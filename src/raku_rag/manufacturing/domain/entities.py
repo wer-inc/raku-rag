@@ -18,6 +18,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+# --- T054: 001 ACL scope binding (FR-MFG-013, SC-MFG-008) ----------------------------------------
+#
+# Manufacturing entities expose the 001 ACL *territory* they live in so callers can build/route
+# grants through the SAME mapping the answer/search/drafts paths use — NO new authz. The scope is a
+# plain ``(scope_type, scope_id)`` pair in 001 terms (string values mirror ``ScopeType`` to avoid an
+# import cycle: ``acl_mapping`` imports this module, not the reverse). ``acl_mapping.factory_scope`` /
+# ``equipment_area_scope`` consume the same convention. Customer is HIGH-sensitivity and ACL-relevant
+# (SC-MFG-008): a Customer is never freely listable; its documents inherit the factory/collection ACL
+# and ``confidential`` marks it for the deny-by-default path.
+
+_SCOPE_TENANT = "tenant"
+_SCOPE_COLLECTION = "collection"
+_SCOPE_DOCUMENT = "document"
+
+
+def _factory_collection_id(factory_id: str) -> str:
+    """The 001 collection that holds a factory's documents (factory = ACL territory unit).
+
+    MUST stay in lock-step with ``acl_mapping._factory_collection_id`` so an entity's declared scope
+    and the grant the mapping emits target the identical 001 collection (SC-MFG-008).
+    """
+    return f"factory:{factory_id}"
+
 
 # --- Countermeasure 2-axis enums (data-model §D, FR-MFG-008/009) ---
 
@@ -48,6 +71,10 @@ class Factory:
     factory_id: str
     name: str = ""
 
+    def acl_scope(self) -> tuple[str, str]:
+        """001 COLLECTION territory carrying this factory's documents (T054, FR-MFG-013)."""
+        return (_SCOPE_COLLECTION, _factory_collection_id(self.factory_id))
+
 
 @dataclass
 class ProductionLine:
@@ -65,6 +92,10 @@ class Process:
     process_name: str = ""
     line_id: str | None = None
 
+    def acl_scope(self) -> tuple[str, str]:
+        """Equipment-area → 001 DOCUMENT-scoped grant keyed by process_id (T054, FR-MFG-013)."""
+        return (_SCOPE_DOCUMENT, self.process_id)
+
 
 @dataclass
 class Equipment:
@@ -75,6 +106,10 @@ class Equipment:
     model_no: str | None = None
     line_id: str | None = None
     process_id: str | None = None
+
+    def acl_scope(self) -> tuple[str, str]:
+        """Equipment-area → 001 DOCUMENT-scoped grant keyed by equipment_id (T054, FR-MFG-013)."""
+        return (_SCOPE_DOCUMENT, self.equipment_id)
 
 
 @dataclass
@@ -105,11 +140,29 @@ class Part:
 
 @dataclass
 class Customer:
-    """High sensitivity; ACL-relevant (SC-MFG-008)."""
+    """High sensitivity; ACL-relevant (SC-MFG-008).
+
+    A Customer is CONFIDENTIAL by default: its name and the documents that reference it are visible
+    only through the deny-by-default 001 ACL of the factory/collection that owns them — there is no
+    free Customer listing. ``acl_scope`` returns the 001 territory the customer's documents inherit
+    when an owning factory is known; otherwise the tenant boundary (still deny-by-default within it).
+    """
 
     tenant_id: str
     customer_id: str
     name: str = ""
+    confidential: bool = True  # SC-MFG-008: customer identity is ACL-controlled, never free-listed
+    factory_id: str | None = None  # owning factory whose ACL territory the customer docs inherit
+
+    def acl_scope(self) -> tuple[str, str]:
+        """001 ACL territory the customer's documents inherit (T054, SC-MFG-008).
+
+        Bound to the owning factory's COLLECTION when known (so customer docs follow the factory
+        ACL); otherwise the tenant scope — never a wider-than-tenant or cross-tenant scope.
+        """
+        if self.factory_id:
+            return (_SCOPE_COLLECTION, _factory_collection_id(self.factory_id))
+        return (_SCOPE_TENANT, self.tenant_id)
 
 
 @dataclass

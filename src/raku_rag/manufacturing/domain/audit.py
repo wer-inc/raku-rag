@@ -32,6 +32,48 @@ class TelemetryAxis(str, Enum):
     DEPARTMENT = "department"
 
 
+# --- T056: actor organizational context snapshot (FR-MFG-030) -----------------------------------
+#
+# ``factory_id`` / ``department_id`` are the US5 telemetry grouping axes. They are derived from the
+# SAME FR-MFG-013 mapping as the ACL itself (NO new authz): department == the actor's 001 ACL group
+# (falling back to a role when no group is present), factory == an explicit Factory context supplied
+# by the caller (the actor's resolved territory). Snapshotting them onto the immutable AuditLogEntry
+# at write time means later aggregation never has to re-resolve a mutable identity.
+
+
+def actor_org_context(
+    principal: IdentityClaims, *, factory_id: str | None = None
+) -> tuple[str | None, str | None]:
+    """Return ``(factory_id, department_id)`` for ``principal`` — the FR-MFG-013-derived org context.
+
+    ``department_id`` is the actor's primary 001 ACL group (department IS a group, FR-MFG-013),
+    falling back to the primary role if the actor carries no group. ``factory_id`` is the resolved
+    Factory territory when the caller knows it (e.g. from a granted ManufacturingScope); otherwise
+    ``None`` — never invented. Pure read-only derivation; builds no authorization.
+    """
+    department_id = (
+        principal.groups[0] if principal.groups else (principal.roles[0] if principal.roles else None)
+    )
+    return (factory_id, department_id)
+
+
+def stamp_org_context(
+    entry: "AuditLogEntry", principal: IdentityClaims, *, factory_id: str | None = None
+) -> "AuditLogEntry":
+    """Return an immutable COPY of ``entry`` with the actor org-context snapshot applied (T056).
+
+    Only fills ``factory_id`` / ``department_id`` (and ``actor_id`` if unset) so callers can stamp an
+    already-built entry without mutating it — the snapshot is immutable once recorded.
+    """
+    fac, dept = actor_org_context(principal, factory_id=factory_id)
+    return replace(
+        entry,
+        actor_id=entry.actor_id or principal.user_id,
+        factory_id=entry.factory_id if entry.factory_id is not None else fac,
+        department_id=entry.department_id if entry.department_id is not None else dept,
+    )
+
+
 @dataclass
 class AuditLogEntry:
     """Structured audit record (data-model §H). Only reference IDs — no PII/secret/body text."""

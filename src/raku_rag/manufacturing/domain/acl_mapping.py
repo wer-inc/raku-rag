@@ -1,4 +1,4 @@
-"""T011 — Manufacturing ACL mapping helper (FR-MFG-013).
+"""T011 / T053 / T055 — Manufacturing ACL mapping helper + enforcement seam (FR-MFG-013, FR-MFG-021).
 
 Translate manufacturing access scopes (department / factory / role / equipment-area) into the
 inputs of the existing 001 deny-by-default ACL ([base:FR-022/025a]). This module builds **NO new
@@ -16,14 +16,29 @@ Mapping (spec FR-MFG-013):
 - **equipment-area** → Process/Equipment metadata (``process_id`` / ``equipment_id``), expressed as a
   001 ``DOCUMENT``-scoped grant over the documents tagged with that equipment-area.
 
-Schema/helper only — the visibility predicate itself is 001's. Stage-2 wires concrete grant sources;
-this module is the pure translation layer.
+T053 — enforcement seam. :func:`apply_scope` is the SINGLE place that wires a manufacturing scope into
+a live 001 :class:`AclPolicy`. Because the manufacturing answer/search overlays reuse the 001
+``RetrievalService`` (which consults that very policy as a deny-by-default PRE-filter inside
+``InMemoryVectorStore.search``), routing every grant through :func:`apply_scope` makes the BUILT
+endpoints (answer / search / drafts = US1/US2/US4) enforce manufacturing scoping for free. The
+NOT-YET-BUILT US3 trouble-cases and US5 dashboard MUST, when they land, route their visibility through
+this SAME helper (and the reused 001 retrieval pre-filter) rather than adding a parallel authz path —
+they are NOT stubbed here.
+
+T055 — denial audit. :func:`can_read_chunk` keeps its existing raise-on-cross-tenant contract; the new
+:func:`record_denial` / :func:`audited_read` helpers additionally journal an ACL-denied /
+tenant-isolation-denied event into the reused ``AuditLogWriter`` (reference IDs only, FR-MFG-021).
+
+Helper only — the visibility predicate itself is 001's; this module is the translation + wiring layer.
 """
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime, timezone
+
 from dataclasses import dataclass
 
+from raku_rag.core.errors import TenantIsolationError
 from raku_rag.core.security.acl import AclPolicy
 from raku_rag.core.tenancy import enforce_same_tenant
 from raku_rag.domain.models import ACLGrant, Chunk, IdentityClaims, ScopeType, SubjectType
@@ -147,3 +162,89 @@ def can_read_chunk(
     """Convenience: enforce tenant binding then delegate the read decision to 001's ``AclPolicy``."""
     enforce_same_tenant(principal, resource_tenant_id=chunk.tenant_id)
     return visibility_filter(scopes, principal)(chunk)
+
+
+# --- T053 enforcement seam: wire a scope into a LIVE 001 AclPolicy -------------------------------
+
+
+def apply_scope(policy: AclPolicy, scope: ManufacturingScope) -> list[ACLGrant]:
+    """Add the 001 grants for ``scope`` to a LIVE 001 :class:`AclPolicy`; return what was added.
+
+    This is the single enforcement entrypoint (T053): the manufacturing answer/search/drafts overlays
+    reuse the 001 ``RetrievalService``, which consults exactly this policy as a deny-by-default
+    PRE-filter inside ``InMemoryVectorStore.search``. Adding grants here therefore makes every BUILT
+    endpoint enforce manufacturing scoping with NO new authz mechanism. US3 trouble-cases and US5
+    dashboard, when built, MUST route their visibility through this same helper (they are not stubbed).
+    """
+    grants = grants_for_scope(scope)
+    for g in grants:
+        policy.add(g)
+    return grants
+
+
+# --- T055 denial audit: journal ACL-denied / tenant-isolation-denied (FR-MFG-021) ----------------
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def record_denial(
+    audit,
+    *,
+    principal: IdentityClaims,
+    chunk: Chunk,
+    reason: str,
+) -> None:
+    """Record an access denial into the reused ``AuditLogWriter`` — reference IDs only (FR-MFG-021).
+
+    ``reason`` is one of ``acl_denied`` / ``tenant_isolation_denied``. No body text / customer name is
+    written; the actor's organizational context (factory_id / department_id) is snapshotted via
+    :func:`raku_rag.manufacturing.domain.audit.actor_org_context` for US5 telemetry grouping (T056).
+    """
+    if audit is None:
+        return
+    # Local import avoids a module import cycle (audit imports nothing from this module).
+    from raku_rag.manufacturing.domain.audit import AuditLogEntry, actor_org_context
+
+    factory_id, department_id = actor_org_context(principal)
+    ts = _now_iso()
+    audit.record(
+        AuditLogEntry(
+            tenant_id=principal.tenant_id,
+            log_id=f"acl.deny:{chunk.document_id}:{ts}",
+            timestamp=ts,
+            actor_id=principal.user_id,
+            factory_id=factory_id,
+            department_id=department_id,
+            action="acl.deny",
+            resource_type="document",
+            resource_id=chunk.document_id,  # reference ID only — never the confidential body
+            decision="denied",
+            reason=reason,
+        )
+    )
+
+
+def audited_read(
+    scopes: Iterable[ManufacturingScope],
+    principal: IdentityClaims,
+    chunk: Chunk,
+    *,
+    audit=None,
+) -> bool:
+    """Like :func:`can_read_chunk`, but journals a denial (ACL or tenant-isolation) when audit given.
+
+    Tenant-isolation denials still RAISE (reusing 001 ``enforce_same_tenant``) — the cross-tenant
+    boundary is structural, not a soft deny — but are audited first so the rejection is observable
+    (FR-MFG-021). A within-tenant ACL deny returns ``False`` and is audited as ``acl_denied``.
+    """
+    try:
+        enforce_same_tenant(principal, resource_tenant_id=chunk.tenant_id)
+    except TenantIsolationError:
+        record_denial(audit, principal=principal, chunk=chunk, reason="tenant_isolation_denied")
+        raise
+    allowed = visibility_filter(scopes, principal)(chunk)
+    if not allowed:
+        record_denial(audit, principal=principal, chunk=chunk, reason="acl_denied")
+    return allowed

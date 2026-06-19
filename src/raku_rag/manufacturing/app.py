@@ -29,6 +29,7 @@ from raku_rag.manufacturing.api import record_answer_decision
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, ManufacturingAnswerService
 from raku_rag.manufacturing.api.drafts import DraftService
 from raku_rag.manufacturing.api.search_ext import ManufacturingSearchService
+from raku_rag.manufacturing.domain.acl_mapping import ManufacturingScope, apply_scope
 from raku_rag.manufacturing.domain.audit import InMemoryAuditLogWriter
 from raku_rag.manufacturing.domain.draft import DraftArtifact, DraftType
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
@@ -122,6 +123,18 @@ class ManufacturingSystem:
         subject_id: str,
     ) -> None:
         self._mvp.grant(tenant_id, scope_type, scope_id, subject_type, subject_id)
+
+    def grant_scope(self, scope: ManufacturingScope) -> None:
+        """US6 (T053, FR-MFG-013): provision a department/factory/role/equipment-area scope.
+
+        Translates the manufacturing scope to 001 ``ACLGrant`` records via the T011 ``acl_mapping``
+        helper and adds them to the SAME 001 :class:`AclPolicy` the reused 001 ``RetrievalService``
+        consults (``self._mvp.acl``). This builds NO new authorization mechanism: the 001
+        deny-by-default PRE-filter inside ``InMemoryVectorStore.search`` then enforces manufacturing
+        scoping on every BUILT endpoint (answer / search / drafts = US1/US2/US4). US3 trouble-cases
+        and US5 dashboard, when built, MUST grant through this SAME method (they are not stubbed).
+        """
+        apply_scope(self._mvp.acl, scope)
 
     # --- metadata resolver ------------------------------------------------------------------------
     def get_mfg_meta(self, tenant_id: str, document_id: str) -> ManufacturingDocumentMetadata | None:
