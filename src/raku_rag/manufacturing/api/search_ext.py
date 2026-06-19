@@ -6,9 +6,10 @@ Reuses the 001 ``RetrievalService`` (ACL pre-filter, tombstone, tenancy) unchang
   - ``approval_status`` / ``effective_date`` on each result (latest_approved / obsolete / 有効日の識別,
     contracts §A POST /v1/search; US2-2).
 
-NOTE (scope): XLSX/CSV CELL-coordinate citation (``sheet`` / ``row`` / ``col`` on the citation range,
-FR-MFG-002) is **US2** and intentionally NOT implemented here — see contracts §A and §1. This module
-covers only the US1 metadata-filter + approval-tag extension.
+US2 (FR-MFG-002): a spreadsheet-derived chunk carries a ``sheet!R{row}C{col}`` cell anchor in its
+normalized text (emitted by ``SpreadsheetParser``); this overlay parses it back out and exposes the
+cell coordinate on the result as ``cell_anchor`` (+ structured ``sheet`` / ``row`` / ``col``) so a
+citation resolves to a single cell — preserved through the reused 001 ingest/chunk/citation path.
 
 stdlib only.
 """
@@ -19,6 +20,7 @@ from typing import Callable
 
 from raku_rag.domain.models import IdentityClaims, QueryProfile, ScoredChunk
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
+from raku_rag.providers.parsers import parse_cell_anchor
 from raku_rag.services.retrieval import RetrievalService
 
 GetMfgMeta = Callable[[str, str], ManufacturingDocumentMetadata | None]
@@ -34,6 +36,12 @@ class ManufacturingSearchResult:
     retrieval_score: float
     approval_status: str | None = None
     effective_date: str | None = None
+    approval_source: str | None = None
+    # FR-MFG-002 spreadsheet cell coordinate (None for non-spreadsheet chunks).
+    cell_anchor: str | None = None
+    sheet: str | None = None
+    row: int | None = None
+    col: int | None = None
 
 
 def _matches_filters(meta: ManufacturingDocumentMetadata | None, filters: dict | None) -> bool:
@@ -73,6 +81,13 @@ class ManufacturingSearchService:
             meta = self._get_mfg_meta(principal.tenant_id, s.chunk.document_id)
             if not _matches_filters(meta, manufacturing_filters):
                 continue
+            # FR-MFG-002: recover the spreadsheet cell coordinate from the chunk's normalized text.
+            anchor = parse_cell_anchor(s.chunk.text)
+            cell_anchor = sheet = None
+            row = col = None
+            if anchor is not None:
+                sheet, row, col = anchor
+                cell_anchor = f"{sheet}!R{row}C{col}"
             results.append(
                 ManufacturingSearchResult(
                     chunk_id=s.chunk.chunk_id,
@@ -81,6 +96,11 @@ class ManufacturingSearchService:
                     retrieval_score=s.retrieval_score,
                     approval_status=(meta.approval_status.value if meta else None),
                     effective_date=(meta.effective_date if meta else None),
+                    approval_source=(meta.approval_source.value if meta else None),
+                    cell_anchor=cell_anchor,
+                    sheet=sheet,
+                    row=row,
+                    col=col,
                 )
             )
         return results

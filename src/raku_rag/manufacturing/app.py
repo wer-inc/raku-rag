@@ -19,6 +19,7 @@ stdlib only.
 """
 from __future__ import annotations
 
+import os
 from datetime import date
 
 from raku_rag.app import MvpSystem
@@ -29,11 +30,34 @@ from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, Manufactu
 from raku_rag.manufacturing.api.search_ext import ManufacturingSearchService
 from raku_rag.manufacturing.domain.audit import InMemoryAuditLogWriter
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
+from raku_rag.manufacturing.ingestion.approval import ApprovalWorkflow
+from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY, MetadataEnricher
+from raku_rag.manufacturing.interfaces import ApprovalState
 from raku_rag.manufacturing.safety.classifier import RuleHighRiskClassifier
 from raku_rag.manufacturing.safety.gate import ManufacturingSafetyGate
+from raku_rag.providers.parsers import (
+    CompositeParser,
+    DocxParser,
+    SpreadsheetParser,
+    TextParser,
+    DOCX_CONTENT_TYPE,
+    XLSX_CONTENT_TYPE,
+)
+from raku_rag.services.ingestion import IngestionService
 
 # Key for the ManufacturingDocumentMetadata stashed in the 001 Document.metadata JSON.
-_MFG_META_KEY = "_mfg_meta"
+_MFG_META_KEY = MFG_META_KEY
+
+# Map file extension -> content type for the manufacturing file-ingestion entrypoint (FR-MFG-001).
+_EXT_CONTENT_TYPE: dict[str, str] = {
+    ".docx": DOCX_CONTENT_TYPE,
+    ".xlsx": XLSX_CONTENT_TYPE,
+    ".csv": "text/csv",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".html": "text/html",
+    ".htm": "text/html",
+}
 
 
 class ManufacturingSystem:
@@ -42,6 +66,28 @@ class ManufacturingSystem:
         # tenant-scoped manufacturing metadata store (mirrors DocumentRegistry; in-memory).
         self._mfg_meta: dict[tuple[str, str], ManufacturingDocumentMetadata] = {}
         self.audit = InMemoryAuditLogWriter()
+
+        # Manufacturing ingestion path: REUSE the 001 IngestionService (parse->chunk->embed->index)
+        # but wire a CompositeParser so DOCX / XLSX / CSV (and the 001 text types) are all accepted
+        # behind the single 001 Parser abstraction (FR-MFG-001/002). 001's TextParser alone rejects
+        # these OOXML types, so the manufacturing path uses this composite instead.
+        self._parser = CompositeParser([TextParser(), DocxParser(), SpreadsheetParser()])
+        self._ingestion = IngestionService(
+            self._mvp.store,
+            self._mvp.embedder,
+            self._parser,
+            self._mvp.chunker,
+            self._mvp.registry,
+        )
+        self._enricher = MetadataEnricher(
+            store=self._mvp.store, get_document=self._mvp.registry.get
+        )
+        self._approval = ApprovalWorkflow(
+            get_meta=self.get_mfg_meta,
+            set_meta=self._set_mfg_meta,
+            audit=self.audit,
+            enricher=self._enricher,
+        )
 
         classifier = RuleHighRiskClassifier(llm=self._mvp.llm)
         safety_gate = ManufacturingSafetyGate(today=today)
@@ -74,6 +120,12 @@ class ManufacturingSystem:
     def get_mfg_meta(self, tenant_id: str, document_id: str) -> ManufacturingDocumentMetadata | None:
         return self._mfg_meta.get((tenant_id, document_id))
 
+    def _set_mfg_meta(
+        self, tenant_id: str, document_id: str, metadata: ManufacturingDocumentMetadata
+    ) -> None:
+        """Update the fast resolver map (read by search/answer/classifier/gate)."""
+        self._mfg_meta[(tenant_id, document_id)] = metadata
+
     # --- ingestion (001 body path + manufacturing metadata attach) --------------------------------
     def ingest_manufacturing(
         self,
@@ -96,8 +148,114 @@ class ManufacturingSystem:
         doc = self._mvp.registry.get(tenant_id, document_id)
         if doc is not None:
             doc.metadata[_MFG_META_KEY] = metadata
-        self._mfg_meta[(tenant_id, document_id)] = metadata
+        self._set_mfg_meta(tenant_id, document_id, metadata)
+        # Propagate to indexed chunks (FR-MFG-003) so the metadata travels with the evidence.
+        self._enricher.propagate_to_chunks(tenant_id, document_id, metadata)
         return job
+
+    # --- file ingestion (T029/T030; FR-MFG-001/002/003) -------------------------------------------
+    def ingest_manufacturing_file(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        document_id: str,
+        path: str,
+        content_type: str | None = None,
+        metadata: ManufacturingDocumentMetadata,
+        source_id: str = "src",
+    ):
+        """Ingest a DOCX/XLSX/CSV (or 001 text) file via the REUSED 001 ingestion path.
+
+        Reads the file bytes from ``path``, routes by extension / ``content_type`` to the right 001
+        ``Parser`` (DocxParser / SpreadsheetParser / TextParser, dispatched by the CompositeParser),
+        runs parse->chunk->embed->index, then enriches the Document/Chunk metadata. Returns the 001
+        ``IngestionJob`` (``status == 'succeeded'``, ``chunk_count > 0``). Parse/ingest is audited
+        (FR-MFG-021). Does NOT define a new search mechanism — the file is found via the 001 path.
+        """
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        ct = content_type or self._content_type_for(path)
+
+        job = self._ingestion.ingest(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            raw=raw,
+            content_type=ct,
+        )
+        # Attach manufacturing metadata to Document.metadata + propagate to chunks (FR-MFG-003).
+        self._set_mfg_meta(tenant_id, document_id, metadata)
+        self._enricher.attach(tenant_id, document_id, metadata)
+        # Audit the ingest/parse (reference IDs only; no body text) — FR-MFG-021.
+        self._audit_ingest(
+            tenant_id=tenant_id, document_id=document_id, content_type=ct, job=job
+        )
+        return job
+
+    @staticmethod
+    def _content_type_for(path: str) -> str:
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in _EXT_CONTENT_TYPE:
+            raise ValueError(f"unsupported file extension: {ext!r}")
+        return _EXT_CONTENT_TYPE[ext]
+
+    def _audit_ingest(
+        self, *, tenant_id: str, document_id: str, content_type: str, job
+    ) -> None:
+        from datetime import datetime, timezone
+
+        from raku_rag.manufacturing.domain.audit import AuditLogEntry
+
+        ts = datetime.now(timezone.utc).isoformat()
+        self.audit.record(
+            AuditLogEntry(
+                tenant_id=tenant_id,
+                log_id=f"ingest.file:{document_id}:{ts}",
+                timestamp=ts,
+                action="ingest.file",
+                resource_type="document",
+                resource_id=document_id,  # reference ID only
+                decision=job.status,
+                reason=content_type,
+                document_ids_used=(document_id,),
+            )
+        )
+
+    # --- metadata update / approval lifecycle (T030; FR-MFG-003/004/004a) -------------------------
+    def update_metadata(
+        self,
+        *,
+        tenant_id: str,
+        document_id: str,
+        metadata: ManufacturingDocumentMetadata,
+    ) -> ManufacturingDocumentMetadata:
+        """Re-attach manufacturing metadata to an already-ingested document (FR-MFG-003)."""
+        self._set_mfg_meta(tenant_id, document_id, metadata)
+        return self._enricher.attach(tenant_id, document_id, metadata)
+
+    def transition_approval(
+        self,
+        *,
+        tenant_id: str,
+        document_id: str,
+        to_status: str,
+        actor: IdentityClaims,
+    ) -> ApprovalState:
+        """Drive the lightweight workflow (approval_source = workflow). Audited (FR-MFG-004/021)."""
+        return self._approval.transition(tenant_id, document_id, to_status, actor)
+
+    def import_external_approval(
+        self,
+        *,
+        tenant_id: str,
+        document_id: str,
+        external: dict,
+        actor: IdentityClaims | None = None,
+    ) -> ApprovalState:
+        """Import an upstream approval as source of truth, overriding the workflow (FR-MFG-004a)."""
+        return self._approval.import_external(tenant_id, document_id, external, actor)
 
     # --- answer (001 path under the safety overlay) -----------------------------------------------
     def answer(

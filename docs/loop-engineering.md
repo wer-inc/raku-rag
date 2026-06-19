@@ -147,7 +147,8 @@ obsolete・draft 一次証拠(011) / no-train override(009) / audit 抑制(010) 
 - [x] `/speckit-analyze` プリフライト（002、読み取り専用 = L3 整合ゲート）— 完了 / 解決は §8
 - [x] Phase 2 Foundational（T005/006/008/009/010/011）— L2 Workflow完了・gate GREEN(69)・32 unit tests・分離不変条件保持。T007(SQLAlchemy)/Dagster延期。要再確認(US1): value object 3件(TroubleCaseResult/HighRiskClassification/SafetyDecision)の tenant スコープ
 - [x] US1（Phase 3: T012–T021 + 安全ゲート T014/T015）— L2 Workflow完了・gate.sh all GREEN・境界レビューPASS。§3 precision否定対照を追加、SafetyGate の非high-risk過剰ブロックを仕様準拠(FR-MFG-005/006)に修正
-- [ ] US2（Phase 4: DOCX/XLSX/CSV 取込）を L2 Workflow。**要 parser依存(python-docx/openpyxl)**、XLSX/CSVセル引用座標(T023/T026)
+- [x] US2（Phase 4: DOCX/XLSX/CSV 取込・メタデータ・承認ライフサイクル）— L2 Workflow完了・gate.sh all GREEN(97)・境界レビューPASS（cell座標pin・imported approval優先を独立検証）。T002 deps導入、Dagster系(T024a/T031a/T031b)は本番adapter track延期
+- [x] **PoC MVPコア(US1+US2)成立** — plan「MVP First」の STOP & VALIDATE 地点
 - [ ] US3/US4/US6/US5・Governance Overlay（T032〜T072）を順次 L2 Workflow
 - [ ] 各フェーズ末に L3 converge/analyze
 - [ ] 安定後（§0 Stage1 昇格条件）に L4 nightly `/schedule`（読み取り専用）

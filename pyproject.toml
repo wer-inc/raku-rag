@@ -23,6 +23,8 @@ prod = [
   "structlog",
 ]
 dev = ["pytest", "ruff", "black", "mypy"]
+# 002 manufacturing solution layer parsers (T002). CSV uses the stdlib; DOCX/XLSX need these.
+manufacturing = ["python-docx", "openpyxl"]
 
 [tool.ruff]
 target-version = "py311"
