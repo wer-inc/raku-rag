@@ -1,0 +1,61 @@
+name: ci
+
+# P0-T16 — CI skeleton. Stage order: lint → unit → contract → integration → security-hard-gate → eval-gate.
+# The security hard gate is a BLOCKING job (baseline-independent; one failure blocks merge).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dev tools
+        run: pip install ruff black mypy
+      - name: Lint (ruff + black --check)
+        run: |
+          ruff check src tests workers
+          black --check src tests workers
+      - name: Unit tests
+        run: python -m unittest discover -s tests/unit -v
+      - name: Contract + integration tests
+        run: python -m unittest discover -s tests/integration -v
+      - name: Migration runner smoke
+        run: python -m raku_rag.migrations.runner --dir infra/db/migrations --db /tmp/ci.sqlite
+
+  security-hard-gate:
+    # BLOCKING: ACL leak / tenant isolation / deletion reappearance must pass regardless of baseline.
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Security hard-gate tests
+        run: python -m unittest discover -s tests/security -v
+
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Build shared contracts
+        run: npm run build:shared
+      - name: Typecheck workspaces
+        run: npm run typecheck
+      - name: API e2e (NestJS skeleton)
+        run: npm run test:api

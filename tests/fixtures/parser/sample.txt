@@ -1,0 +1,2 @@
+The deployment pipeline runs canary rollouts before production.
+Alarm 17 trips the pump when pressure exceeds the configured limit.

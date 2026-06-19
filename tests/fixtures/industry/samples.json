@@ -1,0 +1,5 @@
+{
+  "manufacturing": {"equipment_id": "EQ-001", "alarm_code": "17", "line": "L1"},
+  "real_estate": {"property_id": "P-100", "unit_id": "U-12", "lease_id": "L-555"},
+  "investment": {"fund_id": "F-9", "share_class": "I", "isin": "JP0000000000"}
+}

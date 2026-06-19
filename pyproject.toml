@@ -1,0 +1,32 @@
+[project]
+name = "raku-rag"
+version = "0.1.0"
+description = "Generic RAG Platform (MVP: tenancy/ACL/ingestion/search/answer/citation/groundedness)"
+requires-python = ">=3.11"
+
+# NOTE (MVP scope): the runnable MVP core (src/raku_rag) uses the Python stdlib only,
+# so the security hard-gate and integration tests run without external services.
+# The production adapters below are wired behind interfaces/ in later phases.
+dependencies = []
+
+[project.optional-dependencies]
+# Production stack (plan.md). Installed when wiring the FastAPI/pgvector/Arq adapters.
+prod = [
+  "fastapi",
+  "uvicorn",
+  "sqlalchemy>=2",
+  "alembic",
+  "pgvector",
+  "pydantic>=2",
+  "arq",
+  "opentelemetry-sdk",
+  "structlog",
+]
+dev = ["pytest", "ruff", "black", "mypy"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,26 @@
+{
+  "name": "raku-rag",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generic RAG Platform — local-first monorepo (Phase 0 foundation)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:shared": "npm run build --workspace @raku-rag/shared",
+    "dev:api": "npm run start:dev --workspace @raku-rag/api",
+    "dev:web": "npm run dev --workspace @raku-rag/web",
+    "test:api": "npm run test:e2e --workspace @raku-rag/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml down -v",
+    "py:test": "PYTHONPATH=src python3 -m unittest discover -s tests",
+    "py:migrate": "PYTHONPATH=src python3 -m raku_rag.migrations.runner --dir infra/db/migrations",
+    "py:seed": "PYTHONPATH=src python3 -m raku_rag.seed.loader",
+    "worker:smoke": "PYTHONPATH=src python3 workers/ingest/worker.py --smoke"
+  }
+}

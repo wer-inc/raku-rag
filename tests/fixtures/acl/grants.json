@@ -1,0 +1,7 @@
+{
+  "tenant_id": "tenant_local",
+  "grants": [
+    {"scope_type": "collection", "scope_id": "default", "subject_type": "role", "subject_id": "reader", "permission": "read"},
+    {"scope_type": "document", "scope_id": "doc-eng-1", "subject_type": "group", "subject_id": "eng", "permission": "read"}
+  ]
+}

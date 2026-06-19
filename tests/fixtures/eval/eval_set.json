@@ -1,0 +1,15 @@
+{
+  "tenant_id": "tenant_local",
+  "items": [
+    {
+      "question": "What trips the pump on alarm 17?",
+      "expected_answer_contains": "pressure",
+      "expected_evidence": ["sample.txt"]
+    },
+    {
+      "question": "What is the capital of an unrelated topic?",
+      "expected_answer_contains": null,
+      "expected_rejection": "insufficient_evidence"
+    }
+  ]
+}

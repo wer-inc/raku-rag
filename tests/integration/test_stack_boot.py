@@ -1,0 +1,46 @@
+"""P0-T15 — local stack boot smoke (RT1/RT3). Skips cleanly when Docker is unavailable so the test
+suite stays green on machines without Docker; on a Docker host it asserts the core services boot and
+pgvector is available.
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import unittest
+
+COMPOSE = os.path.join(os.path.dirname(__file__), "..", "..", "infra", "docker-compose.yml")
+
+
+def _docker_available() -> bool:
+    if not shutil.which("docker"):
+        return False
+    try:
+        return subprocess.run(["docker", "info"], capture_output=True, timeout=10).returncode == 0
+    except Exception:
+        return False
+
+
+@unittest.skipUnless(_docker_available(), "Docker not available (compose boot is host-only)")
+class TestStackBoot(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        subprocess.run(["docker", "compose", "-f", COMPOSE, "up", "-d", "--wait",
+                        "postgres", "minio", "localstack"], check=True, timeout=300)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        subprocess.run(["docker", "compose", "-f", COMPOSE, "down", "-v"], timeout=120)
+
+    def test_pgvector_extension_available(self) -> None:
+        out = subprocess.run(
+            ["docker", "compose", "-f", COMPOSE, "exec", "-T", "postgres",
+             "psql", "-U", "raku", "-d", "raku", "-tAc",
+             "SELECT 1 FROM pg_extension WHERE extname='vector'"],
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(out.stdout.strip(), "1")
+
+
+if __name__ == "__main__":
+    unittest.main()

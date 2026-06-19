@@ -1,0 +1,2 @@
+# Phase 1 (P1-T02+) adds NNNN_*.sql migrations here; the Phase 0 runner (raku_rag.migrations.runner)
+# discovers and applies them idempotently. Kept empty in Phase 0 (framework only).
