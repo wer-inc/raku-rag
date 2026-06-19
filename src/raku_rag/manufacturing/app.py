@@ -27,8 +27,10 @@ from raku_rag.core.config import Settings
 from raku_rag.domain.models import IdentityClaims, ScopeType, SubjectType
 from raku_rag.manufacturing.api import record_answer_decision
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, ManufacturingAnswerService
+from raku_rag.manufacturing.api.drafts import DraftService
 from raku_rag.manufacturing.api.search_ext import ManufacturingSearchService
 from raku_rag.manufacturing.domain.audit import InMemoryAuditLogWriter
+from raku_rag.manufacturing.domain.draft import DraftArtifact, DraftType
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
 from raku_rag.manufacturing.ingestion.approval import ApprovalWorkflow
 from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY, MetadataEnricher
@@ -103,6 +105,11 @@ class ManufacturingSystem:
         )
         self._search = ManufacturingSearchService(
             retrieval=self._mvp.retrieval, get_mfg_meta=self.get_mfg_meta
+        )
+        # US4 — DraftArtifact generation + lightweight review workflow (FR-MFG-010/010a/010b).
+        # Reuses the shared AuditLogWriter + US1 SafetyGate semantics; AI output is always draft.
+        self._drafts = DraftService(
+            audit=self.audit, get_mfg_meta=self.get_mfg_meta, today=today
         )
 
     # --- admin / ACL (delegates to 001) -----------------------------------------------------------
@@ -299,4 +306,71 @@ class ManufacturingSystem:
         profile = self._mvp.profiles.resolve(collection_id)
         return self._search.search(
             principal, query, profile, manufacturing_filters=manufacturing_filters
+        )
+
+    # --- drafts (US4: generate / assign / review / get; contracts §D) ------------------------------
+    def generate_draft(
+        self,
+        *,
+        principal: IdentityClaims,
+        kind: DraftType | str,
+        context_citations=(),
+        source_document_ids=(),
+        template_id: str | None = None,
+        collection_id: str | None = None,
+        manufacturing_filters: dict | None = None,
+    ) -> DraftArtifact:
+        """POST /v1/manufacturing/drafts — ALWAYS status=draft, created_by=ai (Hard Rule 1).
+
+        AI never auto-approves; safety items follow FR-MFG-005 (no assertion without approved+effective
+        evidence). Generation is audited (FR-MFG-010b/021).
+        """
+        return self._drafts.create(
+            principal=principal,
+            kind=kind,
+            context_citations=context_citations,
+            source_document_ids=source_document_ids,
+            template_id=template_id,
+            collection_id=collection_id,
+            manufacturing_filters=manufacturing_filters,
+        )
+
+    def get_draft(self, tenant_id: str, artifact_id: str) -> DraftArtifact | None:
+        """GET /v1/manufacturing/drafts/{artifact_id} — a detached copy of the stored record."""
+        return self._drafts.get(tenant_id, artifact_id)
+
+    def assign_reviewer(
+        self,
+        *,
+        tenant_id: str,
+        artifact_id: str,
+        reviewer_id: str | None = None,
+        reviewer_group: str | None = None,
+        reviewer_role: str | None = None,
+    ) -> DraftArtifact:
+        """POST .../assign — draft -> in_review with reviewer attribution + assigned_at (audited)."""
+        return self._drafts.assign(
+            tenant_id=tenant_id,
+            artifact_id=artifact_id,
+            reviewer_id=reviewer_id,
+            reviewer_group=reviewer_group,
+            reviewer_role=reviewer_role,
+        )
+
+    def review_draft(
+        self,
+        *,
+        tenant_id: str,
+        artifact_id: str,
+        reviewer: IdentityClaims | None,
+        decision: str,
+        comment: str | None = None,
+    ) -> DraftArtifact:
+        """POST .../review — reviewer decision. approve REQUIRES a reviewer (SC-MFG-007; audited)."""
+        return self._drafts.review(
+            tenant_id=tenant_id,
+            artifact_id=artifact_id,
+            reviewer=reviewer,
+            decision=decision,
+            comment=comment,
         )

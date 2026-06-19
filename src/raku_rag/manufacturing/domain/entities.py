@@ -201,6 +201,36 @@ class TrainingMaterial:
     artifact_id: str | None = None  # DraftArtifact origin (draft)
 
 
+# --- Draft-derived knowledge entities (T045; US4, data-model §F/§C) ---
+#
+# A DraftArtifact (status=draft, created_by=ai) is the ORIGIN of a draft InspectionChecklist /
+# TrainingMaterial. These helpers wire that derivation WITHOUT importing the draft schema at module
+# load time (avoid a cycle): they only read ``artifact_id``/``collection_id``/``type`` off a
+# duck-typed DraftArtifact. The derived entity carries ``artifact_id`` (not ``document_id``) so it is
+# unambiguously a draft-origin record — never treated as an approved imported source until a reviewer
+# approves the originating draft (Hard Rule 1).
+
+
+def inspection_checklist_from_draft(artifact) -> "InspectionChecklist":
+    """Build a draft-origin InspectionChecklist from a CHECKLIST DraftArtifact (artifact_id set)."""
+    return InspectionChecklist(
+        tenant_id=artifact.tenant_id,
+        checklist_id=artifact.artifact_id,
+        document_id=None,  # not an imported source — this is draft-origin
+        artifact_id=artifact.artifact_id,
+    )
+
+
+def training_material_from_draft(artifact) -> "TrainingMaterial":
+    """Build a draft-origin TrainingMaterial from a TRAINING DraftArtifact (artifact_id set)."""
+    return TrainingMaterial(
+        tenant_id=artifact.tenant_id,
+        training_id=artifact.artifact_id,
+        document_id=None,  # not an imported source — this is draft-origin
+        artifact_id=artifact.artifact_id,
+    )
+
+
 # --- Retrieval result wrapper (TroubleCaseRetriever return shape, contracts §5) ---
 
 

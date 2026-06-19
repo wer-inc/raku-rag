@@ -149,7 +149,8 @@ obsolete・draft 一次証拠(011) / no-train override(009) / audit 抑制(010) 
 - [x] US1（Phase 3: T012–T021 + 安全ゲート T014/T015）— L2 Workflow完了・gate.sh all GREEN・境界レビューPASS。§3 precision否定対照を追加、SafetyGate の非high-risk過剰ブロックを仕様準拠(FR-MFG-005/006)に修正
 - [x] US2（Phase 4: DOCX/XLSX/CSV 取込・メタデータ・承認ライフサイクル）— L2 Workflow完了・gate.sh all GREEN(97)・境界レビューPASS（cell座標pin・imported approval優先を独立検証）。T002 deps導入、Dagster系(T024a/T031a/T031b)は本番adapter track延期
 - [x] **PoC MVPコア(US1+US2)成立** — plan「MVP First」の STOP & VALIDATE 地点
-- [ ] US3/US4/US6/US5・Governance Overlay（T032〜T072）を順次 L2 Workflow
+- [x] US4（Phase 6: ドラフト生成 + レビュー, T038-T045）— 安全ハードゲート T039(SC-MFG-007 AI自動確定禁止)を機構pinで実装・境界レビューPASS（ai→approved経路の不在を実コードで確認、detached copy で直接変異も無効化）。**6ハードゲート中3本完了（006/007/011）**
+- [ ] 残: US3 類似トラブル(P2) / US6 ACL(SC-MFG-008) / US5 ダッシュボード(P3) / Governance Overlay(SC-MFG-009/010・T066 縦串) / Polish
 - [x] CI: `.github/workflows/gate.yml`（全 push/PR で `gate.sh a`＋`all` を実行、PR は §5 分離を CI 強制, T004）— **ループ運用化**。`ci.yml` は 001 本番アダプタ用スケルトンとして温存
 - [ ] 各フェーズ末に L3 converge/analyze
 - [ ] 安定後（§0 Stage1 昇格条件）に L4 nightly `/schedule`（読み取り専用）
