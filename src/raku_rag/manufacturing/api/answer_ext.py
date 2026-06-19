@@ -33,10 +33,18 @@ from raku_rag.domain.models import (
     QueryProfile,
     ScoredChunk,
 )
-from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
-from raku_rag.manufacturing.domain.safety import HighRiskClassification, SafetyDecision
+from raku_rag.manufacturing.domain.metadata import ApprovalStatus, ManufacturingDocumentMetadata
+from raku_rag.manufacturing.domain.safety import (
+    HighRiskClassification,
+    SafetyBlockReason,
+    SafetyDecision,
+)
 from raku_rag.manufacturing.safety.classifier import RuleHighRiskClassifier
-from raku_rag.manufacturing.safety.gate import ManufacturingSafetyGate, normalize_block_reason
+from raku_rag.manufacturing.safety.gate import (
+    ManufacturingSafetyGate,
+    is_approved_effective,
+    normalize_block_reason,
+)
 from raku_rag.services.answer import AnswerService
 from raku_rag.services.groundedness import GroundednessGate
 from raku_rag.services.retrieval import RetrievalService
@@ -149,6 +157,7 @@ class ManufacturingAnswerService:
         self._get_document = get_document
         self._classifier = classifier or RuleHighRiskClassifier()
         self._safety_gate = safety_gate or ManufacturingSafetyGate(today=today)
+        self._today = today
 
     def answer(
         self,
@@ -222,6 +231,35 @@ class ManufacturingAnswerService:
             ManufacturingCitation.from_base(c, self._get_mfg_meta(tenant, c.document_id))
             for c in base.citations
         )
+
+        # (FR-MFG-006 / SC-MFG-011) T066 integration glue: the pre-gate ``has_usable_primary`` check
+        # confirms SOME candidate is non-draft/non-obsolete, but the REUSED 001 answer path may still
+        # rank an OBSOLETE document as the TOP cited evidence (when an unrelated approved doc only
+        # shares generic tokens). The gate's documented invariant is "an obsolete document is NEVER
+        # primary evidence": so if the answer asserted with an obsolete PRIMARY (top) citation and NO
+        # approved+effective document is among the actually-cited evidence, the obsolete doc would be
+        # the real basis of the assertion — demote to insufficient_evidence (reference-only + warning).
+        if base.status == AnswerStatus.OK.value and mfg_citations:
+            primary = mfg_citations[0]
+            cited_has_approved_effective = any(
+                is_approved_effective(self._get_mfg_meta(tenant, c.document_id), today=self._today)
+                for c in mfg_citations
+            )
+            if primary.approval_status == ApprovalStatus.OBSOLETE.value and not cited_has_approved_effective:
+                blocked = ManufacturingAnswer(
+                    status=AnswerStatus.INSUFFICIENT_EVIDENCE.value,
+                    text=None,
+                    citations=(),
+                    used_chunks=(),
+                    correlation_id=base.correlation_id,
+                    high_risk=classification.is_high_risk,
+                    high_risk_reason_codes=classification.reason_codes,
+                    safety_block_reason=SafetyBlockReason.INSUFFICIENT_EVIDENCE.value,
+                    obsolete_warning=True,
+                    requires_onsite_confirmation=decision.requires_onsite_confirmation,
+                    notice=notice,
+                )
+                return blocked, classification, decision, tuple(candidate_doc_ids)
 
         # If 001 itself could not produce a grounded answer, normalize the block reason.
         base_block_reason = None

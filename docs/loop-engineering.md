@@ -154,7 +154,8 @@ obsolete・draft 一次証拠(011) / no-train override(009) / audit 抑制(010) 
 - [x] Governance Overlay（Phase 9, T057-T065）— SC-MFG-009 no-train（opt-in強制・非no-train capability block＝temporarily_unavailable・no silent degrade）+ SC-MFG-010 audit（閉列挙網羅・PII0・SHA-256 hash chain改ざん検知）+ retention/policy/governance/export API + base-cr-notes。境界レビューPASS。**🎯 6ハードゲート全完成（006/007/008/009/010/011）**
 - [x] US3（Phase 5: 類似トラブル事例, T032-T037）— 001 retrieval+ACL pre-filter再利用・Hard Rule 4（permanent過去事例も候補表示）機構pin・SC-MFG-008をtrouble-casesへ拡張。境界レビューPASS
 - [x] US5（Phase 7: 運用ダッシュボード/KPI/safety telemetry, T046-T051）— SC-MFG-013 telemetry（相互排他・audit由来・冪等・factory/department軸）+ FR-MFG-028 KPI全項(json/csv)。境界レビューPASS。Dagster(T047a/T051a)延期
-- [ ] 残: T066 PoC v0 縦串(end-to-end) / Polish（T067 quickstart検証 / T069 unit / T070 security review、T068 docs・T072 UI・T071a Dagsterは本番/UI track）
+- [x] T066 PoC v0 縦串(end-to-end) + T067 quickstart S1-S11 — capstone統合検証PASS（225テスト）。**capstoneが実バグ発見・修正**: 多doc構成でobsoleteが一次引用されるSC-MFG-011抜けをanswer_ext.pyで降格修正（孤立fixtureのT015は捕捉できず＝§3 fixture特異性の実例）。Verifyで T070 セキュリティレビュー5軸PASS（PII0/draft/no-train/ACL/deletion）
+- [ ] 任意polish: **T015を多doc一次引用ケースで強化（推奨・別コミット）** / T068 docs / T069 追加unit / T072 PoC UI / T071a Dagster（UI/本番track）
 - [x] CI: `.github/workflows/gate.yml`（全 push/PR で `gate.sh a`＋`all` を実行、PR は §5 分離を CI 強制, T004）— **ループ運用化**。`ci.yml` は 001 本番アダプタ用スケルトンとして温存
 - [ ] 各フェーズ末に L3 converge/analyze
 - [ ] 安定後（§0 Stage1 昇格条件）に L4 nightly `/schedule`（読み取り専用）
