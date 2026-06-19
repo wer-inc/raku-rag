@@ -47,21 +47,23 @@ run_separation() {
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
     echo "not a git repo — separation guard inactive"; return 0
   fi
-  local protected='^(tests/security/|tests/manufacturing/test_.*gate.*|scripts/gate\.sh$)'
-  local changed
-  if git rev-parse HEAD >/dev/null 2>&1; then
-    changed="$( { git diff --name-only HEAD; git diff --name-only --cached; } | sort -u )"
-  else
+  # The protected set = the 001 security gates, the 6 named 002 hard-gate test files, the unit gate
+  # tests, and this gate script itself. (Not every test_*.py — only the hard gates; new feature tests
+  # are free to land with their impl.)
+  local protected='^(tests/security/|tests/manufacturing/unit/|tests/manufacturing/test_(safety_gate|obsolete_draft_evidence|draft_only|acl_mapping|no_train|audit_coverage)\.py|scripts/gate\.sh$)'
+  if ! git rev-parse HEAD >/dev/null 2>&1; then
     # No commits yet: nothing is "modified", invariant not yet enforceable.
     echo "no commits yet — separation guard inactive (becomes active after first commit)"; return 0
   fi
-  local gate_files src_files
-  gate_files="$(printf '%s\n' "$changed" | grep -E "$protected" || true)"
-  src_files="$(printf '%s\n' "$changed" | grep -E '^src/' || true)"
-  if [ -n "$gate_files" ] && [ -n "$src_files" ]; then
-    echo "BLOCK: gate/test files changed together with src/ — separation violated." >&2
-    echo "Gate changes must be a separate, human-reviewed commit. Touched gate files:" >&2
-    printf '%s\n' "$gate_files" >&2
+  # §5: flag only the reward-hack shape — MODIFYING an already-committed protected gate/test alongside
+  # src/ (consistent with CI). Adding a NEW hard-gate test is allowed.
+  local mod_protected src_changed
+  mod_protected="$( { git diff --name-only --diff-filter=M HEAD; git diff --name-only --cached --diff-filter=M HEAD; } | sort -u | grep -E "$protected" || true)"
+  src_changed="$( { git diff --name-only HEAD; git diff --name-only --cached; } | sort -u | grep -E '^src/' || true)"
+  if [ -n "$mod_protected" ] && [ -n "$src_changed" ]; then
+    echo "BLOCK: an existing hard-gate/test file was MODIFIED together with src/ — §5 separation violated." >&2
+    echo "Gate changes must be a separate, independently-reviewed commit. Modified protected files:" >&2
+    printf '%s\n' "$mod_protected" >&2
     return 3
   fi
   echo "separation OK"

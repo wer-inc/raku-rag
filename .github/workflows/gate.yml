@@ -40,7 +40,7 @@ jobs:
       - name: Block weakening of an existing hard gate
         run: |
           base="${{ github.event.pull_request.base.sha }}"
-          protected_re='^(tests/security/|tests/manufacturing/test_.*gate.*|scripts/gate\.sh$)'
+          protected_re='^(tests/security/|tests/manufacturing/unit/|tests/manufacturing/test_(safety_gate|obsolete_draft_evidence|draft_only|acl_mapping|no_train|audit_coverage)\.py|scripts/gate\.sh$)'
           mod_protected="$(git diff --diff-filter=M --name-only "$base"...HEAD | grep -E "$protected_re" || true)"
           src_changed="$(git diff --name-only "$base"...HEAD | grep -E '^src/' || true)"
           if [ -n "$mod_protected" ] && [ -n "$src_changed" ]; then

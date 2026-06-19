@@ -117,8 +117,8 @@ ESCALATE(=人へ上げて停止) when:       # 「No」を止め時の定義に�
 
 enforce（多層・安価）:
 
-- **(a) 保護パス**: `tests/security/**`, `tests/manufacturing/test_*gate*.py`, `scripts/gate.sh`
-  → pre-commit/CI が「保護テスト + `src/` を同一コミットで変更」を弾く（`scripts/gate.sh separation`）。
+- **(a) 保護パス**: `tests/security/**`, `tests/manufacturing/unit/**`, **6つのハードゲートテスト**（`test_safety_gate` / `test_obsolete_draft_evidence` / `test_draft_only` / `test_acl_mapping` / `test_no_train` / `test_audit_coverage`）, `scripts/gate.sh`
+  → CI / `scripts/gate.sh separation` が「**既存**保護テストの改変 + `src/` 変更」を同時に弾く（新規ゲート追加は許可＝diff-filter=M）。※旧パターン `test_*gate*` は `test_safety_gate` 1本しか保護しない穴があり、6本全部へ拡張済み。
 - **(b) CI は作業ツリーでなく `main` のテストでゲート判定** → ローカル改変で緑を偽装できない。
 - **(c) L2 Workflow では実装エージェントにゲートファイルを read-only で渡す**。ゲート作成は
   人レビュー付きの独立フェーズに分離（implement→fix ループの中に入れない）。
@@ -155,7 +155,8 @@ obsolete・draft 一次証拠(011) / no-train override(009) / audit 抑制(010) 
 - [x] US3（Phase 5: 類似トラブル事例, T032-T037）— 001 retrieval+ACL pre-filter再利用・Hard Rule 4（permanent過去事例も候補表示）機構pin・SC-MFG-008をtrouble-casesへ拡張。境界レビューPASS
 - [x] US5（Phase 7: 運用ダッシュボード/KPI/safety telemetry, T046-T051）— SC-MFG-013 telemetry（相互排他・audit由来・冪等・factory/department軸）+ FR-MFG-028 KPI全項(json/csv)。境界レビューPASS。Dagster(T047a/T051a)延期
 - [x] T066 PoC v0 縦串(end-to-end) + T067 quickstart S1-S11 — capstone統合検証PASS（225テスト）。**capstoneが実バグ発見・修正**: 多doc構成でobsoleteが一次引用されるSC-MFG-011抜けをanswer_ext.pyで降格修正（孤立fixtureのT015は捕捉できず＝§3 fixture特異性の実例）。Verifyで T070 セキュリティレビュー5軸PASS（PII0/draft/no-train/ACL/deletion）
-- [ ] 任意polish: **T015を多doc一次引用ケースで強化（推奨・別コミット）** / T068 docs / T069 追加unit / T072 PoC UI / T071a Dagster（UI/本番track）
+- [x] T015 を多doc一次引用ケースで強化（capstone発見を専用 SC-MFG-011 ゲートに焼込・test-only・load-bearing）+ **§5分離ガードの保護対象を6ハードゲート全部に拡張**（旧 `test_*gate*` は `test_safety_gate` のみ保護の穴を修正、CIと整合）
+- [ ] 任意polish: T068 docs / T069 追加unit / T072 PoC UI / T071a Dagster（UI/本番track）
 - [x] CI: `.github/workflows/gate.yml`（全 push/PR で `gate.sh a`＋`all` を実行、PR は §5 分離を CI 強制, T004）— **ループ運用化**。`ci.yml` は 001 本番アダプタ用スケルトンとして温存
 - [ ] 各フェーズ末に L3 converge/analyze
 - [ ] 安定後（§0 Stage1 昇格条件）に L4 nightly `/schedule`（読み取り専用）

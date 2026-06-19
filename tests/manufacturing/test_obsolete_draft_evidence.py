@@ -129,5 +129,107 @@ class TestApprovedPositiveControl(unittest.TestCase):
         self.assertEqual(ans.citations[0].approval_status, "approved")
 
 
+class TestObsoletePrimaryWithUnrelatedApprovedCoexisting(unittest.TestCase):
+    """MULTI-DOC obsolete-as-PRIMARY-citation gap (FR-MFG-006 / SC-MFG-011) — the T066 capstone class.
+
+    The three cases above pin the SINGLE-doc axis: when the obsolete/draft doc is the ONLY candidate,
+    the SafetyGate pre-gate already blocks (its ``has_usable_primary`` is False). But the T066 capstone
+    revealed a SHARPER bug the isolated single-doc gate MISSED: when an UNRELATED approved doc *coexists*
+    as a weak candidate, the pre-gate's ``has_usable_primary`` becomes True (satisfied by that approved
+    doc), so the SafetyGate does NOT block — yet the reused 001 answer path still ranks the OBSOLETE doc
+    as the TOP (primary) citation and asserts. The obsolete doc would then be the real basis of the
+    assertion, violating the gate's documented "an obsolete document is NEVER primary evidence" invariant.
+
+    ``ManufacturingAnswerService.answer`` (api/answer_ext.py) closes this: on a non-high-risk ``ok``
+    answer whose PRIMARY (top) citation is obsolete and with NO approved+effective doc among the actually
+    CITED evidence, it demotes to ``insufficient_evidence`` (reference-only + the mandatory obsolete
+    warning). This gate test reproduces the multi-doc scenario DETERMINISTICALLY and pins that demote, so
+    the bug class is caught HERE too — not only end-to-end in the capstone.
+    """
+
+    # Query whose distinctive tokens (coolant/flow/setpoint/grinder/spindle/legacy) are all carried by
+    # the OBSOLETE doc, so deterministic bag-of-words cosine ranks it #1 (the primary candidate). The
+    # generic token 'rate' is shared ONLY with the unrelated approved doc (see below).
+    QUERY = "what is the legacy coolant flow setpoint rate for the grinder spindle?"
+
+    def setUp(self) -> None:
+        self.sys = fresh()
+        # The ONLY on-topic (coolant) evidence is OBSOLETE. TWO strongly-overlapping sentences so the
+        # deterministic extractive answer path fills BOTH of its sentence slots from this doc alone —
+        # the unrelated approved doc's single weak sentence therefore never enters the answer text, so
+        # the approved doc is NOT among the actually-cited evidence (only surveyed as a candidate).
+        self.sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="c",
+            document_id="obsolete_coolant",
+            text=(
+                "The legacy coolant flow setpoint for the grinder spindle is eight liters per minute. "
+                "This legacy coolant setpoint governs the grinder spindle flow during finishing."
+            ),
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="obsolete_coolant",
+                approval_status=ApprovalStatus.OBSOLETE,
+                effective_date="2020-01-01",
+                obsolete_at="2025-12-31",
+                superseded_by="new_coolant_spec",
+            ),
+        )
+        # An UNRELATED APPROVED + effective doc that COEXISTS as a weak candidate: it shares ONLY the
+        # generic query token 'rate', so its cosine clears the groundedness pre-gate threshold (it is a
+        # usable-primary candidate => the SafetyGate's has_usable_primary is True and it does NOT block)
+        # WITHOUT outranking the obsolete doc and WITHOUT sharing any token with the obsolete answer
+        # text (so it is never cited). This is the multi-doc noise the single-doc gate could not model.
+        self.sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="c",
+            document_id="approved_unrelated",
+            text="The conveyor motor lubrication rate schedule covers routine greasing intervals.",
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="approved_unrelated",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-01-10",
+            ),
+        )
+        self.sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "op")
+        self.op = claims(T, "op")
+
+    def test_obsolete_primary_with_unrelated_approved_is_not_an_asserted_answer(self) -> None:
+        from raku_rag.manufacturing.domain.safety import SafetyBlockReason
+
+        ans = self.sys.answer(self.op, self.QUERY)
+
+        # The approved doc makes has_usable_primary True, so this is NOT caught by the single-doc
+        # pre-gate — it must be caught by the answer-path demote. An obsolete top citation must NEVER
+        # back an asserted (ok) answer (FR-MFG-006 / SC-MFG-011).
+        self.assertNotEqual(
+            ans.status,
+            "ok",
+            "an obsolete PRIMARY citation must NOT produce an asserted (ok) answer even when an "
+            "unrelated approved doc coexists as a weak candidate (FR-MFG-006/SC-MFG-011)",
+        )
+        # Demoted to reference-only: insufficient_evidence with the normalized block reason.
+        self.assertEqual(ans.status, "insufficient_evidence")
+        self.assertEqual(ans.safety_block_reason, SafetyBlockReason.INSUFFICIENT_EVIDENCE.value)
+
+        # Referencing obsolete material keeps the mandatory warning (consistent with the cases above).
+        self.assertTrue(
+            ans.obsolete_warning,
+            "referencing an obsolete document requires obsolete_warning=True (FR-MFG-006)",
+        )
+
+        # No obsolete document is the primary basis of an asserted answer: the demote returns empty
+        # citations/text, so the obsolete doc is reference-only and never cited as primary evidence.
+        self.assertFalse(ans.text, "a demoted answer must not assert text grounded on obsolete evidence")
+        self.assertEqual(ans.used_chunks, (), "a demoted answer must use no chunks as its basis")
+        for c in ans.citations:
+            self.assertNotEqual(
+                getattr(c, "approval_status", None),
+                "obsolete",
+                "an obsolete document must never be the primary citation behind an asserted answer",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
