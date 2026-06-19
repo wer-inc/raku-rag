@@ -150,6 +150,7 @@ obsolete・draft 一次証拠(011) / no-train override(009) / audit 抑制(010) 
 - [x] US2（Phase 4: DOCX/XLSX/CSV 取込・メタデータ・承認ライフサイクル）— L2 Workflow完了・gate.sh all GREEN(97)・境界レビューPASS（cell座標pin・imported approval優先を独立検証）。T002 deps導入、Dagster系(T024a/T031a/T031b)は本番adapter track延期
 - [x] **PoC MVPコア(US1+US2)成立** — plan「MVP First」の STOP & VALIDATE 地点
 - [ ] US3/US4/US6/US5・Governance Overlay（T032〜T072）を順次 L2 Workflow
+- [x] CI: `.github/workflows/gate.yml`（全 push/PR で `gate.sh a`＋`all` を実行、PR は §5 分離を CI 強制, T004）— **ループ運用化**。`ci.yml` は 001 本番アダプタ用スケルトンとして温存
 - [ ] 各フェーズ末に L3 converge/analyze
 - [ ] 安定後（§0 Stage1 昇格条件）に L4 nightly `/schedule`（読み取り専用）
 
