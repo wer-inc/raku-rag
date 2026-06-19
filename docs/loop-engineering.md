@@ -152,7 +152,8 @@ obsolete・draft 一次証拠(011) / no-train override(009) / audit 抑制(010) 
 - [x] US4（Phase 6: ドラフト生成 + レビュー, T038-T045）— 安全ハードゲート T039(SC-MFG-007 AI自動確定禁止)を機構pinで実装・境界レビューPASS（ai→approved経路の不在を実コードで確認、detached copy で直接変異も無効化）。**6ハードゲート中3本完了（006/007/011）**
 - [x] US6（Phase 8: ACL マッピング, T052-T056）— セキュリティハードゲート T052(SC-MFG-008 権限外漏洩0)を001 pre-filter委譲で実装・境界レビューPASS（last_prefiltered_count で pre-filter機構pin・新authz無し）。**6ハードゲート中4本完了（006/007/008/011）**
 - [x] Governance Overlay（Phase 9, T057-T065）— SC-MFG-009 no-train（opt-in強制・非no-train capability block＝temporarily_unavailable・no silent degrade）+ SC-MFG-010 audit（閉列挙網羅・PII0・SHA-256 hash chain改ざん検知）+ retention/policy/governance/export API + base-cr-notes。境界レビューPASS。**🎯 6ハードゲート全完成（006/007/008/009/010/011）**
-- [ ] 残（安全ハードゲート無し）: US3 類似トラブル(P2) / US5 ダッシュボード(P3) / T066 PoC縦串(US5依存) / Polish（T067-T072）
+- [x] US3（Phase 5: 類似トラブル事例, T032-T037）— 001 retrieval+ACL pre-filter再利用・Hard Rule 4（permanent過去事例も候補表示）機構pin・SC-MFG-008をtrouble-casesへ拡張。境界レビューPASS
+- [ ] 残: US5 ダッシュボード/KPI(P3, SC-MFG-013 telemetry=Tier B) / T066 PoC縦串(US5依存) / Polish（T067-T072）
 - [x] CI: `.github/workflows/gate.yml`（全 push/PR で `gate.sh a`＋`all` を実行、PR は §5 分離を CI 強制, T004）— **ループ運用化**。`ci.yml` は 001 本番アダプタ用スケルトンとして温存
 - [ ] 各フェーズ末に L3 converge/analyze
 - [ ] 安定後（§0 Stage1 昇格条件）に L4 nightly `/schedule`（読み取り専用）

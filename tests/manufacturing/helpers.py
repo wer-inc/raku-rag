@@ -67,6 +67,8 @@ def mfg_meta(
     equipment_id: str | None = None,
     obsolete_at: str | None = None,
     superseded_by: str | None = None,
+    customer: str | None = None,
+    defect_type: str | None = None,
 ) -> ManufacturingDocumentMetadata:
     """Build a ManufacturingDocumentMetadata; APPROVED + effective by default (the safe baseline)."""
     return ManufacturingDocumentMetadata(
@@ -84,4 +86,6 @@ def mfg_meta(
         equipment_id=equipment_id,
         obsolete_at=obsolete_at,
         superseded_by=superseded_by,
+        customer=customer,
+        defect_type=defect_type,
     )

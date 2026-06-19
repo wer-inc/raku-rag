@@ -39,9 +39,20 @@ from raku_rag.manufacturing.domain.acl_mapping import ManufacturingScope, apply_
 from raku_rag.manufacturing.domain.audit import AuditLogEntry, InMemoryAuditLogWriter
 from raku_rag.manufacturing.domain.draft import DraftArtifact, DraftType
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
+from raku_rag.manufacturing.api.trouble import TroubleCaseSearchService
+from raku_rag.manufacturing.domain.entities import (
+    Countermeasure,
+    FailureMode,
+    TroubleCase,
+)
 from raku_rag.manufacturing.governance.no_train import (
     InMemoryDataUsePolicyStore,
     InMemoryNoTrainGuard,
+)
+from raku_rag.manufacturing.knowledge.trouble_cases import (
+    InMemoryTroubleCaseStore,
+    TroubleCaseRetriever,
+    TroubleCaseSearchResponse,
 )
 from raku_rag.manufacturing.governance.retention import InMemoryRetentionManager
 from raku_rag.manufacturing.ingestion.approval import ApprovalWorkflow
@@ -163,6 +174,21 @@ class ManufacturingSystem:
         # Reuses the shared AuditLogWriter + US1 SafetyGate semantics; AI output is always draft.
         self._drafts = DraftService(
             audit=self.audit, get_mfg_meta=self.get_mfg_meta, today=today
+        )
+        # US3 — similar past TroubleCase retrieval (FR-MFG-008/009, Hard Rule 4). The knowledge graph
+        # is registered in an in-memory store; the retriever runs the symptom query through the SAME
+        # reused 001 RetrievalService (deny-by-default ACL PRE-filter) — no parallel authz path — and
+        # resolves only ACL-visible source documents back to their TroubleCase graph. Past-case
+        # countermeasures are normalized to candidate/past-example even when permanent.
+        self._trouble_cases = InMemoryTroubleCaseStore()
+        self._trouble_retriever = TroubleCaseRetriever(
+            retrieval=self._mvp.retrieval,
+            store=self._trouble_cases,
+            get_mfg_meta=self.get_mfg_meta,
+            get_document=self._mvp.registry.get,
+        )
+        self._trouble_search = TroubleCaseSearchService(
+            retriever=self._trouble_retriever, audit=self.audit
         )
 
     # --- admin / ACL (delegates to 001) -----------------------------------------------------------
@@ -513,6 +539,76 @@ class ManufacturingSystem:
             reviewer=reviewer,
             decision=decision,
             comment=comment,
+        )
+
+    # --- trouble cases (US3: register + search; contracts §C; FR-MFG-008/009) ---------------------
+    def register_trouble_case(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_document_id: str,
+        text: str,
+        metadata: ManufacturingDocumentMetadata,
+        trouble_case: TroubleCase,
+        failure_mode: FailureMode | None = None,
+        countermeasures: tuple[Countermeasure, ...] = (),
+        recurrence_prevention: str | None = None,
+        source_id: str = "src",
+    ) -> None:
+        """Seed a past TroubleCase: ingest the report body via the REUSED 001 ingestion path (so its
+        chunks are retrievable AND subject to the 001 ACL PRE-filter) and register the
+        TroubleCase/FailureMode/Countermeasure graph + recurrence note (T034).
+
+        Visibility is decided by the 001 ACL over the ingested source document — NOT by this store.
+        """
+        # Reuse the 001 ingestion + manufacturing metadata-attach path (same as every other endpoint),
+        # so the body is retrievable through the 001 RetrievalService deny-by-default PRE-filter.
+        self.ingest_manufacturing(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            document_id=source_document_id,
+            text=text,
+            metadata=metadata,
+            source_id=source_id,
+        )
+        # Register the knowledge-graph relations, keyed by the source 001 Document (the ACL anchor).
+        self._trouble_cases.register(
+            tenant_id=tenant_id,
+            source_document_id=source_document_id,
+            trouble_case=trouble_case,
+            failure_mode=failure_mode,
+            countermeasures=tuple(countermeasures),
+            recurrence_prevention=recurrence_prevention,
+        )
+
+    def search_trouble_cases(
+        self,
+        principal: IdentityClaims,
+        symptom_query: str,
+        *,
+        collection_id: str | None = None,
+        manufacturing_filters: dict | None = None,
+        top_k: int | None = None,
+    ) -> TroubleCaseSearchResponse:
+        """POST /v1/manufacturing/trouble-cases/search (contracts §C, FR-MFG-008/009).
+
+        Finds similar past TroubleCases via the reused 001 RetrievalService (ACL PRE-filter), resolves
+        each ACL-visible case to its FailureMode (cause) + provisional/permanent-split Countermeasures
+        (normalized to candidate/past-example, Hard Rule 4) + recurrence note + citations. Audited
+        (FR-MFG-021). An unauthorized confidential case never surfaces — its source chunk is excluded
+        by the 001 deny-by-default pre-filter BEFORE scoring (SC-MFG-008, extended).
+        """
+        profile = self._mvp.profiles.resolve(collection_id)
+        if top_k is not None:
+            from dataclasses import replace as _replace
+
+            profile = _replace(profile, top_k=top_k)
+        return self._trouble_search.search(
+            principal,
+            symptom_query,
+            profile,
+            manufacturing_filters=manufacturing_filters,
         )
 
     # --- governance: no-train (T057, FR-MFG-016~018/029, SC-MFG-009, GQ1) -------------------------
