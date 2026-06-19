@@ -15,7 +15,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from raku_rag.manufacturing.domain.audit import AuditLogEntry, InMemoryAuditLogWriter
+from raku_rag.domain.models import IdentityClaims
+from raku_rag.manufacturing.domain.audit import (
+    AuditLogEntry,
+    InMemoryAuditLogWriter,
+    stamp_org_context,
+)
 from raku_rag.manufacturing.domain.safety import (
     HighRiskClassification,
     SafetyBlockReason,
@@ -39,11 +44,19 @@ def record_answer_decision(
     safety_block_reason: str | None,
     candidate_document_ids: tuple[str, ...],
     citation_ids: tuple[str, ...] = (),
+    principal: IdentityClaims | None = None,
+    factory_id: str | None = None,
 ) -> None:
     """Record one answer-path safety decision. Counter (FR-MFG-021/030 telemetry source).
 
     ``citation_ids`` are the reference IDs of the citations actually relied upon for an asserted
     answer (citation-access auditing, FR-MFG-021); empty for a blocked / non-asserting answer.
+
+    When ``principal`` is supplied the actor org-context (factory == the supplied ``factory_id``
+    territory; department == the actor's primary 001 ACL group) is SNAPSHOTTED onto the immutable
+    entry (T056 ``stamp_org_context``) so US5 safety-telemetry can group by factory/department
+    without re-resolving a mutable identity. Default-safe: omitting ``principal`` leaves the
+    org-context unset (prior behaviour unchanged).
     """
     reason: SafetyBlockReason | None = None
     if safety_block_reason is not None:
@@ -75,4 +88,8 @@ def record_answer_decision(
             ),
         },
     )
+    # T056 — snapshot the actor org-context (factory/department) onto the immutable entry so US5
+    # telemetry can group by factory/department. No-op when no principal is supplied.
+    if principal is not None:
+        entry = stamp_org_context(entry, principal, factory_id=factory_id)
     writer.record(entry)

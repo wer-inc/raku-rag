@@ -32,6 +32,7 @@ from raku_rag.core.config import Settings
 from raku_rag.domain.models import IdentityClaims, ScopeType, SubjectType
 from raku_rag.manufacturing.api import record_answer_decision
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, ManufacturingAnswerService
+from raku_rag.manufacturing.api.dashboard import DashboardService
 from raku_rag.manufacturing.api.drafts import DraftService
 from raku_rag.manufacturing.api.search_ext import ManufacturingSearchService
 from raku_rag.manufacturing.api.policy import GovernanceService
@@ -189,6 +190,17 @@ class ManufacturingSystem:
         )
         self._trouble_search = TroubleCaseSearchService(
             retriever=self._trouble_retriever, audit=self.audit
+        )
+        # US5 — knowledge-ops dashboard / safety-telemetry / KPI (FR-MFG-012/028/030). All three are
+        # DERIVED SYNCHRONOUSLY from the SHARED audit log (single source of truth) + the in-memory
+        # approval metadata + 001 evaluation/metrics primitives — NO parallel counter, NO Dagster on
+        # the request path (T047a/T051a materialization asset + daily schedule are DEFERRED to the
+        # production track, §8 C5). retention bounds the audit window per DataUsePolicy.
+        self._dashboard = DashboardService(
+            audit=self.audit,
+            get_mfg_meta=self.get_mfg_meta,
+            all_mfg_meta=lambda: list(self._mfg_meta.items()),
+            retention=self.retention,
         )
 
     # --- admin / ACL (delegates to 001) -----------------------------------------------------------
@@ -367,6 +379,7 @@ class ManufacturingSystem:
         collection_id: str | None = None,
         intent_hint: str | None = None,
         manufacturing_filters: dict | None = None,
+        factory_id: str | None = None,
     ) -> ManufacturingAnswer:
         profile = self._mvp.profiles.resolve(collection_id)
         # T061 — ACL-denial auditing: a query that matches within-tenant documents the principal has
@@ -396,6 +409,11 @@ class ManufacturingSystem:
             safety_block_reason=ans.safety_block_reason,
             candidate_document_ids=candidate_doc_ids,
             citation_ids=citation_ids,
+            # T056 — snapshot the actor org-context so US5 telemetry can group by factory/department
+            # (department == the actor's 001 ACL group; factory == the supplied territory). Optional;
+            # answer behaviour is unchanged when factory_id is omitted.
+            principal=principal,
+            factory_id=factory_id,
         )
         # T061 — citation-access auditing (FR-MFG-021): when the answer path retrieves and SURVEYS
         # candidate citations as evidence (asserted citations, else the surveyed candidate documents),
@@ -699,3 +717,76 @@ class ManufacturingSystem:
             )
         )
         return result
+
+    # --- US5: knowledge-ops dashboard / safety-telemetry / KPI (contracts §E; FR-MFG-012/028/030) --
+    def knowledge_ops_dashboard(
+        self,
+        principal: IdentityClaims,
+        *,
+        collection_id: str | None = None,
+        factory_id: str | None = None,
+        department_id: str | None = None,
+        time_range: tuple[str, str] | None = None,
+    ):
+        """GET /v1/manufacturing/dashboard (FR-MFG-012, US5-1).
+
+        Surfaces unanswered / low-rating / frequent-questions / frequently-referenced-documents /
+        obsolete(stale) candidates / knowledge-gap areas, all DERIVED from the shared audit log
+        (single source of truth) + in-memory approval metadata. Tenant-scoped; computed
+        synchronously (no Dagster — T047a/T051a deferred, §8 C5).
+        """
+        return self._dashboard.knowledge_ops_dashboard(
+            principal,
+            collection_id=collection_id,
+            factory_id=factory_id,
+            department_id=department_id,
+            time_range=time_range,
+        )
+
+    def safety_telemetry(
+        self,
+        principal: IdentityClaims,
+        *,
+        collection_id: str | None = None,
+        factory_id: str | None = None,
+        department_id: str | None = None,
+        time_range: tuple[str, str] | None = None,
+        axis=None,
+        granularity: str = "daily",
+    ):
+        """GET /v1/manufacturing/safety-telemetry (FR-MFG-030, SC-MFG-013).
+
+        Audit-derived high_risk_query_count / safety_gate_block_count + mutually-exclusive breakdown
+        (single source of truth, idempotent GROUP/SUM). Restricts to a factory/department axis when
+        supplied; ``source == 'audit_log'``. Tenant-scoped.
+        """
+        return self._dashboard.safety_telemetry(
+            principal,
+            collection_id=collection_id,
+            factory_id=factory_id,
+            department_id=department_id,
+            time_range=time_range,
+            axis=axis,
+            granularity=granularity,
+        )
+
+    def kpi(
+        self,
+        principal: IdentityClaims,
+        *,
+        collection_id: str | None = None,
+        time_range: tuple[str, str] | None = None,
+        format: str = "json",
+    ):
+        """GET /v1/manufacturing/kpi (FR-MFG-028, SC-MFG-012).
+
+        Computes the full FR-MFG-028 KPI set and EXPORTS it as json (dict) or csv (str). The safety
+        counters reuse the SAME audit-derived telemetry as GET /safety-telemetry (consistency).
+        Computed synchronously (no Dagster — T047a/T051a deferred, §8 C5).
+        """
+        return self._dashboard.kpi(
+            principal,
+            collection_id=collection_id,
+            time_range=time_range,
+            format=format,
+        )
