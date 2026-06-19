@@ -38,8 +38,13 @@ def record_answer_decision(
     decision: SafetyDecision,
     safety_block_reason: str | None,
     candidate_document_ids: tuple[str, ...],
+    citation_ids: tuple[str, ...] = (),
 ) -> None:
-    """Record one answer-path safety decision. Counter (FR-MFG-021/030 telemetry source)."""
+    """Record one answer-path safety decision. Counter (FR-MFG-021/030 telemetry source).
+
+    ``citation_ids`` are the reference IDs of the citations actually relied upon for an asserted
+    answer (citation-access auditing, FR-MFG-021); empty for a blocked / non-asserting answer.
+    """
     reason: SafetyBlockReason | None = None
     if safety_block_reason is not None:
         reason = SafetyBlockReason(safety_block_reason)
@@ -58,6 +63,7 @@ def record_answer_decision(
         high_risk_classification_result=classification.is_high_risk,
         safety_block_reason=reason,
         approval_status_at_use=decision.approval_status_at_use,
+        citation_ids=tuple(citation_ids),
         document_ids_used=tuple(candidate_document_ids),
         client_metadata={
             "obsolete_warning": decision.obsolete_warning,

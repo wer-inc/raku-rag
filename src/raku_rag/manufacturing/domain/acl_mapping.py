@@ -212,12 +212,12 @@ def record_denial(
     audit.record(
         AuditLogEntry(
             tenant_id=principal.tenant_id,
-            log_id=f"acl.deny:{chunk.document_id}:{ts}",
+            log_id=f"acl.denied:{chunk.document_id}:{ts}",
             timestamp=ts,
             actor_id=principal.user_id,
             factory_id=factory_id,
             department_id=department_id,
-            action="acl.deny",
+            action="acl.denied",
             resource_type="document",
             resource_id=chunk.document_id,  # reference ID only — never the confidential body
             decision="denied",

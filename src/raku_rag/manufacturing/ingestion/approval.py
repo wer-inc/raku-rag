@@ -22,7 +22,7 @@ stdlib only. Structurally satisfies ``raku_rag.manufacturing.interfaces.Approval
 from __future__ import annotations
 
 import dataclasses
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Callable
 
 from raku_rag.domain.models import IdentityClaims
@@ -44,6 +44,10 @@ _WORKFLOW_STATES: tuple[str, ...] = tuple(s.value for s in ApprovalStatus)
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _today_iso() -> str:
+    return date.today().isoformat()
 
 
 class ApprovalWorkflow:
@@ -73,6 +77,12 @@ class ApprovalWorkflow:
         approved_by = actor.user_id if status == ApprovalStatus.APPROVED else meta.approved_by
         approved_at = _now() if status == ApprovalStatus.APPROVED else meta.approved_at
         obsolete_at = _now() if status == ApprovalStatus.OBSOLETE else meta.obsolete_at
+        # A workflow approval becomes effective on approval when no explicit effective_date exists
+        # (FR-MFG-004): an approved document with no validity window would otherwise never be a valid
+        # approved+effective citation. An already-set effective_date (e.g. a future window) is kept.
+        effective_date = meta.effective_date
+        if status == ApprovalStatus.APPROVED and not effective_date:
+            effective_date = _today_iso()
 
         updated = dataclasses.replace(
             meta,
@@ -81,6 +91,7 @@ class ApprovalWorkflow:
             approved_by=approved_by,
             approved_at=approved_at,
             obsolete_at=obsolete_at,
+            effective_date=effective_date,
         )
         self._persist(tenant_id, document_id, updated)
         self._audit_transition(

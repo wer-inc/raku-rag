@@ -20,7 +20,12 @@ stdlib only.
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime, timezone
+
+
+def datetime_now_iso() -> str:
+    """Module-level UTC ISO timestamp helper (reference-only audit timestamps)."""
+    return datetime.now(timezone.utc).isoformat()
 
 from raku_rag.app import MvpSystem
 from raku_rag.core.config import Settings
@@ -29,10 +34,16 @@ from raku_rag.manufacturing.api import record_answer_decision
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, ManufacturingAnswerService
 from raku_rag.manufacturing.api.drafts import DraftService
 from raku_rag.manufacturing.api.search_ext import ManufacturingSearchService
-from raku_rag.manufacturing.domain.acl_mapping import ManufacturingScope, apply_scope
-from raku_rag.manufacturing.domain.audit import InMemoryAuditLogWriter
+from raku_rag.manufacturing.api.policy import GovernanceService
+from raku_rag.manufacturing.domain.acl_mapping import ManufacturingScope, apply_scope, record_denial
+from raku_rag.manufacturing.domain.audit import AuditLogEntry, InMemoryAuditLogWriter
 from raku_rag.manufacturing.domain.draft import DraftArtifact, DraftType
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
+from raku_rag.manufacturing.governance.no_train import (
+    InMemoryDataUsePolicyStore,
+    InMemoryNoTrainGuard,
+)
+from raku_rag.manufacturing.governance.retention import InMemoryRetentionManager
 from raku_rag.manufacturing.ingestion.approval import ApprovalWorkflow
 from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY, MetadataEnricher
 from raku_rag.manufacturing.interfaces import ApprovalState
@@ -51,6 +62,20 @@ from raku_rag.services.ingestion import IngestionService
 # Key for the ManufacturingDocumentMetadata stashed in the 001 Document.metadata JSON.
 _MFG_META_KEY = MFG_META_KEY
 
+# Safe default provider-capability wiring used when the caller injects none. The single default
+# provider 'mvp_local' is treated as no-train-guaranteed (the in-memory MVP processes data locally
+# and never sends it to an external trainer), so the BUILT capabilities stay available out of the box
+# while still routing every decision through the NoTrainGuard (no silent bypass). Base CR-001-B owns
+# the real verified set in production; this is the minimal local default.
+_DEFAULT_PROVIDER = "mvp_local"
+_DEFAULT_PROVIDER_CAPABILITIES: dict[str, tuple[str, ...]] = {
+    "answer_llm": (_DEFAULT_PROVIDER,),
+    "embedding": (_DEFAULT_PROVIDER,),
+    "ocr": (_DEFAULT_PROVIDER,),
+    "draft_llm": (_DEFAULT_PROVIDER,),
+}
+_DEFAULT_NO_TRAIN_PROVIDERS: tuple[str, ...] = (_DEFAULT_PROVIDER,)
+
 # Map file extension -> content type for the manufacturing file-ingestion entrypoint (FR-MFG-001).
 _EXT_CONTENT_TYPE: dict[str, str] = {
     ".docx": DOCX_CONTENT_TYPE,
@@ -64,11 +89,38 @@ _EXT_CONTENT_TYPE: dict[str, str] = {
 
 
 class ManufacturingSystem:
-    def __init__(self, settings: Settings | None = None, *, today: date | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        today: date | None = None,
+        provider_capabilities: dict | None = None,
+        no_train_providers=None,
+    ) -> None:
         self._mvp = MvpSystem(settings)
         # tenant-scoped manufacturing metadata store (mirrors DocumentRegistry; in-memory).
         self._mfg_meta: dict[tuple[str, str], ManufacturingDocumentMetadata] = {}
         self.audit = InMemoryAuditLogWriter()
+
+        # --- Phase 9 governance overlay (no-train / retention / policy / export) ------------------
+        # Reuse the Phase-2 DataUsePolicyStore (per-tenant GQ1/GQ2 defaults + opt-in invariant +
+        # version bump). The NoTrainGuard enforces the policy against the INJECTED provider-capability
+        # map (Base CR-001-B verified set is injected here; 002 enforces opt-in/GQ1 locally). When the
+        # caller injects no map a safe local default applies (every BUILT capability stays available).
+        self._policy_store = InMemoryDataUsePolicyStore()
+        caps = _DEFAULT_PROVIDER_CAPABILITIES if provider_capabilities is None else provider_capabilities
+        nt_providers = _DEFAULT_NO_TRAIN_PROVIDERS if no_train_providers is None else no_train_providers
+        self.no_train = InMemoryNoTrainGuard(
+            self._policy_store,
+            provider_capabilities=caps,
+            no_train_providers=nt_providers,
+        )
+        self.retention = InMemoryRetentionManager(
+            self._policy_store, deletion=self._mvp.deletion
+        )
+        self._governance = GovernanceService(
+            policy_store=self._policy_store, audit=self.audit
+        )
 
         # Manufacturing ingestion path: REUSE the 001 IngestionService (parse->chunk->embed->index)
         # but wire a CompositeParser so DOCX / XLSX / CSV (and the 001 text types) are all accepted
@@ -171,6 +223,10 @@ class ManufacturingSystem:
         self._set_mfg_meta(tenant_id, document_id, metadata)
         # Propagate to indexed chunks (FR-MFG-003) so the metadata travels with the evidence.
         self._enricher.propagate_to_chunks(tenant_id, document_id, metadata)
+        # Audit the ingest / metadata enrichment (reference IDs only; no body text) — FR-MFG-021.
+        self._audit_ingest(
+            tenant_id=tenant_id, document_id=document_id, content_type="text/plain", job=job
+        )
         return job
 
     # --- file ingestion (T029/T030; FR-MFG-001/002/003) -------------------------------------------
@@ -232,9 +288,9 @@ class ManufacturingSystem:
         self.audit.record(
             AuditLogEntry(
                 tenant_id=tenant_id,
-                log_id=f"ingest.file:{document_id}:{ts}",
+                log_id=f"ingest.metadata:{document_id}:{ts}",
                 timestamp=ts,
-                action="ingest.file",
+                action="ingest.parse_metadata",
                 resource_type="document",
                 resource_id=document_id,  # reference ID only
                 decision=job.status,
@@ -287,6 +343,11 @@ class ManufacturingSystem:
         manufacturing_filters: dict | None = None,
     ) -> ManufacturingAnswer:
         profile = self._mvp.profiles.resolve(collection_id)
+        # T061 — ACL-denial auditing: a query that matches within-tenant documents the principal has
+        # NO grant to is silently dropped by the 001 deny-by-default PRE-filter; surface that denial
+        # to the audit log (reference IDs only) so FR-MFG-021 coverage includes acl_denied.
+        self._audit_acl_denials(principal, collection_id)
+
         ans, classification, decision, candidate_doc_ids = self._answer.answer(
             principal,
             query,
@@ -294,7 +355,10 @@ class ManufacturingSystem:
             intent_hint=intent_hint,
             manufacturing_filters=manufacturing_filters,
         )
-        # T020 — audit the high-risk + safety decision (reference IDs only; redacted).
+        # T020/T061 — audit the high-risk + safety decision + citation access (reference IDs only).
+        citation_ids = tuple(
+            c.chunk_id or c.document_id for c in ans.citations if (c.chunk_id or c.document_id)
+        )
         record_answer_decision(
             self.audit,
             tenant_id=principal.tenant_id,
@@ -305,8 +369,71 @@ class ManufacturingSystem:
             decision=decision,
             safety_block_reason=ans.safety_block_reason,
             candidate_document_ids=candidate_doc_ids,
+            citation_ids=citation_ids,
         )
+        # T061 — citation-access auditing (FR-MFG-021): when the answer path retrieves and SURVEYS
+        # candidate citations as evidence (asserted citations, else the surveyed candidate documents),
+        # record which citations/documents were accessed by reference ID only. Non-vacuous: it fires
+        # only when real, ACL-visible evidence was actually read to form the decision.
+        accessed = citation_ids or tuple(candidate_doc_ids)
+        if accessed:
+            self._audit_citation_access(
+                principal=principal,
+                correlation_id=ans.correlation_id,
+                citation_ids=accessed,
+                document_ids=tuple(candidate_doc_ids),
+            )
         return ans
+
+    def _audit_citation_access(
+        self,
+        *,
+        principal: IdentityClaims,
+        correlation_id: str,
+        citation_ids: tuple[str, ...],
+        document_ids: tuple[str, ...],
+    ) -> None:
+        """Record a citation-access event (reference IDs only) — FR-MFG-021 / SC-MFG-010."""
+        ts = datetime_now_iso()
+        self.audit.record(
+            AuditLogEntry(
+                tenant_id=principal.tenant_id,
+                log_id=f"citation.access:{correlation_id or ts}:{ts}",
+                timestamp=ts,
+                request_id=correlation_id or None,
+                actor_id=principal.user_id,
+                action="citation.access",
+                resource_type="citation",
+                resource_id=correlation_id or None,
+                decision="accessed",
+                citation_ids=tuple(citation_ids),
+                document_ids_used=tuple(document_ids),
+            )
+        )
+
+    def _audit_acl_denials(self, principal: IdentityClaims, collection_id: str | None) -> None:
+        """Journal an ACL denial when the principal is barred from in-tenant documents (FR-MFG-021).
+
+        Walks the reused 001 vector store for chunks in the principal's tenant (optionally scoped to
+        ``collection_id``) that are NOT visible under the 001 ACL pre-filter. Each denied document is
+        recorded ONCE via the existing ``record_denial`` helper (action ``acl.denied``, reference IDs
+        only). This builds NO new authz — it observes the SAME deny-by-default decision the retrieval
+        pre-filter already makes.
+        """
+        visible = self._mvp.acl.visibility(principal)
+        seen: set[str] = set()
+        for chunk, _vec in self._mvp.store._items.values():
+            if chunk.tenant_id != principal.tenant_id or chunk.tombstone:
+                continue
+            if collection_id is not None and chunk.collection_id != collection_id:
+                continue
+            if chunk.document_id in seen:
+                continue
+            if not visible(chunk):
+                seen.add(chunk.document_id)
+                record_denial(
+                    self.audit, principal=principal, chunk=chunk, reason="acl_denied"
+                )
 
     # --- search (001 retrieval + approval tags) ---------------------------------------------------
     def search(
@@ -387,3 +514,92 @@ class ManufacturingSystem:
             decision=decision,
             comment=comment,
         )
+
+    # --- governance: no-train (T057, FR-MFG-016~018/029, SC-MFG-009, GQ1) -------------------------
+    def use_for_training(self, *, tenant_id: str, data_kind: str, actor: IdentityClaims) -> None:
+        """Single funnel for "use customer data for training/improvement".
+
+        Delegates to ``no_train.assert_no_train`` BEFORE any use (so opt-in-less training is
+        impossible) and audits the attempt/decision. Raises on refusal (default policy refuses;
+        SC-MFG-009 = 0 accepted uses without a valid admin opt-in).
+        """
+        ts = datetime_now_iso()
+        try:
+            self.no_train.assert_no_train(tenant_id, data_kind)
+        except Exception:
+            self._audit_training_use(
+                tenant_id=tenant_id, data_kind=data_kind, actor=actor, decision="refused", ts=ts
+            )
+            raise
+        self._audit_training_use(
+            tenant_id=tenant_id, data_kind=data_kind, actor=actor, decision="permitted", ts=ts
+        )
+
+    def _audit_training_use(
+        self, *, tenant_id: str, data_kind: str, actor: IdentityClaims, decision: str, ts: str
+    ) -> None:
+        self.audit.record(
+            AuditLogEntry(
+                tenant_id=tenant_id,
+                log_id=f"no_train.use:{tenant_id}:{ts}",
+                timestamp=ts,
+                actor_id=actor.user_id if actor else None,
+                action="no_train.training_use",
+                resource_type="data_use_policy",
+                resource_id=tenant_id,  # reference ID only
+                decision=decision,
+                reason=data_kind,  # a reference label (answer/draft/feedback/eval) — not body text
+            )
+        )
+
+    def capability_status(self, tenant_id: str, capability: str) -> str:
+        """'temporarily_unavailable' when the capability is blocked (GQ1), else 'ok'."""
+        return self.no_train.capability_status(tenant_id, capability)
+
+    def resolve_capability_provider(self, tenant_id: str, capability: str) -> str | None:
+        """A no-train-guaranteed provider for the capability, or None when blocked (no silent degrade)."""
+        return self.no_train.resolve_capability_provider(tenant_id, capability)
+
+    # --- governance: data-use policy / status / export (T062/T063/T064) ---------------------------
+    def get_data_use_policy(self, tenant_id: str):
+        """GET /v1/manufacturing/policy/data-use — GQ1/GQ2 safe default (auto-seeded)."""
+        return self._governance.get_data_use_policy(tenant_id)
+
+    def update_data_use_policy(self, *, tenant_id: str, patch: dict, actor: IdentityClaims):
+        """PUT /v1/manufacturing/policy/data-use — patch + version bump + opt-in invariant + audit."""
+        return self._governance.update_data_use_policy(
+            tenant_id=tenant_id, patch=patch, actor=actor
+        )
+
+    def governance_status(self, tenant_id: str) -> dict:
+        """GET /v1/manufacturing/governance/status — core features + ISMAP readiness memo."""
+        return self._governance.governance_status(tenant_id)
+
+    def export_audit(self, *, principal: IdentityClaims, fmt: str = "jsonl"):
+        """GET /v1/manufacturing/audit/export — tenant-scoped, reference-only, hash-chain exposed."""
+        return self._governance.export_audit(principal=principal, fmt=fmt)
+
+    # --- governance: deletion / tombstone (T061; reuses 001 tombstone) ----------------------------
+    def delete_document(self, *, tenant_id: str, document_id: str, actor: IdentityClaims):
+        """Delete a document via the REUSED 001 tombstone/cascade path; audited as a deletion.
+
+        A deleted document never reappears in search/answer/citation (SC-003). The audit entry holds
+        reference IDs only (the document_id), never the body / customer name.
+        """
+        result = self._mvp.deletion.delete(tenant_id, document_id)
+        ts = datetime_now_iso()
+        self.audit.record(
+            AuditLogEntry(
+                tenant_id=tenant_id,
+                log_id=f"deletion.tombstone:{document_id}:{ts}",
+                timestamp=ts,
+                actor_id=actor.user_id if actor else None,
+                action="deletion.tombstone",
+                resource_type="document",
+                resource_id=document_id,  # reference ID only — never the confidential body
+                decision="tombstoned",
+                reason=f"chunks={result.tombstoned_chunks}",
+                document_ids_used=(document_id,),
+            )
+        )
+        return result

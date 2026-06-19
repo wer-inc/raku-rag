@@ -14,7 +14,8 @@ Schema + enums only — no hashing / writing / aggregation behaviour (stage-2).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+import hashlib
+from dataclasses import dataclass, field, fields, replace
 from enum import Enum
 
 from raku_rag.core.errors import TenantIsolationError
@@ -152,6 +153,50 @@ _REDACT_TEXT_FIELDS: tuple[str, ...] = (
 )
 
 
+# --- T059: tamper-evidence (Base CR-001-A) -------------------------------------------------------
+#
+# Every stored entry carries a SHA-256 ``entry_hash`` over its canonical reference-only content,
+# linked to the previous entry via ``prev_hash`` (per-tenant chain). The chain field is hashed too
+# (so re-ordering also breaks it), but ``entry_hash`` itself is excluded from its own preimage.
+# ``hashlib`` is stdlib — no new dependency. Mutating any stored field without re-hashing makes
+# ``compute_entry_hash`` disagree with the stored ``entry_hash`` => ``verify_chain`` returns False.
+
+_HASH_EXCLUDED_FIELDS: frozenset[str] = frozenset({"entry_hash"})
+
+
+def _canonical(value) -> str:
+    """Deterministic, dependency-free rendering of a field value for hashing."""
+    if value is None:
+        return "\x00"
+    if isinstance(value, Enum):
+        return f"E:{value.value}"
+    if isinstance(value, bool):
+        return f"B:{int(value)}"
+    if isinstance(value, (tuple, list)):
+        return "L:[" + ",".join(_canonical(v) for v in value) + "]"
+    if isinstance(value, dict):
+        items = sorted((str(k), _canonical(v)) for k, v in value.items())
+        return "D:{" + ",".join(f"{k}={v}" for k, v in items) + "}"
+    return f"S:{value}"
+
+
+def compute_entry_hash(entry: "AuditLogEntry") -> str:
+    """SHA-256 over the entry's canonical content (every field except ``entry_hash``).
+
+    ``prev_hash`` is included so a re-link/re-order is also detected. Pure function of the entry's
+    current field values — recomputing it over a mutated entry yields a different digest.
+    """
+    h = hashlib.sha256()
+    for f in fields(entry):
+        if f.name in _HASH_EXCLUDED_FIELDS:
+            continue
+        h.update(f.name.encode("utf-8"))
+        h.update(b"\x1f")
+        h.update(_canonical(getattr(entry, f.name)).encode("utf-8"))
+        h.update(b"\x1e")
+    return h.hexdigest()
+
+
 class InMemoryAuditLogWriter:
     """T009 — In-memory, tenant-scoped AuditLogWriter (FR-MFG-021/022/023, SC-MFG-010).
 
@@ -179,11 +224,21 @@ class InMemoryAuditLogWriter:
 
     # --- write -------------------------------------------------------------------------------
     def record(self, entry: AuditLogEntry) -> None:
-        """Persist a single audit entry. Free-text is redacted; reference IDs are kept verbatim."""
+        """Persist a single audit entry. Free-text is redacted; reference IDs are kept verbatim.
+
+        The entry is linked into the per-tenant SHA-256 hash chain at write time (Base CR-001-A):
+        ``prev_hash`` = the previous entry's ``entry_hash`` (None for the first entry), and
+        ``entry_hash`` is computed over the stored (already-redacted) content. These fields are
+        additive and default-safe; the reference-IDs-only / redaction / tenant-isolation guarantees
+        are unchanged.
+        """
         if not entry.tenant_id:
             raise TenantIsolationError("resource not found")  # untenanted entry is rejected
         safe = self._redact_entry(entry)
-        self._by_tenant.setdefault(safe.tenant_id, []).append(safe)
+        chain = self._by_tenant.setdefault(safe.tenant_id, [])
+        safe.prev_hash = chain[-1].entry_hash if chain else None
+        safe.entry_hash = compute_entry_hash(safe)
+        chain.append(safe)
 
     def _redact_entry(self, entry: AuditLogEntry) -> AuditLogEntry:
         red = self._redactor.redact
@@ -214,3 +269,20 @@ class InMemoryAuditLogWriter:
         """
         enforce_same_tenant(principal, resource_tenant_id=tenant_id)
         return tuple(self._by_tenant.get(tenant_id, ()))
+
+    # --- tamper-evidence verification (Base CR-001-A) ----------------------------------------
+    def verify_chain(self, principal: IdentityClaims) -> bool:
+        """Return True iff the principal's tenant log is an intact SHA-256 hash chain.
+
+        Each entry's ``prev_hash`` must equal the previous entry's stored ``entry_hash`` and each
+        stored ``entry_hash`` must recompute from the entry's current content. A mutated entry
+        (its content changed without re-hashing) makes the recomputation disagree => False.
+        """
+        prev: str | None = None
+        for entry in self._by_tenant.get(principal.tenant_id, ()):
+            if entry.prev_hash != prev:
+                return False
+            if entry.entry_hash != compute_entry_hash(entry):
+                return False
+            prev = entry.entry_hash
+        return True
