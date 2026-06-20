@@ -3,6 +3,7 @@
 Provides a ``visibility`` predicate used as a PRE-filter inside VectorStore.search, plus
 ``assert_visible`` for the double-defense post-check in RetrievalService.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable

@@ -16,6 +16,7 @@ ones it performs here, all audited (FR-MFG-021).
 
 stdlib only.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

@@ -166,6 +166,11 @@ DocumentProcessingState の詳細。
 - res 200: `{ logging_policy_id, provider_config_audit_event_id }`
 - Default must keep raw retrieved context storage disabled unless explicit opt-in policy exists.
 
+#### GET /v1/admin/provider-config-audit-events
+- query: `event_type?`, `correlation_id?`, `collection_id?`
+- res 200: `[{ provider_config_audit_event_id, tenant_id, collection_id?, event_type, actor, redacted_before, redacted_after, reason, approval_ref?, created_at, correlation_id? }]`
+- Provider/retrieval/logging/model/parser policy changes must be listed tenant-scoped with redacted before/after snapshots.
+
 ### Admin 設定 API
 - `GET/PUT /v1/admin/datasources/{id}`（同期スケジュール含む）
 - `GET/PUT /v1/admin/query-profiles/{id}`（score_threshold/top_k/rerank/llm_model 等）

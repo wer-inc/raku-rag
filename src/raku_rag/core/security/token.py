@@ -2,6 +2,7 @@
 
 MVP uses an HMAC-SHA256 signed compact token. Production swaps in JWT/JWKS behind this class.
 """
+
 from __future__ import annotations
 
 import base64

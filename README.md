@@ -12,8 +12,10 @@ apps/api/         NestJS sync API skeleton (/v1, mock auth)
 apps/web/         Next.js + Vercel AI SDK client skeleton
 workers/ingest/   Python worker runtime host (imports raku_rag)
 packages/shared/  TypeScript contracts (DTOs + policy types, ADR-015 lifecycle fields)
+sdk/python/       Python SDK for the /v1 API facade
 src/raku_rag/     Canonical Python package (+ migrations/, seed/, providers/mock/)
-infra/            docker-compose: postgres+pgvector, minio, localstack(sqs), langfuse(optional)
+infra/cdk/        TypeScript CDK app scaffold
+infra/            local infra assets; root docker-compose boots postgres+pgvector, minio, localstack(sqs), trace-sink, langfuse(optional)
 tests/            Python tests: unit / contract / integration / security
 ```
 
@@ -25,9 +27,11 @@ Prerequisites: Node ≥ 20 + npm, Python ≥ 3.11, Docker + docker compose.
 # 1. env
 cp .env.example .env
 
-# 2. local dependencies (postgres+pgvector / minio / localstack)
-docker compose -f infra/docker-compose.yml up -d
-#   optional trace sink:  docker compose -f infra/docker-compose.yml --profile observability up -d
+# 2. local dependencies (postgres+pgvector / minio / localstack / trace-sink)
+docker compose up -d
+#   optional Langfuse UI: docker compose --profile observability up -d
+#   optional Dagster dev UI: docker compose --profile dagster up -d dagster
+scripts/docker-compose-smoke.sh
 
 # 3. Python foundation (stdlib only — no install needed)
 PYTHONPATH=src python3 -m unittest discover -s tests          # full suite (unit/integration/security)
@@ -44,7 +48,8 @@ npm run test:api              # NestJS e2e (health, /v1 versioning, mock auth)
 
 ### Verify
 - `curl localhost:3000/v1/health` → `{"status":"ok",...}`
-- `docker compose -f infra/docker-compose.yml exec postgres psql -U raku -d raku -c "SELECT extname FROM pg_extension WHERE extname='vector';"` → `vector`
+- `docker compose exec postgres psql -U raku -d raku -c "SELECT extname FROM pg_extension WHERE extname='vector';"` → `vector`
+- `curl localhost:13133/` → OpenTelemetry Collector health response
 
 ## Scope
 

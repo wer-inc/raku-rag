@@ -10,6 +10,7 @@ Public surface:
   - ``ManufacturingSearchService`` / ``ManufacturingSearchResult`` (search_ext)
   - ``record_answer_decision`` (audit, FR-MFG-021)
 """
+
 from __future__ import annotations
 
 from raku_rag.manufacturing.api.answer_ext import (
@@ -18,6 +19,7 @@ from raku_rag.manufacturing.api.answer_ext import (
     ManufacturingCitation,
 )
 from raku_rag.manufacturing.api.audit import record_answer_decision
+from raku_rag.manufacturing.api.ingest_metadata import ManufacturingSyncStatusService
 from raku_rag.manufacturing.api.search_ext import (
     ManufacturingSearchResult,
     ManufacturingSearchService,
@@ -27,6 +29,7 @@ __all__ = [
     "ManufacturingAnswer",
     "ManufacturingAnswerService",
     "ManufacturingCitation",
+    "ManufacturingSyncStatusService",
     "ManufacturingSearchResult",
     "ManufacturingSearchService",
     "record_answer_decision",

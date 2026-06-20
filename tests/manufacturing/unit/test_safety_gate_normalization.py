@@ -8,6 +8,7 @@ Tests the gate's pure helpers in isolation:
 
 stdlib only; additive (new file). Uses an injected ``today`` so assertions are deterministic.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -131,9 +132,7 @@ class TestGateEvaluate(unittest.TestCase):
         m = _meta(approval_status=ApprovalStatus.DRAFT)
         d = self.gate.evaluate(self.hr, [_cite("d")], [m])
         self.assertTrue(d.blocked)
-        self.assertEqual(
-            d.safety_block_reason, SafetyBlockReason.APPROVED_CITATION_MISSING
-        )
+        self.assertEqual(d.safety_block_reason, SafetyBlockReason.APPROVED_CITATION_MISSING)
         self.assertTrue(d.requires_onsite_confirmation)
         self.assertIsNone(d.approval_status_at_use)
 

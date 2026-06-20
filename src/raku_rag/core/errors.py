@@ -1,4 +1,5 @@
 """T017 — error model and API status values."""
+
 from __future__ import annotations
 
 from enum import Enum

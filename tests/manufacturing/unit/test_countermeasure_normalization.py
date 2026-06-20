@@ -8,6 +8,7 @@ Tests the pure ``normalize_countermeasure`` / ``split_countermeasures`` units in
 
 stdlib only; additive (new file).
 """
+
 from __future__ import annotations
 
 import unittest

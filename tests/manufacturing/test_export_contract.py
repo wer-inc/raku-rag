@@ -17,6 +17,7 @@ Entrypoint contract the stage-2 ManufacturingSystem must satisfy:
 TDD: RED now because export_audit is unimplemented on ManufacturingSystem (missing-impl), NOT an
 unrelated import error. Assertion style mirrors tests/manufacturing/test_drafts_contract.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -75,7 +76,9 @@ class TestAuditExportShape(unittest.TestCase):
         # dict format returns a list of dict records for the admin's OWN tenant only.
         self.assertTrue(out)
         for rec in out:
-            self.assertEqual(rec["tenant_id"], T, "export must not include another tenant's entries")
+            self.assertEqual(
+                rec["tenant_id"], T, "export must not include another tenant's entries"
+            )
 
 
 if __name__ == "__main__":

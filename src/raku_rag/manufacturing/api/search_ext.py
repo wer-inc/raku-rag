@@ -13,6 +13,7 @@ citation resolves to a single cell — preserved through the reused 001 ingest/c
 
 stdlib only.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

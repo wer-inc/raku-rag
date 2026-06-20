@@ -1,4 +1,5 @@
 """P0-T02 — canonical monorepo layout invariants (ADR-016)."""
+
 from __future__ import annotations
 
 import json
@@ -15,15 +16,31 @@ def _p(*parts: str) -> str:
 class TestRepoLayout(unittest.TestCase):
     def test_canonical_roots_exist(self) -> None:
         for d in [
-            "apps/api", "apps/web", "workers/ingest", "packages/shared",
-            "src/raku_rag", "infra/db", "infra/localstack", "docs/decisions",
-            "tests/unit", "tests/contract", "tests/integration", "tests/security",
+            "apps/api",
+            "apps/web",
+            "workers/ingest",
+            "packages/shared",
+            "sdk/python",
+            "src/raku_rag",
+            "infra/db",
+            "infra/localstack",
+            "docs/decisions",
+            "tests/unit",
+            "tests/contract",
+            "tests/integration",
+            "tests/security",
         ]:
             self.assertTrue(os.path.isdir(_p(d)), f"missing dir: {d}")
 
     def test_required_root_files(self) -> None:
-        for f in ["package.json", "README.md", ".env.example", ".gitignore",
-                  "docs/decisions/ADR-016-canonical-layout.md", "infra/docker-compose.yml"]:
+        for f in [
+            "package.json",
+            "README.md",
+            ".env.example",
+            ".gitignore",
+            "docs/decisions/ADR-016-canonical-layout.md",
+            "infra/docker-compose.yml",
+        ]:
             self.assertTrue(os.path.isfile(_p(f)), f"missing file: {f}")
 
     def test_workspace_manifest_declares_workspaces(self) -> None:

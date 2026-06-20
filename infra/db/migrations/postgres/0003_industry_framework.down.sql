@@ -1,0 +1,23 @@
+SET search_path TO public;
+
+DROP TABLE IF EXISTS document_metadata_extensions;
+DROP TABLE IF EXISTS no_train_policies;
+DROP TABLE IF EXISTS evaluation_profiles;
+DROP TABLE IF EXISTS audit_event_definitions;
+DROP TABLE IF EXISTS governance_profiles;
+DROP TABLE IF EXISTS dashboard_widget_definitions;
+DROP TABLE IF EXISTS kpi_values;
+DROP TABLE IF EXISTS kpi_definitions;
+DROP TABLE IF EXISTS draft_artifacts;
+DROP TABLE IF EXISTS draft_review_policies;
+DROP TABLE IF EXISTS draft_artifact_type_definitions;
+DROP TABLE IF EXISTS acl_mapping_policies;
+DROP TABLE IF EXISTS approval_policies;
+DROP TABLE IF EXISTS required_evidence_policies;
+DROP TABLE IF EXISTS risk_decisions;
+DROP TABLE IF EXISTS risk_policies;
+DROP TABLE IF EXISTS workflow_definitions;
+DROP TABLE IF EXISTS entity_type_definitions;
+DROP TABLE IF EXISTS document_type_definitions;
+DROP TABLE IF EXISTS metadata_schemas;
+DROP TABLE IF EXISTS industry_profiles;

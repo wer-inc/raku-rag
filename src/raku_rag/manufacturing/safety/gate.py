@@ -18,6 +18,7 @@ cite, and their manufacturing/approval metadata, and decides the safe-side outco
 
 stdlib only; frozen value objects from ``manufacturing.domain.safety``.
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -47,7 +48,9 @@ def is_effective(effective_date: str | None, *, today: date | None = None) -> bo
     return eff <= today
 
 
-def is_approved_effective(meta: ManufacturingDocumentMetadata | None, *, today: date | None = None) -> bool:
+def is_approved_effective(
+    meta: ManufacturingDocumentMetadata | None, *, today: date | None = None
+) -> bool:
     """A citation is a VALID approved citation iff approved AND its effective_date is valid."""
     if meta is None:
         return False
@@ -79,7 +82,8 @@ class ManufacturingSafetyGate:
 
         # Approval/state survey over the candidate evidence (what 001 would otherwise cite).
         has_approved_effective = any(
-            is_approved_effective(by_doc.get(c.document_id), today=today) for c in candidate_citations
+            is_approved_effective(by_doc.get(c.document_id), today=today)
+            for c in candidate_citations
         )
         has_obsolete = any(
             (by_doc.get(c.document_id) is not None)

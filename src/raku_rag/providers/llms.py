@@ -5,6 +5,7 @@ answer from sentences in the provided context that overlap the query, so generat
 grounded in the supplied evidence — keeping the post-generation evidence check meaningful and
 deterministic. Production swaps in Anthropic/OpenAI-compatible providers behind LLMProvider.
 """
+
 from __future__ import annotations
 
 import re

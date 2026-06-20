@@ -1,7 +1,7 @@
 # Phase 0 local-first dependency stack (P0-T14). Boot: `docker compose -f infra/docker-compose.yml up -d`
-# Core services (postgres+pgvector / minio / localstack) start by default. The trace sink (langfuse)
-# and redis are optional profiles; by default the app runs with LANGFUSE_ENABLED=false (mock sink),
-# satisfying the "disabled-safe" acceptance criterion.
+# Core services (postgres+pgvector / minio / localstack / trace-sink) start by default. Langfuse
+# UI and redis are optional profiles; by default the app runs with LANGFUSE_ENABLED=false and can
+# emit to the local OpenTelemetry collector without storing raw retrieved context.
 name: raku-local
 
 services:
@@ -54,6 +54,16 @@ services:
       timeout: 5s
       retries: 20
 
+  trace-sink:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+
   # --- optional: local trace sink (profile: observability) ---
   langfuse-db:
     image: postgres:16-alpine
@@ -84,6 +94,22 @@ services:
     profiles: ["cache"]
     ports:
       - "6379:6379"
+
+  # --- optional: Dagster dev UI (profile: dagster) ---
+  dagster:
+    image: python:3.12-slim
+    profiles: ["dagster"]
+    working_dir: /workspace
+    command: >
+      sh -c "pip install --quiet dagster dagster-webserver &&
+             dagster dev -h 0.0.0.0 -p 3003"
+    environment:
+      DAGSTER_HOME: /workspace/.dagster
+      PYTHONPATH: /workspace/src
+    ports:
+      - "3003:3003"
+    volumes:
+      - ..:/workspace
 
 volumes:
   pgdata:

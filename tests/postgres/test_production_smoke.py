@@ -5,6 +5,7 @@ Discoverable by the normal suite but SKIPPED unless a Postgres is reachable (mir
 authoritative parity is the full ``tests/security/*`` suite run with ``RAKU_TEST_BACKEND=postgres`` in
 Tier B (``scripts/gate.sh b``); this smoke just proves the adapter wires up end-to-end.
 """
+
 from __future__ import annotations
 
 import os
@@ -39,11 +40,15 @@ class TestProductionSystemSmoke(unittest.TestCase):
         from tests.helpers import claims
 
         self.sys.ingest_text(
-            tenant_id="T", collection_id="c", document_id="d1",
+            tenant_id="T",
+            collection_id="c",
+            document_id="d1",
             text="The maintenance interval for pump P-12 is ninety days per the manual.",
         )
         self.sys.grant("T", ScopeType.COLLECTION, "c", SubjectType.USER, "alice")
-        ans = self.sys.answer(claims("T", "alice"), "what is the maintenance interval for pump P-12?")
+        ans = self.sys.answer(
+            claims("T", "alice"), "what is the maintenance interval for pump P-12?"
+        )
         self.assertEqual(ans.status, "ok")
         self.assertTrue(any(c.document_id == "d1" for c in ans.citations))
 
@@ -52,7 +57,9 @@ class TestProductionSystemSmoke(unittest.TestCase):
 
         for t in ("A", "B"):
             self.sys.ingest_text(
-                tenant_id=t, collection_id=f"c{t}", document_id=f"d{t}",
+                tenant_id=t,
+                collection_id=f"c{t}",
+                document_id=f"d{t}",
                 text="The rocket fuel mixing ratio is documented in section four.",
             )
             self.sys.grant(t, ScopeType.COLLECTION, f"c{t}", SubjectType.USER, "u")

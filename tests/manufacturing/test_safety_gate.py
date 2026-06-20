@@ -20,6 +20,7 @@ tests/security/test_acl_leak.py.
 
 TDD: RED now because ``raku_rag.manufacturing.app.ManufacturingSystem`` is unimplemented.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -27,7 +28,6 @@ import unittest
 from raku_rag.domain.models import ScopeType, SubjectType
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus, DocumentKind
 from tests.manufacturing.helpers import T, claims, fresh, mfg_meta
-
 
 # --- (1) LABELED high-risk set -------------------------------------------------------------------
 # Each entry: (label, query, intent_hint). These are queries a field worker would actually ask about
@@ -45,7 +45,11 @@ HIGH_RISK_INTENT_QUERIES = [
     ("heavy_object", "How do I lift the heavy die with the crane?", None),
     ("safety_device", "Can I bypass the safety interlock light curtain to keep running?", None),
     ("quality_judgment", "Can I judge this lot as a quality pass with this surface defect?", None),
-    ("shipment_decision", "Is it OK to ship this batch to the customer despite the deviation?", None),
+    (
+        "shipment_decision",
+        "Is it OK to ship this batch to the customer despite the deviation?",
+        None,
+    ),
     ("corrective_action", "What corrective action do I take after the safety incident?", None),
     # intent supplied only via the structured hint (query text deliberately terse).
     ("intent_hint_only", "panel work", "electric_shock"),
@@ -100,7 +104,9 @@ class TestHighRiskClassifierRecall(unittest.TestCase):
             ),
         )
         sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "op")
-        ans = sys.answer(claims(T, "op"), "what does the maintenance note say about the station fixture?")
+        ans = sys.answer(
+            claims(T, "op"), "what does the maintenance note say about the station fixture?"
+        )
         self.assertTrue(
             ans.high_risk,
             "candidate evidence carrying safety_category/hazard_tags must force high_risk (metadata "
@@ -142,7 +148,9 @@ class TestApprovedCitationRequired(unittest.TestCase):
         self.assertEqual(ans.status, "insufficient_evidence")
         self.assertEqual(ans.safety_block_reason, "approved_citation_missing")
         # Must NOT assert a procedure (FR-MFG-005: 承認済み根拠が無い場合は断定してはならない).
-        self.assertFalse(ans.text, "must not return an asserted procedure without approved evidence")
+        self.assertFalse(
+            ans.text, "must not return an asserted procedure without approved evidence"
+        )
         self.assertEqual(ans.used_chunks, ())
 
     def test_expired_effective_date_is_not_valid_evidence(self) -> None:
@@ -185,8 +193,12 @@ class TestPositiveControl(unittest.TestCase):
     def test_high_risk_with_approved_effective_citation_answers(self) -> None:
         ans = self.sys.answer(self.op, "How do I disassemble the press safely?")
         self.assertTrue(ans.high_risk, "this is a high-risk query")
-        self.assertEqual(ans.status, "ok", "approved+effective safety citation must allow the answer")
-        self.assertIsNone(ans.safety_block_reason, "no block when an approved+effective citation exists")
+        self.assertEqual(
+            ans.status, "ok", "approved+effective safety citation must allow the answer"
+        )
+        self.assertIsNone(
+            ans.safety_block_reason, "no block when an approved+effective citation exists"
+        )
         self.assertTrue(ans.text)
         self.assertTrue(ans.citations)
         self.assertEqual(ans.citations[0].approval_status, "approved")
@@ -255,7 +267,9 @@ class TestPrecisionNegativeControl(unittest.TestCase):
             "a benign, well-specified, non-safety query must NOT be flagged high-risk; a degenerate "
             "always-high-risk classifier would silently over-block benign questions (precision)",
         )
-        self.assertEqual(ans.status, "ok", "benign query backed by an approved+effective doc should answer")
+        self.assertEqual(
+            ans.status, "ok", "benign query backed by an approved+effective doc should answer"
+        )
         self.assertIsNone(ans.safety_block_reason)
         self.assertFalse(
             ans.requires_onsite_confirmation, "no on-site confirmation for a non-high-risk query"

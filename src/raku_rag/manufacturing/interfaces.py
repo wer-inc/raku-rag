@@ -8,6 +8,7 @@ Signatures follow contracts/mfg-interfaces.md §2–§8. ABCs only — no behavi
 Concrete types referenced here are the stdlib @dataclass domain models in
 raku_rag.manufacturing.domain.*; ``Citation`` / ``IdentityClaims`` are reused from 001 domain.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -58,9 +59,7 @@ class ApprovalWorkflow(ABC):
     ) -> ApprovalState: ...
 
     @abstractmethod
-    def import_external(
-        self, tenant_id: str, document_id: str, external: dict
-    ) -> ApprovalState:
+    def import_external(self, tenant_id: str, document_id: str, external: dict) -> ApprovalState:
         """Import approval_source=imported as the source of truth (FR-MFG-004a)."""
 
 

@@ -1,4 +1,5 @@
 """T038 — US2: diff-sync (checksum); 旧バージョンの内容が残らない (SC-007)."""
+
 from __future__ import annotations
 
 import unittest
@@ -23,7 +24,9 @@ class TestDiffSync(unittest.TestCase):
 
     def test_updated_content_replaces_old_version(self) -> None:
         self.sys.ingest_text(
-            tenant_id=T, collection_id="c", document_id="d1",
+            tenant_id=T,
+            collection_id="c",
+            document_id="d1",
             text="The API rate limit is one hundred requests per minute.",
         )
         old = self.sys.answer(self.alice, "what is the API rate limit?")
@@ -32,7 +35,9 @@ class TestDiffSync(unittest.TestCase):
 
         # Source updated
         job = self.sys.ingest_text(
-            tenant_id=T, collection_id="c", document_id="d1",
+            tenant_id=T,
+            collection_id="c",
+            document_id="d1",
             text="The API rate limit is five hundred requests per minute now.",
         )
         self.assertFalse(job.skipped)

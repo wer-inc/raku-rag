@@ -2,46 +2,46 @@
 
 ## Phase 1 - Foundations
 
-- [ ] ISF-T001 Define database migrations for IndustryProfile, MetadataSchema, DocumentTypeDefinition, EntityTypeDefinition, WorkflowDefinition, RiskPolicy, RequiredEvidencePolicy, ApprovalPolicy, ACLMappingPolicy, DraftArtifactTypeDefinition, DraftReviewPolicy, KPIDefinition, DashboardWidgetDefinition, GovernanceProfile, AuditEventDefinition, EvaluationProfile.
-- [ ] ISF-T002 Implement `IndustryProfileService` with tenant/collection scoped profile resolution.
-- [ ] ISF-T003 Implement `MetadataSchemaService` with JSON schema validation, schema versioning, and indexed field declaration.
-- [ ] ISF-T004 Add seed profiles for manufacturing, real estate, and investment management without changing their domain semantics.
+- [X] ISF-T001 Define database migrations for IndustryProfile, MetadataSchema, DocumentTypeDefinition, EntityTypeDefinition, WorkflowDefinition, RiskPolicy, RequiredEvidencePolicy, ApprovalPolicy, ACLMappingPolicy, DraftArtifactTypeDefinition, DraftReviewPolicy, KPIDefinition, DashboardWidgetDefinition, GovernanceProfile, AuditEventDefinition, EvaluationProfile.
+- [X] ISF-T002 Implement `IndustryProfileService` with tenant/collection scoped profile resolution.
+- [X] ISF-T003 Implement `MetadataSchemaService` with JSON schema validation, schema versioning, and indexed field declaration.
+- [X] ISF-T004 Add seed profiles for manufacturing, real estate, and investment management without changing their domain semantics.
 
 ## Phase 2 - Policy and Workflow
 
-- [ ] ISF-T010 Implement `IndustryRiskPolicyService` with rule-based matching and optional LLM classifier hook.
-- [ ] ISF-T011 Implement `RequiredEvidencePolicyService` using 001 citations, approval metadata, effective_date, obsolete/draft state.
-- [ ] ISF-T012 Implement `IndustryWorkflowService` that calls 001 retrieval/answer/citation/audit/cost services.
-- [ ] ISF-T013 Add uncertain-case behavior tests: high-risk by default where configured.
+- [X] ISF-T010 Implement `IndustryRiskPolicyService` with rule-based matching and optional LLM classifier hook.
+- [X] ISF-T011 Implement `RequiredEvidencePolicyService` using 001 citations, approval metadata, effective_date, obsolete/draft state.
+- [X] ISF-T012 Implement `IndustryWorkflowService` that calls 001 retrieval/answer/citation/audit/cost services.
+- [X] ISF-T013 Add uncertain-case behavior tests: high-risk by default where configured.
 
 ## Phase 3 - Drafts and Reviews
 
-- [ ] ISF-T020 Implement common DraftArtifact storage with industry-specific payload schema validation.
-- [ ] ISF-T021 Implement DraftReviewPolicy allowed transition enforcement.
-- [ ] ISF-T022 Add tests proving AI-created artifacts cannot be auto-approved.
-- [ ] ISF-T023 Add audit events for draft generation, assignment, review transition, and archive.
+- [X] ISF-T020 Implement common DraftArtifact storage with industry-specific payload schema validation.
+- [X] ISF-T021 Implement DraftReviewPolicy allowed transition enforcement.
+- [X] ISF-T022 Add tests proving AI-created artifacts cannot be auto-approved.
+- [X] ISF-T023 Add audit events for draft generation, assignment, review transition, and archive.
 
 ## Phase 4 - KPI / Dashboard / Governance
 
-- [ ] ISF-T030 Implement KPIDefinition calculation adapter from audit/feedback/evaluation/draft sources.
-- [ ] ISF-T031 Implement DashboardWidgetDefinition rendering API with tenant/ACL filtering.
-- [ ] ISF-T032 Implement GovernanceProfile status API delegating provider/no-train/audit facts to 001.
-- [ ] ISF-T033 Add dashboard/KPI leakage tests across tenant, role, and industry filters.
+- [X] ISF-T030 Implement KPIDefinition calculation adapter from audit/feedback/evaluation/draft sources.
+- [X] ISF-T031 Implement DashboardWidgetDefinition rendering API with tenant/ACL filtering.
+- [X] ISF-T032 Implement GovernanceProfile status API delegating provider/no-train/audit facts to 001.
+- [X] ISF-T033 Add dashboard/KPI leakage tests across tenant, role, and industry filters.
 
 ## Phase 5 - Regulated Extensions
 
-- [ ] ISF-T040 Implement RegulatedActivityPolicy and AdviceBoundaryPolicy contracts.
-- [ ] ISF-T041 Implement DisclosureEvidencePolicy and ComplianceReviewPolicy definitions.
-- [ ] ISF-T042 Implement RecordRetentionPolicy contract hooks to 001 retention/audit/export controls.
-- [ ] ISF-T043 Add 006 investment management compatibility tests.
+- [X] ISF-T040 Implement RegulatedActivityPolicy and AdviceBoundaryPolicy contracts.
+- [X] ISF-T041 Implement DisclosureEvidencePolicy and ComplianceReviewPolicy definitions.
+- [X] ISF-T042 Implement RecordRetentionPolicy contract hooks to 001 retention/audit/export controls.
+- [X] ISF-T043 Add 006 investment management compatibility tests.
 
 ## Phase 6 - Contracts and Compatibility
 
-- [ ] ISF-T050 Implement generic `/industries` APIs and contract tests.
-- [ ] ISF-T051 Add mapping tests for 002 manufacturing profile.
-- [ ] ISF-T052 Add mapping tests for 003 real estate profile.
-- [ ] ISF-T053 Add mapping tests for 006 investment management profile.
-- [ ] ISF-T054 Add migration/versioning tests ensuring profile changes do not break existing industries.
+- [X] ISF-T050 Implement generic `/industries` APIs and contract tests.
+- [X] ISF-T051 Add mapping tests for 002 manufacturing profile.
+- [X] ISF-T052 Add mapping tests for 003 real estate profile.
+- [X] ISF-T053 Add mapping tests for 006 investment management profile.
+- [X] ISF-T054 Add migration/versioning tests ensuring profile changes do not break existing industries.
 
 ## Requirement Traceability
 

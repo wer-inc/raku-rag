@@ -11,6 +11,7 @@ on the metadata MUST match the document (001 tenancy is the hard isolation bound
 
 stdlib only. Structurally satisfies ``raku_rag.manufacturing.interfaces.MetadataEnricher``.
 """
+
 from __future__ import annotations
 
 from typing import Callable

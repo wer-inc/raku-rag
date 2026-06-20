@@ -2,6 +2,7 @@
 
 visual artifact のクロステナント参照ケースは US6 (MVP対象外) のため skip。
 """
+
 from __future__ import annotations
 
 import unittest

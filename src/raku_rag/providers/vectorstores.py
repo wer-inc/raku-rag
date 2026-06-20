@@ -4,11 +4,12 @@ CRITICAL invariant (FR-022, SC-003/004, SC-009): search applies tenant_id, tombs
 and the ACL ``visible`` predicate as a PRE-filter, BEFORE scoring — never post-filter only. The
 production pgvector adapter expresses the same filter as a SQL WHERE clause.
 """
+
 from __future__ import annotations
 
 from typing import Sequence
 
-from raku_rag.domain.models import Chunk, ScoredChunk
+from raku_rag.domain.models import Chunk, Modality, ScoredChunk
 from raku_rag.interfaces.base import VectorStore, Vector, VisibilityPredicate
 from raku_rag.providers.embeddings import cosine
 
@@ -64,3 +65,23 @@ class InMemoryVectorStore(VectorStore):
         for cid in to_del:
             del self._items[cid]
         return len(to_del)
+
+    def visual_chunks_for_asset(self, tenant_id: str, asset_id: str) -> tuple[Chunk, ...]:
+        return tuple(
+            chunk
+            for chunk, _ in self._items.values()
+            if chunk.tenant_id == tenant_id
+            and not chunk.tombstone
+            and (chunk.modality == Modality.VISUAL or str(chunk.modality) == Modality.VISUAL.value)
+            and str(chunk.metadata.get("asset_id", "")) == asset_id
+        )
+
+    def visual_chunks_for_document(self, tenant_id: str, document_id: str) -> tuple[Chunk, ...]:
+        return tuple(
+            chunk
+            for chunk, _ in self._items.values()
+            if chunk.tenant_id == tenant_id
+            and chunk.document_id == document_id
+            and not chunk.tombstone
+            and (chunk.modality == Modality.VISUAL or str(chunk.modality) == Modality.VISUAL.value)
+        )

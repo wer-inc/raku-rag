@@ -1,4 +1,5 @@
 """P0-T22 — seed framework: idempotent, tenant-scoped, deny-by-default (sqlite smoke)."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -10,9 +11,7 @@ from raku_rag.seed.loader import SeedLoader, SeedSpec, default_local_seed_specs
 class TestSeedLoader(unittest.TestCase):
     def setUp(self) -> None:
         self.conn = sqlite3.connect(":memory:")
-        self.conn.execute(
-            "CREATE TABLE tenant (tenant_id TEXT PRIMARY KEY, name TEXT)"
-        )
+        self.conn.execute("CREATE TABLE tenant (tenant_id TEXT PRIMARY KEY, name TEXT)")
 
     def _spec(self) -> list[SeedSpec]:
         return [SeedSpec("tenant", ("tenant_id",), ({"tenant_id": "t1", "name": "T1"},))]

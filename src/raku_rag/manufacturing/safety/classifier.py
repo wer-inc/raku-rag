@@ -19,6 +19,7 @@ telemetry can attribute the decision (FR-MFG-021).
 stdlib only; mirrors the existing services/* style. No new security mechanism — this only LABELS the
 query; the SafetyGate (§4) is what enforces the approved-citation requirement on a high-risk answer.
 """
+
 from __future__ import annotations
 
 from typing import Sequence
@@ -27,56 +28,152 @@ from raku_rag.interfaces.base import LLMProvider
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
 from raku_rag.manufacturing.domain.safety import ClassificationSource, HighRiskClassification
 
-
 # --- (2) labeled dangerous-intent keyword sets -----------------------------------------------------
 # reason_code -> tuple of substrings (lower-cased) that, if present in the query/intent_hint, mark
 # that danger class. Both English (field tools localize) and Japanese surface forms are covered so a
 # bilingual field worker's question is caught. A single hit => high-risk (FR-MFG-015 recall on danger).
 _INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
     "equipment_stop": (
-        "stop the", "stop line", "stop machine", "shut down", "shutdown", "halt", "停止", "止め",
-        "non-stop", "clear a jam", "clear the jam",
+        "stop the",
+        "stop line",
+        "stop machine",
+        "shut down",
+        "shutdown",
+        "halt",
+        "停止",
+        "止め",
+        "non-stop",
+        "clear a jam",
+        "clear the jam",
     ),
     "disassembly": (
-        "disassemble", "dismantle", "take apart", "remove the guard", "removing any guard",
-        "remove guard", "分解", "取り外", "取外",
+        "disassemble",
+        "dismantle",
+        "take apart",
+        "remove the guard",
+        "removing any guard",
+        "remove guard",
+        "分解",
+        "取り外",
+        "取外",
     ),
     "electric_shock": (
-        "electrocut", "electric shock", "live wire", "energized", "panel", "400v", "200v", "高電圧",
-        "感電", "通電", "充電部", "voltage panel", "v panel",
+        "electrocut",
+        "electric shock",
+        "live wire",
+        "energized",
+        "panel",
+        "400v",
+        "200v",
+        "高電圧",
+        "感電",
+        "通電",
+        "充電部",
+        "voltage panel",
+        "v panel",
     ),
     "high_temp": (
-        "hot", "furnace", "high temp", "high-temp", "molten", "burn", "高温", "やけど", "炉",
+        "hot",
+        "furnace",
+        "high temp",
+        "high-temp",
+        "molten",
+        "burn",
+        "高温",
+        "やけど",
+        "炉",
     ),
     "pressure": (
-        "pressure", "hydraulic", "pneumatic", "accumulator", "compressed", "高圧", "圧力", "蓄圧",
+        "pressure",
+        "hydraulic",
+        "pneumatic",
+        "accumulator",
+        "compressed",
+        "高圧",
+        "圧力",
+        "蓄圧",
     ),
     "chemical": (
-        "chemical", "solvent", "acid", "corros", "toxic", "spill", "薬品", "化学", "溶剤", "腐食",
+        "chemical",
+        "solvent",
+        "acid",
+        "corros",
+        "toxic",
+        "spill",
+        "薬品",
+        "化学",
+        "溶剤",
+        "腐食",
     ),
     "heavy_object": (
-        "heavy", "crane", "hoist", "lift the", "lifting", "die with the crane", "重量物", "吊り",
-        "玉掛", "クレーン",
+        "heavy",
+        "crane",
+        "hoist",
+        "lift the",
+        "lifting",
+        "die with the crane",
+        "重量物",
+        "吊り",
+        "玉掛",
+        "クレーン",
     ),
     "safety_device": (
-        "safety interlock", "interlock", "light curtain", "bypass the safety", "bypass safety",
-        "guard", "emergency stop", "e-stop", "安全装置", "インターロック", "ライトカーテン", "非常停止",
+        "safety interlock",
+        "interlock",
+        "light curtain",
+        "bypass the safety",
+        "bypass safety",
+        "guard",
+        "emergency stop",
+        "e-stop",
+        "安全装置",
+        "インターロック",
+        "ライトカーテン",
+        "非常停止",
         "bypass",
     ),
     "quality_judgment": (
-        "judge this", "quality pass", "quality judgement", "quality judgment", "defect", "out of spec",
-        "tolerance", "合否", "良否", "品質判定", "規格外", "不良",
+        "judge this",
+        "quality pass",
+        "quality judgement",
+        "quality judgment",
+        "defect",
+        "out of spec",
+        "tolerance",
+        "合否",
+        "良否",
+        "品質判定",
+        "規格外",
+        "不良",
     ),
     "shipment_decision": (
-        "ship this", "ship the", "shipment", "deviation", "release to customer", "出荷", "客先",
+        "ship this",
+        "ship the",
+        "shipment",
+        "deviation",
+        "release to customer",
+        "出荷",
+        "客先",
         "deviate",
     ),
     "customer_impact": (
-        "customer impact", "customer complaint", "recall", "顧客影響", "クレーム", "リコール",
+        "customer impact",
+        "customer complaint",
+        "recall",
+        "顧客影響",
+        "クレーム",
+        "リコール",
     ),
     "corrective_action": (
-        "corrective action", "corrective", "after the safety incident", "incident", "root cause",
-        "是正", "再発防止", "対策", "事故後",
+        "corrective action",
+        "corrective",
+        "after the safety incident",
+        "incident",
+        "root cause",
+        "是正",
+        "再発防止",
+        "対策",
+        "事故後",
     ),
 }
 
@@ -146,13 +243,17 @@ class RuleHighRiskClassifier:
                 return HighRiskClassification(
                     is_high_risk=True,
                     reason_codes=("ambiguous",),
-                    classification_source=ClassificationSource.LLM
-                    if self._llm is not None
-                    else ClassificationSource.RULE,
+                    classification_source=(
+                        ClassificationSource.LLM
+                        if self._llm is not None
+                        else ClassificationSource.RULE
+                    ),
                 )
 
         # Clearly non-dangerous, well-specified query: not high-risk.
-        return HighRiskClassification(is_high_risk=False, reason_codes=(), classification_source=None)
+        return HighRiskClassification(
+            is_high_risk=False, reason_codes=(), classification_source=None
+        )
 
     # --- stage helpers ----------------------------------------------------------------------------
     def _metadata_reason_codes(

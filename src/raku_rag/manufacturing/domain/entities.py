@@ -13,9 +13,10 @@ Hard rules reflected here:
 
 Schema only — no behaviour/validation logic (stage-2).
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 # --- T054: 001 ACL scope binding (FR-MFG-013, SC-MFG-008) ----------------------------------------

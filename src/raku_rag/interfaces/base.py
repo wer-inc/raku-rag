@@ -1,10 +1,11 @@
 """Abstract interfaces for the 13 pluggable components (FR-031)."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Callable, Protocol, Sequence
 
-from raku_rag.domain.models import Chunk, ScoredChunk
+from raku_rag.domain.models import Chunk, LayoutRegion, OcrTextRegion, ScoredChunk
 
 # A pre-filter predicate: given a candidate chunk, may it be retrieved for this principal?
 # Used by VectorStore.search to enforce ACL/tenant/tombstone BEFORE scoring (FR-022, pre-filter).
@@ -66,7 +67,9 @@ class VectorStore(ABC):
 
 class Reranker(ABC):
     @abstractmethod
-    def rerank(self, query: str, scored: Sequence[ScoredChunk], top_n: int) -> list[ScoredChunk]: ...
+    def rerank(
+        self, query: str, scored: Sequence[ScoredChunk], top_n: int
+    ) -> list[ScoredChunk]: ...
 
 
 class LLMProvider(ABC):
@@ -86,11 +89,11 @@ class TaskQueue(ABC):
 
 
 class OcrEngine(Protocol):
-    def extract(self, image: bytes) -> object: ...
+    def extract(self, image: bytes) -> tuple[OcrTextRegion, ...]: ...
 
 
 class LayoutExtractor(Protocol):
-    def extract(self, image: bytes) -> object: ...
+    def extract(self, image: bytes) -> tuple[LayoutRegion, ...]: ...
 
 
 class CaptioningProvider(Protocol):
@@ -104,4 +107,4 @@ class VisualEmbeddingProvider(Protocol):
 
 
 class VLMProvider(Protocol):
-    def generate(self, query: str, *, visual_regions: Sequence[object]) -> str: ...
+    def generate(self, query: str, *, visual_regions: Sequence[LayoutRegion]) -> str: ...

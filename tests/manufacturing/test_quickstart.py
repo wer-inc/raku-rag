@@ -28,6 +28,7 @@ stdlib only (+ python-docx/openpyxl for the DOCX/XLSX fixtures, already present)
 quickstart.md S1-S11; spec FR-MFG-027/028, SC-MFG-006~013. Assertion style mirrors the dedicated
 per-scenario tests under tests/manufacturing/.
 """
+
 from __future__ import annotations
 
 import csv
@@ -125,7 +126,9 @@ class S1_IngestMetadataApproval(unittest.TestCase):
         self.assertEqual(hit.effective_date, "2026-01-10")
         # S1.3: an XLSX-derived citation carries the sheet!RxCy cell coordinate (FR-MFG-002).
         cell_hit = next((r for r in results if r.cell_anchor is not None), None)
-        self.assertIsNotNone(cell_hit, "a spreadsheet-derived result must carry a cell coordinate (FR-MFG-002)")
+        self.assertIsNotNone(
+            cell_hit, "a spreadsheet-derived result must carry a cell coordinate (FR-MFG-002)"
+        )
         self.assertIsNotNone(cell_hit.sheet)
         self.assertIsNotNone(cell_hit.row)
         self.assertIsNotNone(cell_hit.col)
@@ -201,7 +204,9 @@ class S3_HighRiskApprovedCitationRequired(unittest.TestCase):
         )
         self.sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "op")
         ans = self.sys.answer(self.op, "how should I handle this?", intent_hint="ambiguous")
-        self.assertTrue(ans.high_risk, "S3.2: ambiguous safety query is treated high-risk (fail-safe)")
+        self.assertTrue(
+            ans.high_risk, "S3.2: ambiguous safety query is treated high-risk (fail-safe)"
+        )
 
     def test_s3_3_high_risk_with_approved_citation_answers_and_requires_onsite(self) -> None:
         self._seed(ApprovalStatus.APPROVED, "2026-01-10")
@@ -209,7 +214,9 @@ class S3_HighRiskApprovedCitationRequired(unittest.TestCase):
         self.assertTrue(ans.high_risk)
         self.assertEqual(ans.status, "ok")
         self.assertEqual(ans.citations[0].approval_status, "approved")
-        self.assertTrue(ans.requires_onsite_confirmation, "S3.3: on-site confirmation required (FR-MFG-007)")
+        self.assertTrue(
+            ans.requires_onsite_confirmation, "S3.3: on-site confirmation required (FR-MFG-007)"
+        )
 
 
 # ------------------------------------------------------------------------------------------------
@@ -254,7 +261,9 @@ class S4_ObsoleteDraftHandling(unittest.TestCase):
         )
         self.sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "op")
         ans = self.sys.answer(self.op, "what is the torque specification for the flange bolt?")
-        self.assertNotEqual(ans.status, "ok", "S4.2: draft-only evidence must not be a formal basis")
+        self.assertNotEqual(
+            ans.status, "ok", "S4.2: draft-only evidence must not be a formal basis"
+        )
         for c in ans.citations:
             self.assertNotEqual(getattr(c, "approval_status", None), "approved")
 
@@ -286,18 +295,46 @@ class S5_SimilarTroubleCases(unittest.TestCase):
                 failure_mode_id="fm_bearing",
                 source_document_id="tr_A",
             ),
-            failure_mode=FailureMode(tenant_id=T, failure_mode_id="fm_bearing", name="軸受摩耗", description="bearing wear"),
+            failure_mode=FailureMode(
+                tenant_id=T,
+                failure_mode_id="fm_bearing",
+                name="軸受摩耗",
+                description="bearing wear",
+            ),
             countermeasures=(
-                Countermeasure(tenant_id=T, measure_id="m_prov", trouble_case_id="tc_A", description="reduce feed rate", measure_class=MeasureClass.PROVISIONAL, source_document_id="tr_A"),
-                Countermeasure(tenant_id=T, measure_id="m_perm", trouble_case_id="tc_A", description="replace the worn bearing", measure_class=MeasureClass.PERMANENT, source_document_id="tr_A"),
+                Countermeasure(
+                    tenant_id=T,
+                    measure_id="m_prov",
+                    trouble_case_id="tc_A",
+                    description="reduce feed rate",
+                    measure_class=MeasureClass.PROVISIONAL,
+                    source_document_id="tr_A",
+                ),
+                Countermeasure(
+                    tenant_id=T,
+                    measure_id="m_perm",
+                    trouble_case_id="tc_A",
+                    description="replace the worn bearing",
+                    measure_class=MeasureClass.PERMANENT,
+                    source_document_id="tr_A",
+                ),
             ),
             recurrence_prevention="add the bearing to the periodic replacement schedule",
         )
-        self.sys.grant_scope(ManufacturingScope(tenant_id=T, department="maintenance_dept", roles=("technician",), factory_ids=("facA",)))
+        self.sys.grant_scope(
+            ManufacturingScope(
+                tenant_id=T,
+                department="maintenance_dept",
+                roles=("technician",),
+                factory_ids=("facA",),
+            )
+        )
         self.op = claims(T, "fa_user", groups=["maintenance_dept"], roles=["technician"])
 
     def test_s5_similar_case_with_cause_split_measures_and_candidate_label(self) -> None:
-        resp = self.sys.search_trouble_cases(self.op, "振動増加 異音 vibration increase abnormal noise gearbox bearing")
+        resp = self.sys.search_trouble_cases(
+            self.op, "振動増加 異音 vibration increase abnormal noise gearbox bearing"
+        )
         self.assertEqual(_val(resp.status), "ok")
         m = next((x for x in resp.results if x.trouble_case_id == "tc_A"), None)
         self.assertIsNotNone(m, "S5: the similar gearbox case must be listed")
@@ -325,16 +362,29 @@ class S6_DraftGeneration(unittest.TestCase):
         art = self.sys.generate_draft(
             principal=self.author,
             kind=DraftType.CHECKLIST,
-            context_citations=(Citation(kind="text", document_id="d1", source_id="src", version=1, retrieval_score=0.9, chunk_id="d1#0"),),
+            context_citations=(
+                Citation(
+                    kind="text",
+                    document_id="d1",
+                    source_id="src",
+                    version=1,
+                    retrieval_score=0.9,
+                    chunk_id="d1#0",
+                ),
+            ),
             source_document_ids=("d1",),
         )
-        self.assertEqual(_val(art.status), DraftStatus.DRAFT.value, "S6.1: kind=checklist is status=draft")
+        self.assertEqual(
+            _val(art.status), DraftStatus.DRAFT.value, "S6.1: kind=checklist is status=draft"
+        )
         self.assertTrue(art.source_citations, "S6.1: source_citations present")
         self.assertEqual(_val(art.created_by), CreatedBy.AI.value)
 
     def test_s6_3_faq_not_auto_approved(self) -> None:
         faq = self.sys.generate_draft(principal=self.author, kind=DraftType.FAQ)
-        self.assertEqual(_val(faq.status), DraftStatus.DRAFT.value, "S6.3: FAQ is draft, never auto-approved")
+        self.assertEqual(
+            _val(faq.status), DraftStatus.DRAFT.value, "S6.3: FAQ is draft, never auto-approved"
+        )
 
     def test_s6_4_reviewer_only_confirms_via_assign_then_review(self) -> None:
         art = self.sys.generate_draft(principal=self.author, kind=DraftType.CHECKLIST)
@@ -345,19 +395,25 @@ class S6_DraftGeneration(unittest.TestCase):
             reviewer=claims(T, "rev_1", roles=("reviewer",)),
             decision="approved",
         )
-        self.assertEqual(_val(approved.status), DraftStatus.APPROVED.value, "S6.4: reviewer confirms")
+        self.assertEqual(
+            _val(approved.status), DraftStatus.APPROVED.value, "S6.4: reviewer confirms"
+        )
         self.assertEqual(approved.reviewer_id, "rev_1")
 
     def test_s6_5_ai_self_approve_rejected(self) -> None:
         art = self.sys.generate_draft(principal=self.author, kind=DraftType.CHECKLIST)
         leaked = False
         try:
-            r = self.sys.review_draft(tenant_id=T, artifact_id=art.artifact_id, reviewer=None, decision="approved")
+            r = self.sys.review_draft(
+                tenant_id=T, artifact_id=art.artifact_id, reviewer=None, decision="approved"
+            )
             leaked = _val(r.status) == DraftStatus.APPROVED.value
         except (ValueError, PermissionError, TypeError):
             pass
         self.assertFalse(leaked, "S6.5: created_by=ai cannot self-approve (SC-MFG-007 = 0)")
-        self.assertEqual(_val(self.sys.get_draft(T, art.artifact_id).status), DraftStatus.DRAFT.value)
+        self.assertEqual(
+            _val(self.sys.get_draft(T, art.artifact_id).status), DraftStatus.DRAFT.value
+        )
 
 
 # ------------------------------------------------------------------------------------------------
@@ -373,25 +429,55 @@ class S7_AclMapping(unittest.TestCase):
             collection_id=self.coll_b,
             document_id="conf_B",
             text="Confidential: customer AcmeMotors cathode line cathode-delamination defect on drawing DRW-9.",
-            metadata=mfg_meta(tenant_id=T, document_id="conf_B", customer="AcmeMotors", defect_type="cathode-delamination"),
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="conf_B",
+                customer="AcmeMotors",
+                defect_type="cathode-delamination",
+            ),
         )
         # Authorized factory-B quality user; unauthorized factory-A maintenance user.
-        self.sys.grant_scope(ManufacturingScope(tenant_id=T, department="quality_dept", roles=("supervisor",), factory_ids=("facB",)))
-        self.sys.grant_scope(ManufacturingScope(tenant_id=T, department="maintenance_dept", roles=("technician",), factory_ids=("facA",)))
+        self.sys.grant_scope(
+            ManufacturingScope(
+                tenant_id=T, department="quality_dept", roles=("supervisor",), factory_ids=("facB",)
+            )
+        )
+        self.sys.grant_scope(
+            ManufacturingScope(
+                tenant_id=T,
+                department="maintenance_dept",
+                roles=("technician",),
+                factory_ids=("facA",),
+            )
+        )
         self.authorized = claims(T, "qb", groups=["quality_dept"], roles=["supervisor"])
         self.unauthorized = claims(T, "fa", groups=["maintenance_dept"], roles=["technician"])
         self.probe = "AcmeMotors cathode-delamination defect drawing DRW-9 customer"
 
     def test_s7_unauthorized_user_sees_no_confidential_doc_or_citation(self) -> None:
         results = self.sys.search(self.unauthorized, self.probe)
-        self.assertTrue(all(r.document_id != "conf_B" for r in results), "S7: confidential doc must not leak into search")
-        ans = self.sys.answer(self.unauthorized, "what is the AcmeMotors cathode-delamination defect?", collection_id=self.coll_b)
+        self.assertTrue(
+            all(r.document_id != "conf_B" for r in results),
+            "S7: confidential doc must not leak into search",
+        )
+        ans = self.sys.answer(
+            self.unauthorized,
+            "what is the AcmeMotors cathode-delamination defect?",
+            collection_id=self.coll_b,
+        )
         for c in ans.citations:
-            self.assertNotEqual(c.document_id, "conf_B", "S7: confidential doc must not be cited to unauthorized user")
+            self.assertNotEqual(
+                c.document_id,
+                "conf_B",
+                "S7: confidential doc must not be cited to unauthorized user",
+            )
 
     def test_s7_authorized_user_can_see_it_positive_control(self) -> None:
         results = self.sys.search(self.authorized, self.probe)
-        self.assertTrue(any(r.document_id == "conf_B" for r in results), "S7: authorized user must find their own doc")
+        self.assertTrue(
+            any(r.document_id == "conf_B" for r in results),
+            "S7: authorized user must find their own doc",
+        )
 
 
 # ------------------------------------------------------------------------------------------------
@@ -412,7 +498,9 @@ class S8_NoTrainGovernance(unittest.TestCase):
 
     def test_s8_2_training_without_optin_is_refused(self) -> None:
         sys = fresh()
-        with self.assertRaises(Exception, msg="S8.2: training without opt-in must be refused (SC-MFG-009 = 0)"):
+        with self.assertRaises(
+            Exception, msg="S8.2: training without opt-in must be refused (SC-MFG-009 = 0)"
+        ):
             sys.use_for_training(tenant_id=T, data_kind="answer", actor=self.admin)
 
     def test_s8_3_capability_without_no_train_provider_is_blocked(self) -> None:
@@ -429,10 +517,16 @@ class S8_NoTrainGovernance(unittest.TestCase):
             "S8.3: a non-no-train capability must be blocked, not silently degraded (GQ1)",
         )
 
-    def test_s8_4_optin_without_contract_ref_rejected_and_version_bumps_on_valid_change(self) -> None:
+    def test_s8_4_optin_without_contract_ref_rejected_and_version_bumps_on_valid_change(
+        self,
+    ) -> None:
         sys = fresh()
-        with self.assertRaises(Exception, msg="S8.4: training_opt_in=True without opt_in_contract_ref must be rejected"):
-            sys.update_data_use_policy(tenant_id=T, patch={"training_opt_in": True}, actor=self.admin)
+        with self.assertRaises(
+            Exception, msg="S8.4: training_opt_in=True without opt_in_contract_ref must be rejected"
+        ):
+            sys.update_data_use_policy(
+                tenant_id=T, patch={"training_opt_in": True}, actor=self.admin
+            )
         before = sys.get_data_use_policy(T).policy_version
         sys.update_data_use_policy(tenant_id=T, patch={"retention_customer": 730}, actor=self.admin)
         after = sys.get_data_use_policy(T).policy_version
@@ -467,20 +561,30 @@ class S9_AuditCoverage(unittest.TestCase):
         )
         self.sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "op")
         self.sys.answer(self.op, "How do I disassemble the press safely after lockout?")
-        self.sys.update_data_use_policy(tenant_id=T, patch={"retention_customer": 730}, actor=self.admin)
+        self.sys.update_data_use_policy(
+            tenant_id=T, patch={"retention_customer": 730}, actor=self.admin
+        )
 
     def test_s9_export_is_tenant_scoped_reference_only_and_chain_verifies(self) -> None:
         export = self.sys.export_audit(principal=self.admin, fmt="dict")
         self.assertTrue(export, "S9: required events must be recorded (coverage)")
         # Reference-only: the confidential customer name must not appear anywhere in the export.
         blob = repr(export)
-        self.assertNotIn(self.secret_customer, blob, "S9: PII/secret must not appear in the audit export (混入 0)")
+        self.assertNotIn(
+            self.secret_customer,
+            blob,
+            "S9: PII/secret must not appear in the audit export (混入 0)",
+        )
         # An approved answer + a policy change are both audited (representative coverage).
         actions = {str(r.get("action", "")).lower() for r in export}
         self.assertTrue(any("answer" in a for a in actions), "S9: answer events recorded")
-        self.assertTrue(any("policy" in a or "retention" in a for a in actions), "S9: policy change recorded")
+        self.assertTrue(
+            any("policy" in a or "retention" in a for a in actions), "S9: policy change recorded"
+        )
         # Tamper-evident hash chain verifies intact.
-        self.assertTrue(self.sys.audit.verify_chain(self.admin), "S9: the audit hash chain must verify intact")
+        self.assertTrue(
+            self.sys.audit.verify_chain(self.admin), "S9: the audit hash chain must verify intact"
+        )
 
 
 # ------------------------------------------------------------------------------------------------
@@ -489,24 +593,64 @@ class S9_AuditCoverage(unittest.TestCase):
 def _seed_and_drive_us5(sys) -> None:
     op = claims(T, "op", groups=("dept_press",))
     sys.ingest_manufacturing(
-        tenant_id=T, collection_id="c", document_id="appr1",
+        tenant_id=T,
+        collection_id="c",
+        document_id="appr1",
         text="Approved lockout/tagout: isolate, lock, tag, verify zero energy before disassembly.",
-        metadata=mfg_meta(tenant_id=T, document_id="appr1", approval_status=ApprovalStatus.APPROVED, effective_date="2026-01-10", document_kind=DocumentKind.WORK_INSTRUCTION, safety_category="lockout_tagout", hazard_tags=("設備停止", "分解")),
+        metadata=mfg_meta(
+            tenant_id=T,
+            document_id="appr1",
+            approval_status=ApprovalStatus.APPROVED,
+            effective_date="2026-01-10",
+            document_kind=DocumentKind.WORK_INSTRUCTION,
+            safety_category="lockout_tagout",
+            hazard_tags=("設備停止", "分解"),
+        ),
     )
     sys.ingest_manufacturing(
-        tenant_id=T, collection_id="c", document_id="draft1",
+        tenant_id=T,
+        collection_id="c",
+        document_id="draft1",
         text="Draft note about working on the 400V panel — not yet approved.",
-        metadata=ManufacturingDocumentMetadata(tenant_id=T, document_id="draft1", approval_status=ApprovalStatus.DRAFT, effective_date=None, document_kind=DocumentKind.WORK_INSTRUCTION, safety_category="electrical", hazard_tags=("感電", "高圧")),
+        metadata=ManufacturingDocumentMetadata(
+            tenant_id=T,
+            document_id="draft1",
+            approval_status=ApprovalStatus.DRAFT,
+            effective_date=None,
+            document_kind=DocumentKind.WORK_INSTRUCTION,
+            safety_category="electrical",
+            hazard_tags=("感電", "高圧"),
+        ),
     )
     sys.ingest_manufacturing(
-        tenant_id=T, collection_id="c", document_id="old1",
+        tenant_id=T,
+        collection_id="c",
+        document_id="old1",
         text="Old torque spec note for the bracket assembly.",
-        metadata=mfg_meta(tenant_id=T, document_id="old1", approval_status=ApprovalStatus.OBSOLETE, effective_date="2024-01-01", obsolete_at="2025-06-01"),
+        metadata=mfg_meta(
+            tenant_id=T,
+            document_id="old1",
+            approval_status=ApprovalStatus.OBSOLETE,
+            effective_date="2024-01-01",
+            obsolete_at="2025-06-01",
+        ),
     )
     sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "op")
-    sys.answer(op, "How do I disassemble the press safely after lockout/tagout?", collection_id="c", factory_id="f1")
-    sys.answer(op, "How do I work on the 400V panel without getting electrocuted?", collection_id="c", factory_id="f1")
-    sys.answer(op, "what is the torque spec for the bracket assembly?", collection_id="c", factory_id="f1")
+    sys.answer(
+        op,
+        "How do I disassemble the press safely after lockout/tagout?",
+        collection_id="c",
+        factory_id="f1",
+    )
+    sys.answer(
+        op,
+        "How do I work on the 400V panel without getting electrocuted?",
+        collection_id="c",
+        factory_id="f1",
+    )
+    sys.answer(
+        op, "what is the torque spec for the bracket assembly?", collection_id="c", factory_id="f1"
+    )
 
 
 class S10_SafetyTelemetryAndKpi(unittest.TestCase):
@@ -516,29 +660,67 @@ class S10_SafetyTelemetryAndKpi(unittest.TestCase):
         self.admin = claims(T, "admin", roles=("admin",))
 
     def test_s10_1_telemetry_counts_mutually_exclusive_breakdown_from_audit(self) -> None:
-        tel = self.sys.safety_telemetry(self.admin, factory_id="f1", department_id="dept_press", granularity="daily")
+        tel = self.sys.safety_telemetry(
+            self.admin, factory_id="f1", department_id="dept_press", granularity="daily"
+        )
         self.assertIsInstance(_attr_or_key(tel, "high_risk_query_count"), int)
         self.assertIsInstance(_attr_or_key(tel, "safety_gate_block_count"), int)
-        self.assertEqual(_attr_or_key(tel, "source"), "audit_log", "S10.1: audit log is the single source of truth")
-        bd = _attr_or_key(tel, "block_breakdown") or _attr_or_key(tel, "safety_gate_block_breakdown") or {}
-        allowed = {SafetyBlockReason.APPROVED_CITATION_MISSING.value, SafetyBlockReason.INSUFFICIENT_EVIDENCE.value, SafetyBlockReason.OTHER_BLOCK.value}
-        self.assertTrue(set(bd.keys()) <= allowed, "S10.1: breakdown keyed only by the three block codes")
-        self.assertEqual(sum(bd.values()), _attr_or_key(tel, "safety_gate_block_count"), "S10.1: mutually exclusive (no double count)")
+        self.assertEqual(
+            _attr_or_key(tel, "source"),
+            "audit_log",
+            "S10.1: audit log is the single source of truth",
+        )
+        bd = (
+            _attr_or_key(tel, "block_breakdown")
+            or _attr_or_key(tel, "safety_gate_block_breakdown")
+            or {}
+        )
+        allowed = {
+            SafetyBlockReason.APPROVED_CITATION_MISSING.value,
+            SafetyBlockReason.INSUFFICIENT_EVIDENCE.value,
+            SafetyBlockReason.OTHER_BLOCK.value,
+        }
+        self.assertTrue(
+            set(bd.keys()) <= allowed, "S10.1: breakdown keyed only by the three block codes"
+        )
+        self.assertEqual(
+            sum(bd.values()),
+            _attr_or_key(tel, "safety_gate_block_count"),
+            "S10.1: mutually exclusive (no double count)",
+        )
 
     def test_s10_2_dashboard_surfaces_views(self) -> None:
         dash = self.sys.knowledge_ops_dashboard(self.admin)
-        for surface in ("unanswered_question_count", "frequently_referenced_documents", "obsolete_document_candidates", "knowledge_gap_areas"):
-            self.assertTrue(_attr_or_key(dash, surface) is not None or hasattr(dash, surface), f"S10.2: dashboard surfaces {surface}")
+        for surface in (
+            "unanswered_question_count",
+            "frequently_referenced_documents",
+            "obsolete_document_candidates",
+            "knowledge_gap_areas",
+        ):
+            self.assertTrue(
+                _attr_or_key(dash, surface) is not None or hasattr(dash, surface),
+                f"S10.2: dashboard surfaces {surface}",
+            )
         cands = " ".join(str(c) for c in (_attr_or_key(dash, "obsolete_document_candidates") or ()))
         self.assertIn("old1", cands, "S10.2: obsolete doc surfaced as a candidate")
 
     def test_s10_3_kpi_full_set_and_csv_export(self) -> None:
         kpi = self.sys.kpi(self.admin, format="json")
-        for key in ("self_resolution_rate", "average_time_to_answer", "grounded_answer_rate", "insufficient_evidence_rate", "unanswered_question_count", "high_risk_query_count", "safety_gate_block_count"):
+        for key in (
+            "self_resolution_rate",
+            "average_time_to_answer",
+            "grounded_answer_rate",
+            "insufficient_evidence_rate",
+            "unanswered_question_count",
+            "high_risk_query_count",
+            "safety_gate_block_count",
+        ):
             self.assertIn(key, kpi, f"S10.3: FR-MFG-028 KPI {key} computable (SC-MFG-012)")
         csv_export = self.sys.kpi(self.admin, format="csv")
         self.assertIsInstance(csv_export, str)
-        self.assertIn("high_risk_query_count", csv_export, "S10.3: KPI exportable to csv (SC-MFG-012)")
+        self.assertIn(
+            "high_risk_query_count", csv_export, "S10.3: KPI exportable to csv (SC-MFG-012)"
+        )
 
 
 # ------------------------------------------------------------------------------------------------
@@ -557,7 +739,9 @@ class S11_PocVerticalSlice(unittest.TestCase):
         tmp = Path(self._tmp.name)
         self.docx = tmp / "lockout.docx"
         d = DocxDocument()
-        d.add_paragraph("To disassemble the press, stop the machine, apply lockout tagout, release stored hydraulic pressure before removing any guard.")
+        d.add_paragraph(
+            "To disassemble the press, stop the machine, apply lockout tagout, release stored hydraulic pressure before removing any guard."
+        )
         d.save(str(self.docx))
         self.csv = tmp / "defects.csv"
         buf = io.StringIO()
@@ -573,19 +757,45 @@ class S11_PocVerticalSlice(unittest.TestCase):
         sys = self.sys
         # ingest DOCX (approved safety) + CSV (defect/part) with metadata.
         sys.ingest_manufacturing_file(
-            tenant_id=T, collection_id="c", document_id="docx1", path=str(self.docx), content_type=DOCX_CT,
-            metadata=mfg_meta(tenant_id=T, document_id="docx1", approval_status=ApprovalStatus.APPROVED, effective_date="2026-01-10", document_kind=DocumentKind.WORK_INSTRUCTION, safety_category="lockout_tagout", hazard_tags=("設備停止", "分解")),
+            tenant_id=T,
+            collection_id="c",
+            document_id="docx1",
+            path=str(self.docx),
+            content_type=DOCX_CT,
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="docx1",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-01-10",
+                document_kind=DocumentKind.WORK_INSTRUCTION,
+                safety_category="lockout_tagout",
+                hazard_tags=("設備停止", "分解"),
+            ),
         )
         sys.ingest_manufacturing_file(
-            tenant_id=T, collection_id="c", document_id="csv1", path=str(self.csv), content_type=CSV_CT,
-            metadata=ManufacturingDocumentMetadata(tenant_id=T, document_id="csv1", approval_status=ApprovalStatus.APPROVED, effective_date="2026-01-10", document_kind=DocumentKind.QUALITY_REPORT, defect_type="crack", part_no="P900"),
+            tenant_id=T,
+            collection_id="c",
+            document_id="csv1",
+            path=str(self.csv),
+            content_type=CSV_CT,
+            metadata=ManufacturingDocumentMetadata(
+                tenant_id=T,
+                document_id="csv1",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-01-10",
+                document_kind=DocumentKind.QUALITY_REPORT,
+                defect_type="crack",
+                part_no="P900",
+            ),
         )
         # baseline KPI BEFORE any query (analyze C2).
         baseline = sys.kpi(self.admin, format="json")
         self.assertEqual(baseline["high_risk_query_count"], 0)
         self.assertEqual(baseline["safety_gate_block_count"], 0)
         # search by defect/part.
-        hits = sys.search(self.op, "crack defect P900 housing", manufacturing_filters={"part_no": "P900"})
+        hits = sys.search(
+            self.op, "crack defect P900 housing", manufacturing_filters={"part_no": "P900"}
+        )
         self.assertTrue(any(r.document_id == "csv1" for r in hits))
         # high-risk answer with approved evidence answers (approved-citation present).
         ans = sys.answer(self.op, "How do I disassemble the press safely?", collection_id="c")
@@ -593,12 +803,21 @@ class S11_PocVerticalSlice(unittest.TestCase):
         self.assertEqual(ans.status, "ok")
         self.assertEqual(ans.citations[0].approval_status, "approved")
         # draft generated, never auto-approved.
-        art = sys.generate_draft(principal=self.op, kind=DraftType.CHECKLIST, source_document_ids=("docx1",))
+        art = sys.generate_draft(
+            principal=self.op, kind=DraftType.CHECKLIST, source_document_ids=("docx1",)
+        )
         self.assertEqual(_val(art.status), DraftStatus.DRAFT.value)
         # PoC KPI rises above baseline (the slice activity is measured).
         final = sys.kpi(self.admin, format="json")
-        self.assertGreater(final["high_risk_query_count"], baseline["high_risk_query_count"], "S11: PoC KPI measures the slice activity")
-        self.assertTrue(sys.audit.verify_chain(self.admin), "S11: audit accumulates and verifies through the slice")
+        self.assertGreater(
+            final["high_risk_query_count"],
+            baseline["high_risk_query_count"],
+            "S11: PoC KPI measures the slice activity",
+        )
+        self.assertTrue(
+            sys.audit.verify_chain(self.admin),
+            "S11: audit accumulates and verifies through the slice",
+        )
 
 
 if __name__ == "__main__":

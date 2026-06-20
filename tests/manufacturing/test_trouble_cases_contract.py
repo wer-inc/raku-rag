@@ -47,6 +47,7 @@ an unrelated import error. Assertion style mirrors tests/manufacturing/test_draf
 stdlib only. Authoritative: spec FR-MFG-008/009, Hard Rule 4; quickstart S5; contracts/mfg-openapi.md
 §C; contracts/mfg-interfaces.md §5; data-model §D.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -139,7 +140,9 @@ class TestTroubleCaseSearchResponseShape(unittest.TestCase):
 
     def test_similar_case_is_listed(self) -> None:
         resp = self.sys.search_trouble_cases(self.op, SYMPTOM_QUERY)
-        self.assertEqual(_status_value(resp), "ok", "seeded similar case should be retrievable (S5)")
+        self.assertEqual(
+            _status_value(resp), "ok", "seeded similar case should be retrievable (S5)"
+        )
         self.assertTrue(resp.results, "must list at least the seeded similar TroubleCase")
         self.assertTrue(
             any(m.trouble_case_id == "tc_1" for m in resp.results),
@@ -152,18 +155,28 @@ class TestTroubleCaseSearchResponseShape(unittest.TestCase):
         self.assertEqual(m.symptom, "振動増加＋異音")
         self.assertEqual(m.equipment_id, "eq_3")
         self.assertEqual(m.process_id, "pr_1")
-        self.assertIsNotNone(m.failure_mode, "the FailureMode (cause) must be resolved on the match")
+        self.assertIsNotNone(
+            m.failure_mode, "the FailureMode (cause) must be resolved on the match"
+        )
         self.assertEqual(m.failure_mode.name, "軸受摩耗")
-        self.assertTrue(m.failure_mode.description, "FailureMode description (cause) must be present")
+        self.assertTrue(
+            m.failure_mode.description, "FailureMode description (cause) must be present"
+        )
 
     def test_match_splits_provisional_and_permanent_countermeasures(self) -> None:
         # G4 / FR-MFG-008: provisional vs permanent shown as a SEPARATE measure_class axis.
         m = self._match(self.sys.search_trouble_cases(self.op, SYMPTOM_QUERY))
         cm = m.countermeasures
-        self.assertTrue(hasattr(cm, "provisional"), "countermeasures must expose a .provisional split")
+        self.assertTrue(
+            hasattr(cm, "provisional"), "countermeasures must expose a .provisional split"
+        )
         self.assertTrue(hasattr(cm, "permanent"), "countermeasures must expose a .permanent split")
-        self.assertTrue(cm.provisional, "the provisional countermeasure must be in the provisional bucket")
-        self.assertTrue(cm.permanent, "the permanent countermeasure must be in the permanent bucket")
+        self.assertTrue(
+            cm.provisional, "the provisional countermeasure must be in the provisional bucket"
+        )
+        self.assertTrue(
+            cm.permanent, "the permanent countermeasure must be in the permanent bucket"
+        )
         # each bucket only holds its own measure_class
         for c in cm.provisional:
             self.assertEqual(_enum_value(c.measure_class), MeasureClass.PROVISIONAL.value)
@@ -177,7 +190,9 @@ class TestTroubleCaseSearchResponseShape(unittest.TestCase):
         all_cms = tuple(m.countermeasures.provisional) + tuple(m.countermeasures.permanent)
         self.assertTrue(all_cms, "match must carry at least one countermeasure")
         for c in all_cms:
-            self.assertTrue(getattr(c, "label", None), "every countermeasure must carry a display label")
+            self.assertTrue(
+                getattr(c, "label", None), "every countermeasure must carry a display label"
+            )
             self.assertEqual(
                 _enum_value(c.type),
                 CountermeasureType.CANDIDATE.value,

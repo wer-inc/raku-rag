@@ -81,4 +81,3 @@ else
     echo "SPECS_DIR: $FEATURE_DIR"
     echo "BRANCH: $CURRENT_BRANCH"
 fi
-

@@ -1,0 +1,18 @@
+SET search_path TO public;
+
+DROP TABLE IF EXISTS evaluation_runs CASCADE;
+DROP TABLE IF EXISTS provider_config_audit_events CASCADE;
+DROP TABLE IF EXISTS rerank_traces CASCADE;
+DROP TABLE IF EXISTS embedding_jobs CASCADE;
+DROP TABLE IF EXISTS logging_policies CASCADE;
+DROP TABLE IF EXISTS retrieval_profiles CASCADE;
+DROP TABLE IF EXISTS provider_policies CASCADE;
+DROP TABLE IF EXISTS reindex_plans CASCADE;
+DROP TABLE IF EXISTS asset_materialization_refs CASCADE;
+DROP TABLE IF EXISTS source_document_manifests CASCADE;
+DROP TABLE IF EXISTS budgets CASCADE;
+DROP TABLE IF EXISTS cost_records CASCADE;
+DROP TABLE IF EXISTS embeddings CASCADE;
+DROP TABLE IF EXISTS crops CASCADE;
+DROP TABLE IF EXISTS layout_regions CASCADE;
+DROP TABLE IF EXISTS visual_assets CASCADE;

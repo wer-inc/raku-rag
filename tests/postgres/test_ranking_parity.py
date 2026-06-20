@@ -9,6 +9,7 @@ truncate the visible chunk out of ``top_k``.
 Skip-guarded on Postgres availability (Tier B / local-only); the security hard-gate parity lives in
 ``tests/security`` run with ``RAKU_TEST_BACKEND=postgres``.
 """
+
 from __future__ import annotations
 
 import os
@@ -62,7 +63,9 @@ class TestRankingParity(unittest.TestCase):
         mvp_order = [r.chunk.document_id for r in mvp.search(who, self.QUERY)]
         prod_order = [r.chunk.document_id for r in prod.search(who, self.QUERY)]
         self.assertEqual(mvp_order, ["d1", "d2", "d3", "d4"], "oracle ordering sanity")
-        self.assertEqual(prod_order, mvp_order, "pgvector ranking must match the in-memory oracle order")
+        self.assertEqual(
+            prod_order, mvp_order, "pgvector ranking must match the in-memory oracle order"
+        )
 
     def test_topk_does_not_truncate_before_acl(self) -> None:
         # A non-visible chunk (X, collection 'hid') ranks BETWEEN two visible ones (A>X>B by similarity).
@@ -72,12 +75,21 @@ class TestRankingParity(unittest.TestCase):
 
         prod = ProductionSystem(DSN, reset=True)
         self.addCleanup(prod.close)
-        prod.ingest_text(tenant_id="T", collection_id="vis", document_id="A",
-                         text="turbine bearing vibration noise spectrum")
-        prod.ingest_text(tenant_id="T", collection_id="hid", document_id="X",
-                         text="turbine bearing vibration alignment")
-        prod.ingest_text(tenant_id="T", collection_id="vis", document_id="B",
-                         text="turbine bearing lubrication")
+        prod.ingest_text(
+            tenant_id="T",
+            collection_id="vis",
+            document_id="A",
+            text="turbine bearing vibration noise spectrum",
+        )
+        prod.ingest_text(
+            tenant_id="T",
+            collection_id="hid",
+            document_id="X",
+            text="turbine bearing vibration alignment",
+        )
+        prod.ingest_text(
+            tenant_id="T", collection_id="vis", document_id="B", text="turbine bearing lubrication"
+        )
         prod.grant("T", ScopeType.COLLECTION, "vis", SubjectType.USER, "alice")
 
         who = claims("T", "alice")

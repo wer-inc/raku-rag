@@ -24,6 +24,7 @@ S6. Assertion style mirrors tests/security/test_acl_leak.py and tests/manufactur
 TDD: RED now because ``raku_rag.manufacturing.app.ManufacturingSystem`` has no draft entrypoints yet
 (missing-impl) — NOT an unrelated import error.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -143,9 +144,7 @@ class TestReviewerRequiredForApproved(unittest.TestCase):
         self.sys = fresh()
         self.author = claims(T, "author")
         self.art = self.sys.generate_draft(principal=self.author, kind=DraftType.TRAINING)
-        self.sys.assign_reviewer(
-            tenant_id=T, artifact_id=self.art.artifact_id, reviewer_id="rev_9"
-        )
+        self.sys.assign_reviewer(tenant_id=T, artifact_id=self.art.artifact_id, reviewer_id="rev_9")
 
     def test_approved_is_attributable_to_the_reviewer(self) -> None:
         reviewer = claims(T, "rev_9", roles=("reviewer",))

@@ -19,6 +19,7 @@ Entrypoint contract asserted here (the impl T029/T030 must satisfy):
 TDD: RED now because ``ingest_manufacturing_file`` is unimplemented on ``ManufacturingSystem``.
 Authoritative: quickstart S1, contracts/mfg-openapi.md §B, FR-MFG-001/003.
 """
+
 from __future__ import annotations
 
 import csv

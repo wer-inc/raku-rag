@@ -10,6 +10,7 @@ US2 (T025/T026) ADDS, behind the SAME 001 ``Parser`` abstraction (no new search/
     single cell (FR-MFG-002). The anchor token is parsed back out of the chunk text / Chunk.metadata
     by the manufacturing search overlay to expose the cell coordinate.
 """
+
 from __future__ import annotations
 
 import csv

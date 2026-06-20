@@ -3,6 +3,7 @@
 Cross-tenant search is forbidden in the MVP (FR-021a). Collections/documents named in a request
 that belong to another tenant are treated as non-existent (no existence disclosure).
 """
+
 from __future__ import annotations
 
 from raku_rag.core.errors import TenantIsolationError

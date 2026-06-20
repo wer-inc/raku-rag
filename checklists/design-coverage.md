@@ -1111,4 +1111,3 @@
 - Technical stack gaps:
 - Security/governance gaps:
 - Recommended next action:
-

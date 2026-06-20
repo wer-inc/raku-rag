@@ -5,6 +5,7 @@ Verifies the three hard guarantees:
   (b) cross-tenant reads raise (001 tenancy reused, no existence disclosure),
   (c) the reused 001 Redactor is applied to free-text fields at write time.
 """
+
 from __future__ import annotations
 
 import unittest

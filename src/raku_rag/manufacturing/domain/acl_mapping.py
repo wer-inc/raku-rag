@@ -31,6 +31,7 @@ tenant-isolation-denied event into the reused ``AuditLogWriter`` (reference IDs 
 
 Helper only — the visibility predicate itself is 001's; this module is the translation + wiring layer.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterable

@@ -5,13 +5,19 @@ import type { FormEvent } from "react";
 import { answer } from "../lib/api-client";
 import type { AnswerResponse } from "@raku-rag/shared";
 
-// Step 4b — minimal manufacturing-knowledge chat UI. Posts to the NestJS facade (/v1/answer), which
-// forwards to the Python answer-service over the Postgres + pgvector + RLS ProductionSystem. The identity
-// is taken from the signed token; switch tenant/user to see ACL + tenant isolation in the response.
-function makeToken(tenantId: string, userId: string): string {
-  const json = JSON.stringify({ tenant_id: tenantId, user_id: userId, groups: [], roles: [] });
-  // base64url (NestJS parseUserToken decodes base64url, padding optional)
-  return btoa(json).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+// Step 4b — minimal manufacturing-knowledge chat UI. A local-only Next route mints the signed dev token;
+// the browser never sees the signing secret.
+async function makeToken(tenantId: string, userId: string): Promise<string> {
+  const res = await fetch("/api/dev-token", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tenant_id: tenantId, user_id: userId, groups: [], roles: [] }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || typeof body.token !== "string") {
+    throw new Error(typeof body.error === "string" ? body.error : "failed to mint local dev token");
+  }
+  return body.token;
 }
 
 export default function Home() {
@@ -28,7 +34,8 @@ export default function Home() {
     setError(null);
     setRes(null);
     try {
-      setRes(await answer({ query }, makeToken(tenant, user)));
+      const token = await makeToken(tenant, user);
+      setRes(await answer({ query }, token));
     } catch (err) {
       setError(String(err));
     } finally {

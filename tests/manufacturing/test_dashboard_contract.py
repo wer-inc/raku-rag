@@ -54,6 +54,7 @@ yet (missing-impl: AttributeError), NOT an unrelated import error.
 stdlib only. Authoritative: spec FR-MFG-012/028/030, SC-MFG-012/013; quickstart S10;
 contracts/mfg-openapi.md §E; contracts/mfg-interfaces.md §8; data-model §I.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -192,7 +193,9 @@ def _seed_and_drive(sys) -> None:
     # high-risk + asserts (approved citation) — produces high_risk + citation access in audit.
     sys.answer(op, "How do I disassemble the press safely after lockout/tagout?", collection_id="c")
     # high-risk + blocked (only draft evidence) — approved_citation_missing.
-    sys.answer(op, "How do I work on the 400V panel without getting electrocuted?", collection_id="c")
+    sys.answer(
+        op, "How do I work on the 400V panel without getting electrocuted?", collection_id="c"
+    )
     # non-high-risk question whose only evidence is obsolete — does not assert (insufficient_evidence).
     sys.answer(op, "what is the torque spec for the bracket assembly?", collection_id="c")
 
@@ -219,7 +222,9 @@ class TestSafetyTelemetryResponseShape(unittest.TestCase):
         # The breakdown is keyed ONLY by the three mutually-exclusive SafetyBlockReason codes (§E).
         tel = self.sys.safety_telemetry(self.admin)
         bd = _breakdown(tel)
-        self.assertTrue(set(bd.keys()) <= BLOCK_CODES, f"unexpected breakdown keys: {set(bd.keys())}")
+        self.assertTrue(
+            set(bd.keys()) <= BLOCK_CODES, f"unexpected breakdown keys: {set(bd.keys())}"
+        )
 
     def test_source_is_audit_log(self) -> None:
         # FR-MFG-030: audit log is the single source of truth. The view declares its provenance.
@@ -312,7 +317,9 @@ class TestKpiResponseShapeAndExport(unittest.TestCase):
         # safety-telemetry counters are part of the KPI snapshot (FR-MFG-028 specializes FR-MFG-030).
         self.assertIsInstance(kpi["high_risk_query_count"], int)
         self.assertIsInstance(kpi["safety_gate_block_count"], int)
-        self.assertIn("materialized_at", kpi, "KPI snapshot must record materialized_at (data-model §I)")
+        self.assertIn(
+            "materialized_at", kpi, "KPI snapshot must record materialized_at (data-model §I)"
+        )
 
     def test_kpi_csv_export_is_text_and_contains_every_kpi(self) -> None:
         # SC-MFG-012: the FR-MFG-028 KPI set must be EXPORTABLE (json/csv).
@@ -326,7 +333,9 @@ class TestKpiResponseShapeAndExport(unittest.TestCase):
         kpi = self.sys.kpi(self.admin, format="json")
         tel = self.sys.safety_telemetry(self.admin)
         self.assertEqual(kpi["high_risk_query_count"], _attr_or_key(tel, "high_risk_query_count"))
-        self.assertEqual(kpi["safety_gate_block_count"], _attr_or_key(tel, "safety_gate_block_count"))
+        self.assertEqual(
+            kpi["safety_gate_block_count"], _attr_or_key(tel, "safety_gate_block_count")
+        )
 
 
 if __name__ == "__main__":

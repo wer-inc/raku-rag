@@ -315,20 +315,20 @@ tests（P1-T10/T21/T23/T24/T58/T64/T68）は対応 impl を gate し、baseline 
 ## Phase 0/1 Acceptance Checklist
 
 Phase 0 exit:
-- [ ] `docker compose up` で全 local 依存（Postgres+pgvector / MinIO / LocalStack SQS / trace sink）起動（RT1）
-- [ ] migrations 適用（RT2）・pgvector extension 有効（RT3）
-- [ ] deterministic mock providers で ingestion/search/answer contract test 実行可
-- [ ] CI が lint→unit→contract→integration→🔒security-hard-gate→eval を blocking で実行
+- [X] `docker compose up` で全 local 依存（Postgres+pgvector / MinIO / LocalStack SQS / trace sink）起動（RT1）
+- [X] migrations 適用（RT2）・pgvector extension 有効（RT3）
+- [X] deterministic mock providers で ingestion/search/answer contract test 実行可
+- [X] CI が lint→unit→contract→integration→🔒security-hard-gate→eval を blocking で実行
 
 Phase 1 exit（security hard gate は 1 件でも fail で merge 不可）:
-- [ ] 🔒 tenant leakage = 0（RT4）/ cross-tenant vector search 漏洩 = 0（RT5）
-- [ ] 🔒 ACL pre-filter、denied chunk が rerank/LLM/citation に出ない（RT6/7/8）
-- [ ] insufficient_evidence 正答（RT9）・citation に document_id/chunk_id/range（RT10）
-- [ ] no-train 既定 active（RT11）かつ auditable（RT12）
-- [ ] 🔒 Langfuse が raw retrieved context を既定保存しない（RT13）
-- [ ] audit event に tenant_id/actor_id/action/resource/decision/trace_id（RT14）
-- [ ] ingestion job 冪等再試行（RT15）・🔒 tombstoned document 非検索（RT16）
-- [ ] mock answer end-to-end（RT17）・eval smoke 実行（RT18）
+- [X] 🔒 tenant leakage = 0（RT4）/ cross-tenant vector search 漏洩 = 0（RT5）
+- [X] 🔒 ACL pre-filter、denied chunk が rerank/LLM/citation に出ない（RT6/7/8）
+- [X] insufficient_evidence 正答（RT9）・citation に document_id/chunk_id/range（RT10）
+- [X] no-train 既定 active（RT11）かつ auditable（RT12）
+- [X] 🔒 Langfuse が raw retrieved context を既定保存しない（RT13）
+- [X] audit event に tenant_id/actor_id/action/resource/decision/trace_id（RT14）
+- [X] ingestion job 冪等再試行（RT15）・🔒 tombstoned document 非検索（RT16）
+- [X] mock answer end-to-end（RT17）・eval smoke 実行（RT18）
 
 ## Out-of-Scope for Phase 0/1（backlog にマップ）
 
@@ -357,10 +357,10 @@ ADR-015 の schema_version / policy lifecycle fields / hot-field index は P1-T0
 ## Phase 1: Setup (Shared Infrastructure)
 
 - [X] T001 Create project structure `src/raku_rag/{api,core,domain,interfaces,providers,pipelines,services,workers,persistence,observability,eval}` と `tests/{unit,contract,integration,security}` per plan.md
-- [ ] T002 Initialize monorepo: NestJS API (`apps/api`), Next.js + Vercel AI SDK client (`apps/web`), Python 3.12 ingest/eval worker (`workers/ingest`), shared contracts package, and CDK TypeScript app (`infra/cdk`)
-- [ ] T003 [P] Configure lint/format/type (ruff, black, mypy) + pre-commit
-- [ ] T004 [P] docker-compose + testcontainers: PostgreSQL+pgvector / MinIO(S3) / Redis / LocalStack SQS / Langfuse / optional Dagster dev services in `docker-compose.yml`, `tests/conftest.py`
-- [ ] T005 [P] CI pipeline skeleton (lint→unit→contract→integration→**security hard gate**→eval gate) in `.github/workflows/ci.yml`
+- [X] T002 Initialize monorepo: NestJS API (`apps/api`), Next.js + Vercel AI SDK client (`apps/web`), Python 3.12 ingest/eval worker (`workers/ingest`), shared contracts package, and CDK TypeScript app (`infra/cdk`)
+- [X] T003 [P] Configure lint/format/type (ruff, black, mypy) + pre-commit
+- [X] T004 [P] docker-compose + testcontainers: PostgreSQL+pgvector / MinIO(S3) / Redis / LocalStack SQS / Langfuse / optional Dagster dev services in `docker-compose.yml`, `tests/conftest.py`
+- [X] T005 [P] CI pipeline skeleton (lint→unit→contract→integration→**security hard gate**→eval gate) in `.github/workflows/ci.yml`
 - [X] T006 [P] Environment configuration management in `src/raku_rag/core/config.py`
 
 ---
@@ -370,24 +370,24 @@ ADR-015 の schema_version / policy lifecycle fields / hot-field index は P1-T0
 **⚠️ CRITICAL**: 完了まで User Story 着手不可
 
 - [X] T007 Define domain schemas/value objects (Pydantic) in `src/raku_rag/domain/` (Tenant, Collection, DataSource, Document, Chunk[modality], VisualAsset, LayoutRegion[+caption fields], Crop, ACLGrant, QueryProfile, Query/Answer, Citation[kind], CostRecord/Budget, IdentityClaims)
-- [ ] T008 Database models + migrations — 全テーブル `tenant_id` 必須、`tombstone`/`deleted_at` 索引、caption fields、crop、ACL/cost/audit テーブル、embedding `modality`/`target_type`、SourceSyncState / SourceDocumentManifest / DocumentProcessingState / IngestionRun / AssetMaterializationRef / ReindexPlan、ProviderPolicy / RetrievalProfile / LoggingPolicy / EmbeddingJob / RerankTrace / ProviderConfigAuditEvent。**ADR-015 lock additions**: `metadata_schema_version`(default 1) を Document/Chunk/VisualAsset/LayoutRegion の JSONB metadata に; `profile_version`/`schema_version`/`effective_from`/`deprecated_at` を ProviderPolicy/RetrievalProfile/LoggingPolicy/QueryProfile に; document_type/approval_status/effective_date + 識別子 hot field の expression-index/generated-column（data-model.md "Phase 0/1 Lock Schema Additions" 参照）。これらが欠落したら migration/contract test を FAIL させる
+- [X] T008 Database models + migrations — 全テーブル `tenant_id` 必須、`tombstone`/`deleted_at` 索引、caption fields、crop、ACL/cost/audit テーブル、embedding `modality`/`target_type`、SourceSyncState / SourceDocumentManifest / DocumentProcessingState / IngestionRun / AssetMaterializationRef / ReindexPlan、ProviderPolicy / RetrievalProfile / LoggingPolicy / EmbeddingJob / RerankTrace / ProviderConfigAuditEvent。**ADR-015 lock additions**: `metadata_schema_version`(default 1) を Document/Chunk/VisualAsset/LayoutRegion の JSONB metadata に; `profile_version`/`schema_version`/`effective_from`/`deprecated_at` を ProviderPolicy/RetrievalProfile/LoggingPolicy/QueryProfile に; document_type/approval_status/effective_date + 識別子 hot field の expression-index/generated-column（data-model.md "Phase 0/1 Lock Schema Additions" 参照）。これらが欠落したら migration/contract test を FAIL させる
 - [X] T009 [P] Define abstract interfaces in shared contracts / worker interfaces — **計13 provider抽象**: Connector, Parser, OcrEngine, LayoutExtractor, Chunker, CaptioningProvider, EmbeddingProvider, VisualEmbeddingProvider, VectorStore, Reranker, LLMProvider, VLMProvider, TaskQueue plus ProviderPolicyService, RetrievalProfileService, LoggingPolicyEnforcer, GuardrailsAdapter
 - [X] T010 [P] Implement TokenVerifier (signed token → IdentityClaims) in `src/raku_rag/core/security/token.py`
 - [X] T011 Implement AclPolicy (deny-by-default, tenant→collection→document 階層, `visibility_filter`, `assert_visible`) in `src/raku_rag/core/security/acl.py` (depends T009)
 - [X] T012 Implement tenancy enforcement (tenant_id 伝播, クロステナント拒否) in `src/raku_rag/core/tenancy.py`
 - [X] T013 [P] Implement Redactor (PII/secret 検出・分類・マスク; テキスト + 画像領域 + EXIF フック) in `src/raku_rag/observability/redaction.py`
 - [X] T014 [P] Structured logging with mandatory redaction in `src/raku_rag/observability/logging.py` (depends T013)
-- [ ] T015 [P] OpenTelemetry tracing (correlation_id 伝播) in `src/raku_rag/observability/tracing.py`
-- [ ] T016 [P] Prometheus metrics in `src/raku_rag/observability/metrics.py`
+- [X] T015 [P] OpenTelemetry tracing (correlation_id 伝播) in `src/raku_rag/observability/tracing.py`
+- [X] T016 [P] Prometheus metrics in `src/raku_rag/observability/metrics.py`
 - [X] T017 Error model + API status (`ok|insufficient_evidence|budget_exceeded|temporarily_unavailable`) in `src/raku_rag/core/errors.py`
-- [ ] T018 TaskQueue adapter for SQS + DLQ + circuit breaker, with local/dev adapter, in `workers/ingest/queue/` and shared TaskQueue contract (depends T009)
+- [X] T018 TaskQueue adapter for SQS + DLQ + circuit breaker, with local/dev adapter, in `workers/ingest/queue/` and shared TaskQueue contract (depends T009)
 - [X] T019 pgvector VectorStore: **ACL pre-filter + tombstone exclusion + tenant 分離 + modality 対応** in `src/raku_rag/providers/vectorstores/pgvector.py` (depends T008, T009, T011)
-- [ ] T020 NestJS API app skeleton + `/v1` versioning + auth middleware (API key + `X-User-Token`) in `apps/api/src/main.ts` and `apps/api/src/auth/` (depends T010, T012, T017)
+- [X] T020 NestJS API app skeleton + `/v1` versioning + auth middleware (API key + `X-User-Token`) in `apps/api/src/main.ts` and `apps/api/src/auth/` (depends T010, T012, T017)
 - [X] T021 **CostService + Budget + cache layer**（tenant/collection/job/query cost 記録、budget 強制で `budget_exceeded`、retrieval/answer cache 基盤; 旧 analyze C1 解消）in `src/raku_rag/services/cost.py`, `src/raku_rag/services/cache.py` (depends T008, T017)
 
-- [ ] T021a [P] Dagster project skeleton in `src/raku_rag/dagster/` — assets/resources/jobs/sensors/schedules/checks、tenant/collection/source/sync_run 粒度の partition 方針、Dagster run URL 生成 helper（online search/answer path からは呼ばない）
-- [ ] T021b Implement sync/processing state repositories in `src/raku_rag/persistence/` — SourceSyncState / SourceDocumentManifest / DocumentProcessingState / IngestionRun / AssetMaterializationRef / ReindexPlan の CRUD と app-facing status projection（depends T008）
-- [ ] T021c [P] Contract tests for ingestion run / sync status APIs in `tests/contract/test_ingestion_status.py` — `/v1/admin/sources/{source_id}/sync-status`, `/v1/admin/ingestion-runs/{ingestion_run_id}`, `/v1/admin/documents/{document_id}/processing-status`
+- [X] T021a [P] Dagster project skeleton in `src/raku_rag/dagster/` — assets/resources/jobs/sensors/schedules/checks、tenant/collection/source/sync_run 粒度の partition 方針、Dagster run URL 生成 helper（online search/answer path からは呼ばない）
+- [X] T021b Implement sync/processing state repositories in `src/raku_rag/persistence/` — SourceSyncState / SourceDocumentManifest / DocumentProcessingState / IngestionRun / AssetMaterializationRef / ReindexPlan の CRUD と app-facing status projection（depends T008）
+- [X] T021c [P] Contract tests for ingestion run / sync status APIs in `tests/contract/test_ingestion_status.py` — `/v1/admin/sources/{source_id}/sync-status`, `/v1/admin/ingestion-runs/{ingestion_run_id}`, `/v1/admin/documents/{document_id}/processing-status`
 
 **Checkpoint**: 基盤完成（認証・テナント・ACL・観測・コスト・VectorStore・Dagster control plane state）
 
@@ -400,7 +400,7 @@ ADR-015 の schema_version / policy lifecycle fields / hot-field index は P1-T0
 **Independent Test**: seed チャンクで (a) 答えあり→引用付き回答 (b) 答えなし→`insufficient_evidence`。
 
 ### Tests ⚠️
-- [ ] T022 [P] [US1] Contract test `POST /v1/search` & `/v1/answer` in `tests/contract/test_search_answer.py`
+- [X] T022 [P] [US1] Contract test `POST /v1/search` & `/v1/answer` in `tests/contract/test_search_answer.py`
 - [X] T023 [P] [US1] Integration: seeded chunks → answer + citations + used_chunks in `tests/integration/test_answer.py`
 - [X] T024 [P] [US1] Integration: no-evidence → `insufficient_evidence` in `tests/integration/test_insufficient_evidence.py`
 - [X] T025 [P] [US1] **Security hard-gate — ACL漏洩**: 権限外チャンクが result/rerank/LLM context/citation に出ない in `tests/security/test_acl_leak.py`
@@ -420,9 +420,9 @@ ADR-015 の schema_version / policy lifecycle fields / hot-field index は P1-T0
 - [X] T030 [US1] GroundednessGate (pre-gate score/evidence + post-generation evidence check) in `src/raku_rag/services/groundedness.py`
 - [X] T031 [US1] AnswerService (context=権限確認済みのみ, citations, used_chunks, confidence, **budget チェック via CostService**) in `src/raku_rag/services/answer.py` (depends T026, T029, T030, T021)
 - [X] T031b [US1] **Freshness 反映（FR-005b）**: search/answer レスポンスに `indexed_at`・`source_freshness`・`document_version`(または source revision/checksum) を含め、使用された visual asset/OCR/generated caption についても indexed_at/freshness を反映。contracts/openapi.md の response shape を実装・検証対象とする in `apps/api/src/search/search.controller.ts`, `apps/api/src/answer/answer.controller.ts`, `apps/api/src/answer/answer.service.ts`
-- [ ] T032 [US1] search & answer controllers in `apps/api/src/search/search.controller.ts`, `apps/api/src/answer/answer.controller.ts` (depends T026, T031)
+- [X] T032 [US1] search & answer controllers in `apps/api/src/search/search.controller.ts`, `apps/api/src/answer/answer.controller.ts` (depends T026, T031)
 - [X] T033 [US1] Wire QueryProfile (score_threshold/top_k/minimum_evidence_count/model) in `src/raku_rag/services/profile.py`
-- [ ] T034 [US1] tracing/metrics/audit + **cost 記録(LLM/embedding token)** in `src/raku_rag/services/answer.py`, `retrieval.py` (depends T021)
+- [X] T034 [US1] tracing/metrics/audit + **cost 記録(LLM/embedding token)** in `src/raku_rag/services/answer.py`, `retrieval.py` (depends T021)
 
 **Checkpoint**: US1 が seed データで独立機能（引用・根拠不足・ACL pre-filter・budget）
 
@@ -436,24 +436,24 @@ ADR-015 の schema_version / policy lifecycle fields / hot-field index は P1-T0
 
 ### Tests ⚠️
 - [X] T035 [P] [US2] Integration: ingest PDF/MD/HTML/text(+日本語) → indexed in `tests/integration/test_ingest.py`
-- [ ] T036 [P] [US2] Integration: 壊れ文書 → failed + 個別再実行 in `tests/integration/test_ingest_failure.py`
+- [X] T036 [P] [US2] Integration: 壊れ文書 → failed + 個別再実行 in `tests/integration/test_ingest_failure.py`
 - [X] T037 [P] [US2] **Security hard-gate**: 削除 → search/answer/citation/cache 再出現0 in `tests/security/test_deletion_reappearance.py`
 - [X] T038 [P] [US2] Integration: 差分同期 checksum、旧version残存0 in `tests/integration/test_diff_sync.py`
 
 ### Implementation
-- [ ] T039 [P] [US2] Connector (upload / object storage S3互換) in `src/raku_rag/providers/connectors/`
+- [X] T039 [P] [US2] Connector (upload / object storage S3互換) in `src/raku_rag/providers/connectors/`
 - [X] T040 [P] [US2] Parser (pdf/markdown/html/text, 日本語 NFKC 正規化) in `src/raku_rag/providers/parsers/`
 - [X] T041 [P] [US2] Chunker (構造+文境界, offset_mapping, heading_path, 日本語境界) in `src/raku_rag/providers/chunkers/`
 - [X] T042 [US2] IngestionService (Document version/checksum 登録, IngestionRun queued 作成) in `src/raku_rag/services/ingestion.py` (depends T018)
-- [ ] T043 [US2] ingestion/indexing executor helpers used by Dagster assets (parse→chunk→embed→upsert[tx]) in `src/raku_rag/workers/ingestion.py` (depends T018, T019, T040, T041, T027)
+- [X] T043 [US2] ingestion/indexing executor helpers used by Dagster assets (parse→chunk→embed→upsert[tx]) in `src/raku_rag/workers/ingestion.py` (depends T018, T019, T040, T041, T027)
 - [X] T044 [US2] DeletionService (tombstone 即時 + 非同期カスケード + cache invalidation: retrieval/answer cache) in `src/raku_rag/services/deletion.py` (depends T019, T021)
 - [X] T045 [US2] diff-sync + re-embedding decision service (checksum/parser/chunking/embedding_model_version) in `src/raku_rag/services/sync.py`
-- [ ] T045a [US2] Implement Dagster assets in `src/raku_rag/dagster/assets/ingestion.py` — `source_manifest`, `changed_document_manifest`, `raw_document_artifacts`, `parsed_document_elements`, `chunks`, `embeddings`, `vector_index_entries`。asset 粒度は tenant/collection/source/sync_run、document_id/chunk_id 詳細は DocumentProcessingState に保存（depends T021a, T021b, T039-T041, T027, T019）
-- [ ] T045b [US2] Implement diff decision rules in Dagster asset/resource — content_checksum 不変なら parse/chunk/embedding skip、approval_metadata_checksum のみ変化なら metadata + safety/index filter update のみ、parser/chunking version 変更なら reparse/rechunk、embedding_model_version 変更なら reembedding/backfill 対象（depends T045a）
-- [ ] T045c [US2] Implement source deletion tombstone path — SourceDocumentManifest.deleted_in_source=true を観測したら PostgreSQL tombstone + cache invalidation を即時反映し、Dagster physical cleanup を待たず search/answer/citation/cache から除外（depends T044, T045a）
-- [ ] T046 [US2] reindex (並行構築→切替→旧version tombstone) in `src/raku_rag/services/reindex.py` and Dagster ReindexPlan/backfill job in `src/raku_rag/dagster/jobs/reindex.py`
-- [ ] T047 [US2] ingest & admin job controllers (status/retry/delete/reindex/sync-status) in `apps/api/src/ingest/ingest.controller.ts`, `apps/api/src/admin/jobs.controller.ts` — IngestionRun / SourceSyncState / DocumentProcessingState を返し、内部運用者向けに dagster_run_id / run URL を表示可能
-- [ ] T048 [US2] backup/restore re-apply of tombstone/deletion log in `src/raku_rag/services/deletion.py`
+- [X] T045a [US2] Implement Dagster assets in `src/raku_rag/dagster/assets/ingestion.py` — `source_manifest`, `changed_document_manifest`, `raw_document_artifacts`, `parsed_document_elements`, `chunks`, `embeddings`, `vector_index_entries`。asset 粒度は tenant/collection/source/sync_run、document_id/chunk_id 詳細は DocumentProcessingState に保存（depends T021a, T021b, T039-T041, T027, T019）
+- [X] T045b [US2] Implement diff decision rules in Dagster asset/resource — content_checksum 不変なら parse/chunk/embedding skip、approval_metadata_checksum のみ変化なら metadata + safety/index filter update のみ、parser/chunking version 変更なら reparse/rechunk、embedding_model_version 変更なら reembedding/backfill 対象（depends T045a）
+- [X] T045c [US2] Implement source deletion tombstone path — SourceDocumentManifest.deleted_in_source=true を観測したら PostgreSQL tombstone + cache invalidation を即時反映し、Dagster physical cleanup を待たず search/answer/citation/cache から除外（depends T044, T045a）
+- [X] T046 [US2] reindex (並行構築→切替→旧version tombstone) in `src/raku_rag/services/reindex.py` and Dagster ReindexPlan/backfill job in `src/raku_rag/dagster/jobs/reindex.py`
+- [X] T047 [US2] ingest & admin job controllers (status/retry/delete/reindex/sync-status) in `apps/api/src/ingest/ingest.controller.ts`, `apps/api/src/admin/jobs.controller.ts` — IngestionRun / SourceSyncState / DocumentProcessingState を返し、内部運用者向けに dagster_run_id / run URL を表示可能
+- [X] T048 [US2] backup/restore re-apply of tombstone/deletion log in `src/raku_rag/services/deletion.py`
 
 **Checkpoint**: US1+US2 で取り込み→検索→引用付き回答のフルパス成立（MVP）
 
@@ -461,11 +461,11 @@ ADR-015 の schema_version / policy lifecycle fields / hot-field index は P1-T0
 
 ## Phase 5: User Story 3 - アプリ開発者によるAPI組み込み (Priority: P2)
 
-- [ ] T049 [P] [US3] Contract test: OpenAPI 全面 (schemathesis) in `tests/contract/test_openapi.py`
-- [ ] T050 [US3] Finalize OpenAPI/Swagger 生成・公開 in `apps/api/src/openapi/`
-- [ ] T051 [US3] admin 設定 API (datasources, retrieval/query profiles[+captioning toggle], provider policies, logging policies, acl, budgets) in `apps/api/src/admin/`
-- [ ] T052 [P] [US3] Python SDK client in `sdk/python/`
-- [ ] T053 [US3] API versioning + Deprecation/Sunset ヘッダ in `apps/api/src/main.ts` and `apps/api/src/versioning/`
+- [X] T049 [P] [US3] Contract test: OpenAPI 全面 (schemathesis) in `tests/contract/test_openapi.py`
+- [X] T050 [US3] Finalize OpenAPI/Swagger 生成・公開 in `apps/api/src/openapi/`
+- [X] T051 [US3] admin 設定 API (datasources, retrieval/query profiles[+captioning toggle], provider policies, logging policies, acl, budgets) in `apps/api/src/admin/`
+- [X] T052 [P] [US3] Python SDK client in `sdk/python/`
+- [X] T053 [US3] API versioning + Deprecation/Sunset ヘッダ in `apps/api/src/main.ts` and `apps/api/src/versioning/`
 
 **Checkpoint**: 外部アプリが安定契約面（API+SDK+OpenAPI）で利用可能
 
@@ -473,13 +473,13 @@ ADR-015 の schema_version / policy lifecycle fields / hot-field index は P1-T0
 
 ## Phase 6: User Story 4 - 品質評価とフィードバック (Priority: P2)
 
-- [ ] T054 [P] [US4] Integration: eval run が text 指標(recall@k/citation acc/groundedness/latency/cost)算出 in `tests/integration/test_eval.py`
-- [ ] T055 [P] [US4] **Security hard-gate**: ACL漏洩/削除再出現/テナント分離違反で `gate_result:blocked` in `tests/security/test_eval_hard_gate.py`
-- [ ] T056 [US4] EvaluationSet/Run models + 登録時 PII/secret scrub in `src/raku_rag/eval/models.py`
-- [ ] T057 [US4] EvaluationRunner (text 指標 + baseline relative gate + security absolute gate) in `src/raku_rag/eval/runner.py`
-- [ ] T058 [US4] eval & feedback controllers in `apps/api/src/eval/eval.controller.ts`, `apps/api/src/feedback/feedback.controller.ts`
-- [ ] T059 [US4] CI + Dagster scheduled evaluation job in `.github/workflows/ci.yml`, `src/raku_rag/dagster/jobs/evaluation.py`
-- [ ] T059a [US4] Dagster quality check assets in `src/raku_rag/dagster/checks/quality.py` — embedding coverage、chunk count > 0、parser output schema valid、spreadsheet citation cell_range valid、deleted documents not searchable、ACL leakage = 0、tenant isolation leakage = 0、recall@k / citation accuracy baseline regression
+- [X] T054 [P] [US4] Integration: eval run が text 指標(recall@k/citation acc/groundedness/latency/cost)算出 in `tests/integration/test_eval.py`
+- [X] T055 [P] [US4] **Security hard-gate**: ACL漏洩/削除再出現/テナント分離違反で `gate_result:blocked` in `tests/security/test_eval_hard_gate.py`
+- [X] T056 [US4] EvaluationSet/Run models + 登録時 PII/secret scrub in `src/raku_rag/eval/models.py`
+- [X] T057 [US4] EvaluationRunner (text 指標 + baseline relative gate + security absolute gate) in `src/raku_rag/eval/runner.py`
+- [X] T058 [US4] eval & feedback controllers in `apps/api/src/eval/eval.controller.ts`, `apps/api/src/feedback/feedback.controller.ts`
+- [X] T059 [US4] CI + Dagster scheduled evaluation job in `.github/workflows/ci.yml`, `src/raku_rag/dagster/jobs/evaluation.py`
+- [X] T059a [US4] Dagster quality check assets in `src/raku_rag/dagster/checks/quality.py` — embedding coverage、chunk count > 0、parser output schema valid、spreadsheet citation cell_range valid、deleted documents not searchable、ACL leakage = 0、tenant isolation leakage = 0、recall@k / citation accuracy baseline regression
 
 **Checkpoint**: 品質ゲートが CI/定期で機能（回帰ブロック＋security hard fail）
 
@@ -487,10 +487,10 @@ ADR-015 の schema_version / policy lifecycle fields / hot-field index は P1-T0
 
 ## Phase 7: User Story 5 - 運用監視 (Priority: P3)
 
-- [ ] T060 [US5] Stage-wise metrics dashboards (latency/throughput/error/cost) in `src/raku_rag/observability/metrics.py`, `ops/dashboards/`
-- [ ] T061 [US5] Alerts (ACL post-check diff, deletion reappearance, budget exceed, failed jobs, quality regression) in `ops/alerts/`
-- [ ] T062 [US5] Trace completeness verification (SC-005) in `tests/integration/test_trace_completeness.py`
-- [ ] T062a [US5] Dagster failed job visibility and retry orchestration — failed IngestionRun/DocumentProcessingState を admin UI/API から retry 可能にし、Dagster run_id と PostgreSQL status の突合を検証 in optional `workers/ingest/dagster/sensors/retry.py`, `apps/api/src/admin/jobs.controller.ts`
+- [X] T060 [US5] Stage-wise metrics dashboards (latency/throughput/error/cost) in `src/raku_rag/observability/metrics.py`, `ops/dashboards/`
+- [X] T061 [US5] Alerts (ACL post-check diff, deletion reappearance, budget exceed, failed jobs, quality regression) in `ops/alerts/`
+- [X] T062 [US5] Trace completeness verification (SC-005) in `tests/integration/test_trace_completeness.py`
+- [X] T062a [US5] Dagster failed job visibility and retry orchestration — failed IngestionRun/DocumentProcessingState を admin UI/API から retry 可能にし、Dagster run_id と PostgreSQL status の突合を検証 in optional `workers/ingest/dagster/sensors/retry.py`, `apps/api/src/admin/jobs.controller.ts`
 
 ---
 
@@ -501,31 +501,31 @@ ADR-015 の schema_version / policy lifecycle fields / hot-field index は P1-T0
 **Independent Test**: スキャンPDF/画像→visual citation 付き回答、権限外/削除済み visual が出ない、captioning 無効でも成立。
 
 ### Tests ⚠️
-- [ ] T063 [P] [US6] Integration: scanned PDF/image → OCR+region(+optional caption)+visual embed → answer with visual citation(asset/page_number/region_id/bbox/crop_uri) + used_modalities in `tests/integration/test_visual_answer.py`
-- [ ] T063b [P] [US6] Integration: **captioning disabled 時の成立検証（FR-047/048）** in `tests/integration/test_visual_captioning_disabled.py`。必須ケース:
+- [X] T063 [P] [US6] Integration: scanned PDF/image → OCR+region(+optional caption)+visual embed → answer with visual citation(asset/page_number/region_id/bbox/crop_uri) + used_modalities in `tests/integration/test_visual_answer.py`
+- [X] T063b [P] [US6] Integration: **captioning disabled 時の成立検証（FR-047/048）** in `tests/integration/test_visual_captioning_disabled.py`。必須ケース:
   - captioning disabled の collection/ingestion job でも OCR/layout region/visual embedding で検索できる
   - `generated_caption_text` が存在しなくても answer API が失敗しない
   - captioning 無効時は captioning cost が発生しない（CostRecord に caption 項目0）
   - captioning 無効でも visual citation は元画像/crop/region/OCR に基づいて返る
   - caption を一次根拠として扱わない方針が維持される（有効時も無効時も一次根拠は元画像/crop/region/OCR）
-- [ ] T064 [P] [US6] **Security hard-gate**: 権限外 visual asset/region/crop/OCR/generated caption が result/rerank/VLM入力/citation/thumbnail に出ない、削除済み再出現0、EXIF/画像PII redaction in `tests/security/test_visual_acl_deletion.py`
+- [X] T064 [P] [US6] **Security hard-gate**: 権限外 visual asset/region/crop/OCR/generated caption が result/rerank/VLM入力/citation/thumbnail に出ない、削除済み再出現0、EXIF/画像PII redaction in `tests/security/test_visual_acl_deletion.py`
 
 ### Implementation
-- [ ] T065 [P] [US6] OcrEngine (cloud / tesseract; text+confidence+bbox) in `src/raku_rag/providers/ocr/`
-- [ ] T066 [P] [US6] LayoutExtractor (region/bbox/type[text/figure/table/chart/screenshot/form/caption]/page) in `src/raku_rag/providers/layout/`
-- [ ] T067 [P] [US6] **CaptioningProvider (optional enrichment)** in `src/raku_rag/providers/captioning/`
-- [ ] T068 [P] [US6] VisualEmbeddingProvider (clip/multimodal; target_type) in `src/raku_rag/providers/visual_embeddings/`
-- [ ] T069 [P] [US6] VLMProvider (anthropic_vision / openai_vision / azure / local) in `src/raku_rag/providers/vlms/`
-- [ ] T070 [US6] ingestion worker 拡張: 画像/scanned PDF → VisualAsset storage + OCR + layout + **EXIF strip** + visual embed in `src/raku_rag/workers/ingestion.py` (depends T043, T065, T066, T068)
-- [ ] T071 [US6] **captioning 統合**: enable/disable(tenant/collection/job/budget), `caption_status`, caption redaction(FR-049), caption cost, 検索補助として index（一次根拠にしない）in `src/raku_rag/workers/ingestion.py`, `src/raku_rag/services/ingestion.py` (depends T067, T070)
-- [ ] T072 [US6] VectorStore/RetrievalService 拡張: `modality` + visual pre-filter（**LayoutRegion を visual chunk 正本**として統一）in `src/raku_rag/providers/vectorstores/pgvector.py`, `src/raku_rag/services/retrieval.py`
-- [ ] T073 [US6] AnswerService+VLM 拡張: visual citation(asset/page_number/region_id/bbox/crop_uri), 権限確認済み画像/crop のみ投入, caption は検索補助・VLM が元画像/crop で裏付け in `src/raku_rag/services/answer.py` (depends T069, T072)
-- [ ] T074 [US6] **Crop 生成 + ACL/redaction/deletion 継承**（FR-052）in `src/raku_rag/services/crop.py`
-- [ ] T075 [US6] 画像PII + **EXIF** redaction policy in `src/raku_rag/observability/redaction.py` (extend T013)
-- [ ] T076 [US6] `GET /v1/assets/{asset_id}` (権限確認済み領域/crop 表示, 権限外/削除は404相当) in `apps/api/src/assets/assets.controller.ts`
-- [ ] T077 [US6] **コスト粒度拡張**: OCR/layout/captioning/visual embedding/**VLM image token(独立)**/thumbnail・crop generation/visual storage を CostService に追加 in `src/raku_rag/services/cost.py` (extend T021)
-- [ ] T078 [US6] **削除カスケード拡張**: visual asset/region/crop/OCR text/generated caption/visual embedding/thumbnail + retrieval/answer/VLM response/visual answer/thumbnail/crop cache 無効化 in `src/raku_rag/services/deletion.py` (extend T044)
-- [ ] T079 [US6] **EvaluationRunner 拡張: visual 指標群**(visual_recall@k, visual_citation_accuracy, bbox_iou, visual_groundedness, p95 visual answer latency, visual query cost) + visual security hard gate(SC-009) in `src/raku_rag/eval/runner.py` (extend T057)
+- [X] T065 [P] [US6] OcrEngine (cloud / tesseract; text+confidence+bbox) in `src/raku_rag/providers/ocr/`
+- [X] T066 [P] [US6] LayoutExtractor (region/bbox/type[text/figure/table/chart/screenshot/form/caption]/page) in `src/raku_rag/providers/layout/`
+- [X] T067 [P] [US6] **CaptioningProvider (optional enrichment)** in `src/raku_rag/providers/captioning/`
+- [X] T068 [P] [US6] VisualEmbeddingProvider (clip/multimodal; target_type) in `src/raku_rag/providers/visual_embeddings/`
+- [X] T069 [P] [US6] VLMProvider (anthropic_vision / openai_vision / azure / local) in `src/raku_rag/providers/vlms/`
+- [X] T070 [US6] ingestion worker 拡張: 画像/scanned PDF → VisualAsset storage + OCR + layout + **EXIF strip** + visual embed in `src/raku_rag/workers/ingestion.py` (depends T043, T065, T066, T068)
+- [X] T071 [US6] **captioning 統合**: enable/disable(tenant/collection/job/budget), `caption_status`, caption redaction(FR-049), caption cost, 検索補助として index（一次根拠にしない）in `src/raku_rag/workers/ingestion.py`, `src/raku_rag/services/ingestion.py` (depends T067, T070)
+- [X] T072 [US6] VectorStore/RetrievalService 拡張: `modality` + visual pre-filter（**LayoutRegion を visual chunk 正本**として統一）in `src/raku_rag/providers/vectorstores/pgvector.py`, `src/raku_rag/services/retrieval.py`
+- [X] T073 [US6] AnswerService+VLM 拡張: visual citation(asset/page_number/region_id/bbox/crop_uri), 権限確認済み画像/crop のみ投入, caption は検索補助・VLM が元画像/crop で裏付け in `src/raku_rag/services/answer.py` (depends T069, T072)
+- [X] T074 [US6] **Crop 生成 + ACL/redaction/deletion 継承**（FR-052）in `src/raku_rag/services/crop.py`
+- [X] T075 [US6] 画像PII + **EXIF** redaction policy in `src/raku_rag/observability/redaction.py` (extend T013)
+- [X] T076 [US6] `GET /v1/assets/{asset_id}` (権限確認済み領域/crop 表示, 権限外/削除は404相当) in `apps/api/src/assets/assets.controller.ts`
+- [X] T077 [US6] **コスト粒度拡張**: OCR/layout/captioning/visual embedding/**VLM image token(独立)**/thumbnail・crop generation/visual storage を CostService に追加 in `src/raku_rag/services/cost.py` (extend T021)
+- [X] T078 [US6] **削除カスケード拡張**: visual asset/region/crop/OCR text/generated caption/visual embedding/thumbnail + retrieval/answer/VLM response/visual answer/thumbnail/crop cache 無効化 in `src/raku_rag/services/deletion.py` (extend T044)
+- [X] T079 [US6] **EvaluationRunner 拡張: visual 指標群**(visual_recall@k, visual_citation_accuracy, bbox_iou, visual_groundedness, p95 visual answer latency, visual query cost) + visual security hard gate(SC-009) in `src/raku_rag/eval/runner.py` (extend T057)
 
 **Checkpoint**: 画像RAG が visual citation 付きで機能、captioning は optional・非一次根拠、visual 漏洩/削除再出現0
 
@@ -533,12 +533,12 @@ ADR-015 の schema_version / policy lifecycle fields / hot-field index は P1-T0
 
 ## Phase 9: Polish & Cross-Cutting Concerns
 
-- [ ] T080 [P] Documentation in `docs/` (architecture, provider 差し替えガイド incl 13抽象, API使用例)
-- [ ] T081 quickstart S1〜S10 検証スクリプト in `tests/integration/test_quickstart.py`
-- [ ] T082 [P] Unit tests (chunker 日本語境界/offset, ACL, groundedness gate, redaction incl EXIF/caption) in `tests/unit/`
-- [ ] T083 Security hardening review (redaction カバレッジ: text/image/EXIF/OCR/caption/crop, secret 非保存) in `tests/security/test_redaction.py`
-- [ ] T084 Performance baseline + 設定可能 p95/throughput/同時実行/最大文書サイズ/最大チャンク in `src/raku_rag/core/config.py`
-- [ ] T085 Establish evaluation baseline (text + visual; SC-001/008) and enable regression gates in `.github/workflows/ci.yml`
+- [X] T080 [P] Documentation in `docs/` (architecture, provider 差し替えガイド incl 13抽象, API使用例)
+- [X] T081 quickstart S1〜S10 検証スクリプト in `tests/integration/test_quickstart.py`
+- [X] T082 [P] Unit tests (chunker 日本語境界/offset, ACL, groundedness gate, redaction incl EXIF/caption) in `tests/unit/`
+- [X] T083 Security hardening review (redaction カバレッジ: text/image/EXIF/OCR/caption/crop, secret 非保存) in `tests/security/test_redaction.py`
+- [X] T084 Performance baseline + 設定可能 p95/throughput/同時実行/最大文書サイズ/最大チャンク in `src/raku_rag/core/config.py`
+- [X] T085 Establish evaluation baseline (text + visual; SC-001/008) and enable regression gates in `.github/workflows/ci.yml`
 
 ---
 
@@ -604,29 +604,29 @@ US1+US2(MVP) → US3(API/SDK) → US4(評価ゲート) → US5(監視) → **US6
 
 ## Phase 10: AWS Technical Stack Alignment & Benchmark Tasks
 
-- [ ] T086 [P] Implement `ProviderPolicyService` in `apps/api/src/provider-policy/` and worker-side enforcement in `workers/ingest/provider_policy.py` — parser/OCR/LLM/embedding/rerank provider allowlist, region, zero-retention/no-train capability, customer opt-in, fallback policy
-- [ ] T087 [P] Add ProviderPolicy APIs and contract tests in `apps/api/src/admin/provider-policies.controller.ts`, `tests/contract/test_provider_policies.py` — validate AWS-only denies Azure/Google DI without opt-in
-- [ ] T088 [P] Implement `RetrievalProfileService` in `apps/api/src/retrieval/` — metadata exact filter + identifier/code match + pgvector search + bounded Cohere rerank; vector-only default forbidden
-- [ ] T089 [P] Add RetrievalProfile APIs and benchmark endpoint in `apps/api/src/admin/retrieval-profiles.controller.ts`, `tests/contract/test_retrieval_profiles.py`
-- [ ] T090 [P] Implement normalized identifier/code matching in `apps/api/src/retrieval/identifier-match.ts` — equipment_id, alarm_code, property_id, room_number, contract_id, fund_id, ISIN, invoice_id style fields
-- [ ] T091 [P] Implement Aurora pgvector + RLS migration hardening in `infra/db/migrations/` — tenant_id on retrievable rows, RLS policies, app.current_tenant_id/session context, no application bypass role
-- [ ] T092 [P] Security hard tests for RLS/vector search in `tests/security/test_rls_pgvector.py` — cross-tenant vector search returns zero, worker/admin/reindex/eval require tenant context
-- [ ] T093 [P] Implement Cohere Embed Multilingual v3 provider via Bedrock in `workers/ingest/providers/embeddings/bedrock_cohere.py` — capability includes 1024 dim and max_input_tokens; chunk overflow fails closed into rechunk plan
-- [ ] T094 [P] Update chunker defaults in `workers/ingest/chunking/` — target 250-400 tokens, max ~450, heading_path/metadata separate, table summary + row/cell chunks for XLSX/CSV
-- [ ] T095 [P] Implement Cohere Rerank 3.5 via Bedrock in `apps/api/src/rerank/bedrock-cohere-rerank.service.ts` — candidate limit 50-80, final context 5-12, cost/latency recorded
-- [ ] T096 [P] Implement Bedrock Claude providers in `apps/api/src/llm/bedrock-claude.service.ts` — Sonnet for final answer, Haiku-class for classification/enrichment/summarization/high-risk assistance
-- [ ] T097 [P] Implement Bedrock Guardrails adapter in `apps/api/src/guardrails/` — defense-in-depth only; tests assert it cannot bypass ACL, RequiredEvidencePolicy, GroundednessGate, or RiskGate
-- [ ] T098 [P] Implement `LoggingPolicyEnforcer` in `apps/api/src/observability/logging-policy.service.ts` and Langfuse exporter in `apps/api/src/observability/langfuse.ts` — raw retrieved context default disabled, redaction/sampling enforced
-- [ ] T099 [P] Add logging/redaction hard tests in `tests/security/test_logging_policy.py` — no raw context in Langfuse by default, citation IDs/chunk IDs/prompt version/model metadata retained
-- [ ] T100 [P] Implement SQS worker runtime in `workers/ingest/` — DLQ, retry/backoff, idempotency key, IngestionRun/DocumentProcessingState projection, SQS message IDs stored
-- [ ] T101 [P] CDK TypeScript infrastructure in `infra/cdk/` — ECS Fargate services for NestJS API, Python worker, Langfuse; Aurora Serverless v2 pgvector; SQS/DLQ; S3; Cognito; KMS; Secrets Manager; CloudWatch dashboards
-- [ ] T102 [P] Provider parser adapters behind ProviderPolicy in `workers/ingest/providers/parsers/` — AWS-only/customer-managed default, Azure DI opt-in, Google DI opt-in, Textract/OSS benchmark adapters
-- [ ] T103 [P] ParserProviderPolicy tests in `tests/integration/test_parser_provider_policy.py` — residency/no-train/opt-in checks, fallback behavior, provider config audit events
-- [ ] T104 [P] Implement `ProviderConfigAuditEvent` repository and API integration — provider/retrieval/logging/model/parser policy changes are audited with redacted before/after
-- [ ] T105 [P] Build two-stage PoC benchmark harness in `tests/benchmarks/poc_stack_benchmark.py` — 20-50 representative Japanese documents per industry profile
-- [ ] T106 [P] Benchmark parser providers — Azure DI vs Google DI vs Textract/OSS for PDF/DOCX/XLSX/CSV/image/scanned PDF; metrics include parser table structure accuracy and spreadsheet cell citation accuracy
-- [ ] T107 [P] Benchmark embeddings/retrieval — Cohere Embed Multilingual v3 vs Titan if needed; vector+rerank vs metadata/code+vector+rerank; optional hybrid search; metrics include recall@5/10 and exact code lookup success
-- [ ] T108 [P] Benchmark answer quality — citation accuracy, groundedness, insufficient evidence correct rejection, high-risk gate compliance, p95 latency, query cost
-- [ ] T109 [P] Benchmark security hard gates — ACL leakage = 0, tenant leakage = 0, deleted documents not searchable, raw context logging violation = 0
-- [ ] T110 [P] Add fallback decision record in `specs/001-rag-platform/research.md` after benchmark run — OpenSearch/Qdrant/Titan/parser provider fallback criteria
-- [ ] T111 [P] Residency fallback for frontend hosting — document Vercel AI SDK usage vs AWS-hosted Next.js fallback in `infra/cdk/README.md` and `apps/web/README.md`
+- [X] T086 [P] Implement `ProviderPolicyService` in `apps/api/src/provider-policy/` and worker-side enforcement in `workers/ingest/provider_policy.py` — parser/OCR/LLM/embedding/rerank provider allowlist, region, zero-retention/no-train capability, customer opt-in, fallback policy
+- [X] T087 [P] Add ProviderPolicy APIs and contract tests in `apps/api/src/admin/provider-policies.controller.ts`, `tests/contract/test_provider_policies.py` — validate AWS-only denies Azure/Google DI without opt-in
+- [X] T088 [P] Implement `RetrievalProfileService` in `apps/api/src/retrieval/` — metadata exact filter + identifier/code match + pgvector search + bounded Cohere rerank; vector-only default forbidden
+- [X] T089 [P] Add RetrievalProfile APIs and benchmark endpoint in `apps/api/src/admin/retrieval-profiles.controller.ts`, `tests/contract/test_retrieval_profiles.py`
+- [X] T090 [P] Implement normalized identifier/code matching in `apps/api/src/retrieval/identifier-match.ts` — equipment_id, alarm_code, property_id, room_number, contract_id, fund_id, ISIN, invoice_id style fields
+- [X] T091 [P] Implement Aurora pgvector + RLS migration hardening in `infra/db/migrations/` — tenant_id on retrievable rows, RLS policies, app.current_tenant_id/session context, no application bypass role
+- [X] T092 [P] Security hard tests for RLS/vector search in `tests/security/test_rls_pgvector.py` — cross-tenant vector search returns zero, worker/admin/reindex/eval require tenant context
+- [X] T093 [P] Implement Cohere Embed Multilingual v3 provider via Bedrock in `workers/ingest/providers/embeddings/bedrock_cohere.py` — capability includes 1024 dim and max_input_tokens; chunk overflow fails closed into rechunk plan
+- [X] T094 [P] Update chunker defaults in `workers/ingest/chunking/` — target 250-400 tokens, max ~450, heading_path/metadata separate, table summary + row/cell chunks for XLSX/CSV
+- [X] T095 [P] Implement Cohere Rerank 3.5 via Bedrock in `apps/api/src/rerank/bedrock-cohere-rerank.service.ts` — candidate limit 50-80, final context 5-12, cost/latency recorded
+- [X] T096 [P] Implement Bedrock Claude providers in `apps/api/src/llm/bedrock-claude.service.ts` — Sonnet for final answer, Haiku-class for classification/enrichment/summarization/high-risk assistance
+- [X] T097 [P] Implement Bedrock Guardrails adapter in `apps/api/src/guardrails/` — defense-in-depth only; tests assert it cannot bypass ACL, RequiredEvidencePolicy, GroundednessGate, or RiskGate
+- [X] T098 [P] Implement `LoggingPolicyEnforcer` in `apps/api/src/observability/logging-policy.service.ts` and Langfuse exporter in `apps/api/src/observability/langfuse.ts` — raw retrieved context default disabled, redaction/sampling enforced
+- [X] T099 [P] Add logging/redaction hard tests in `tests/security/test_logging_policy.py` — no raw context in Langfuse by default, citation IDs/chunk IDs/prompt version/model metadata retained
+- [X] T100 [P] Implement SQS worker runtime in `workers/ingest/` — DLQ, retry/backoff, idempotency key, IngestionRun/DocumentProcessingState projection, SQS message IDs stored
+- [X] T101 [P] CDK TypeScript infrastructure in `infra/cdk/` — ECS Fargate services for NestJS API, Python worker, Langfuse; Aurora Serverless v2 pgvector; SQS/DLQ; S3; Cognito; KMS; Secrets Manager; CloudWatch dashboards
+- [X] T102 [P] Provider parser adapters behind ProviderPolicy in `workers/ingest/providers/parsers/` — AWS-only/customer-managed default, Azure DI opt-in, Google DI opt-in, Textract/OSS benchmark adapters
+- [X] T103 [P] ParserProviderPolicy tests in `tests/integration/test_parser_provider_policy.py` — residency/no-train/opt-in checks, fallback behavior, provider config audit events
+- [X] T104 [P] Implement `ProviderConfigAuditEvent` repository and API integration — provider/retrieval/logging/model/parser policy changes are audited with redacted before/after
+- [X] T105 [P] Build two-stage PoC benchmark harness in `tests/benchmarks/poc_stack_benchmark.py` — 20-50 representative Japanese documents per industry profile
+- [X] T106 [P] Benchmark parser providers — Azure DI vs Google DI vs Textract/OSS for PDF/DOCX/XLSX/CSV/image/scanned PDF; metrics include parser table structure accuracy and spreadsheet cell citation accuracy
+- [X] T107 [P] Benchmark embeddings/retrieval — Cohere Embed Multilingual v3 vs Titan if needed; vector+rerank vs metadata/code+vector+rerank; optional hybrid search; metrics include recall@5/10 and exact code lookup success
+- [X] T108 [P] Benchmark answer quality — citation accuracy, groundedness, insufficient evidence correct rejection, high-risk gate compliance, p95 latency, query cost
+- [X] T109 [P] Benchmark security hard gates — ACL leakage = 0, tenant leakage = 0, deleted documents not searchable, raw context logging violation = 0
+- [X] T110 [P] Add fallback decision record in `specs/001-rag-platform/research.md` after benchmark run — OpenSearch/Qdrant/Titan/parser provider fallback criteria
+- [X] T111 [P] Residency fallback for frontend hosting — document Vercel AI SDK usage vs AWS-hosted Next.js fallback in `infra/cdk/README.md` and `apps/web/README.md`

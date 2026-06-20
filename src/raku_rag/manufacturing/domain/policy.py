@@ -9,6 +9,7 @@ stage-2 stores can pick either; ``no_train_default`` etc. are the canonical attr
 
 Schema + enums only — no enforcement (stage-2 DataUsePolicyStore / NoTrainGuard / RetentionManager).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

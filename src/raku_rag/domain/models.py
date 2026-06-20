@@ -4,6 +4,7 @@ Every persisted entity carries ``tenant_id`` (FR-021). Chunks carry ``modality``
 the document ACL. Visual entities (VisualAsset/LayoutRegion/Crop) are defined in US6 (out of MVP
 scope) and intentionally omitted here.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -112,7 +113,7 @@ class ScoredChunk:
 
 @dataclass(frozen=True)
 class Citation:
-    """Traceable evidence actually cited (FR-013/015). kind=text in MVP."""
+    """Traceable evidence actually cited (FR-013/015). kind=text or visual."""
 
     kind: str  # "text" | "visual"
     document_id: str
@@ -121,6 +122,11 @@ class Citation:
     retrieval_score: float
     chunk_id: str | None = None
     text_range: tuple[int, int] | None = None  # code-point offsets on normalized text
+    asset_id: str = ""
+    page_number: int = 0
+    region_id: str = ""
+    bbox: BoundingBox | None = None
+    crop_uri: str = ""
 
 
 @dataclass(frozen=True)
@@ -128,6 +134,84 @@ class Freshness:
     indexed_at: str
     document_version: int
     source_freshness: str = ""
+
+
+@dataclass(frozen=True)
+class BoundingBox:
+    """Normalized visual coordinates: x/y/width/height in the 0..1 page coordinate space."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+@dataclass(frozen=True)
+class OcrTextRegion:
+    text: str
+    confidence: float
+    bbox: BoundingBox
+    page_number: int = 1
+
+
+@dataclass
+class VisualAsset:
+    tenant_id: str
+    collection_id: str
+    document_id: str
+    asset_id: str
+    storage_uri: str
+    checksum: str
+    content_type: str = "image/png"
+    version: int = 1
+    page_number: int = 1
+    metadata: dict = field(default_factory=dict)
+    tombstone: bool = False
+
+
+@dataclass
+class LayoutRegion:
+    tenant_id: str
+    collection_id: str
+    document_id: str
+    asset_id: str
+    region_id: str
+    bbox: BoundingBox
+    page_number: int = 1
+    region_type: str = "text"
+    heading_path: tuple[str, ...] = ()
+    ocr_text: str = ""
+    generated_caption_text: str = ""
+    crop_uri: str = ""
+    metadata: dict = field(default_factory=dict)
+    tombstone: bool = False
+
+
+@dataclass(frozen=True)
+class VisualCitation:
+    asset_id: str
+    document_id: str
+    page_number: int
+    bbox: BoundingBox
+    retrieval_score: float
+    region_id: str = ""
+    crop_uri: str = ""
+    ocr_text: str = ""
+
+
+@dataclass
+class CropArtifact:
+    tenant_id: str
+    collection_id: str
+    document_id: str
+    asset_id: str
+    region_id: str
+    crop_id: str
+    bbox: BoundingBox
+    crop_uri: str
+    redaction_policy_ref: str = "inherit"
+    metadata: dict = field(default_factory=dict)
+    tombstone: bool = False
 
 
 @dataclass(frozen=True)

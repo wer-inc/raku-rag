@@ -10,6 +10,7 @@ audits answer-generation + citation-access by REFERENCE ID only (FR-MFG-021 / SC
 
 stdlib only.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -55,9 +56,7 @@ class TroubleCaseSearchService:
             profile,
             manufacturing_filters=manufacturing_filters,
         )
-        status = (
-            AnswerStatus.OK.value if matches else AnswerStatus.INSUFFICIENT_EVIDENCE.value
-        )
+        status = AnswerStatus.OK.value if matches else AnswerStatus.INSUFFICIENT_EVIDENCE.value
         resp = TroubleCaseSearchResponse(
             status=status, results=matches, correlation_id=correlation_id
         )

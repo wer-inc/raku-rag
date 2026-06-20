@@ -12,9 +12,9 @@ declare global {
 }
 
 /**
- * P0-T06 — mock auth middleware (no Cognito). Requires an `Authorization: Bearer <api-key>` and an
- * `X-User-Token` carrying signed user claims; attaches the resolved principal to the request.
- * Production swaps in the real TokenVerifier / Cognito federation behind this boundary.
+ * P0-T06 / Step 4 — local auth middleware (no Cognito yet). Requires an
+ * `Authorization: Bearer <api-key>` and an HMAC-signed `X-User-Token`; attaches the verified principal
+ * to the request. Production swaps in Cognito/JWKS behind this boundary.
  */
 @Injectable()
 export class AuthMiddleware implements NestMiddleware {

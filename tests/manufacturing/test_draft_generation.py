@@ -28,6 +28,7 @@ tests/manufacturing/test_obsolete_draft_evidence.py.
 
 TDD: RED now because ``ManufacturingSystem.generate_draft`` is unimplemented (missing-impl).
 """
+
 from __future__ import annotations
 
 import json
@@ -71,7 +72,10 @@ class TestTroubleReportCarriesSourceProvenance(unittest.TestCase):
     def setUp(self) -> None:
         self.sys = fresh()
         self.author = claims(T, "author")
-        self.cits = [_citation("case_42", chunk_id="case_42#0"), _citation("case_7", chunk_id="case_7#0")]
+        self.cits = [
+            _citation("case_42", chunk_id="case_42#0"),
+            _citation("case_7", chunk_id="case_7#0"),
+        ]
 
     def test_trouble_report_has_source_citations_and_document_ids(self) -> None:
         art = self.sys.generate_draft(
@@ -181,8 +185,7 @@ class TestSafetyItemWithoutApprovedCitationNotAsserted(unittest.TestCase):
         )
         # It must be visibly held back: surfaced as unconfirmed / needs-approved-evidence.
         self.assertTrue(
-            any(marker in blob for marker in _UNCONFIRMED_MARKERS)
-            or "approved" in blob,
+            any(marker in blob for marker in _UNCONFIRMED_MARKERS) or "approved" in blob,
             "an unbacked safety item must be flagged (unconfirmed / requires approved evidence) "
             "rather than silently asserted (FR-MFG-011)",
         )

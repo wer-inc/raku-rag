@@ -1,10 +1,10 @@
 """Smoke test for the stdlib local PoC UI (T072)."""
+
 from __future__ import annotations
 
 import importlib.util
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVER = ROOT / "poc-ui" / "server.py"

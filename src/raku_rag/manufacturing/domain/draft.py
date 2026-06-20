@@ -9,6 +9,7 @@ State machine (data-model §F):
 
 Schema + enums only — no transition/validation behaviour (stage-2 ReviewWorkflow / DraftGenerator).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

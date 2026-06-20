@@ -1,4 +1,5 @@
 """P0-T17 — migration runner framework + idempotency (RT2 at framework level, sqlite smoke)."""
+
 from __future__ import annotations
 
 import os
@@ -28,8 +29,12 @@ class TestMigrationRunner(unittest.TestCase):
         applied = runner.apply()
         self.assertEqual(applied, ["0001_a", "0002_b"])  # both applied in order
         # tables exist
-        names = {r[0] for r in self.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        names = {
+            r[0]
+            for r in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
         self.assertIn("a", names)
         self.assertIn("b", names)
         # ledger recorded

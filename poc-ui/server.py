@@ -7,6 +7,7 @@ Run:
 Smoke:
     PYTHONPATH=src python3 poc-ui/server.py --smoke
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,16 +25,16 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from raku_rag.domain.models import Citation, IdentityClaims, ScopeType, SubjectType
-from raku_rag.manufacturing.app import ManufacturingSystem
-from raku_rag.manufacturing.domain.draft import DraftType
-from raku_rag.manufacturing.domain.entities import (
+from raku_rag.domain.models import Citation, IdentityClaims, ScopeType, SubjectType  # noqa: E402
+from raku_rag.manufacturing.app import ManufacturingSystem  # noqa: E402
+from raku_rag.manufacturing.domain.draft import DraftType  # noqa: E402
+from raku_rag.manufacturing.domain.entities import (  # noqa: E402
     Countermeasure,
     FailureMode,
     MeasureClass,
     TroubleCase,
 )
-from raku_rag.manufacturing.domain.metadata import (
+from raku_rag.manufacturing.domain.metadata import (  # noqa: E402
     ApprovalSource,
     ApprovalStatus,
     DocumentKind,
@@ -85,145 +86,145 @@ def mfg_meta(
 
 
 def seed_system(sysm: ManufacturingSystem) -> ManufacturingSystem:
-        """Seed the local demo documents, ACL grants, and trouble-case graph."""
-        sysm.grant(TENANT, ScopeType.COLLECTION, COLLECTION, SubjectType.USER, OPERATOR.user_id)
-        sysm.grant(TENANT, ScopeType.COLLECTION, COLLECTION, SubjectType.USER, ADMIN.user_id)
+    """Seed the local demo documents, ACL grants, and trouble-case graph."""
+    sysm.grant(TENANT, ScopeType.COLLECTION, COLLECTION, SubjectType.USER, OPERATOR.user_id)
+    sysm.grant(TENANT, ScopeType.COLLECTION, COLLECTION, SubjectType.USER, ADMIN.user_id)
 
-        sysm.ingest_manufacturing(
+    sysm.ingest_manufacturing(
+        tenant_id=TENANT,
+        collection_id=COLLECTION,
+        document_id="approved_lockout",
+        text=(
+            "To disassemble the press safely, stop the machine, apply lockout tagout, "
+            "release stored hydraulic pressure, and verify zero energy before removing guards."
+        ),
+        metadata=mfg_meta(
+            "approved_lockout",
+            document_kind=DocumentKind.WORK_INSTRUCTION,
+            safety_category="lockout_tagout",
+            hazard_tags=("equipment_stop", "disassembly", "hydraulic_pressure"),
+            equipment="press",
+            equipment_id="press1",
+            process="press_maintenance",
+            process_id="proc_press",
+        ),
+    )
+    sysm.ingest_manufacturing(
+        tenant_id=TENANT,
+        collection_id=COLLECTION,
+        document_id="approved_torque",
+        text="The torque specification for the M8 conveyor cover bolt is twelve newton meters.",
+        metadata=mfg_meta(
+            "approved_torque",
+            process="conveyor_assembly",
+            process_id="proc_conveyor",
+        ),
+    )
+    sysm.ingest_manufacturing(
+        tenant_id=TENANT,
+        collection_id=COLLECTION,
+        document_id="ledger_pump17",
+        text="Equipment ledger: pump17 alarm E152 remedy is to replace the impeller seal.",
+        metadata=mfg_meta(
+            "ledger_pump17",
+            document_kind=DocumentKind.LEDGER,
+            equipment="pump17",
+            equipment_id="pump17",
+            alarm_code="E152",
+        ),
+    )
+    sysm.ingest_manufacturing(
+        tenant_id=TENANT,
+        collection_id=COLLECTION,
+        document_id="quality_p900",
+        text="Quality log: for a P900 housing crack defect, scrap and remold the P900 housing.",
+        metadata=mfg_meta(
+            "quality_p900",
+            document_kind=DocumentKind.QUALITY_REPORT,
+            defect_type="crack",
+            part_no="P900",
+        ),
+    )
+    sysm.ingest_manufacturing(
+        tenant_id=TENANT,
+        collection_id=COLLECTION,
+        document_id="obsolete_coolant",
+        text="The legacy coolant flow rate setpoint for the grinder spindle is eight liters per minute.",
+        metadata=mfg_meta(
+            "obsolete_coolant",
+            approval_status=ApprovalStatus.OBSOLETE,
+            effective_date="2020-01-01",
+            obsolete_at="2025-12-31",
+        ),
+    )
+    sysm.ingest_manufacturing(
+        tenant_id=TENANT,
+        collection_id=COLLECTION,
+        document_id="draft_panel",
+        text="Draft note about working on the 400V electrical panel. This note is not approved.",
+        metadata=mfg_meta(
+            "draft_panel",
+            approval_status=ApprovalStatus.DRAFT,
+            effective_date=None,
+            document_kind=DocumentKind.WORK_INSTRUCTION,
+            safety_category="electrical",
+            hazard_tags=("electric_shock", "high_voltage"),
+        ),
+    )
+    sysm.register_trouble_case(
+        tenant_id=TENANT,
+        collection_id=COLLECTION,
+        source_document_id="trouble_gearbox",
+        text=(
+            "Trouble report: the assembly gearbox showed vibration increase and abnormal noise. "
+            "Root cause: bearing wear. Provisional countermeasure: reduce feed rate and monitor. "
+            "Permanent countermeasure: replace the worn bearing and install a vibration sensor. "
+            "Recurrence prevention: add the bearing to the periodic replacement schedule."
+        ),
+        metadata=mfg_meta(
+            "trouble_gearbox",
+            document_kind=DocumentKind.TROUBLE_REPORT,
+            equipment="gearbox",
+            equipment_id="eq_gearbox",
+            process="assembly",
+            process_id="proc_assembly",
+        ),
+        trouble_case=TroubleCase(
             tenant_id=TENANT,
-            collection_id=COLLECTION,
-            document_id="approved_lockout",
-            text=(
-                "To disassemble the press safely, stop the machine, apply lockout tagout, "
-                "release stored hydraulic pressure, and verify zero energy before removing guards."
-            ),
-            metadata=mfg_meta(
-                "approved_lockout",
-                document_kind=DocumentKind.WORK_INSTRUCTION,
-                safety_category="lockout_tagout",
-                hazard_tags=("equipment_stop", "disassembly", "hydraulic_pressure"),
-                equipment="press",
-                equipment_id="press1",
-                process="press_maintenance",
-                process_id="proc_press",
-            ),
-        )
-        sysm.ingest_manufacturing(
-            tenant_id=TENANT,
-            collection_id=COLLECTION,
-            document_id="approved_torque",
-            text="The torque specification for the M8 conveyor cover bolt is twelve newton meters.",
-            metadata=mfg_meta(
-                "approved_torque",
-                process="conveyor_assembly",
-                process_id="proc_conveyor",
-            ),
-        )
-        sysm.ingest_manufacturing(
-            tenant_id=TENANT,
-            collection_id=COLLECTION,
-            document_id="ledger_pump17",
-            text="Equipment ledger: pump17 alarm E152 remedy is to replace the impeller seal.",
-            metadata=mfg_meta(
-                "ledger_pump17",
-                document_kind=DocumentKind.LEDGER,
-                equipment="pump17",
-                equipment_id="pump17",
-                alarm_code="E152",
-            ),
-        )
-        sysm.ingest_manufacturing(
-            tenant_id=TENANT,
-            collection_id=COLLECTION,
-            document_id="quality_p900",
-            text="Quality log: for a P900 housing crack defect, scrap and remold the P900 housing.",
-            metadata=mfg_meta(
-                "quality_p900",
-                document_kind=DocumentKind.QUALITY_REPORT,
-                defect_type="crack",
-                part_no="P900",
-            ),
-        )
-        sysm.ingest_manufacturing(
-            tenant_id=TENANT,
-            collection_id=COLLECTION,
-            document_id="obsolete_coolant",
-            text="The legacy coolant flow rate setpoint for the grinder spindle is eight liters per minute.",
-            metadata=mfg_meta(
-                "obsolete_coolant",
-                approval_status=ApprovalStatus.OBSOLETE,
-                effective_date="2020-01-01",
-                obsolete_at="2025-12-31",
-            ),
-        )
-        sysm.ingest_manufacturing(
-            tenant_id=TENANT,
-            collection_id=COLLECTION,
-            document_id="draft_panel",
-            text="Draft note about working on the 400V electrical panel. This note is not approved.",
-            metadata=mfg_meta(
-                "draft_panel",
-                approval_status=ApprovalStatus.DRAFT,
-                effective_date=None,
-                document_kind=DocumentKind.WORK_INSTRUCTION,
-                safety_category="electrical",
-                hazard_tags=("electric_shock", "high_voltage"),
-            ),
-        )
-        sysm.register_trouble_case(
-            tenant_id=TENANT,
-            collection_id=COLLECTION,
+            trouble_case_id="tc_gearbox",
+            symptom="vibration increase and abnormal noise",
+            equipment_id="eq_gearbox",
+            process_id="proc_assembly",
+            failure_mode_id="fm_bearing",
             source_document_id="trouble_gearbox",
-            text=(
-                "Trouble report: the assembly gearbox showed vibration increase and abnormal noise. "
-                "Root cause: bearing wear. Provisional countermeasure: reduce feed rate and monitor. "
-                "Permanent countermeasure: replace the worn bearing and install a vibration sensor. "
-                "Recurrence prevention: add the bearing to the periodic replacement schedule."
-            ),
-            metadata=mfg_meta(
-                "trouble_gearbox",
-                document_kind=DocumentKind.TROUBLE_REPORT,
-                equipment="gearbox",
-                equipment_id="eq_gearbox",
-                process="assembly",
-                process_id="proc_assembly",
-            ),
-            trouble_case=TroubleCase(
+        ),
+        failure_mode=FailureMode(
+            tenant_id=TENANT,
+            failure_mode_id="fm_bearing",
+            name="bearing wear",
+            description="Worn bearing causing vibration and noise.",
+        ),
+        countermeasures=(
+            Countermeasure(
                 tenant_id=TENANT,
+                measure_id="cm_feed",
                 trouble_case_id="tc_gearbox",
-                symptom="vibration increase and abnormal noise",
-                equipment_id="eq_gearbox",
-                process_id="proc_assembly",
-                failure_mode_id="fm_bearing",
+                description="reduce feed rate and monitor closely",
+                measure_class=MeasureClass.PROVISIONAL,
                 source_document_id="trouble_gearbox",
             ),
-            failure_mode=FailureMode(
+            Countermeasure(
                 tenant_id=TENANT,
-                failure_mode_id="fm_bearing",
-                name="bearing wear",
-                description="Worn bearing causing vibration and noise.",
+                measure_id="cm_bearing",
+                trouble_case_id="tc_gearbox",
+                description="replace the worn bearing and install a vibration sensor",
+                measure_class=MeasureClass.PERMANENT,
+                source_document_id="trouble_gearbox",
             ),
-            countermeasures=(
-                Countermeasure(
-                    tenant_id=TENANT,
-                    measure_id="cm_feed",
-                    trouble_case_id="tc_gearbox",
-                    description="reduce feed rate and monitor closely",
-                    measure_class=MeasureClass.PROVISIONAL,
-                    source_document_id="trouble_gearbox",
-                ),
-                Countermeasure(
-                    tenant_id=TENANT,
-                    measure_id="cm_bearing",
-                    trouble_case_id="tc_gearbox",
-                    description="replace the worn bearing and install a vibration sensor",
-                    measure_class=MeasureClass.PERMANENT,
-                    source_document_id="trouble_gearbox",
-                ),
-            ),
-            recurrence_prevention="add the bearing to the periodic replacement schedule",
-        )
-        return sysm
+        ),
+        recurrence_prevention="add the bearing to the periodic replacement schedule",
+    )
+    return sysm
 
 
 def build_seeded_system() -> ManufacturingSystem:
@@ -361,11 +362,15 @@ def handle_draft_review(system: ManufacturingSystem, payload: dict[str, Any]) ->
     if reviewer_id:
         current = system.get_draft(TENANT, artifact_id)
         if current is not None and getattr(current.status, "value", current.status) == "draft":
-            system.assign_reviewer(tenant_id=TENANT, artifact_id=artifact_id, reviewer_id=str(reviewer_id))
+            system.assign_reviewer(
+                tenant_id=TENANT, artifact_id=artifact_id, reviewer_id=str(reviewer_id)
+            )
         reviewed = system.review_draft(
             tenant_id=TENANT,
             artifact_id=artifact_id,
-            reviewer=IdentityClaims(tenant_id=TENANT, user_id=str(reviewer_id), roles=("reviewer",)),
+            reviewer=IdentityClaims(
+                tenant_id=TENANT, user_id=str(reviewer_id), roles=("reviewer",)
+            ),
             decision=decision,
             comment="demo review",
         )
@@ -737,7 +742,10 @@ def smoke() -> dict[str, Any]:
     assert trouble["status"] == "ok" and trouble["results"], trouble
     assert draft["status"] == "draft", draft
     assert kpi["kpi"]["high_risk_query_count"] >= 2, kpi
-    return {"status": "ok", "checks": ["answer", "high_risk", "safety_block", "trouble", "draft", "kpi"]}
+    return {
+        "status": "ok",
+        "checks": ["answer", "high_risk", "safety_block", "trouble", "draft", "kpi"],
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

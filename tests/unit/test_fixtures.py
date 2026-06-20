@@ -1,4 +1,5 @@
 """P0-T21 — fixtures load deterministically and carry tenant scoping."""
+
 from __future__ import annotations
 
 import unittest
@@ -17,7 +18,9 @@ class TestFixtures(unittest.TestCase):
         self.assertTrue(acl["grants"])  # explicit grants only (deny-by-default)
         ev = load_json("eval", "eval_set.json")
         self.assertEqual(ev["tenant_id"], "tenant_local")
-        self.assertTrue(any(i.get("expected_rejection") == "insufficient_evidence" for i in ev["items"]))
+        self.assertTrue(
+            any(i.get("expected_rejection") == "insufficient_evidence" for i in ev["items"])
+        )
         ind = load_json("industry", "samples.json")
         self.assertIn("manufacturing", ind)
         self.assertIn("investment", ind)

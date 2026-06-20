@@ -16,6 +16,7 @@ with reference IDs only — generation time, creator, template, source documents
 
 stdlib only.
 """
+
 from __future__ import annotations
 
 import itertools

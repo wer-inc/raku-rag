@@ -3,6 +3,7 @@
 Production wires structlog + OpenTelemetry + Prometheus behind these helpers. The invariant that
 matters for the MVP security gates: nothing is logged without passing through the Redactor.
 """
+
 from __future__ import annotations
 
 import json

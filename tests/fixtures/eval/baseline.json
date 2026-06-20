@@ -1,0 +1,28 @@
+{
+  "tenant_id": "tenant_local",
+  "min_metrics": {
+    "recall_at_k": 1.0,
+    "citation_accuracy": 1.0,
+    "groundedness": 1.0,
+    "visual_recall_at_k": 1.0,
+    "visual_citation_accuracy": 1.0,
+    "bbox_iou": 0.95,
+    "visual_groundedness": 1.0
+  },
+  "max_metrics": {
+    "p95_latency_ms": 2000.0,
+    "p95_visual_answer_latency_ms": 5000.0,
+    "query_cost": 100.0,
+    "visual_query_cost": 100.0
+  },
+  "security_checks": [
+    "acl_leakage",
+    "deleted_reappearance",
+    "tenant_isolation",
+    "unauthorized_context",
+    "visual_acl_leakage",
+    "visual_deleted_reappearance",
+    "visual_unauthorized_context",
+    "visual_thumbnail_crop_leakage"
+  ]
+}

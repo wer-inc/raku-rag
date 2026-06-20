@@ -19,11 +19,12 @@ Flow (FR-MFG-005/006/007/015/030):
 
 stdlib only.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Sequence
+from typing import Callable
 
 from raku_rag.core.errors import AnswerStatus
 from raku_rag.domain.models import (
@@ -110,8 +111,6 @@ class ManufacturingAnswer:
 
 
 # document_id -> ManufacturingDocumentMetadata resolver (tenant-scoped by caller).
-from typing import Callable
-
 GetMfgMeta = Callable[[str, str], ManufacturingDocumentMetadata | None]
 
 
@@ -176,7 +175,9 @@ class ManufacturingAnswerService:
         candidate_scored = [
             s
             for s in scored
-            if _matches_filters(self._get_mfg_meta(tenant, s.chunk.document_id), manufacturing_filters)
+            if _matches_filters(
+                self._get_mfg_meta(tenant, s.chunk.document_id), manufacturing_filters
+            )
         ]
 
         # (3) candidate metadata + the citations the 001 path would consider (pre-gate evidence).
@@ -245,7 +246,10 @@ class ManufacturingAnswerService:
                 is_approved_effective(self._get_mfg_meta(tenant, c.document_id), today=self._today)
                 for c in mfg_citations
             )
-            if primary.approval_status == ApprovalStatus.OBSOLETE.value and not cited_has_approved_effective:
+            if (
+                primary.approval_status == ApprovalStatus.OBSOLETE.value
+                and not cited_has_approved_effective
+            ):
                 blocked = ManufacturingAnswer(
                     status=AnswerStatus.INSUFFICIENT_EVIDENCE.value,
                     text=None,

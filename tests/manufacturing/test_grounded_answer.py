@@ -7,6 +7,7 @@ must not break the normal grounded-answer path — it only constrains high-risk 
 
 TDD: RED now because ``raku_rag.manufacturing.app.ManufacturingSystem`` is unimplemented.
 """
+
 from __future__ import annotations
 
 import unittest

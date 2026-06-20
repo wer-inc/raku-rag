@@ -5,6 +5,7 @@ LLMProvider, TaskQueue, Connector. Visual abstractions (OcrEngine, LayoutExtract
 CaptioningProvider, VisualEmbeddingProvider, VLMProvider) are declared for US6 and not
 implemented in the MVP scope.
 """
+
 from raku_rag.interfaces.base import (  # noqa: F401
     CaptioningProvider,
     Chunker,

@@ -7,26 +7,550 @@ is never reimplemented in TypeScript.
 
     POST /internal/answer  {tenant_id,user_id,groups,roles,query,collection_id?} -> AnswerResponse JSON
     POST /internal/search  {...}                                                 -> {results,correlation_id}
+    POST /internal/ingest  {...}                                                 -> IngestResponse JSON
+    GET  /internal/assets/{asset_id}                                             -> authorized VisualAsset JSON
+    GET  /internal/ingestion-runs/{id}                                           -> IngestionRun JSON
+    GET  /internal/documents/{id}/processing-status                              -> DocumentProcessingState JSON
+    GET  /internal/sources/{id}/sync-status                                      -> SourceSyncState JSON
     GET  /healthz                                                                -> {status:"ok"}
 
 Run:  POSTGRES_URL=postgresql://raku:raku@127.0.0.1:5432/raku_parity \
-      PYTHONPATH=src python3 apps/answer-service/server.py --seed --port 8088
+      PYTHONPATH=src python3 apps/answer-service/server.py --seed --reset-demo-db --port 8088
 stdlib only (http.server) + the project's psycopg-backed ProductionSystem.
 """
+
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
-# Run as a script: put the project's src/ on sys.path so `raku_rag` imports resolve.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+# Run as a script: put the project root and src/ on sys.path so `raku_rag` and worker helpers resolve.
+_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_ROOT / "src"))
 
-from raku_rag.domain.models import IdentityClaims, ScopeType, SubjectType  # noqa: E402
+from raku_rag.domain.models import ACLGrant, IdentityClaims, ScopeType, SubjectType  # noqa: E402
+from raku_rag.eval import EvaluationRunner, EvaluationSet  # noqa: E402
+from raku_rag.industry import (  # noqa: E402
+    IndustryApiService,
+    InvestmentApiService,
+    RealEstateApiService,
+)
+from raku_rag.persistence.provider_config_audit import ProviderConfigAuditRepository  # noqa: E402
 from raku_rag.production import DEFAULT_DSN, ProductionSystem  # noqa: E402
+from raku_rag.providers.connectors import default_connector_from_env  # noqa: E402
+from workers.ingest.provider_policy import (  # noqa: E402
+    ProviderPolicy,
+    ProviderPolicyEnforcer,
+    ProviderRequest,
+    capability_for,
+)
+
+_LOCAL_DEMO_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_LOCAL_DEMO_DBS = {"raku", "raku_demo", "raku_parity"}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class _AdminSettingsStore:
+    """Tenant-scoped admin settings boundary used by the product facade.
+
+    Provider/Retrieval/Logging policy migrations are still separate work; this store gives the API a
+    stable contract now while reflecting ACL grants and tenant budgets into the existing core services.
+    """
+
+    _id_fields = {
+        "datasources": "source_id",
+        "query-profiles": "profile_id",
+        "provider-policies": "provider_policy_id",
+        "retrieval-profiles": "retrieval_profile_id",
+        "logging-policies": "logging_policy_id",
+    }
+    _event_types = {
+        "datasources": "data_source_changed",
+        "query-profiles": "query_profile_changed",
+        "provider-policies": "provider_policy_changed",
+        "retrieval-profiles": "retrieval_profile_changed",
+        "logging-policies": "logging_policy_changed",
+    }
+    _parser_policy_keys = {
+        "parser_mode",
+        "allowed_parser_providers",
+        "allowed_ocr_providers",
+        "fallback_policy",
+    }
+    _residency_policy_keys = {
+        "allowed_regions",
+        "provider_regions",
+        "data_residency_requirement",
+        "cross_cloud_processing_allowed",
+    }
+    _opt_in_policy_keys = {"customer_opt_in_required", "customer_opt_in_status"}
+    _model_policy_keys = {"embedding_provider", "llm_provider", "llm_model"}
+
+    def __init__(self, system: ProductionSystem) -> None:
+        self._system = system
+        self._items: dict[str, dict[str, dict[str, dict]]] = {name: {} for name in self._id_fields}
+        self._acl: dict[str, dict[str, dict]] = {}
+        self._budgets: dict[str, dict[str, dict]] = {}
+        self._provider_config_audit = ProviderConfigAuditRepository()
+
+    def _bucket(self, resource: str, tenant_id: str) -> dict[str, dict]:
+        return self._items[resource].setdefault(tenant_id, {})
+
+    def _audit_snapshot(self, item: dict | None) -> dict:
+        if not item:
+            return {}
+        return {
+            key: value
+            for key, value in item.items()
+            if key not in {"audit_events", "provider_config_audit_event_id"}
+        }
+
+    def _event_type_for(self, resource: str, body: dict) -> str:
+        touched = set(body)
+        if resource == "provider-policies":
+            if touched & self._parser_policy_keys:
+                return "parser_provider_changed"
+            if touched & self._residency_policy_keys:
+                return "residency_override"
+            if touched & self._opt_in_policy_keys:
+                return "opt_in_changed"
+        if resource == "query-profiles" and touched & self._model_policy_keys:
+            return "model_changed"
+        return self._event_types.get(resource, "provider_policy_changed")
+
+    def _audit_event(
+        self,
+        tenant_id: str,
+        resource: str,
+        item_id: str,
+        body: dict,
+        actor: str,
+        *,
+        before: dict,
+        after: dict,
+    ) -> dict:
+        event = self._provider_config_audit.record_change(
+            tenant_id=tenant_id,
+            event_type=self._event_type_for(resource, body),
+            actor=actor,
+            before=before,
+            after=after,
+            reason=str(body.get("reason") or ""),
+            approval_ref=str(body.get("approval_ref") or ""),
+            collection_id=after.get("collection_id") or before.get("collection_id"),
+            correlation_id=item_id,
+        )
+        return event.to_dict()
+
+    def _lifecycle(self) -> dict:
+        return {
+            "profile_version": 1,
+            "schema_version": 1,
+            "effective_from": None,
+            "deprecated_at": None,
+        }
+
+    def _default_query_profile(self, tenant_id: str, profile_id: str) -> dict:
+        return {
+            "profile_id": profile_id,
+            "tenant_id": tenant_id,
+            "collection_id": None,
+            "score_threshold": 0.1,
+            "top_k": 5,
+            "minimum_evidence_count": 1,
+            "rerank_enabled": True,
+            "rerank_top_n": 50,
+            "retrieval_profile_id": "default",
+            "query_rewrite_enabled": False,
+            "self_eval_enabled": True,
+            "self_eval_criteria": [],
+            "embedding_provider": "hashing-local",
+            "llm_provider": "extractive-local",
+            "llm_model": "extractive-mvp",
+            "captioning_enabled": False,
+            "captioning_budget_limit": None,
+            **self._lifecycle(),
+        }
+
+    def _default_provider_policy(self, tenant_id: str, policy_id: str) -> dict:
+        return {
+            "provider_policy_id": policy_id,
+            "tenant_id": tenant_id,
+            "collection_id": None,
+            "name": "Default provider policy",
+            "status": "active",
+            "parser_mode": "aws_only",
+            "allowed_parser_providers": ["aws_textract", "tesseract"],
+            "allowed_ocr_providers": ["aws_textract", "tesseract"],
+            "allowed_llm_providers": ["bedrock", "customer_managed"],
+            "allowed_embedding_providers": ["bedrock", "customer_managed"],
+            "allowed_rerank_providers": ["bedrock", "customer_managed"],
+            "allowed_regions": [],
+            "provider_regions": {},
+            "data_residency_requirement": "single_region",
+            "cross_cloud_processing_allowed": False,
+            "zero_retention_required": True,
+            "no_train_required": True,
+            "customer_opt_in_required": True,
+            "customer_opt_in_status": "pending",
+            "provider_contract_refs": [],
+            "provider_capability_snapshot": {},
+            "fallback_policy": {
+                "parse": {"provider": "aws_textract"},
+                "ocr": {"provider": "aws_textract"},
+                "embed": {"provider": "bedrock"},
+                "rerank": {"provider": "bedrock"},
+                "llm": {"provider": "bedrock"},
+            },
+            "audit_events": [],
+            **self._lifecycle(),
+        }
+
+    def _default_retrieval_profile(self, tenant_id: str, profile_id: str) -> dict:
+        return {
+            "retrieval_profile_id": profile_id,
+            "tenant_id": tenant_id,
+            "collection_id": None,
+            "name": "Default retrieval profile",
+            "version": 1,
+            "status": "active",
+            "metadata_filter_required": True,
+            "identifier_match_enabled": True,
+            "identifier_fields": [],
+            "keyword_match_enabled": True,
+            "keyword_strategy": "postgres_fts",
+            "vector_search_enabled": True,
+            "vector_top_k": 20,
+            "vector_score_threshold": 0.1,
+            "rerank_enabled": True,
+            "rerank_provider": "score_order",
+            "rerank_model": "score-order-mvp",
+            "rerank_candidate_limit": 50,
+            "final_context_limit": 5,
+            "exact_candidate_limit": 20,
+            "hybrid_candidate_limit": 50,
+            "minimum_evidence_count": 1,
+            "fallback_behavior": "insufficient_evidence",
+            **self._lifecycle(),
+        }
+
+    def _default_logging_policy(self, tenant_id: str, policy_id: str) -> dict:
+        return {
+            "logging_policy_id": policy_id,
+            "tenant_id": tenant_id,
+            "collection_id": None,
+            "name": "Default logging policy",
+            "status": "active",
+            "raw_user_query_storage": "disabled",
+            "raw_retrieved_context_storage": "disabled",
+            "model_input_storage": "disabled",
+            "model_output_storage": "disabled",
+            "store_citation_ids": True,
+            "store_chunk_ids": True,
+            "store_prompt_template_version": True,
+            "store_model_metadata": True,
+            "store_latency": True,
+            "store_cost": True,
+            "production_sampling_rate": 1.0,
+            "high_risk_trace_policy": "metadata_only",
+            "pii_redaction_policy_ref": "",
+            "secret_redaction_policy_ref": "",
+            "retention_policy_ref": "",
+            **self._lifecycle(),
+        }
+
+    def _default_for(self, tenant_id: str, resource: str, item_id: str) -> dict | None:
+        if item_id != "default":
+            return None
+        if resource == "query-profiles":
+            return self._default_query_profile(tenant_id, item_id)
+        if resource == "provider-policies":
+            return self._default_provider_policy(tenant_id, item_id)
+        if resource == "retrieval-profiles":
+            return self._default_retrieval_profile(tenant_id, item_id)
+        if resource == "logging-policies":
+            return self._default_logging_policy(tenant_id, item_id)
+        return None
+
+    def _ensure_default(self, tenant_id: str, resource: str) -> None:
+        default = self._default_for(tenant_id, resource, "default")
+        if default:
+            self._bucket(resource, tenant_id).setdefault("default", default)
+
+    def list_resource(
+        self, tenant_id: str, resource: str, *, collection_id: str = ""
+    ) -> list[dict]:
+        self._ensure_default(tenant_id, resource)
+        items = list(self._bucket(resource, tenant_id).values())
+        if collection_id:
+            items = [item for item in items if item.get("collection_id") == collection_id]
+        return [copy.deepcopy(item) for item in items]
+
+    def get_resource(self, tenant_id: str, resource: str, item_id: str) -> dict | None:
+        self._ensure_default(tenant_id, resource)
+        item = self._bucket(resource, tenant_id).get(item_id)
+        return copy.deepcopy(item) if item else None
+
+    def upsert_resource(
+        self, tenant_id: str, resource: str, item_id: str, body: dict, *, actor: str
+    ) -> dict:
+        id_field = self._id_fields[resource]
+        existing = self.get_resource(tenant_id, resource, item_id)
+        before = self._audit_snapshot(existing)
+        item = (
+            existing
+            or self._default_for(tenant_id, resource, item_id)
+            or {
+                id_field: item_id,
+                "tenant_id": tenant_id,
+                "status": "active",
+                **self._lifecycle(),
+            }
+        )
+        clean = {
+            k: v
+            for k, v in body.items()
+            if k not in {"tenant_id", id_field, "reason", "audit_events"}
+        }
+        item.update(clean)
+        item[id_field] = item_id
+        item["tenant_id"] = tenant_id
+        item["updated_at"] = _now()
+        if "status" not in item:
+            item["status"] = "active"
+        if resource == "datasources":
+            item.setdefault("config", {})
+            item.setdefault("collection_id", clean.get("collection_id") or "default")
+            item.setdefault("type", clean.get("type") or "upload")
+        if resource == "logging-policies" and "raw_retrieved_context_storage" not in clean:
+            item.setdefault("raw_retrieved_context_storage", "disabled")
+        if resource == "retrieval-profiles":
+            item["version"] = int(item.get("version") or 1) + (1 if existing else 0)
+
+        after = self._audit_snapshot(item)
+        event = self._audit_event(
+            tenant_id, resource, item_id, body, actor, before=before, after=after
+        )
+        item.setdefault("audit_events", []).append(event)
+        self._bucket(resource, tenant_id)[item_id] = item
+        result = copy.deepcopy(item)
+        result["provider_config_audit_event_id"] = event["provider_config_audit_event_id"]
+        return result
+
+    def list_audit_events(
+        self,
+        tenant_id: str,
+        *,
+        event_type: str = "",
+        correlation_id: str = "",
+        collection_id: str = "",
+    ) -> list[dict]:
+        return [
+            event.to_dict()
+            for event in self._provider_config_audit.list_events(
+                tenant_id,
+                event_type=event_type,
+                correlation_id=correlation_id,
+                collection_id=collection_id,
+            )
+        ]
+
+    def validate_provider_policy(self, tenant_id: str, policy_id: str, body: dict) -> dict:
+        policy = self.get_resource(tenant_id, "provider-policies", policy_id)
+        if policy is None:
+            return {"allowed": False, "reasons": ["provider policy not found"]}
+        operation = str(body.get("operation") or "")
+        provider = str(body.get("provider") or self._default_provider_for_operation(operation))
+        capability_override = (
+            body.get("capability") if isinstance(body.get("capability"), dict) else None
+        )
+        decision = ProviderPolicyEnforcer().evaluate(
+            ProviderPolicy.from_mapping(policy),
+            ProviderRequest(
+                operation=operation,
+                provider=provider,
+                capability=capability_for(provider, capability_override),
+            ),
+        )
+        return decision.to_dict()
+
+    def _default_provider_for_operation(self, operation: str) -> str:
+        if operation in {"parse", "ocr"}:
+            return "aws_textract"
+        if operation in {"embed", "embedding", "rerank", "llm"}:
+            return "bedrock"
+        return "customer_managed"
+
+    def benchmark_retrieval_profile(self, tenant_id: str, profile_id: str, body: dict) -> dict:
+        digest = hashlib.sha256(
+            json.dumps([tenant_id, profile_id, body], sort_keys=True).encode()
+        ).hexdigest()[:12]
+        evaluation_run_id = f"eval_{digest}"
+        return {
+            "evaluation_run_id": evaluation_run_id,
+            "status_url": f"/v1/evaluations/runs/{evaluation_run_id}",
+        }
+
+    def acl(self, tenant_id: str) -> dict:
+        return {"grants": list(self._acl.setdefault(tenant_id, {}).values())}
+
+    def update_acl(self, tenant_id: str, body: dict, *, actor: str) -> dict:
+        grants = self._acl.setdefault(tenant_id, {})
+        before = {"grants": list(grants.values())}
+        for grant_id in body.get("revoke_grant_ids") or []:
+            grants.pop(str(grant_id), None)
+        for raw in body.get("grants") or []:
+            scope_type = str(raw["scope_type"])
+            scope_id = str(raw["scope_id"])
+            subject_type = str(raw["subject_type"])
+            subject_id = str(raw["subject_id"])
+            grant_id = str(
+                raw.get("grant_id")
+                or f"{tenant_id}:{scope_type}:{scope_id}:{subject_type}:{subject_id}"
+            )
+            grant = {
+                "grant_id": grant_id,
+                "tenant_id": tenant_id,
+                "scope_type": scope_type,
+                "scope_id": scope_id,
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "permission": "read",
+                "created_at": _now(),
+            }
+            grants[grant_id] = grant
+            self._system.acl.add(
+                ACLGrant(
+                    tenant_id=tenant_id,
+                    scope_type=ScopeType(scope_type),
+                    scope_id=scope_id,
+                    subject_type=SubjectType(subject_type),
+                    subject_id=subject_id,
+                )
+            )
+        event = self._provider_config_audit.record_change(
+            tenant_id=tenant_id,
+            event_type="acl_changed",
+            actor=actor,
+            before=before,
+            after={"grants": list(grants.values())},
+            reason=str(body.get("reason") or ""),
+            correlation_id="acl",
+        ).to_dict()
+        return {
+            "grants": list(grants.values()),
+            "provider_config_audit_event_id": event["provider_config_audit_event_id"],
+        }
+
+    def budgets(self, tenant_id: str, *, scope_type: str = "", scope_id: str = "") -> list[dict]:
+        budgets = list(self._budgets.setdefault(tenant_id, {}).values())
+        if scope_type:
+            budgets = [budget for budget in budgets if budget.get("scope_type") == scope_type]
+        if scope_id:
+            budgets = [budget for budget in budgets if budget.get("scope_id") == scope_id]
+        return budgets
+
+    def update_budgets(self, tenant_id: str, body: dict, *, actor: str) -> dict:
+        budgets = self._budgets.setdefault(tenant_id, {})
+        before = {"budgets": list(budgets.values())}
+        for raw in body.get("budgets") or []:
+            scope_type = str(raw["scope_type"])
+            scope_id = str(raw.get("scope_id") or tenant_id)
+            budget_id = str(raw.get("budget_id") or f"{scope_type}:{scope_id}")
+            limit = raw.get("limit")
+            budget = {
+                "budget_id": budget_id,
+                "tenant_id": tenant_id,
+                "scope_type": scope_type,
+                "scope_id": scope_id,
+                "limit": limit,
+                "spent": 0,
+                "currency": raw.get("currency") or "USD",
+                "period": raw.get("period") or "monthly",
+                "status": raw.get("status") or "active",
+                "updated_at": _now(),
+            }
+            budgets[budget_id] = budget
+            if scope_type == "tenant" and scope_id == tenant_id:
+                self._system.cost.set_budget(tenant_id, float(limit) if limit is not None else None)
+        event = self._provider_config_audit.record_change(
+            tenant_id=tenant_id,
+            event_type="budget_changed",
+            actor=actor,
+            before=before,
+            after={"budgets": list(budgets.values())},
+            reason=str(body.get("reason") or ""),
+            correlation_id="budgets",
+        ).to_dict()
+        return {
+            "budgets": list(budgets.values()),
+            "provider_config_audit_event_id": event["provider_config_audit_event_id"],
+        }
+
+
+class _EvalFeedbackStore:
+    def __init__(self, system: ProductionSystem) -> None:
+        self._system = system
+        self._sets: dict[tuple[str, str], EvaluationSet] = {}
+        self._runs: dict[tuple[str, str], dict] = {}
+        self._feedback: dict[tuple[str, str], dict] = {}
+
+    def create_set(self, tenant_id: str, body: dict) -> dict:
+        eval_set = EvaluationSet.register(tenant_id=tenant_id, items=body.get("items") or ())
+        self._sets[(tenant_id, eval_set.eval_set_id)] = eval_set
+        return {
+            "eval_set_id": eval_set.eval_set_id,
+            "item_count": len(eval_set.items),
+            "status": "created",
+        }
+
+    def create_run(self, tenant_id: str, body: dict, principal: IdentityClaims) -> dict:
+        eval_set_id = str(body.get("eval_set_id") or "")
+        eval_set = self._sets.get((tenant_id, eval_set_id))
+        if eval_set is None:
+            raise KeyError("eval_set_id")
+        run = EvaluationRunner(self._system).run(
+            eval_set,
+            principal=principal,
+            collection_id=str(body.get("collection_id") or "") or None,
+            baseline=bool(body.get("baseline") or False),
+        )
+        payload = run.to_dict()
+        self._runs[(tenant_id, run.run_id)] = payload
+        return {"run_id": run.run_id, "status_url": f"/v1/evaluations/runs/{run.run_id}"}
+
+    def get_run(self, tenant_id: str, run_id: str) -> dict | None:
+        return self._runs.get((tenant_id, run_id))
+
+    def create_feedback(self, tenant_id: str, body: dict, actor: str) -> dict:
+        digest = hashlib.sha256(
+            f"{tenant_id}:{actor}:{body.get('answer_id')}:{body.get('evaluation_run_id')}:{len(self._feedback)}".encode()
+        ).hexdigest()[:12]
+        feedback_id = f"fb_{digest}"
+        self._feedback[(tenant_id, feedback_id)] = {
+            "feedback_id": feedback_id,
+            "tenant_id": tenant_id,
+            "actor": actor,
+            "answer_id": body.get("answer_id") or "",
+            "evaluation_run_id": body.get("evaluation_run_id") or "",
+            "subject": body.get("subject") or "user",
+            "rating": int(body.get("rating") or 0),
+            "comment": str(body.get("comment") or ""),
+            "created_at": _now(),
+        }
+        return {"feedback_id": feedback_id, "status": "accepted"}
 
 
 def seed(system: ProductionSystem) -> None:
@@ -42,12 +566,36 @@ def seed(system: ProductionSystem) -> None:
     system.grant("demo", ScopeType.COLLECTION, "manuals", SubjectType.USER, "alice")
 
 
+def _assert_demo_reset_allowed(dsn: str) -> None:
+    """Guard the destructive demo reset; --seed alone is non-destructive."""
+    parsed = urlparse(dsn)
+    dbname = unquote((parsed.path or "").lstrip("/"))
+    host = parsed.hostname or ""
+    if host in _LOCAL_DEMO_HOSTS and dbname in _LOCAL_DEMO_DBS:
+        return
+    if os.environ.get("RAKU_ALLOW_DEMO_DB_RESET") == "1":
+        return
+    raise SystemExit(
+        "Refusing to reset a non-local demo database. Use --seed without --reset-demo-db, "
+        "or set RAKU_ALLOW_DEMO_DB_RESET=1 only in a disposable environment."
+    )
+
+
 def _claims(body: dict) -> IdentityClaims:
     return IdentityClaims(
         tenant_id=str(body["tenant_id"]),
         user_id=str(body["user_id"]),
         groups=tuple(body.get("groups") or ()),
         roles=tuple(body.get("roles") or ()),
+    )
+
+
+def _claims_from_headers(headers) -> IdentityClaims:
+    return IdentityClaims(
+        tenant_id=str(headers["x-raku-tenant-id"]),
+        user_id=str(headers.get("x-raku-user-id") or "unknown"),
+        groups=tuple(json.loads(headers.get("x-raku-groups") or "[]")),
+        roles=tuple(json.loads(headers.get("x-raku-roles") or "[]")),
     )
 
 
@@ -85,7 +633,186 @@ def _answer_json(ans) -> dict:
     }
 
 
+def _search_json(
+    system: ProductionSystem, principal: IdentityClaims, query: str, collection_id, top_k
+) -> dict:
+    digest = hashlib.sha256(f"{principal.tenant_id}:{query}".encode("utf-8")).hexdigest()[:12]
+    correlation_id = f"trace_{digest}"
+    results = system.search(principal, query, collection_id, correlation_id=correlation_id)
+    if isinstance(top_k, int) and top_k > 0:
+        results = results[:top_k]
+    items = []
+    for r in results:
+        doc = system.registry.get(principal.tenant_id, r.chunk.document_id)
+        items.append(
+            {
+                "source_id": doc.source_id if doc else "",
+                "document_id": r.chunk.document_id,
+                "chunk_id": r.chunk.chunk_id,
+                "version": doc.version if doc else 0,
+                "retrieval_score": r.retrieval_score,
+                "heading_path": list(r.chunk.heading_path),
+                "text": r.chunk.text,
+                "freshness": {
+                    "indexed_at": doc.indexed_at if doc else None,
+                    "document_version": doc.version if doc else None,
+                    "source_freshness": doc.updated_at if doc else None,
+                },
+            }
+        )
+    return {"results": items, "correlation_id": correlation_id}
+
+
+def _dagster_run_url(run_id: str) -> str:
+    base_url = os.environ.get("DAGSTER_BASE_URL", "").rstrip("/")
+    if not base_url or not run_id:
+        return ""
+    return f"{base_url}/runs/{quote(run_id, safe='')}"
+
+
+def _ingestion_run_json(run) -> dict:
+    return {
+        "ingestion_run_id": run.ingestion_run_id,
+        "type": run.type,
+        "trigger": run.trigger,
+        "status": run.status,
+        "tenant_id": run.tenant_id,
+        "collection_id": run.collection_id,
+        "source_id": run.source_id,
+        "document_id": run.document_id,
+        "document_ref": run.document_ref,
+        "content_type": run.content_type,
+        "sqs_message_id": run.sqs_message_id,
+        "retry_count": run.retry_count,
+        "chunk_count": run.chunk_count,
+        "failure_reason": run.failure_reason,
+        "dagster_run_id": run.dagster_run_id,
+        "dagster_run_url": _dagster_run_url(run.dagster_run_id),
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+        "summary": {
+            "observed_count": 1 if run.document_id else 0,
+            "changed_count": 1 if run.status == "succeeded" else 0,
+            "deleted_count": 0,
+            "skipped_count": 0,
+            "failed_count": 1 if run.status in {"failed", "dead_letter"} else 0,
+        },
+        "documents": (
+            [
+                {
+                    "document_id": run.document_id,
+                    "source_document_id": run.document_id,
+                    "parse_status": run.status,
+                    "chunk_status": run.status,
+                    "embedding_status": run.status,
+                    "index_status": run.status,
+                    "last_indexed_at": run.finished_at,
+                    "last_error": run.failure_reason,
+                }
+            ]
+            if run.document_id
+            else []
+        ),
+        "asset_materializations": [],
+        "correlation_id": run.ingestion_run_id,
+    }
+
+
+def _processing_state_json(state) -> dict:
+    return {
+        "tenant_id": state.tenant_id,
+        "collection_id": state.collection_id,
+        "source_id": state.source_id,
+        "document_id": state.document_id,
+        "source_document_id": state.document_id,
+        "ingestion_run_id": state.ingestion_run_id,
+        "content_checksum": state.content_checksum,
+        "parser_version": state.parser_version,
+        "chunking_config_version": state.chunking_config_version,
+        "embedding_model_version": state.embedding_model_version,
+        "parse_status": state.status,
+        "chunk_status": state.status,
+        "embedding_status": state.status,
+        "index_status": state.status,
+        "chunk_count": state.chunk_count,
+        "last_indexed_at": state.updated_at if state.status == "succeeded" else "",
+        "last_error": state.failure_reason,
+    }
+
+
+def _source_sync_state_json(state) -> dict:
+    return {
+        "tenant_id": state.tenant_id,
+        "source_id": state.source_id,
+        "collection_id": state.collection_id,
+        "status": state.status,
+        "last_manifest_checksum": state.last_manifest_checksum,
+        "last_ingestion_run_id": state.last_ingestion_run_id,
+        "observed_count": state.observed_count,
+        "changed_count": state.changed_count,
+        "deleted_count": state.deleted_count,
+        "skipped_count": state.skipped_count,
+        "failed_count": state.failed_count,
+        "freshness": {"last_successful_sync_at": state.last_synced_at},
+        "last_error": "",
+        "dagster_run_id": "",
+        "dagster_run_url": "",
+        "created_at": state.created_at,
+        "updated_at": state.updated_at,
+    }
+
+
+def _ingest_response_json(job) -> dict:
+    return {
+        "ingestion_run_id": job.ingestion_run_id,
+        "document_id": job.document_id,
+        "status": job.status,
+        "status_url": f"/v1/admin/ingestion-runs/{job.ingestion_run_id}",
+        "failure_reason": job.failure_reason,
+        "chunk_count": job.chunk_count,
+    }
+
+
+def _job_summary_json(run) -> dict:
+    return {
+        "job_id": run.ingestion_run_id,
+        "ingestion_run_id": run.ingestion_run_id,
+        "type": run.type,
+        "trigger": run.trigger,
+        "status": run.status,
+        "source_id": run.source_id,
+        "document_id": run.document_id,
+        "failure_reason": run.failure_reason,
+        "retry_count": run.retry_count,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "dagster_run_id": run.dagster_run_id,
+        "dagster_run_url": _dagster_run_url(run.dagster_run_id),
+    }
+
+
+def _reindex_response_json(plan) -> dict:
+    return {
+        "reindex_plan_id": plan.reindex_plan_id,
+        "collection_id": plan.collection_id,
+        "source_id": plan.source_id,
+        "status": plan.status,
+        "status_url": f"/v1/admin/reindex-plans/{plan.reindex_plan_id}",
+        "affected_document_count": plan.affected_document_count,
+        "dagster_backfill_id": plan.dagster_backfill_id,
+    }
+
+
 def make_handler(system: ProductionSystem):
+    connector = default_connector_from_env()
+    admin_settings = _AdminSettingsStore(system)
+    eval_feedback = _EvalFeedbackStore(system)
+    industry_api = IndustryApiService()
+    real_estate_api = RealEstateApiService()
+    investment_api = InvestmentApiService()
+
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, payload: dict) -> None:
             data = json.dumps(payload).encode("utf-8")
@@ -99,40 +826,667 @@ def make_handler(system: ProductionSystem):
             n = int(self.headers.get("content-length") or 0)
             return json.loads(self.rfile.read(n) or b"{}")
 
+        def _tenant_header(self) -> str:
+            tenant_id = self.headers.get("x-raku-tenant-id") or ""
+            if not tenant_id:
+                raise KeyError("x-raku-tenant-id")
+            return tenant_id
+
         def do_GET(self) -> None:  # noqa: N802
-            if self.path == "/healthz":
-                self._send(200, {"status": "ok", "backend": "production-system"})
-            else:
-                self._send(404, {"error": "not found"})
+            try:
+                parsed = urlparse(self.path)
+                path = parsed.path
+                parts = [unquote(p) for p in path.split("/") if p]
+                if path == "/healthz":
+                    self._send(200, {"status": "ok", "backend": "production-system"})
+                elif parts == ["internal", "industries"]:
+                    self._send(200, industry_api.list_industries(tenant_id=self._tenant_header()))
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "industries"]
+                    and parts[3] == "profile"
+                ):
+                    self._send(200, industry_api.profile(parts[2]))
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "industries"]
+                    and parts[3] == "dashboard"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        200,
+                        industry_api.dashboard(self._tenant_header(), parts[2], roles=roles),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "industries"]
+                    and parts[3] == "kpi"
+                ):
+                    self._send(200, industry_api.kpi(self._tenant_header(), parts[2]))
+                elif (
+                    len(parts) == 5
+                    and parts[:2] == ["internal", "industries"]
+                    and parts[3:] == ["governance", "status"]
+                ):
+                    self._send(200, industry_api.governance_status(parts[2]))
+                elif (
+                    len(parts) == 5
+                    and parts[:2] == ["internal", "industries"]
+                    and parts[3] == "drafts"
+                ):
+                    draft = industry_api.get_draft(parts[2], parts[4])
+                    self._send(200, draft) if draft else self._send(404, {"error": "not found"})
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "real-estate", "properties"]
+                    and parts[4] == "knowledge"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        200,
+                        real_estate_api.property_knowledge(self._tenant_header(), parts[3], roles),
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "real-estate", "units"]
+                    and parts[4] == "knowledge"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        200,
+                        real_estate_api.unit_knowledge(self._tenant_header(), parts[3], roles),
+                    )
+                elif len(parts) == 4 and parts[:3] == ["internal", "real-estate", "drafts"]:
+                    draft = real_estate_api.draft(parts[3])
+                    self._send(200, draft) if draft else self._send(404, {"error": "not found"})
+                elif parts == ["internal", "real-estate", "dashboard"]:
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(200, real_estate_api.dashboard(self._tenant_header(), roles))
+                elif parts == ["internal", "real-estate", "kpi"]:
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(200, real_estate_api.kpi(self._tenant_header(), roles))
+                elif parts == ["internal", "real-estate", "audit"]:
+                    self._send(200, real_estate_api.audit())
+                elif parts == ["internal", "real-estate", "governance", "status"]:
+                    self._send(200, real_estate_api.governance_status())
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "investment", "funds"]
+                    and parts[4] == "knowledge"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        200,
+                        investment_api.fund_knowledge(self._tenant_header(), parts[3], roles),
+                    )
+                elif len(parts) == 4 and parts[:3] == ["internal", "investment", "drafts"]:
+                    draft = investment_api.draft(parts[3])
+                    self._send(200, draft) if draft else self._send(404, {"error": "not found"})
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "investment"]
+                    and parts[2] == "disclosure-evidence"
+                ):
+                    evidence = investment_api.disclosure_evidence(parts[3])
+                    (
+                        self._send(200, evidence)
+                        if evidence
+                        else self._send(404, {"error": "not found"})
+                    )
+                elif parts == ["internal", "investment", "dashboard"]:
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(200, investment_api.dashboard(self._tenant_header(), roles))
+                elif parts == ["internal", "investment", "kpi"]:
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(200, investment_api.kpi(self._tenant_header(), roles))
+                elif parts == ["internal", "investment", "audit"]:
+                    self._send(200, investment_api.audit())
+                elif parts == ["internal", "investment", "governance", "status"]:
+                    self._send(200, investment_api.governance_status())
+                elif parts == ["internal", "jobs"]:
+                    qs = parse_qs(parsed.query)
+                    runs = system.ingestion_runs.list_runs(
+                        self._tenant_header(),
+                        status=(qs.get("status") or [""])[0],
+                        source_id=(qs.get("source_id") or [""])[0],
+                    )
+                    self._send(200, {"jobs": [_job_summary_json(run) for run in runs]})
+                elif len(parts) == 3 and parts[:2] == ["internal", "ingestion-runs"]:
+                    run = system.ingestion_runs.get_for_tenant(self._tenant_header(), parts[2])
+                    if run:
+                        self._send(200, _ingestion_run_json(run))
+                    else:
+                        self._send(404, {"error": "not found"})
+                elif len(parts) == 3 and parts[:2] == ["internal", "assets"]:
+                    asset = system.assets.get_visual_asset(
+                        _claims_from_headers(self.headers), parts[2]
+                    )
+                    if asset:
+                        self._send(200, asset)
+                    else:
+                        self._send(404, {"error": "not found"})
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "documents"]
+                    and parts[3] == "processing-status"
+                ):
+                    state = system.ingestion_runs.processing_state(self._tenant_header(), parts[2])
+                    if state:
+                        self._send(200, _processing_state_json(state))
+                    else:
+                        self._send(404, {"error": "not found"})
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "sources"]
+                    and parts[3] == "sync-status"
+                ):
+                    state = system.ingestion_runs.source_sync_state(self._tenant_header(), parts[2])
+                    if state:
+                        self._send(200, _source_sync_state_json(state))
+                    else:
+                        self._send(404, {"error": "not found"})
+                elif len(parts) == 4 and parts[:3] == ["internal", "evaluations", "runs"]:
+                    run = eval_feedback.get_run(self._tenant_header(), parts[3])
+                    if run:
+                        self._send(200, run)
+                    else:
+                        self._send(404, {"error": "not found"})
+                elif len(parts) >= 3 and parts[:2] == ["internal", "admin"]:
+                    resource = parts[2]
+                    qs = parse_qs(parsed.query)
+                    if resource == "provider-config-audit-events" and len(parts) == 3:
+                        self._send(
+                            200,
+                            admin_settings.list_audit_events(
+                                self._tenant_header(),
+                                event_type=(qs.get("event_type") or [""])[0],
+                                correlation_id=(qs.get("correlation_id") or [""])[0],
+                                collection_id=(qs.get("collection_id") or [""])[0],
+                            ),
+                        )
+                    elif resource in admin_settings._id_fields and len(parts) == 3:
+                        self._send(
+                            200,
+                            admin_settings.list_resource(
+                                self._tenant_header(),
+                                resource,
+                                collection_id=(qs.get("collection_id") or [""])[0],
+                            ),
+                        )
+                    elif resource in admin_settings._id_fields and len(parts) == 4:
+                        item = admin_settings.get_resource(
+                            self._tenant_header(), resource, parts[3]
+                        )
+                        if item:
+                            self._send(200, item)
+                        else:
+                            self._send(404, {"error": "not found"})
+                    elif resource == "acl" and len(parts) == 3:
+                        self._send(200, admin_settings.acl(self._tenant_header()))
+                    elif resource == "budgets" and len(parts) == 3:
+                        self._send(
+                            200,
+                            admin_settings.budgets(
+                                self._tenant_header(),
+                                scope_type=(qs.get("scope_type") or [""])[0],
+                                scope_id=(qs.get("scope_id") or [""])[0],
+                            ),
+                        )
+                    else:
+                        self._send(404, {"error": "not found"})
+                else:
+                    self._send(404, {"error": "not found"})
+            except KeyError as exc:
+                self._send(400, {"error": f"missing header: {exc}"})
+            except Exception as exc:  # pragma: no cover - surface as 500 to the facade
+                self._send(500, {"error": str(exc)})
 
         def do_POST(self) -> None:  # noqa: N802
             try:
                 body = self._body()
-                principal = _claims(body)
-                query = str(body.get("query") or "")
-                collection_id = body.get("collection_id")
-                if self.path == "/internal/answer":
+                path = urlparse(self.path).path
+                parts = [unquote(p) for p in path.split("/") if p]
+                if path == "/internal/answer":
+                    principal = _claims(body)
+                    query = str(body.get("query") or "")
+                    collection_id = body.get("collection_id")
                     self._send(200, _answer_json(system.answer(principal, query, collection_id)))
-                elif self.path == "/internal/search":
-                    results = system.search(principal, query, collection_id)
+                elif path == "/internal/search":
+                    principal = _claims(body)
+                    query = str(body.get("query") or "")
+                    collection_id = body.get("collection_id")
+                    top_k = body.get("top_k")
+                    self._send(200, _search_json(system, principal, query, collection_id, top_k))
+                elif path == "/internal/ingest":
+                    principal = _claims(body)
+                    for field in ("collection_id", "source_id", "document_id", "document_ref"):
+                        if not body.get(field):
+                            raise KeyError(field)
+                    raw = connector.fetch(str(body["document_ref"]))
+                    job = system.ingest_document(
+                        tenant_id=principal.tenant_id,
+                        collection_id=str(body["collection_id"]),
+                        source_id=str(body["source_id"]),
+                        document_id=str(body["document_id"]),
+                        document_ref=str(body["document_ref"]),
+                        raw=raw,
+                        content_type=str(body.get("content_type") or "text/plain"),
+                    )
+                    self._send(
+                        202 if job.status in {"queued", "running", "succeeded"} else 200,
+                        _ingest_response_json(job),
+                    )
+                elif path == "/internal/evaluations/sets":
+                    self._send(201, eval_feedback.create_set(self._tenant_header(), body))
+                elif path == "/internal/evaluations/runs":
+                    principal = IdentityClaims(
+                        tenant_id=self._tenant_header(),
+                        user_id=self.headers.get("x-raku-user-id") or "eval",
+                        groups=tuple(json.loads(self.headers.get("x-raku-groups") or "[]")),
+                        roles=tuple(json.loads(self.headers.get("x-raku-roles") or "[]")),
+                    )
+                    self._send(
+                        202, eval_feedback.create_run(self._tenant_header(), body, principal)
+                    )
+                elif path == "/internal/feedback":
+                    self._send(
+                        202,
+                        eval_feedback.create_feedback(
+                            self._tenant_header(),
+                            body,
+                            self.headers.get("x-raku-user-id") or "unknown",
+                        ),
+                    )
+                elif parts == ["internal", "real-estate", "metadata", "import"]:
+                    self._send(202, real_estate_api.metadata_import(self._tenant_header(), body))
+                elif parts == ["internal", "real-estate", "documents", "enrich"]:
+                    self._send(200, real_estate_api.enrich_document(self._tenant_header(), body))
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "real-estate", "workflows"]
+                    and parts[3] == "contract-question"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
                     self._send(
                         200,
-                        {
-                            "results": [
-                                {
-                                    "document_id": r.chunk.document_id,
-                                    "chunk_id": r.chunk.chunk_id,
-                                    "text": r.chunk.text,
-                                    "retrieval_score": r.retrieval_score,
-                                }
-                                for r in results
-                            ]
-                        },
+                        real_estate_api.contract_question(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "real-estate", "workflows"]
+                    and parts[3] == "repair-investigation"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        200,
+                        real_estate_api.repair_investigation(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "real-estate", "workflows"]
+                    and parts[3] == "occupant-reply-draft"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        201,
+                        real_estate_api.occupant_reply_draft(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "real-estate", "workflows"]
+                    and parts[3] == "owner-report-draft"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        201,
+                        real_estate_api.owner_report_draft(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "real-estate", "workflows"]
+                    and parts[3] == "move-out-checklist-draft"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        201,
+                        real_estate_api.move_out_checklist_draft(
+                            self._tenant_header(), roles, body
+                        ),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "real-estate", "workflows"]
+                    and parts[3] == "restoration-explanation-draft"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        201,
+                        real_estate_api.restoration_explanation_draft(
+                            self._tenant_header(), roles, body
+                        ),
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "real-estate", "drafts"]
+                    and parts[4] == "review"
+                ):
+                    reviewed = real_estate_api.review_draft(parts[3], body)
+                    (
+                        self._send(200, reviewed)
+                        if reviewed
+                        else self._send(404, {"error": "not found"})
+                    )
+                elif parts == ["internal", "investment", "metadata", "import"]:
+                    self._send(202, investment_api.metadata_import(self._tenant_header(), body))
+                elif parts == ["internal", "investment", "documents", "enrich"]:
+                    self._send(200, investment_api.enrich_document(self._tenant_header(), body))
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "investment", "workflows"]
+                    and parts[3] == "fund-question"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        200,
+                        investment_api.fund_question(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "investment", "workflows"]
+                    and parts[3] == "rfp-response-draft"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        201,
+                        investment_api.rfp_response_draft(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "investment", "workflows"]
+                    and parts[3] == "ddq-response-draft"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        201,
+                        investment_api.ddq_response_draft(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "investment", "workflows"]
+                    and parts[3] == "inquiry-reply-draft"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        201,
+                        investment_api.inquiry_reply_draft(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "investment", "workflows"]
+                    and parts[3] == "marketing-material-check"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        200,
+                        investment_api.marketing_material_check(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "investment", "workflows"]
+                    and parts[3] == "monthly-commentary-draft"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        201,
+                        investment_api.monthly_commentary_draft(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "investment", "workflows"]
+                    and parts[3] == "compliance-rule-question"
+                ):
+                    roles = tuple(json.loads(self.headers.get("x-raku-roles") or "[]"))
+                    self._send(
+                        200,
+                        investment_api.compliance_rule_question(self._tenant_header(), roles, body),
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "investment", "drafts"]
+                    and parts[4] == "review"
+                ):
+                    reviewed = investment_api.review_draft(parts[3], body)
+                    (
+                        self._send(200, reviewed)
+                        if reviewed
+                        else self._send(404, {"error": "not found"})
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "investment", "drafts"]
+                    and parts[4] == "compliance-review"
+                ):
+                    reviewed = investment_api.compliance_review(parts[3], body)
+                    (
+                        self._send(200, reviewed)
+                        if reviewed
+                        else self._send(404, {"error": "not found"})
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:2] == ["internal", "industries"]
+                    and parts[3:] == ["metadata", "validate"]
+                ):
+                    self._send(200, industry_api.validate_metadata(parts[2], body))
+                elif (
+                    len(parts) == 5
+                    and parts[:2] == ["internal", "industries"]
+                    and parts[3:] == ["documents", "enrich"]
+                ):
+                    self._send(
+                        200, industry_api.enrich_document(self._tenant_header(), parts[2], body)
+                    )
+                elif (
+                    len(parts) == 6
+                    and parts[:2] == ["internal", "industries"]
+                    and parts[3] == "workflows"
+                    and parts[5] == "run"
+                ):
+                    self._send(
+                        200,
+                        industry_api.run_workflow(
+                            self._tenant_header(),
+                            self.headers.get("x-raku-user-id") or "",
+                            parts[2],
+                            parts[4],
+                            body,
+                        ),
+                    )
+                elif (
+                    len(parts) == 6
+                    and parts[:2] == ["internal", "industries"]
+                    and parts[3] == "drafts"
+                    and parts[5] == "review"
+                ):
+                    reviewed = industry_api.review_draft(
+                        self._tenant_header(),
+                        self.headers.get("x-raku-user-id") or "",
+                        parts[2],
+                        parts[4],
+                        body,
+                    )
+                    (
+                        self._send(200, reviewed)
+                        if reviewed
+                        else self._send(404, {"error": "not found"})
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:2] == ["internal", "industries"]
+                    and parts[3] == "drafts"
+                ):
+                    self._send(
+                        201,
+                        industry_api.create_draft(
+                            self._tenant_header(),
+                            self.headers.get("x-raku-user-id") or "",
+                            parts[2],
+                            parts[4],
+                            body,
+                        ),
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "ingestion-runs"]
+                    and parts[3] == "retry"
+                ):
+                    tenant_id = self._tenant_header()
+                    run = system.ingestion_runs.get_for_tenant(tenant_id, parts[2])
+                    if run is None:
+                        self._send(404, {"error": "not found"})
+                        return
+                    if not run.document_ref:
+                        self._send(400, {"error": "ingestion run has no document_ref"})
+                        return
+                    raw = connector.fetch(run.document_ref)
+                    retried = system.retry_ingestion_run(
+                        tenant_id=tenant_id,
+                        ingestion_run_id=run.ingestion_run_id,
+                        raw=raw,
+                    )
+                    if retried is None:
+                        self._send(404, {"error": "not found"})
+                    else:
+                        self._send(
+                            202 if retried.status in {"queued", "running", "succeeded"} else 200,
+                            _ingest_response_json(retried),
+                        )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "admin", "provider-policies"]
+                    and parts[4] == "validate"
+                ):
+                    self._send(
+                        200,
+                        admin_settings.validate_provider_policy(
+                            self._tenant_header(), parts[3], body
+                        ),
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "admin", "retrieval-profiles"]
+                    and parts[4] == "benchmark"
+                ):
+                    self._send(
+                        202,
+                        admin_settings.benchmark_retrieval_profile(
+                            self._tenant_header(), parts[3], body
+                        ),
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "admin", "collections"]
+                    and parts[4] == "reindex"
+                ):
+                    document_ids = [str(v) for v in (body.get("document_ids") or [])]
+                    plan = system.reindex.create_plan(
+                        tenant_id=self._tenant_header(),
+                        collection_id=parts[3],
+                        source_id=str(body.get("source_id") or ""),
+                        document_ids=document_ids,
+                        reason=str(body.get("reason") or "manual"),
+                        created_by=self.headers.get("x-raku-user-id") or "",
+                        target_parser_version=str(body.get("target_parser_version") or ""),
+                        target_chunking_config_version=str(
+                            body.get("target_chunking_config_version") or ""
+                        ),
+                        target_embedding_model_version=str(
+                            body.get("target_embedding_model_version") or ""
+                        ),
+                    )
+                    self._send(202, _reindex_response_json(plan))
+                else:
+                    self._send(404, {"error": "not found"})
+            except KeyError as exc:
+                self._send(400, {"error": f"missing field: {exc}"})
+            except Exception as exc:  # pragma: no cover - surface as 500 to the facade
+                self._send(500, {"error": str(exc)})
+
+        def do_PUT(self) -> None:  # noqa: N802
+            try:
+                body = self._body()
+                path = urlparse(self.path).path
+                parts = [unquote(p) for p in path.split("/") if p]
+                if (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "admin"]
+                    and parts[2] in admin_settings._id_fields
+                ):
+                    self._send(
+                        200,
+                        admin_settings.upsert_resource(
+                            self._tenant_header(),
+                            parts[2],
+                            parts[3],
+                            body,
+                            actor=self.headers.get("x-raku-user-id") or "unknown",
+                        ),
+                    )
+                elif len(parts) == 3 and parts[:2] == ["internal", "admin"] and parts[2] == "acl":
+                    self._send(
+                        200,
+                        admin_settings.update_acl(
+                            self._tenant_header(),
+                            body,
+                            actor=self.headers.get("x-raku-user-id") or "unknown",
+                        ),
+                    )
+                elif (
+                    len(parts) == 3 and parts[:2] == ["internal", "admin"] and parts[2] == "budgets"
+                ):
+                    self._send(
+                        200,
+                        admin_settings.update_budgets(
+                            self._tenant_header(),
+                            body,
+                            actor=self.headers.get("x-raku-user-id") or "unknown",
+                        ),
                     )
                 else:
                     self._send(404, {"error": "not found"})
             except KeyError as exc:
                 self._send(400, {"error": f"missing field: {exc}"})
+            except Exception as exc:  # pragma: no cover - surface as 500 to the facade
+                self._send(500, {"error": str(exc)})
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            try:
+                path = urlparse(self.path).path
+                parts = [unquote(p) for p in path.split("/") if p]
+                if len(parts) == 3 and parts[:2] == ["internal", "documents"]:
+                    tenant_id = self._tenant_header()
+                    document_id = parts[2]
+                    result = system.deletion.delete(tenant_id, document_id)
+                    self._send(
+                        202,
+                        {
+                            "job_id": f"delete_{document_id}",
+                            "document_id": document_id,
+                            "status": "succeeded",
+                            "tombstoned_chunks": result.tombstoned_chunks,
+                            "invalidated_cache_entries": result.invalidated_cache_entries,
+                            "purged_chunks": result.purged_chunks,
+                            "tombstoned_crops": result.tombstoned_crops,
+                            "invalidated_visual_cache_entries": result.invalidated_visual_cache_entries,
+                            "tombstoned_visual_assets": result.tombstoned_visual_assets,
+                            "tombstoned_visual_regions": result.tombstoned_visual_regions,
+                            "tombstoned_visual_embeddings": result.tombstoned_visual_embeddings,
+                        },
+                    )
+                else:
+                    self._send(404, {"error": "not found"})
+            except KeyError as exc:
+                self._send(400, {"error": f"missing header: {exc}"})
             except Exception as exc:  # pragma: no cover - surface as 500 to the facade
                 self._send(500, {"error": str(exc)})
 
@@ -145,17 +1499,26 @@ def make_handler(system: ProductionSystem):
 def main() -> None:
     ap = argparse.ArgumentParser(description="raku-rag answer-service (ProductionSystem over HTTP)")
     ap.add_argument("--port", type=int, default=int(os.environ.get("ANSWER_SERVICE_PORT", "8088")))
-    ap.add_argument("--seed", action="store_true", help="reset + seed a demo tenant on startup")
+    ap.add_argument("--seed", action="store_true", help="seed a demo tenant on startup")
+    ap.add_argument(
+        "--reset-demo-db",
+        action="store_true",
+        help="truncate a local disposable demo DB before seeding; refuses non-local DSNs",
+    )
     args = ap.parse_args()
 
     dsn = os.environ.get("POSTGRES_URL", DEFAULT_DSN)
-    system = ProductionSystem(dsn, reset=args.seed)
+    if args.reset_demo_db:
+        _assert_demo_reset_allowed(dsn)
+    system = ProductionSystem(dsn, reset=args.reset_demo_db)
     if args.seed:
         seed(system)
         print(f"seeded demo tenant; ProductionSystem on {dsn}", flush=True)
 
     httpd = HTTPServer(("127.0.0.1", args.port), make_handler(system))
-    print(f"answer-service listening on http://127.0.0.1:{args.port} (/internal/answer)", flush=True)
+    print(
+        f"answer-service listening on http://127.0.0.1:{args.port} (/internal/answer)", flush=True
+    )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

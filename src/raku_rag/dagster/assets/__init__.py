@@ -1,0 +1,1 @@
+"""Dagster-compatible asset shims."""

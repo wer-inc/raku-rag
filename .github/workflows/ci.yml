@@ -26,7 +26,9 @@ jobs:
           black --check src tests workers
       - name: Unit tests
         run: python -m unittest discover -s tests/unit -v
-      - name: Contract + integration tests
+      - name: Contract tests
+        run: python -m unittest discover -s tests/contract -v
+      - name: Integration tests
         run: python -m unittest discover -s tests/integration -v
       - name: Migration runner smoke
         run: python -m raku_rag.migrations.runner --dir infra/db/migrations --db /tmp/ci.sqlite
@@ -43,6 +45,26 @@ jobs:
           python-version: "3.12"
       - name: Security hard-gate tests
         run: python -m unittest discover -s tests/security -v
+
+  eval-gate:
+    # BLOCKING: text+visual quality metrics, baseline regression, and eval security hard-gates must stay green.
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Evaluation gate
+        run: >
+          python -m unittest
+          tests.integration.test_eval
+          tests.integration.test_visual_eval
+          tests.security.test_eval_hard_gate
+          tests.security.test_visual_eval_hard_gate
+          tests.unit.test_eval_baseline_gate
+          -v
 
   node:
     runs-on: ubuntu-latest

@@ -1,7 +1,9 @@
 """T006 — environment configuration management."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,11 @@ class Settings:
     rerank_top_n: int = 50
     max_document_bytes: int = 25 * 1024 * 1024
     max_chunks_per_document: int = 10_000
+    max_chunk_chars: int = 400
+    max_concurrent_queries: int = 32
+    target_p95_latency_ms: float = 2_000.0
+    target_visual_p95_latency_ms: float = 5_000.0
+    min_throughput_qps: float = 5.0
     # cost defaults (None = unlimited)
     default_query_budget: float | None = None
     embedding_dim: int = 256
@@ -47,8 +54,43 @@ def settings_from_env(env: dict | None = None) -> Settings:
     def _get(name: str, default: str) -> str:
         return str(src.get(name, default))
 
+    def _parse(name: str, default, cast: Callable[[str], object]):
+        raw = src.get(name)
+        if raw in (None, ""):
+            return default
+        return cast(str(raw))
+
     return Settings(
         token_signing_secret=_get("RAKU_TOKEN_SIGNING_SECRET", Settings.token_signing_secret),
+        default_score_threshold=float(
+            _parse("RAKU_DEFAULT_SCORE_THRESHOLD", Settings.default_score_threshold, float)
+        ),
+        default_top_k=int(_parse("RAKU_DEFAULT_TOP_K", Settings.default_top_k, int)),
+        default_minimum_evidence_count=int(
+            _parse(
+                "RAKU_DEFAULT_MINIMUM_EVIDENCE_COUNT", Settings.default_minimum_evidence_count, int
+            )
+        ),
+        rerank_top_n=int(_parse("RAKU_RERANK_TOP_N", Settings.rerank_top_n, int)),
+        max_document_bytes=int(_parse("RAKU_MAX_DOCUMENT_BYTES", Settings.max_document_bytes, int)),
+        max_chunks_per_document=int(
+            _parse("RAKU_MAX_CHUNKS_PER_DOCUMENT", Settings.max_chunks_per_document, int)
+        ),
+        max_chunk_chars=int(_parse("RAKU_MAX_CHUNK_CHARS", Settings.max_chunk_chars, int)),
+        max_concurrent_queries=int(
+            _parse("RAKU_MAX_CONCURRENT_QUERIES", Settings.max_concurrent_queries, int)
+        ),
+        target_p95_latency_ms=float(
+            _parse("RAKU_TARGET_P95_LATENCY_MS", Settings.target_p95_latency_ms, float)
+        ),
+        target_visual_p95_latency_ms=float(
+            _parse(
+                "RAKU_TARGET_VISUAL_P95_LATENCY_MS", Settings.target_visual_p95_latency_ms, float
+            )
+        ),
+        min_throughput_qps=float(
+            _parse("RAKU_MIN_THROUGHPUT_QPS", Settings.min_throughput_qps, float)
+        ),
         logging_raw_retrieved_context_storage=_get("RAKU_LOG_RAW_RETRIEVED_CONTEXT", "disabled"),
         logging_raw_user_query_storage=_get("RAKU_LOG_RAW_USER_QUERY", "disabled"),
     )

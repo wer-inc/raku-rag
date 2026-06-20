@@ -50,6 +50,7 @@ unrelated import error. Assertion style mirrors tests/manufacturing/test_audit_c
 stdlib only. Authoritative: spec FR-MFG-012/028/030, SC-MFG-013; quickstart S10;
 contracts/mfg-openapi.md §E; contracts/mfg-interfaces.md §8; data-model §I.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -217,8 +218,12 @@ class TestTelemetryAuditDerived(_Base):
         # The flow really exercised high-risk queries AND blocks of different reasons (non-vacuous).
         _drive_flow(self.sys, factory_id="f1", op=_op("op_press", dept="dept_press"))
         tel = self.sys.safety_telemetry(self.admin)
-        self.assertGreater(_get(tel, "high_risk_query_count"), 0, "the flow must produce high-risk queries")
-        self.assertGreater(_get(tel, "safety_gate_block_count"), 0, "the flow must produce safety blocks")
+        self.assertGreater(
+            _get(tel, "high_risk_query_count"), 0, "the flow must produce high-risk queries"
+        )
+        self.assertGreater(
+            _get(tel, "safety_gate_block_count"), 0, "the flow must produce safety blocks"
+        )
 
 
 class TestTelemetryMutualExclusivity(_Base):
@@ -231,7 +236,9 @@ class TestTelemetryMutualExclusivity(_Base):
         tel = self.sys.safety_telemetry(self.admin)
         bd = _breakdown(tel)
         # only the three codes may appear
-        self.assertTrue(set(bd.keys()) <= set(BLOCK_CODES), f"unexpected breakdown keys: {set(bd.keys())}")
+        self.assertTrue(
+            set(bd.keys()) <= set(BLOCK_CODES), f"unexpected breakdown keys: {set(bd.keys())}"
+        )
         # MUTUAL EXCLUSIVITY: every block counted under exactly ONE reason => the parts sum to the total.
         self.assertEqual(
             sum(bd.values()),

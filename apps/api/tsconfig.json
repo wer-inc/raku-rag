@@ -10,7 +10,10 @@
     "skipLibCheck": true,
     "strict": true,
     "outDir": "dist",
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "@raku-rag/shared": ["../../packages/shared/src/index.ts"]
+    }
   },
   "include": ["src", "test"]
 }

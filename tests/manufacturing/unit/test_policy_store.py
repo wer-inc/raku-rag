@@ -3,6 +3,7 @@
 Covers: (a) GQ1/GQ2 defaults, (b) training_opt_in=True without contract ref raises (FR-MFG-018),
 (c) policy_version increments on accepted change (FR-MFG-019). Tenant-scoped, stdlib only.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -62,9 +63,7 @@ class TestDataUsePolicyStore(unittest.TestCase):
     def test_opt_in_with_blank_contract_ref_raises(self) -> None:
         store = InMemoryDataUsePolicyStore()
         with self.assertRaises(ValueError):
-            store.update(
-                "t1", {"training_opt_in": True, "opt_in_contract_ref": "   "}, _actor()
-            )
+            store.update("t1", {"training_opt_in": True, "opt_in_contract_ref": "   "}, _actor())
 
     def test_failed_opt_in_leaves_stored_policy_unchanged(self) -> None:
         store = InMemoryDataUsePolicyStore()

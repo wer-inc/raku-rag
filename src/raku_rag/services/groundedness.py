@@ -3,6 +3,7 @@
 (a) pre-gate: enough authorized chunks at/above score_threshold and minimum_evidence_count?
 (b) post-generation evidence check: is the generated answer supported by the cited chunks?
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

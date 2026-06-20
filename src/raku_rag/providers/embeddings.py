@@ -3,6 +3,7 @@
 Production swaps in OpenAI-compatible / Azure / local providers behind EmbeddingProvider.
 Cosine similarity reflects token overlap → good enough for deterministic gate/integration tests.
 """
+
 from __future__ import annotations
 
 import hashlib

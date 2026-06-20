@@ -5,6 +5,7 @@ either the in-memory MVP (default — keeps Tier A at ~ms) or the Postgres-backe
 (adapter parity, exercised in Tier B). Set ``RAKU_TEST_BACKEND=postgres`` (+ optional ``POSTGRES_URL``) to
 switch — see ``docs/production-gate-strategy.md`` and ``scripts/gate.sh b``.
 """
+
 from __future__ import annotations
 
 import os

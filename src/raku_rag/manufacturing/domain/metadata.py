@@ -7,6 +7,7 @@ HighRiskClassifier. Every record carries ``tenant_id`` (001 tenancy is mandatory
 Authoritative field definitions: specs/002-manufacturing-field-knowledge-rag/data-model.md §B.
 No behaviour here — schema + value enums only (stage-2 implements enrichment/validation).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

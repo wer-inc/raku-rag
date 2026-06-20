@@ -16,6 +16,7 @@ Authoritative: spec FR-MFG-006, SC-MFG-011; contracts/mfg-openapi.md §A; contra
 
 TDD: RED now because ``raku_rag.manufacturing.app.ManufacturingSystem`` is unimplemented.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -52,7 +53,8 @@ class TestObsoleteEvidenceNotPrimary(unittest.TestCase):
         ans = self.sys.answer(self.op, "what is the torque specification for the flange bolt?")
         # Not used as primary evidence: an OBSOLETE doc must not back an asserted answer.
         self.assertNotEqual(
-            ans.status, "ok",
+            ans.status,
+            "ok",
             "obsolete-only evidence must NOT produce an asserted (ok) answer (SC-MFG-011)",
         )
         # When obsolete evidence is referenced at all, the warning is mandatory (FR-MFG-006).
@@ -63,7 +65,8 @@ class TestObsoleteEvidenceNotPrimary(unittest.TestCase):
         # The obsolete doc must not appear as a primary citation backing an assertion.
         for c in ans.citations:
             self.assertNotEqual(
-                getattr(c, "approval_status", None), "obsolete",
+                getattr(c, "approval_status", None),
+                "obsolete",
                 "an obsolete document must not be cited as primary evidence",
             )
 
@@ -92,7 +95,8 @@ class TestDraftEvidenceNotFormal(unittest.TestCase):
         ans = self.sys.answer(self.op, "what is the torque specification for the flange bolt?")
         # A DRAFT doc is not formal evidence: it must not back an asserted answer (FR-MFG-006).
         self.assertNotEqual(
-            ans.status, "ok",
+            ans.status,
+            "ok",
             "draft-only evidence must NOT produce an asserted (ok) answer (FR-MFG-006/SC-MFG-011)",
         )
         # A draft must never be cited as approved formal evidence.
@@ -125,7 +129,9 @@ class TestApprovedPositiveControl(unittest.TestCase):
         self.assertEqual(ans.status, "ok")
         self.assertTrue(ans.text)
         self.assertTrue(ans.citations)
-        self.assertFalse(ans.obsolete_warning, "approved evidence must not raise an obsolete warning")
+        self.assertFalse(
+            ans.obsolete_warning, "approved evidence must not raise an obsolete warning"
+        )
         self.assertEqual(ans.citations[0].approval_status, "approved")
 
 
@@ -221,7 +227,9 @@ class TestObsoletePrimaryWithUnrelatedApprovedCoexisting(unittest.TestCase):
 
         # No obsolete document is the primary basis of an asserted answer: the demote returns empty
         # citations/text, so the obsolete doc is reference-only and never cited as primary evidence.
-        self.assertFalse(ans.text, "a demoted answer must not assert text grounded on obsolete evidence")
+        self.assertFalse(
+            ans.text, "a demoted answer must not assert text grounded on obsolete evidence"
+        )
         self.assertEqual(ans.used_chunks, (), "a demoted answer must use no chunks as its basis")
         for c in ans.citations:
             self.assertNotEqual(

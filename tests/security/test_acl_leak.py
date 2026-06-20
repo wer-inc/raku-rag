@@ -1,4 +1,5 @@
 """T025 — Security hard-gate: ACL leak. 権限外チャンクが result/LLM context/citation に出ない."""
+
 from __future__ import annotations
 
 import unittest
@@ -14,11 +15,15 @@ class TestAclLeak(unittest.TestCase):
         self.sys = fresh()
         # eng-only document and sales-only document, same tenant
         self.sys.ingest_text(
-            tenant_id=T, collection_id="eng", document_id="docE",
+            tenant_id=T,
+            collection_id="eng",
+            document_id="docE",
             text="The deployment pipeline runs canary rollouts before production.",
         )
         self.sys.ingest_text(
-            tenant_id=T, collection_id="sales", document_id="docS",
+            tenant_id=T,
+            collection_id="sales",
+            document_id="docS",
             text="The sales commission rate is fifteen percent for new accounts.",
         )
         self.sys.grant(T, ScopeType.COLLECTION, "eng", SubjectType.GROUP, "eng")

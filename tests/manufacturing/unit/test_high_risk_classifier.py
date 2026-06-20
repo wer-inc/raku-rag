@@ -7,6 +7,7 @@ fields (``reason_codes`` + ``classification_source``).
 stdlib only; additive (new file). Behaviour verified against the live module before assertions were
 written — a failure here would indicate a real regression, not a test that needs a src change.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -96,7 +97,9 @@ class TestKeywordStage(unittest.TestCase):
 
     def test_intent_hint_contributes_to_keyword_match(self) -> None:
         # The query alone is benign; the structured intent_hint carries the danger keyword.
-        r = self.clf.classify("proceed with the step", [], intent_hint="bypass the safety interlock")
+        r = self.clf.classify(
+            "proceed with the step", [], intent_hint="bypass the safety interlock"
+        )
         self.assertTrue(r.is_high_risk)
         self.assertEqual(r.classification_source, ClassificationSource.KEYWORD)
         self.assertIn("safety_device", r.reason_codes)

@@ -12,6 +12,7 @@ Hard rules reflected in the schema (enforced by stage-2 AuditLogWriter + the saf
 
 Schema + enums only — no hashing / writing / aggregation behaviour (stage-2).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -53,7 +54,9 @@ def actor_org_context(
     ``None`` — never invented. Pure read-only derivation; builds no authorization.
     """
     department_id = (
-        principal.groups[0] if principal.groups else (principal.roles[0] if principal.roles else None)
+        principal.groups[0]
+        if principal.groups
+        else (principal.roles[0] if principal.roles else None)
     )
     return (factory_id, department_id)
 
@@ -262,7 +265,9 @@ class InMemoryAuditLogWriter:
         """
         return tuple(self._by_tenant.get(principal.tenant_id, ()))
 
-    def read_for_tenant(self, principal: IdentityClaims, tenant_id: str) -> tuple[AuditLogEntry, ...]:
+    def read_for_tenant(
+        self, principal: IdentityClaims, tenant_id: str
+    ) -> tuple[AuditLogEntry, ...]:
         """Read entries for ``tenant_id``; raises if it is not the principal's tenant.
 
         Telemetry/KPI aggregation calls this so any cross-tenant aggregation request fails closed.

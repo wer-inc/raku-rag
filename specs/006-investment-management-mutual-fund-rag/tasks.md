@@ -2,54 +2,54 @@
 
 ## Phase 1 - Profile and Metadata
 
-- [ ] IM-T001 Define 010 Investment Management IndustryProfile seed with financial/regulated extensions.
-- [ ] IM-T002 Define InvestmentManagement MetadataSchema and alias normalization rules.
-- [ ] IM-T003 Implement metadata import/enrichment API.
-- [ ] IM-T004 Add validation tests for fund/document aliases and required fields.
+- [X] IM-T001 Define 010 Investment Management IndustryProfile seed with financial/regulated extensions.
+- [X] IM-T002 Define InvestmentManagement MetadataSchema and alias normalization rules.
+- [X] IM-T003 Implement metadata import/enrichment API.
+- [X] IM-T004 Add validation tests for fund/document aliases and required fields.
 
 ## Phase 2 - Domain Data Model
 
-- [ ] IM-T010 Add migrations for Fund, FundShareClass, DistributionPartner, FundDocument, Prospectus, FundReport, MonthlyReport, MarketingMaterial, InvestmentGuideline, ComplianceRule, RFP, DDQ, InquiryCase, ResearchMemo, RiskReport, ESGDocument.
-- [ ] IM-T011 Add ACL mapping for department, role, fund, share class, asset class, strategy, distribution partner, document type, approval status, confidential data category, personal data category, regulated activity category.
-- [ ] IM-T012 Add tenant/fund/role isolation tests.
+- [X] IM-T010 Add migrations for Fund, FundShareClass, DistributionPartner, FundDocument, Prospectus, FundReport, MonthlyReport, MarketingMaterial, InvestmentGuideline, ComplianceRule, RFP, DDQ, InquiryCase, ResearchMemo, RiskReport, ESGDocument.
+- [X] IM-T011 Add ACL mapping for department, role, fund, share class, asset class, strategy, distribution partner, document type, approval status, confidential data category, personal data category, regulated activity category.
+- [X] IM-T012 Add tenant/fund/role isolation tests.
 
 ## Phase 3 - Regulated Risk and Evidence
 
-- [ ] IM-T020 Implement InvestmentRiskGateService using RiskPolicy, AdviceBoundaryPolicy, RegulatedActivityPolicy, RequiredEvidencePolicy.
-- [ ] IM-T021 Add tests blocking investment advice, buy/sell recommendation, suitability judgment, and legal/regulatory final judgment.
-- [ ] IM-T022 Add tests requiring approved/effective citations for regulated queries.
-- [ ] IM-T023 Implement DisclosureEvidenceService.
-- [ ] IM-T024 Implement contradiction check result generation for marketing materials.
+- [X] IM-T020 Implement InvestmentRiskGateService using RiskPolicy, AdviceBoundaryPolicy, RegulatedActivityPolicy, RequiredEvidencePolicy.
+- [X] IM-T021 Add tests blocking investment advice, buy/sell recommendation, suitability judgment, and legal/regulatory final judgment.
+- [X] IM-T022 Add tests requiring approved/effective citations for regulated queries.
+- [X] IM-T023 Implement DisclosureEvidenceService.
+- [X] IM-T024 Implement contradiction check result generation for marketing materials.
 
 ## Phase 4 - Workflows
 
-- [ ] IM-T030 Implement fund-question workflow.
-- [ ] IM-T031 Implement RFP response draft workflow.
-- [ ] IM-T032 Implement DDQ response draft workflow.
-- [ ] IM-T033 Implement inquiry reply draft workflow.
-- [ ] IM-T034 Implement marketing material check workflow.
-- [ ] IM-T035 Implement monthly commentary draft workflow.
-- [ ] IM-T036 Implement compliance rule question workflow.
+- [X] IM-T030 Implement fund-question workflow.
+- [X] IM-T031 Implement RFP response draft workflow.
+- [X] IM-T032 Implement DDQ response draft workflow.
+- [X] IM-T033 Implement inquiry reply draft workflow.
+- [X] IM-T034 Implement marketing material check workflow.
+- [X] IM-T035 Implement monthly commentary draft workflow.
+- [X] IM-T036 Implement compliance rule question workflow.
 
 ## Phase 5 - Draft and Compliance Review
 
-- [ ] IM-T040 Implement InvestmentDraftArtifact payload schemas and artifact types.
-- [ ] IM-T041 Implement draft review API.
-- [ ] IM-T042 Implement compliance review API and state machine.
-- [ ] IM-T043 Add no-auto-approval and no-auto-compliance-approval tests.
-- [ ] IM-T044 Add audit tests for draft, compliance review, DisclosureEvidence, and contradiction checks.
+- [X] IM-T040 Implement InvestmentDraftArtifact payload schemas and artifact types.
+- [X] IM-T041 Implement draft review API.
+- [X] IM-T042 Implement compliance review API and state machine.
+- [X] IM-T043 Add no-auto-approval and no-auto-compliance-approval tests.
+- [X] IM-T044 Add audit tests for draft, compliance review, DisclosureEvidence, and contradiction checks.
 
 ## Phase 6 - Dashboard / KPI / Governance
 
-- [ ] IM-T050 Implement InvestmentKPI calculations from audit/feedback/draft/evaluation/compliance review sources.
-- [ ] IM-T051 Implement investment dashboard widgets.
-- [ ] IM-T052 Implement governance status API for no-train, audit, advice boundary, regulated activity, disclosure evidence, compliance review, retention, provider governance.
-- [ ] IM-T053 Add dashboard/data leakage tests for funds, customer data, internal memos, DraftArtifacts, and KPI.
+- [X] IM-T050 Implement InvestmentKPI calculations from audit/feedback/draft/evaluation/compliance review sources.
+- [X] IM-T051 Implement investment dashboard widgets.
+- [X] IM-T052 Implement governance status API for no-train, audit, advice boundary, regulated activity, disclosure evidence, compliance review, retention, provider governance.
+- [X] IM-T053 Add dashboard/data leakage tests for funds, customer data, internal memos, DraftArtifacts, and KPI.
 
 ## Phase 7 - Contracts / PoC
 
-- [ ] IM-T060 Add OpenAPI contract tests for all `/investment/...` endpoints.
-- [ ] IM-T061 Build PoC dataset and acceptance tests for fund question, RFP/DDQ draft, marketing material check, monthly commentary draft, compliance rule question, and KPI dashboard.
+- [X] IM-T060 Add OpenAPI contract tests for all `/investment/...` endpoints.
+- [X] IM-T061 Build PoC dataset and acceptance tests for fund question, RFP/DDQ draft, marketing material check, monthly commentary draft, compliance rule question, and KPI dashboard.
 
 ## Requirement Traceability
 

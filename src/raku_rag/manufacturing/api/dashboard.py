@@ -17,6 +17,7 @@ sees an empty audit log, hence 0 / empty everywhere (no disclosure).
 stdlib only. Mirrors contracts/mfg-openapi.md §E + data-model §I; assertion-shape mirrors
 tests/manufacturing/test_dashboard_contract.py + test_safety_telemetry.py.
 """
+
 from __future__ import annotations
 
 from collections import Counter
@@ -25,8 +26,7 @@ from datetime import datetime, timezone
 
 from raku_rag.domain.models import IdentityClaims
 from raku_rag.manufacturing.domain.audit import InMemoryAuditLogWriter
-from raku_rag.manufacturing.domain.metadata import ApprovalStatus, ManufacturingDocumentMetadata
-from raku_rag.manufacturing.domain.safety import SafetyBlockReason
+from raku_rag.manufacturing.domain.metadata import ApprovalStatus
 from raku_rag.manufacturing.telemetry.safety_metrics import SafetyTelemetry, SOURCE_AUDIT_LOG
 
 # Answer-path action label written by record_answer_decision (api/audit.py) — the single source row.
@@ -86,6 +86,7 @@ class DashboardService:
         get_mfg_meta,
         all_mfg_meta,
         retention=None,
+        materialized_kpi_store=None,
     ) -> None:
         self._audit = audit
         self._get_mfg_meta = get_mfg_meta
@@ -93,6 +94,7 @@ class DashboardService:
         self._all_mfg_meta = all_mfg_meta
         self._telemetry = SafetyTelemetry(audit)
         self._retention = retention  # DataUsePolicy-backed retention (audit window) — optional
+        self._materialized_kpi_store = materialized_kpi_store
 
     # --- GET /v1/manufacturing/safety-telemetry (T048; FR-MFG-030, SC-MFG-013) --------------------
     def safety_telemetry(
@@ -159,9 +161,7 @@ class DashboardService:
         # frequent_questions: grouped by the recorded reason-code signature (reference labels only,
         # never the query body — SC-MFG-010). Surfaces the topics asked most.
         reason_sigs = Counter(e.reason for e in answer_entries if e.reason)
-        frequent_questions = tuple(
-            f"{sig} (x{n})" for sig, n in reason_sigs.most_common()
-        )
+        frequent_questions = tuple(f"{sig} (x{n})" for sig, n in reason_sigs.most_common())
 
         # frequently_referenced_documents: from the citation-access audit (single source of truth) —
         # the documents most surveyed/cited as evidence (reference IDs only).
@@ -214,9 +214,27 @@ class DashboardService:
         collection_id: str | None = None,
         time_range: tuple[str, str] | None = None,
         format: str = "json",
+        use_materialized: bool = True,
     ) -> dict | str:
         """Compute the full FR-MFG-028 KPI set and export it as json (dict) or csv (str)."""
         from raku_rag.manufacturing.kpi.poc_metrics import PocKpiReport
+
+        if use_materialized and self._materialized_kpi_store is not None:
+            snapshot = self._materialized_kpi_store.latest(
+                principal.tenant_id,
+                collection_id or "",
+            )
+            if snapshot is not None:
+                data = dict(snapshot.metrics)
+                data["materialized_at"] = snapshot.materialized_at
+                data["source_ingestion_run_id"] = snapshot.source_ingestion_run_id
+                data["dagster_run_id"] = snapshot.dagster_run_id
+                data["source"] = "materialized"
+                if format == "json":
+                    return data
+                if format == "csv":
+                    return _kpi_dict_to_csv(data)
+                raise ValueError(f"unsupported kpi format: {format!r}")
 
         report = PocKpiReport.compute(
             audit=self._audit,
@@ -238,3 +256,18 @@ class DashboardService:
         for key, meta in self._all_mfg_meta():
             if key[0] == tenant_id:
                 yield key, meta
+
+
+def _kpi_dict_to_csv(data: dict) -> str:
+    import csv
+    import io
+    import json
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["kpi", "value"])
+    for key, value in data.items():
+        if isinstance(value, (list, dict)):
+            value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        writer.writerow([key, value])
+    return buf.getvalue()

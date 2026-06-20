@@ -1,0 +1,112 @@
+# Local dependency stack for `docker compose up` from the repository root.
+# Keep infra/docker-compose.yml in sync; scripts may still target the infra-scoped file directly.
+name: raku-local
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-raku}
+      POSTGRES_USER: ${POSTGRES_USER:-raku}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-raku}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-raku} -d ${POSTGRES_DB:-raku}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  localstack:
+    image: localstack/localstack:3
+    environment:
+      SERVICES: sqs
+      DEBUG: "0"
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./infra/localstack/init:/etc/localstack/init/ready.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal sqs list-queues >/dev/null 2>&1 || exit 1"]
+      interval: 6s
+      timeout: 5s
+      retries: 20
+
+  trace-sink:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    volumes:
+      - ./infra/otel/collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+
+  langfuse-db:
+    image: postgres:16-alpine
+    profiles: ["observability"]
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+    volumes:
+      - langfusedb:/var/lib/postgresql/data
+
+  langfuse:
+    image: langfuse/langfuse:2
+    profiles: ["observability"]
+    depends_on:
+      - langfuse-db
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_SECRET: dev-langfuse-secret
+      NEXTAUTH_URL: http://localhost:3001
+      SALT: dev-salt
+    ports:
+      - "3001:3000"
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["cache"]
+    ports:
+      - "6379:6379"
+
+  dagster:
+    image: python:3.12-slim
+    profiles: ["dagster"]
+    working_dir: /workspace
+    command: >
+      sh -c "pip install --quiet dagster dagster-webserver &&
+             dagster dev -h 0.0.0.0 -p 3003"
+    environment:
+      DAGSTER_HOME: /workspace/.dagster
+      PYTHONPATH: /workspace/src
+    ports:
+      - "3003:3003"
+    volumes:
+      - .:/workspace
+
+volumes:
+  pgdata:
+  miniodata:
+  langfusedb:

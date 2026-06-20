@@ -1,4 +1,5 @@
 """T037 — Security hard-gate: 削除済み文書が search/answer/citation/cache に再出現しない (SC-003)."""
+
 from __future__ import annotations
 
 import unittest
@@ -13,7 +14,9 @@ class TestDeletionReappearance(unittest.TestCase):
     def setUp(self) -> None:
         self.sys = fresh()
         self.sys.ingest_text(
-            tenant_id=T, collection_id="c", document_id="d1",
+            tenant_id=T,
+            collection_id="c",
+            document_id="d1",
             text="The incident response runbook lists the on-call escalation path.",
         )
         self.sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "alice")

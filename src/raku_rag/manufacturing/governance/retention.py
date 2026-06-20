@@ -12,6 +12,7 @@ hard reject, so a misconfiguration fails safe to the bounded value).
 
 stdlib only — in-memory; structurally satisfies ``raku_rag.manufacturing.interfaces.RetentionManager``.
 """
+
 from __future__ import annotations
 
 from raku_rag.manufacturing.domain.policy import RetentionConfig
@@ -40,7 +41,9 @@ class InMemoryRetentionManager(RetentionManager):
 
     def __init__(self, store: DataUsePolicyStore, *, deletion=None) -> None:
         self._store = store
-        self._deletion = deletion  # 001 DeletionService (tombstone/cascade); optional for resolution
+        self._deletion = (
+            deletion  # 001 DeletionService (tombstone/cascade); optional for resolution
+        )
 
     def effective_retention(self, tenant_id: str) -> RetentionConfig:
         """Return the tenant's effective retention (default 365/365, GQ2; override clamped to guide)."""

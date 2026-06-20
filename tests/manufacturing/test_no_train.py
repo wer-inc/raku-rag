@@ -56,6 +56,7 @@ TDD: RED now because the no-train enforcement surface
 (``ManufacturingSystem.use_for_training`` / ``.capability_status`` / ``self.no_train``) is
 unimplemented (missing-impl), NOT an unrelated import error.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -82,9 +83,7 @@ NO_TRAIN_PROVIDERS = ("trustworthy_llm", "trustworthy_ocr")  # the Base CR-001-B
 
 
 def _fresh() -> ManufacturingSystem:
-    return ManufacturingSystem(
-        provider_capabilities=CAPS, no_train_providers=NO_TRAIN_PROVIDERS
-    )
+    return ManufacturingSystem(provider_capabilities=CAPS, no_train_providers=NO_TRAIN_PROVIDERS)
 
 
 # --- (1) OPT-IN REQUIRED -------------------------------------------------------------------------
@@ -110,9 +109,7 @@ class TestOptInRequiredForTraining(unittest.TestCase):
         # refuses to even persist such a state; training use therefore remains impossible.
         sys = _fresh()
         with self.assertRaises(ValueError):
-            sys.update_data_use_policy(
-                tenant_id=T, patch={"training_opt_in": True}, actor=_admin()
-            )
+            sys.update_data_use_policy(tenant_id=T, patch={"training_opt_in": True}, actor=_admin())
         # And training is still refused (policy unchanged → opt-in absent).
         with self.assertRaises(Exception):
             sys.use_for_training(tenant_id=T, data_kind="answer", actor=_admin())
@@ -128,7 +125,9 @@ class TestOptInRequiredForTraining(unittest.TestCase):
                 accepted += 1
             except Exception:
                 pass
-        self.assertEqual(accepted, 0, "no training use may be accepted without admin opt-in (SC-MFG-009=0)")
+        self.assertEqual(
+            accepted, 0, "no training use may be accepted without admin opt-in (SC-MFG-009=0)"
+        )
 
 
 # --- (2) BLOCK NOT DEGRADE -----------------------------------------------------------------------

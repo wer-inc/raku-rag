@@ -31,6 +31,7 @@ the Phase-2 ``acl_mapping`` helper, and the 001 retrieval pre-filter (``store.la
 
 stdlib only. Authoritative: spec FR-MFG-013, SC-MFG-008; quickstart S7; contracts/mfg-openapi.md §A.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -47,7 +48,7 @@ from raku_rag.manufacturing.domain.acl_mapping import (
     grants_for_scope,
 )
 from raku_rag.manufacturing.domain.draft import DraftType
-from raku_rag.manufacturing.domain.entities import Equipment, Factory, Process
+from raku_rag.manufacturing.domain.entities import Process
 from tests.manufacturing.helpers import claims, fresh, mfg_meta
 
 T = "tenant_mfg"
@@ -113,9 +114,7 @@ class TestUs6AclMappingHardGate(unittest.TestCase):
             equipment_areas=(Process(tenant_id=T, process_id=CONF_PROC, factory_id="facB"),),
         )
         self.sys.grant_scope(self.authorized_scope)  # << missing impl: RED until T053–T056
-        self.authorized = claims(
-            T, "qb_user", groups=["quality_dept"], roles=["supervisor"]
-        )
+        self.authorized = claims(T, "qb_user", groups=["quality_dept"], roles=["supervisor"])
 
         # Also map a factory-A maintenance department scope so the unauthorized user is a real,
         # legitimately-provisioned user (blocks "denied because they have no grants at all").
@@ -128,9 +127,7 @@ class TestUs6AclMappingHardGate(unittest.TestCase):
             )
         )
         # UNAUTHORIZED principal: WRONG factory (A not B), WRONG department, WRONG role, WRONG area.
-        self.unauthorized = claims(
-            T, "fa_user", groups=["maintenance_dept"], roles=["technician"]
-        )
+        self.unauthorized = claims(T, "fa_user", groups=["maintenance_dept"], roles=["technician"])
 
     # ---------------------------------------------------------------------------------------------
     # (1) Leakage = 0 across search / answer-citation / draft for the unauthorized user.
@@ -153,7 +150,9 @@ class TestUs6AclMappingHardGate(unittest.TestCase):
             self.assertEqual(ans.used_chunks, ())
         # The confidential body MUST NOT appear in the answer text, and the doc never cited.
         for c in ans.citations:
-            self.assertNotEqual(c.document_id, CONF_DOC, "confidential doc cited to unauthorized user")
+            self.assertNotEqual(
+                c.document_id, CONF_DOC, "confidential doc cited to unauthorized user"
+            )
         if ans.text:
             self.assertNotIn(CUSTOMER, ans.text)
             self.assertNotIn(DEFECT, ans.text)
@@ -230,9 +229,7 @@ class TestUs6AclMappingHardGate(unittest.TestCase):
         # A user in a DIFFERENT tenant, even granted an identically-shaped factory-B scope in their
         # own tenant, sees none of tenant_mfg's confidential docs (001 structural tenant boundary).
         self.sys.grant_scope(
-            ManufacturingScope(
-                tenant_id=T_OTHER, department="quality_dept", factory_ids=("facB",)
-            )
+            ManufacturingScope(tenant_id=T_OTHER, department="quality_dept", factory_ids=("facB",))
         )
         foreign = claims(T_OTHER, "outsider", groups=["quality_dept"])
         results = self.sys.search(foreign, PROBE_QUERY)
@@ -265,23 +262,33 @@ class TestUs6AclMappingHardGate(unittest.TestCase):
     # ---------------------------------------------------------------------------------------------
     def test_mapping_produces_real_001_aclpolicy(self) -> None:
         policy = acl_policy_for_scopes([self.authorized_scope])
-        self.assertIsInstance(policy, AclPolicy, "mapping must yield the 001 AclPolicy, not a bespoke one")
+        self.assertIsInstance(
+            policy, AclPolicy, "mapping must yield the 001 AclPolicy, not a bespoke one"
+        )
 
     def test_mapping_emits_001_grants_for_every_dimension(self) -> None:
         grants = grants_for_scope(self.authorized_scope)
         # department -> base ACL group subject
         self.assertTrue(
-            any(g.subject_type == SubjectType.GROUP and g.subject_id == "quality_dept" for g in grants),
+            any(
+                g.subject_type == SubjectType.GROUP and g.subject_id == "quality_dept"
+                for g in grants
+            ),
             "department must map to a base ACL group subject (FR-MFG-013)",
         )
         # role -> base ACL role subject
         self.assertTrue(
-            any(g.subject_type == SubjectType.ROLE and g.subject_id == "supervisor" for g in grants),
+            any(
+                g.subject_type == SubjectType.ROLE and g.subject_id == "supervisor" for g in grants
+            ),
             "role must map to a base ACL role subject (FR-MFG-013)",
         )
         # factory -> COLLECTION-scoped territory keyed by the factory collection
         self.assertTrue(
-            any(g.scope_type == ScopeType.COLLECTION and g.scope_id == FACTORY_B_COLLECTION for g in grants),
+            any(
+                g.scope_type == ScopeType.COLLECTION and g.scope_id == FACTORY_B_COLLECTION
+                for g in grants
+            ),
             "factory must map to a 001 COLLECTION-scoped Factory territory (FR-MFG-013)",
         )
         # equipment-area -> DOCUMENT-scoped Process/Equipment metadata

@@ -14,6 +14,7 @@ Behaviour (no new authz — 001 tenancy is reused for scoping):
 stdlib only — in-memory dict keyed by tenant_id. Audit emission is stage-2 wiring; the store
 returns the new ``DataUsePolicy`` so the caller can record the change via AuditLogWriter.
 """
+
 from __future__ import annotations
 
 import copy
@@ -79,9 +80,7 @@ class InMemoryDataUsePolicyStore(DataUsePolicyStore):
             self._by_tenant[tenant_id] = policy
         return copy.copy(policy)
 
-    def update(
-        self, tenant_id: str, patch: dict, actor: IdentityClaims
-    ) -> DataUsePolicy:
+    def update(self, tenant_id: str, patch: dict, actor: IdentityClaims) -> DataUsePolicy:
         """Apply a partial patch, validate the opt-in invariant, and bump ``policy_version``.
 
         The patch is validated against the *resulting* policy; an invalid patch raises and the
@@ -176,7 +175,9 @@ class InMemoryNoTrainGuard(NoTrainGuard):
 
     def capability_status(self, tenant_id: str, capability: str) -> str:
         """GQ1: blocked capability surfaces ``temporarily_unavailable`` (no inferred answer)."""
-        return CAPABILITY_OK if self.capability_allowed(tenant_id, capability) else CAPABILITY_BLOCKED
+        return (
+            CAPABILITY_OK if self.capability_allowed(tenant_id, capability) else CAPABILITY_BLOCKED
+        )
 
     def resolve_capability_provider(self, tenant_id: str, capability: str) -> str | None:
         """Return a no-train-guaranteed provider for the capability, or None when blocked (GQ1).

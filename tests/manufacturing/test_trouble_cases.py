@@ -31,6 +31,7 @@ entities (TroubleCase/FailureMode/Countermeasure/TroubleCaseResult), the US6
 stdlib only. Authoritative: spec FR-MFG-008/009, Hard Rule 4; quickstart S5; contracts/mfg-openapi.md
 §C; data-model §D; SC-MFG-008 (extended to this endpoint).
 """
+
 from __future__ import annotations
 
 import unittest
@@ -139,7 +140,11 @@ def _seed_confidential_case(sys) -> None:
         source_document_id=CONF_DOC,
         text=CONF_TC_BODY,
         metadata=mfg_meta(
-            tenant_id=T, document_id=CONF_DOC, customer=CUSTOMER, defect_type=DEFECT, process_id=CONF_PROC
+            tenant_id=T,
+            document_id=CONF_DOC,
+            customer=CUSTOMER,
+            defect_type=DEFECT,
+            process_id=CONF_PROC,
         ),
         trouble_case=TroubleCase(
             tenant_id=T,
@@ -151,7 +156,10 @@ def _seed_confidential_case(sys) -> None:
             source_document_id=CONF_DOC,
         ),
         failure_mode=FailureMode(
-            tenant_id=T, failure_mode_id="fm_spindle", name="主軸アンバランス", description="spindle imbalance"
+            tenant_id=T,
+            failure_mode_id="fm_spindle",
+            name="主軸アンバランス",
+            description="spindle imbalance",
         ),
         countermeasures=(
             Countermeasure(
@@ -222,7 +230,9 @@ class TestHardRule4PastCaseCandidate(unittest.TestCase):
         perm_ids = {c.measure_id for c in m.countermeasures.permanent}
         self.assertIn("m_A_prov", prov_ids, "provisional measure must be in the provisional bucket")
         self.assertIn("m_A_perm", perm_ids, "permanent measure must be in the permanent bucket")
-        self.assertEqual(prov_ids & perm_ids, set(), "the two measure_class buckets must be disjoint")
+        self.assertEqual(
+            prov_ids & perm_ids, set(), "the two measure_class buckets must be disjoint"
+        )
         for c in m.countermeasures.provisional:
             self.assertEqual(_enum_value(c.measure_class), MeasureClass.PROVISIONAL.value)
         for c in m.countermeasures.permanent:
@@ -254,7 +264,12 @@ class TestHardRule4PastCaseCandidate(unittest.TestCase):
         self.assertTrue(perm.label, "a candidate/past-example label must be present")
         # Mechanism check: the label must NOT read as a definitive work instruction / official order.
         label = perm.label
-        for forbidden in ("正式手順", "正式作業指示", "definitive work order", "official work instruction"):
+        for forbidden in (
+            "正式手順",
+            "正式作業指示",
+            "definitive work order",
+            "official work instruction",
+        ):
             self.assertNotIn(
                 forbidden,
                 label,
@@ -272,7 +287,9 @@ class TestHardRule4PastCaseCandidate(unittest.TestCase):
                 CountermeasureType.CANDIDATE.value,
                 "all past-case countermeasures (provisional AND permanent) display as candidate",
             )
-            self.assertTrue(c.label, "every displayed countermeasure carries a candidate/reference label")
+            self.assertTrue(
+                c.label, "every displayed countermeasure carries a candidate/reference label"
+            )
 
 
 # ================================================================================================
@@ -331,7 +348,9 @@ class TestTroubleCaseAclHardGate(unittest.TestCase):
         for m in resp.results:
             for c in m.citations:
                 self.assertNotEqual(
-                    c.document_id, CONF_DOC, "confidential TroubleCase source cited to unauthorized user"
+                    c.document_id,
+                    CONF_DOC,
+                    "confidential TroubleCase source cited to unauthorized user",
                 )
 
     # --- PRE-filter (not post-filter): confidential chunk excluded BEFORE scoring -----------------

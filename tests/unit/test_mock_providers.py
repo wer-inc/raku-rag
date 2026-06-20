@@ -1,4 +1,5 @@
 """P0-T19 — deterministic conformance for the 5 Phase-0 mock providers (RT12 no-train auditable)."""
+
 from __future__ import annotations
 
 import unittest

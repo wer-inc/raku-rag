@@ -11,6 +11,7 @@ spec §safety/audit + data-model §H:
 
 No PII / body text is recorded; the writer redacts as defence-in-depth.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

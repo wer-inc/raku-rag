@@ -1,4 +1,5 @@
 """T033 — QueryProfile resolution (per collection, overridable per query) (FR-014a)."""
+
 from __future__ import annotations
 
 from raku_rag.domain.models import QueryProfile

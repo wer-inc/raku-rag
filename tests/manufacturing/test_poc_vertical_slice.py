@@ -31,6 +31,7 @@ Authoritative: spec FR-MFG-027/028, SC-MFG-012/013; quickstart S11 (and S1-S10 i
 contracts/mfg-openapi.md. Assertion style mirrors tests/manufacturing/test_ingest_formats.py +
 test_dashboard_contract.py + test_safety_telemetry.py.
 """
+
 from __future__ import annotations
 
 import csv
@@ -179,7 +180,9 @@ class PocVerticalSliceTest(unittest.TestCase):
             ),
         )
         self.assertEqual(job_docx.status, "succeeded", getattr(job_docx, "failure_reason", ""))
-        self.assertGreater(job_docx.chunk_count, 0, "DOCX must chunk/index (US2 reuse of 001 ingest)")
+        self.assertGreater(
+            job_docx.chunk_count, 0, "DOCX must chunk/index (US2 reuse of 001 ingest)"
+        )
 
         # 1b) XLSX equipment ledger — equipment 'pump17' + alarm 'E152' (search source).
         job_xlsx = sys.ingest_manufacturing_file(
@@ -291,7 +294,8 @@ class PocVerticalSliceTest(unittest.TestCase):
             actor=self.admin,
         )
         self.assertEqual(
-            getattr(imported_state, "approval_status", None) or _attr_or_key(imported_state, "approval_status"),
+            getattr(imported_state, "approval_status", None)
+            or _attr_or_key(imported_state, "approval_status"),
             "approved",
             "an imported upstream approval becomes the source of truth (FR-MFG-004a)",
         )
@@ -302,11 +306,13 @@ class PocVerticalSliceTest(unittest.TestCase):
         baseline_kpi = sys.kpi(self.admin, format="json")
         self.assertIsInstance(baseline_kpi, dict)
         self.assertEqual(
-            baseline_kpi["high_risk_query_count"], 0,
+            baseline_kpi["high_risk_query_count"],
+            0,
             "BASELINE captured before any query MUST show 0 high-risk queries (analyze C2)",
         )
         self.assertEqual(
-            baseline_kpi["safety_gate_block_count"], 0,
+            baseline_kpi["safety_gate_block_count"],
+            0,
             "BASELINE captured before any query MUST show 0 safety blocks (analyze C2)",
         )
         self.assertIn("materialized_at", baseline_kpi, "the baseline snapshot must be timestamped")
@@ -316,20 +322,47 @@ class PocVerticalSliceTest(unittest.TestCase):
 
         # === STAGE 3 — SEARCH by equipment / alarm / process / defect / part (FR-MFG-027) =========
         # equipment name (XLSX ledger) — found via 001 retrieval, carries the approval tag.
-        eq_hits = sys.search(self.op, "replace impeller seal pump17", manufacturing_filters={"equipment": "pump17"})
-        self.assertTrue(any(r.document_id == "xlsx_ledger" for r in eq_hits), "equipment-name search must find the ledger")
+        eq_hits = sys.search(
+            self.op, "replace impeller seal pump17", manufacturing_filters={"equipment": "pump17"}
+        )
+        self.assertTrue(
+            any(r.document_id == "xlsx_ledger" for r in eq_hits),
+            "equipment-name search must find the ledger",
+        )
         # alarm code (XLSX ledger).
-        alarm_hits = sys.search(self.op, "alarm E152 remedy", manufacturing_filters={"alarm_code": "E152"})
-        self.assertTrue(any(r.document_id == "xlsx_ledger" for r in alarm_hits), "alarm-code search must find the ledger")
+        alarm_hits = sys.search(
+            self.op, "alarm E152 remedy", manufacturing_filters={"alarm_code": "E152"}
+        )
+        self.assertTrue(
+            any(r.document_id == "xlsx_ledger" for r in alarm_hits),
+            "alarm-code search must find the ledger",
+        )
         # process name (approved torque doc).
-        proc_hits = sys.search(self.op, "torque specification", manufacturing_filters={"process": "conveyor_assembly"})
-        self.assertTrue(any(r.document_id == "approved_torque" for r in proc_hits), "process-name search must find the doc")
+        proc_hits = sys.search(
+            self.op, "torque specification", manufacturing_filters={"process": "conveyor_assembly"}
+        )
+        self.assertTrue(
+            any(r.document_id == "approved_torque" for r in proc_hits),
+            "process-name search must find the doc",
+        )
         # defect type (CSV defect log).
-        defect_hits = sys.search(self.op, "crack defect P900 scrap remold", manufacturing_filters={"defect_type": "crack"})
-        self.assertTrue(any(r.document_id == "csv_defects" for r in defect_hits), "defect-type search must find the CSV")
+        defect_hits = sys.search(
+            self.op,
+            "crack defect P900 scrap remold",
+            manufacturing_filters={"defect_type": "crack"},
+        )
+        self.assertTrue(
+            any(r.document_id == "csv_defects" for r in defect_hits),
+            "defect-type search must find the CSV",
+        )
         # part number (CSV defect log).
-        part_hits = sys.search(self.op, "P900 housing action", manufacturing_filters={"part_no": "P900"})
-        self.assertTrue(any(r.document_id == "csv_defects" for r in part_hits), "part-number search must find the CSV")
+        part_hits = sys.search(
+            self.op, "P900 housing action", manufacturing_filters={"part_no": "P900"}
+        )
+        self.assertTrue(
+            any(r.document_id == "csv_defects" for r in part_hits),
+            "part-number search must find the CSV",
+        )
         # The metadata filter is a candidate post-filter; it MUST NOT leak a non-matching doc.
         for r in eq_hits:
             self.assertEqual(r.approval_status is None or isinstance(r.approval_status, str), True)
@@ -341,36 +374,68 @@ class PocVerticalSliceTest(unittest.TestCase):
         # === STAGE 4 — GROUNDED ANSWER reflecting approved / obsolete / draft state ================
         # 4a) APPROVED non-high-risk question answers with an APPROVED PRIMARY citation (S2). The
         #     approved doc backs the assertion; no obsolete material is among the torque candidates.
-        ans_ok = sys.answer(self.op, "what is the torque specification for the M8 conveyor cover bolt?", collection_id=COLL)
+        ans_ok = sys.answer(
+            self.op,
+            "what is the torque specification for the M8 conveyor cover bolt?",
+            collection_id=COLL,
+        )
         self.assertEqual(ans_ok.status, "ok")
         self.assertTrue(ans_ok.citations)
-        self.assertEqual(ans_ok.citations[0].document_id, "approved_torque", "the primary citation must be the approved doc")
+        self.assertEqual(
+            ans_ok.citations[0].document_id,
+            "approved_torque",
+            "the primary citation must be the approved doc",
+        )
         self.assertEqual(ans_ok.citations[0].approval_status, "approved")
         self.assertIsNone(ans_ok.safety_block_reason)
-        self.assertFalse(ans_ok.obsolete_warning, "an approved answer with no obsolete candidate must not warn")
+        self.assertFalse(
+            ans_ok.obsolete_warning, "an approved answer with no obsolete candidate must not warn"
+        )
 
         # 4b) OBSOLETE evidence raises the mandatory warning when referenced (S4 / FR-MFG-006). The
         #     grinder-coolant topic's relevant evidence is the obsolete doc; the answer must surface
         #     the obsolete_warning (the obsolete-is-never-PRIMARY axis is pinned, with a discovered
         #     integration gap, by ObsoleteNotPrimaryCitationGapTest below).
-        ans_obsolete = sys.answer(self.op, "what is the legacy coolant flow rate setpoint for the grinder spindle?", collection_id=COLL)
-        self.assertTrue(ans_obsolete.obsolete_warning, "referencing obsolete evidence requires obsolete_warning (FR-MFG-006)")
+        ans_obsolete = sys.answer(
+            self.op,
+            "what is the legacy coolant flow rate setpoint for the grinder spindle?",
+            collection_id=COLL,
+        )
+        self.assertTrue(
+            ans_obsolete.obsolete_warning,
+            "referencing obsolete evidence requires obsolete_warning (FR-MFG-006)",
+        )
 
         # 4c) HIGH-RISK with an APPROVED+effective citation answers + requires on-site confirmation (S3.3).
-        ans_hr_ok = sys.answer(self.op, "How do I disassemble the press safely?", collection_id=COLL)
+        ans_hr_ok = sys.answer(
+            self.op, "How do I disassemble the press safely?", collection_id=COLL
+        )
         self.assertTrue(ans_hr_ok.high_risk, "press disassembly is a high-risk query")
-        self.assertEqual(ans_hr_ok.status, "ok", "an approved+effective safety citation allows the high-risk answer")
+        self.assertEqual(
+            ans_hr_ok.status,
+            "ok",
+            "an approved+effective safety citation allows the high-risk answer",
+        )
         self.assertIsNone(ans_hr_ok.safety_block_reason)
         self.assertTrue(ans_hr_ok.citations)
         self.assertEqual(ans_hr_ok.citations[0].approval_status, "approved")
-        self.assertTrue(ans_hr_ok.requires_onsite_confirmation, "high-risk hazardous work requires on-site confirmation (FR-MFG-007)")
+        self.assertTrue(
+            ans_hr_ok.requires_onsite_confirmation,
+            "high-risk hazardous work requires on-site confirmation (FR-MFG-007)",
+        )
 
         # 4d) HIGH-RISK WITHOUT an approved+effective citation is BLOCKED with the exact reason (S3.1 / SC-MFG-006).
         #     The only electrical-panel evidence is the DRAFT doc => approved_citation_missing.
-        ans_hr_block = sys.answer(self.op, "How do I work on the 400V panel without getting electrocuted?", collection_id=COLL)
+        ans_hr_block = sys.answer(
+            self.op,
+            "How do I work on the 400V panel without getting electrocuted?",
+            collection_id=COLL,
+        )
         self.assertTrue(ans_hr_block.high_risk)
         self.assertEqual(ans_hr_block.status, "insufficient_evidence")
-        self.assertEqual(ans_hr_block.safety_block_reason, SafetyBlockReason.APPROVED_CITATION_MISSING.value)
+        self.assertEqual(
+            ans_hr_block.safety_block_reason, SafetyBlockReason.APPROVED_CITATION_MISSING.value
+        )
         self.assertFalse(ans_hr_block.text, "must not assert a procedure without approved evidence")
         self.assertEqual(ans_hr_block.used_chunks, ())
 
@@ -391,7 +456,10 @@ class PocVerticalSliceTest(unittest.TestCase):
                 source_document_id="tr_gearbox",
             ),
             failure_mode=FailureMode(
-                tenant_id=T, failure_mode_id="fm_bearing", name="軸受摩耗", description="bearing wear"
+                tenant_id=T,
+                failure_mode_id="fm_bearing",
+                name="軸受摩耗",
+                description="bearing wear",
             ),
             countermeasures=(
                 Countermeasure(
@@ -416,7 +484,9 @@ class PocVerticalSliceTest(unittest.TestCase):
         tc_resp = sys.search_trouble_cases(self.op, SYMPTOM_QUERY)
         self.assertEqual(getattr(tc_resp.status, "value", tc_resp.status), "ok")
         match = next((m for m in tc_resp.results if m.trouble_case_id == "tc_gearbox"), None)
-        self.assertIsNotNone(match, "the seeded gearbox case must be retrieved for the symptom query")
+        self.assertIsNotNone(
+            match, "the seeded gearbox case must be retrieved for the symptom query"
+        )
         self.assertIsNotNone(match.failure_mode, "the cause (FailureMode) must accompany the match")
         self.assertTrue(match.recurrence_prevention)
         self.assertTrue(match.citations, "the similar case must be cited (出典つき)")
@@ -438,21 +508,37 @@ class PocVerticalSliceTest(unittest.TestCase):
             principal=self.op,
             kind=DraftType.CHECKLIST,
             context_citations=(
-                Citation(kind="text", document_id="docx_lockout", source_id="src", version=1, retrieval_score=0.9, chunk_id="docx_lockout#0"),
+                Citation(
+                    kind="text",
+                    document_id="docx_lockout",
+                    source_id="src",
+                    version=1,
+                    retrieval_score=0.9,
+                    chunk_id="docx_lockout#0",
+                ),
             ),
             source_document_ids=("docx_lockout",),
         )
-        self.assertEqual(getattr(draft.status, "value", draft.status), DraftStatus.DRAFT.value, "AI output is always draft (Hard Rule 1)")
+        self.assertEqual(
+            getattr(draft.status, "value", draft.status),
+            DraftStatus.DRAFT.value,
+            "AI output is always draft (Hard Rule 1)",
+        )
         self.assertEqual(getattr(draft.created_by, "value", draft.created_by), CreatedBy.AI.value)
         # A no-reviewer approve attempt MUST NOT confirm the draft (SC-MFG-007).
         leaked = False
         try:
-            r = sys.review_draft(tenant_id=T, artifact_id=draft.artifact_id, reviewer=None, decision="approved")
+            r = sys.review_draft(
+                tenant_id=T, artifact_id=draft.artifact_id, reviewer=None, decision="approved"
+            )
             leaked = getattr(r.status, "value", r.status) == DraftStatus.APPROVED.value
         except (ValueError, PermissionError, TypeError):
             pass
         self.assertFalse(leaked, "AI self-approve (no reviewer) must be rejected (SC-MFG-007 = 0)")
-        self.assertEqual(getattr(sys.get_draft(T, draft.artifact_id).status, "value", None), DraftStatus.DRAFT.value)
+        self.assertEqual(
+            getattr(sys.get_draft(T, draft.artifact_id).status, "value", None),
+            DraftStatus.DRAFT.value,
+        )
         # A reviewer CAN approve it (positive control — approval is reachable only via a reviewer).
         sys.assign_reviewer(tenant_id=T, artifact_id=draft.artifact_id, reviewer_id="rev_poc")
         approved = sys.review_draft(
@@ -462,15 +548,23 @@ class PocVerticalSliceTest(unittest.TestCase):
             decision="approved",
             comment="ok",
         )
-        self.assertEqual(getattr(approved.status, "value", approved.status), DraftStatus.APPROVED.value)
-        self.assertEqual(approved.reviewer_id, "rev_poc", "the approval is attributable to the human reviewer")
+        self.assertEqual(
+            getattr(approved.status, "value", approved.status), DraftStatus.APPROVED.value
+        )
+        self.assertEqual(
+            approved.reviewer_id, "rev_poc", "the approval is attributable to the human reviewer"
+        )
 
         # === STAGE 7 — PoC KPI + SAFETY TELEMETRY compute; telemetry == an INDEPENDENT audit scan ==
         final_kpi = sys.kpi(self.admin, format="json")
         self.assertIsInstance(final_kpi, dict)
         for key in (
-            "self_resolution_rate", "average_time_to_answer", "grounded_answer_rate",
-            "insufficient_evidence_rate", "high_risk_query_count", "safety_gate_block_count",
+            "self_resolution_rate",
+            "average_time_to_answer",
+            "grounded_answer_rate",
+            "insufficient_evidence_rate",
+            "high_risk_query_count",
+            "safety_gate_block_count",
         ):
             self.assertIn(key, final_kpi, f"FR-MFG-028 KPI {key!r} must be computable (SC-MFG-012)")
         # CSV export works (SC-MFG-012 export).
@@ -493,23 +587,31 @@ class PocVerticalSliceTest(unittest.TestCase):
         )
         self.assertEqual(_attr_or_key(tel, "source"), "audit_log")
         # The KPI safety counters agree with the telemetry (consistency across endpoints).
-        self.assertEqual(final_kpi["high_risk_query_count"], _attr_or_key(tel, "high_risk_query_count"))
-        self.assertEqual(final_kpi["safety_gate_block_count"], _attr_or_key(tel, "safety_gate_block_count"))
+        self.assertEqual(
+            final_kpi["high_risk_query_count"], _attr_or_key(tel, "high_risk_query_count")
+        )
+        self.assertEqual(
+            final_kpi["safety_gate_block_count"], _attr_or_key(tel, "safety_gate_block_count")
+        )
 
         # BASELINE-vs-FINAL delta: the slice drove >=1 high-risk query and >=1 safety block, so the
         # counters strictly increased from the pre-query baseline (analyze C2 closure).
         self.assertGreater(
-            final_kpi["high_risk_query_count"], baseline_kpi["high_risk_query_count"],
+            final_kpi["high_risk_query_count"],
+            baseline_kpi["high_risk_query_count"],
             "the slice must drive high-risk queries above the pre-query baseline (analyze C2)",
         )
         self.assertGreater(
-            final_kpi["safety_gate_block_count"], baseline_kpi["safety_gate_block_count"],
+            final_kpi["safety_gate_block_count"],
+            baseline_kpi["safety_gate_block_count"],
             "the slice must drive a safety block above the pre-query baseline (analyze C2)",
         )
 
         # Audit accumulated throughout and the tenant chain is intact (tamper-evident, single source).
         self.assertTrue(entries, "audit must accumulate throughout the slice")
-        self.assertTrue(sys.audit.verify_chain(self.admin), "the accumulated audit chain must verify intact")
+        self.assertTrue(
+            sys.audit.verify_chain(self.admin), "the accumulated audit chain must verify intact"
+        )
 
 
 # ================================================================================================
@@ -629,10 +731,14 @@ class TelemetryMatchesAuditAfterSliceTest(unittest.TestCase):
             ),
         )
         sys.answer(op, "How do I disassemble the press safely after lockout?", collection_id=COLL)
-        sys.answer(op, "How do I work on the 400V panel without getting electrocuted?", collection_id=COLL)
+        sys.answer(
+            op, "How do I work on the 400V panel without getting electrocuted?", collection_id=COLL
+        )
         tel = sys.safety_telemetry(admin)
         entries = sys.audit.read_all(admin)
-        self.assertEqual(_attr_or_key(tel, "high_risk_query_count"), _audit_high_risk_count(entries))
+        self.assertEqual(
+            _attr_or_key(tel, "high_risk_query_count"), _audit_high_risk_count(entries)
+        )
         self.assertEqual(_attr_or_key(tel, "safety_gate_block_count"), _audit_block_count(entries))
         self.assertGreater(_attr_or_key(tel, "high_risk_query_count"), 0)
         self.assertGreater(_attr_or_key(tel, "safety_gate_block_count"), 0)
@@ -689,12 +795,36 @@ class ObsoleteNotPrimaryCitationGapTest(unittest.TestCase):
         # generic tokens to SURVIVE the 001 groundedness pre-gate as weak candidates — the noise that
         # makes the gate's ``has_usable_primary`` check pass while the obsolete doc remains top-scored.
         self.sys.ingest_manufacturing_file(
-            tenant_id=T, collection_id=COLL, document_id="xlsx_noise", path=str(xlsx), content_type=XLSX_CT,
-            metadata=ManufacturingDocumentMetadata(tenant_id=T, document_id="xlsx_noise", approval_status=ApprovalStatus.APPROVED, effective_date="2026-01-10", document_kind=DocumentKind.LEDGER, equipment="pump17", alarm_code="E152"),
+            tenant_id=T,
+            collection_id=COLL,
+            document_id="xlsx_noise",
+            path=str(xlsx),
+            content_type=XLSX_CT,
+            metadata=ManufacturingDocumentMetadata(
+                tenant_id=T,
+                document_id="xlsx_noise",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-01-10",
+                document_kind=DocumentKind.LEDGER,
+                equipment="pump17",
+                alarm_code="E152",
+            ),
         )
         self.sys.ingest_manufacturing_file(
-            tenant_id=T, collection_id=COLL, document_id="csv_noise", path=str(csv_path), content_type=CSV_CT,
-            metadata=ManufacturingDocumentMetadata(tenant_id=T, document_id="csv_noise", approval_status=ApprovalStatus.APPROVED, effective_date="2026-01-10", document_kind=DocumentKind.QUALITY_REPORT, defect_type="crack", part_no="P900"),
+            tenant_id=T,
+            collection_id=COLL,
+            document_id="csv_noise",
+            path=str(csv_path),
+            content_type=CSV_CT,
+            metadata=ManufacturingDocumentMetadata(
+                tenant_id=T,
+                document_id="csv_noise",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-01-10",
+                document_kind=DocumentKind.QUALITY_REPORT,
+                defect_type="crack",
+                part_no="P900",
+            ),
         )
 
     def tearDown(self) -> None:
@@ -702,10 +832,14 @@ class ObsoleteNotPrimaryCitationGapTest(unittest.TestCase):
 
     def test_obsolete_is_never_the_primary_cited_evidence(self) -> None:
         ans = self.sys.answer(
-            self.op, "what is the legacy coolant flow rate setpoint for the grinder spindle?", collection_id=COLL
+            self.op,
+            "what is the legacy coolant flow rate setpoint for the grinder spindle?",
+            collection_id=COLL,
         )
         # The obsolete material is referenced => the mandatory warning fires (FR-MFG-006).
-        self.assertTrue(ans.obsolete_warning, "obsolete material in the candidates must raise the warning")
+        self.assertTrue(
+            ans.obsolete_warning, "obsolete material in the candidates must raise the warning"
+        )
         # INVARIANT (FR-MFG-006/SC-MFG-011): an obsolete document is NEVER the primary cited evidence
         # behind an asserted answer. Either the answer does not assert, or its primary citation is not
         # obsolete. (Pre-glue this FAILED: status==ok with obsolete_coolant as citations[0].)

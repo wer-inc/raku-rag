@@ -1,0 +1,50 @@
+{
+  "title": "Raku RAG Stage Observability",
+  "schema_version": 1,
+  "variables": ["tenant_id", "stage"],
+  "stages": ["ingestion", "retrieval", "generation", "evaluation"],
+  "panels": [
+    {
+      "id": "stage-p95-latency",
+      "title": "Stage p95 latency",
+      "metric": "rag_stage_latency_ms",
+      "aggregation": "p95",
+      "group_by": ["tenant_id", "stage"]
+    },
+    {
+      "id": "stage-throughput",
+      "title": "Stage throughput",
+      "metric": "rag_stage_throughput_total",
+      "aggregation": "rate",
+      "group_by": ["tenant_id", "stage", "status"]
+    },
+    {
+      "id": "stage-error-rate",
+      "title": "Stage error rate",
+      "metric": "rag_stage_errors_total",
+      "aggregation": "rate",
+      "group_by": ["tenant_id", "stage", "status"]
+    },
+    {
+      "id": "stage-cost",
+      "title": "Stage cost",
+      "metric": "rag_stage_cost_total",
+      "aggregation": "sum",
+      "group_by": ["tenant_id", "stage"]
+    },
+    {
+      "id": "answer-status",
+      "title": "Answer status",
+      "metric": "answer_requests_total",
+      "aggregation": "rate",
+      "group_by": ["tenant_id", "profile_id", "status"]
+    },
+    {
+      "id": "retrieval-result-count",
+      "title": "Retrieval result count",
+      "metric": "retrieval_result_count",
+      "aggregation": "p95",
+      "group_by": ["tenant_id", "profile_id"]
+    }
+  ]
+}

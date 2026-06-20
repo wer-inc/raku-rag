@@ -1,0 +1,24 @@
+SET search_path TO public;
+
+DROP TABLE IF EXISTS manufacturing_dashboard_metric_snapshots;
+DROP TABLE IF EXISTS manufacturing_kpi_values;
+DROP TABLE IF EXISTS manufacturing_safety_decisions;
+DROP TABLE IF EXISTS manufacturing_audit_events;
+DROP TABLE IF EXISTS manufacturing_draft_artifacts;
+DROP TABLE IF EXISTS manufacturing_document_metadata;
+DROP TABLE IF EXISTS manufacturing_training_materials;
+DROP TABLE IF EXISTS manufacturing_quality_issues;
+DROP TABLE IF EXISTS manufacturing_inspection_checklists;
+DROP TABLE IF EXISTS manufacturing_work_instructions;
+DROP TABLE IF EXISTS manufacturing_trouble_case_countermeasures;
+DROP TABLE IF EXISTS manufacturing_countermeasures;
+DROP TABLE IF EXISTS manufacturing_trouble_cases;
+DROP TABLE IF EXISTS manufacturing_failure_modes;
+DROP TABLE IF EXISTS manufacturing_defect_types;
+DROP TABLE IF EXISTS manufacturing_customers;
+DROP TABLE IF EXISTS manufacturing_parts;
+DROP TABLE IF EXISTS manufacturing_products;
+DROP TABLE IF EXISTS manufacturing_equipment;
+DROP TABLE IF EXISTS manufacturing_processes;
+DROP TABLE IF EXISTS manufacturing_production_lines;
+DROP TABLE IF EXISTS manufacturing_factories;

@@ -45,6 +45,7 @@ TDD: RED now because the hash-chain (``audit.verify_chain``) + the governance/de
 are unimplemented, and the end-to-end flow exercises governance entrypoints that do not exist yet
 (missing-impl), NOT an unrelated import error.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -87,15 +88,21 @@ REQUIRED_EVENT_TYPES: dict[str, callable] = {
     "ingest_parse_metadata": lambda e: any(
         k in _action(e) for k in ("ingest", "parse", "metadata")
     ),
-    "approval_transition": lambda e: "approval" in _action(e) or "approval" in (getattr(e, "resource_type", "") or ""),
-    "draft_generate": lambda e: "draft" in _action(e) and ("generate" in _action(e) or "create" in _action(e)),
-    "draft_review": lambda e: "draft" in _action(e) and ("review" in _action(e) or "assign" in _action(e) or "transition" in _action(e)),
+    "approval_transition": lambda e: "approval" in _action(e)
+    or "approval" in (getattr(e, "resource_type", "") or ""),
+    "draft_generate": lambda e: "draft" in _action(e)
+    and ("generate" in _action(e) or "create" in _action(e)),
+    "draft_review": lambda e: "draft" in _action(e)
+    and ("review" in _action(e) or "assign" in _action(e) or "transition" in _action(e)),
     "high_risk_decision": lambda e: getattr(e, "high_risk_classification_result", None) is True,
     "safety_gate_block": lambda e: getattr(e, "safety_block_reason", None) is not None,
     "answer": lambda e: "answer" in _action(e),
     "citation_access": lambda e: bool(getattr(e, "citation_ids", ())) or "citation" in _action(e),
-    "acl_denied": lambda e: "acl" in _action(e) and ("deni" in _action(e) or "denied" in _action(e)),
-    "policy_setting_change": lambda e: "policy" in _action(e) or "no_train" in _action(e) or "retention" in _action(e),
+    "acl_denied": lambda e: "acl" in _action(e)
+    and ("deni" in _action(e) or "denied" in _action(e)),
+    "policy_setting_change": lambda e: "policy" in _action(e)
+    or "no_train" in _action(e)
+    or "retention" in _action(e),
     "deletion": lambda e: "delet" in _action(e) or "tombstone" in _action(e),
 }
 
@@ -185,12 +192,14 @@ def _drive_end_to_end(sys: ManufacturingSystem) -> None:
         text="Private process note.",
         metadata=ManufacturingDocumentMetadata(tenant_id=T, document_id="priv1"),
     )
-    sys.answer(_op(tenant=T, user="stranger"), "what is in the private process note?", collection_id="private")
+    sys.answer(
+        _op(tenant=T, user="stranger"),
+        "what is in the private process note?",
+        collection_id="private",
+    )
 
     # 6) no-train / retention setting change (governance) — audited (FR-MFG-019).
-    sys.update_data_use_policy(
-        tenant_id=T, patch={"retention_customer": 730}, actor=admin
-    )
+    sys.update_data_use_policy(tenant_id=T, patch={"retention_customer": 730}, actor=admin)
 
     # 7) deletion / tombstone (reuses 001 tombstone) — audited.
     sys.delete_document(tenant_id=T, document_id="conf1", actor=admin)
@@ -205,9 +214,7 @@ class TestAuditCoverageClosedEnumeration(unittest.TestCase):
         entries = sys.audit.read_all(_admin())
         self.assertTrue(entries, "the end-to-end flow must produce audit entries")
         missing = [
-            name
-            for name, pred in REQUIRED_EVENT_TYPES.items()
-            if not any(pred(e) for e in entries)
+            name for name, pred in REQUIRED_EVENT_TYPES.items() if not any(pred(e) for e in entries)
         ]
         self.assertEqual(
             missing,
@@ -283,7 +290,9 @@ class TestAuditTamperEvidence(unittest.TestCase):
     def test_mutating_a_stored_entry_breaks_verification(self) -> None:
         sys = ManufacturingSystem()
         _drive_end_to_end(sys)
-        self.assertTrue(sys.audit.verify_chain(_admin()), "precondition: chain intact before mutation")
+        self.assertTrue(
+            sys.audit.verify_chain(_admin()), "precondition: chain intact before mutation"
+        )
         # Mutate a stored entry's content WITHOUT recomputing its hash → chain must no longer verify.
         entries = sys.audit.read_all(_admin())
         target = entries[len(entries) // 2]

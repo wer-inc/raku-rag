@@ -21,6 +21,7 @@ Fixtures generated PROGRAMMATICALLY in a tmp dir (openpyxl / stdlib csv). No com
 TDD: RED now because ``ManufacturingSystem.ingest_manufacturing_file`` and the cell-anchor surface
 are unimplemented. Authoritative: FR-MFG-002, contracts/mfg-openapi.md §A, mfg-interfaces.md §1.
 """
+
 from __future__ import annotations
 
 import csv
@@ -46,18 +47,18 @@ def write_xlsx(path: Path) -> None:
     wb = Workbook()
     ws = wb.active
     ws.title = "alarms"
-    ws.append(["equipment", "alarm", "remedy"])               # R1: header
+    ws.append(["equipment", "alarm", "remedy"])  # R1: header
     ws.append(["pump17", "E152", "replace the impeller seal"])  # R2
-    ws.append(["fan04", "E311", "tighten the coupling bolt"])   # R3
+    ws.append(["fan04", "E311", "tighten the coupling bolt"])  # R3
     wb.save(str(path))
 
 
 def write_csv(path: Path) -> None:
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["part_no", "defect", "action"])              # R1: header
-    w.writerow(["P900", "crack", "scrap the housing"])        # R2
-    w.writerow(["P201", "burr", "deburr the flange edge"])    # R3
+    w.writerow(["part_no", "defect", "action"])  # R1: header
+    w.writerow(["P900", "crack", "scrap the housing"])  # R2
+    w.writerow(["P201", "burr", "deburr the flange edge"])  # R3
     path.write_text(buf.getvalue(), encoding="utf-8")
 
 
@@ -120,10 +121,16 @@ class TestXlsxCellCitation(unittest.TestCase):
 
     def test_different_cell_resolves_to_different_anchor(self) -> None:
         # The E311 remedy lives in row 3 — its anchor MUST differ from the row-2 cell.
-        r2 = [r for r in self.sys.search(self.op, "replace impeller seal")
-              if r.document_id == "ledger_xlsx"]
-        r3 = [r for r in self.sys.search(self.op, "tighten coupling bolt")
-              if r.document_id == "ledger_xlsx"]
+        r2 = [
+            r
+            for r in self.sys.search(self.op, "replace impeller seal")
+            if r.document_id == "ledger_xlsx"
+        ]
+        r3 = [
+            r
+            for r in self.sys.search(self.op, "tighten coupling bolt")
+            if r.document_id == "ledger_xlsx"
+        ]
         self.assertTrue(r2 and r3)
         _, row2, _ = resolve_anchor(self.sys, self.op, r2[0])
         _, row3, _ = resolve_anchor(self.sys, self.op, r3[0])

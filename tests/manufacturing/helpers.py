@@ -29,6 +29,7 @@ quickstart S2/S3/S4, data-model §B/§E):
   - ``requires_onsite_confirmation: bool``
 and each citation exposes ``approval_status`` / ``effective_date`` / ``approval_source`` (FR-MFG-004).
 """
+
 from __future__ import annotations
 
 from raku_rag.domain.models import IdentityClaims

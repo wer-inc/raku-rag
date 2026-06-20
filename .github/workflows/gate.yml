@@ -1,11 +1,12 @@
 name: gate
 
 # Operationalizes the loop-engineering "No" (docs/loop-engineering.md §1): every push/PR must pass the
-# Tier-A hard gates (001 security + 002 manufacturing safety) AND the full suite, via scripts/gate.sh.
+# Tier-A hard gates (001 security + 002 manufacturing safety), the full suite, and RT1 compose smoke.
 # This is the loop gate. (.github/workflows/ci.yml is the older 001 production-adapter skeleton.)
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -65,6 +66,21 @@ jobs:
       - name: Tier B bootstrap gate
         if: steps.changes.outputs.run == 'true'
         run: bash scripts/gate.sh b
+
+  rt1-compose:
+    name: RT1 local dependency compose smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker runtime
+        run: |
+          docker version
+          docker compose version
+      - name: Boot local dependency stack
+        env:
+          COMPOSE_PROGRESS: plain
+        run: bash scripts/docker-compose-smoke.sh
 
   tier-d:
     name: Tier D NestJS /v1/answer facade (e2e)

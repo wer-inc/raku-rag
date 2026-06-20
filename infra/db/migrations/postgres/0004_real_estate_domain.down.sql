@@ -1,0 +1,25 @@
+SET search_path TO public;
+
+DROP TABLE IF EXISTS real_estate_kpi_values;
+DROP TABLE IF EXISTS real_estate_gate_decisions;
+DROP TABLE IF EXISTS real_estate_risk_decisions;
+DROP TABLE IF EXISTS real_estate_draft_reviews;
+DROP TABLE IF EXISTS real_estate_document_metadata;
+DROP TABLE IF EXISTS real_estate_owner_reports;
+DROP TABLE IF EXISTS real_estate_inquiry_cases;
+DROP TABLE IF EXISTS real_estate_restoration_cases;
+DROP TABLE IF EXISTS real_estate_move_out_cases;
+DROP TABLE IF EXISTS real_estate_invoices;
+DROP TABLE IF EXISTS real_estate_estimates;
+DROP TABLE IF EXISTS real_estate_vendors;
+DROP TABLE IF EXISTS real_estate_inspection_reports;
+DROP TABLE IF EXISTS real_estate_maintenance_requests;
+DROP TABLE IF EXISTS real_estate_repair_cases;
+DROP TABLE IF EXISTS real_estate_management_agreements;
+DROP TABLE IF EXISTS real_estate_lease_terms;
+DROP TABLE IF EXISTS real_estate_lease_contracts;
+DROP TABLE IF EXISTS real_estate_occupants;
+DROP TABLE IF EXISTS real_estate_owners;
+DROP TABLE IF EXISTS real_estate_units;
+DROP TABLE IF EXISTS real_estate_buildings;
+DROP TABLE IF EXISTS real_estate_properties;

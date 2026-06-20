@@ -6,9 +6,10 @@ the 001 GroundednessGate (contracts §4); it is NOT a new security mechanism.
 
 Frozen value objects, no behaviour (stage-2 implements classification / gating).
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 

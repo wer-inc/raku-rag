@@ -26,6 +26,7 @@ the supplied ``DataUsePolicy.retention_audit`` only as a time-range bound (no se
 
 stdlib only. Structurally satisfies ``raku_rag.manufacturing.interfaces.SafetyTelemetry``.
 """
+
 from __future__ import annotations
 
 from raku_rag.domain.models import IdentityClaims

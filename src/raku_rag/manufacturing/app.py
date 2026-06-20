@@ -17,15 +17,11 @@ Contract (asserted by tests/manufacturing/helpers.py):
 
 stdlib only.
 """
+
 from __future__ import annotations
 
 import os
 from datetime import date, datetime, timezone
-
-
-def datetime_now_iso() -> str:
-    """Module-level UTC ISO timestamp helper (reference-only audit timestamps)."""
-    return datetime.now(timezone.utc).isoformat()
 
 from raku_rag.app import MvpSystem
 from raku_rag.core.config import Settings
@@ -34,33 +30,36 @@ from raku_rag.manufacturing.api import record_answer_decision
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, ManufacturingAnswerService
 from raku_rag.manufacturing.api.dashboard import DashboardService
 from raku_rag.manufacturing.api.drafts import DraftService
-from raku_rag.manufacturing.api.search_ext import ManufacturingSearchService
+from raku_rag.manufacturing.api.ingest_metadata import ManufacturingSyncStatusService
 from raku_rag.manufacturing.api.policy import GovernanceService
+from raku_rag.manufacturing.api.search_ext import ManufacturingSearchService
+from raku_rag.manufacturing.api.trouble import TroubleCaseSearchService
 from raku_rag.manufacturing.domain.acl_mapping import ManufacturingScope, apply_scope, record_denial
 from raku_rag.manufacturing.domain.audit import AuditLogEntry, InMemoryAuditLogWriter
 from raku_rag.manufacturing.domain.draft import DraftArtifact, DraftType
-from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
-from raku_rag.manufacturing.api.trouble import TroubleCaseSearchService
 from raku_rag.manufacturing.domain.entities import (
     Countermeasure,
     FailureMode,
     TroubleCase,
 )
+from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
 from raku_rag.manufacturing.governance.no_train import (
     InMemoryDataUsePolicyStore,
     InMemoryNoTrainGuard,
-)
-from raku_rag.manufacturing.knowledge.trouble_cases import (
-    InMemoryTroubleCaseStore,
-    TroubleCaseRetriever,
-    TroubleCaseSearchResponse,
 )
 from raku_rag.manufacturing.governance.retention import InMemoryRetentionManager
 from raku_rag.manufacturing.ingestion.approval import ApprovalWorkflow
 from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY, MetadataEnricher
 from raku_rag.manufacturing.interfaces import ApprovalState
+from raku_rag.manufacturing.knowledge.trouble_cases import (
+    InMemoryTroubleCaseStore,
+    TroubleCaseRetriever,
+    TroubleCaseSearchResponse,
+)
+from raku_rag.dagster.assets.manufacturing import InMemoryManufacturingKpiMaterializationStore
 from raku_rag.manufacturing.safety.classifier import RuleHighRiskClassifier
 from raku_rag.manufacturing.safety.gate import ManufacturingSafetyGate
+from raku_rag.persistence.control_plane import InMemoryControlPlaneStateRepository
 from raku_rag.providers.parsers import (
     CompositeParser,
     DocxParser,
@@ -70,6 +69,12 @@ from raku_rag.providers.parsers import (
     XLSX_CONTENT_TYPE,
 )
 from raku_rag.services.ingestion import IngestionService
+
+
+def datetime_now_iso() -> str:
+    """Module-level UTC ISO timestamp helper (reference-only audit timestamps)."""
+    return datetime.now(timezone.utc).isoformat()
+
 
 # Key for the ManufacturingDocumentMetadata stashed in the 001 Document.metadata JSON.
 _MFG_META_KEY = MFG_META_KEY
@@ -110,6 +115,7 @@ class ManufacturingSystem:
         no_train_providers=None,
     ) -> None:
         self._mvp = MvpSystem(settings)
+        self.control_plane = InMemoryControlPlaneStateRepository()
         # tenant-scoped manufacturing metadata store (mirrors DocumentRegistry; in-memory).
         self._mfg_meta: dict[tuple[str, str], ManufacturingDocumentMetadata] = {}
         self.audit = InMemoryAuditLogWriter()
@@ -120,19 +126,21 @@ class ManufacturingSystem:
         # map (Base CR-001-B verified set is injected here; 002 enforces opt-in/GQ1 locally). When the
         # caller injects no map a safe local default applies (every BUILT capability stays available).
         self._policy_store = InMemoryDataUsePolicyStore()
-        caps = _DEFAULT_PROVIDER_CAPABILITIES if provider_capabilities is None else provider_capabilities
-        nt_providers = _DEFAULT_NO_TRAIN_PROVIDERS if no_train_providers is None else no_train_providers
+        caps = (
+            _DEFAULT_PROVIDER_CAPABILITIES
+            if provider_capabilities is None
+            else provider_capabilities
+        )
+        nt_providers = (
+            _DEFAULT_NO_TRAIN_PROVIDERS if no_train_providers is None else no_train_providers
+        )
         self.no_train = InMemoryNoTrainGuard(
             self._policy_store,
             provider_capabilities=caps,
             no_train_providers=nt_providers,
         )
-        self.retention = InMemoryRetentionManager(
-            self._policy_store, deletion=self._mvp.deletion
-        )
-        self._governance = GovernanceService(
-            policy_store=self._policy_store, audit=self.audit
-        )
+        self.retention = InMemoryRetentionManager(self._policy_store, deletion=self._mvp.deletion)
+        self._governance = GovernanceService(policy_store=self._policy_store, audit=self.audit)
 
         # Manufacturing ingestion path: REUSE the 001 IngestionService (parse->chunk->embed->index)
         # but wire a CompositeParser so DOCX / XLSX / CSV (and the 001 text types) are all accepted
@@ -173,9 +181,7 @@ class ManufacturingSystem:
         )
         # US4 — DraftArtifact generation + lightweight review workflow (FR-MFG-010/010a/010b).
         # Reuses the shared AuditLogWriter + US1 SafetyGate semantics; AI output is always draft.
-        self._drafts = DraftService(
-            audit=self.audit, get_mfg_meta=self.get_mfg_meta, today=today
-        )
+        self._drafts = DraftService(audit=self.audit, get_mfg_meta=self.get_mfg_meta, today=today)
         # US3 — similar past TroubleCase retrieval (FR-MFG-008/009, Hard Rule 4). The knowledge graph
         # is registered in an in-memory store; the retriever runs the symptom query through the SAME
         # reused 001 RetrievalService (deny-by-default ACL PRE-filter) — no parallel authz path — and
@@ -191,17 +197,18 @@ class ManufacturingSystem:
         self._trouble_search = TroubleCaseSearchService(
             retriever=self._trouble_retriever, audit=self.audit
         )
-        # US5 — knowledge-ops dashboard / safety-telemetry / KPI (FR-MFG-012/028/030). All three are
-        # DERIVED SYNCHRONOUSLY from the SHARED audit log (single source of truth) + the in-memory
-        # approval metadata + 001 evaluation/metrics primitives — NO parallel counter, NO Dagster on
-        # the request path (T047a/T051a materialization asset + daily schedule are DEFERRED to the
-        # production track, §8 C5). retention bounds the audit window per DataUsePolicy.
+        # US5 — knowledge-ops dashboard / safety-telemetry / KPI (FR-MFG-012/028/030). Request-path
+        # reads use the materialized KPI store when populated and otherwise compute from the shared
+        # audit log; either path is local state only and never calls Dagster synchronously.
+        self.kpi_materializations = InMemoryManufacturingKpiMaterializationStore()
         self._dashboard = DashboardService(
             audit=self.audit,
             get_mfg_meta=self.get_mfg_meta,
             all_mfg_meta=lambda: list(self._mfg_meta.items()),
             retention=self.retention,
+            materialized_kpi_store=self.kpi_materializations,
         )
+        self._sync_status = ManufacturingSyncStatusService(self.control_plane)
 
     # --- admin / ACL (delegates to 001) -----------------------------------------------------------
     def grant(
@@ -227,7 +234,9 @@ class ManufacturingSystem:
         apply_scope(self._mvp.acl, scope)
 
     # --- metadata resolver ------------------------------------------------------------------------
-    def get_mfg_meta(self, tenant_id: str, document_id: str) -> ManufacturingDocumentMetadata | None:
+    def get_mfg_meta(
+        self, tenant_id: str, document_id: str
+    ) -> ManufacturingDocumentMetadata | None:
         return self._mfg_meta.get((tenant_id, document_id))
 
     def _set_mfg_meta(
@@ -303,9 +312,7 @@ class ManufacturingSystem:
         self._set_mfg_meta(tenant_id, document_id, metadata)
         self._enricher.attach(tenant_id, document_id, metadata)
         # Audit the ingest/parse (reference IDs only; no body text) — FR-MFG-021.
-        self._audit_ingest(
-            tenant_id=tenant_id, document_id=document_id, content_type=ct, job=job
-        )
+        self._audit_ingest(tenant_id=tenant_id, document_id=document_id, content_type=ct, job=job)
         return job
 
     @staticmethod
@@ -315,9 +322,7 @@ class ManufacturingSystem:
             raise ValueError(f"unsupported file extension: {ext!r}")
         return _EXT_CONTENT_TYPE[ext]
 
-    def _audit_ingest(
-        self, *, tenant_id: str, document_id: str, content_type: str, job
-    ) -> None:
+    def _audit_ingest(self, *, tenant_id: str, document_id: str, content_type: str, job) -> None:
         from datetime import datetime, timezone
 
         from raku_rag.manufacturing.domain.audit import AuditLogEntry
@@ -370,6 +375,37 @@ class ManufacturingSystem:
     ) -> ApprovalState:
         """Import an upstream approval as source of truth, overriding the workflow (FR-MFG-004a)."""
         return self._approval.import_external(tenant_id, document_id, external, actor)
+
+    # --- manufacturing sync/status (T031b; wraps 001 control-plane state) -------------------------
+    def request_source_sync(
+        self,
+        principal: IdentityClaims,
+        source_id: str,
+        *,
+        collection_id: str = "manufacturing",
+        document_id: str = "",
+        document_ref: str = "",
+        content_type: str = "text/plain",
+        idempotency_key: str = "",
+    ) -> dict:
+        """POST /v1/manufacturing/sources/{source_id}/sync."""
+        return self._sync_status.request_sync(
+            principal,
+            source_id,
+            collection_id=collection_id,
+            document_id=document_id,
+            document_ref=document_ref,
+            content_type=content_type,
+            idempotency_key=idempotency_key,
+        )
+
+    def source_sync_status(self, principal: IdentityClaims, source_id: str) -> dict:
+        """GET /v1/manufacturing/sources/{source_id}/sync-status."""
+        return self._sync_status.sync_status(principal, source_id)
+
+    def ingestion_run_status(self, principal: IdentityClaims, ingestion_run_id: str) -> dict:
+        """GET /v1/manufacturing/ingestion-runs/{ingestion_run_id}."""
+        return self._sync_status.ingestion_run(principal, ingestion_run_id)
 
     # --- answer (001 path under the safety overlay) -----------------------------------------------
     def answer(
@@ -475,9 +511,7 @@ class ManufacturingSystem:
                 continue
             if not visible(chunk):
                 seen.add(chunk.document_id)
-                record_denial(
-                    self.audit, principal=principal, chunk=chunk, reason="acl_denied"
-                )
+                record_denial(self.audit, principal=principal, chunk=chunk, reason="acl_denied")
 
     # --- search (001 retrieval + approval tags) ---------------------------------------------------
     def search(

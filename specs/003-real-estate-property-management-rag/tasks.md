@@ -2,49 +2,49 @@
 
 ## Phase 1 - Profile and Metadata
 
-- [ ] RE-T001 Define 010 Real Estate IndustryProfile seed.
-- [ ] RE-T002 Define RealEstate MetadataSchema and indexed fields.
-- [ ] RE-T003 Implement real estate metadata import/enrichment API.
-- [ ] RE-T004 Add validation tests for property/unit/lease/repair metadata.
+- [X] RE-T001 Define 010 Real Estate IndustryProfile seed.
+- [X] RE-T002 Define RealEstate MetadataSchema and indexed fields.
+- [X] RE-T003 Implement real estate metadata import/enrichment API.
+- [X] RE-T004 Add validation tests for property/unit/lease/repair metadata.
 
 ## Phase 2 - Domain Data Model
 
-- [ ] RE-T010 Add migrations for Property, Building, Unit, Owner, Occupant, LeaseContract, LeaseTerm, PropertyManagementAgreement, RepairCase, MaintenanceRequest, InspectionReport, Vendor, Estimate, Invoice, MoveOutCase, RestorationCase, InquiryCase, OwnerReport.
-- [ ] RE-T011 Add ACL mapping for branch, department, property, building, unit, owner, document type, approval status, and personal data category.
-- [ ] RE-T012 Add tenant isolation tests for property/unit/contract/occupant data.
+- [X] RE-T010 Add migrations for Property, Building, Unit, Owner, Occupant, LeaseContract, LeaseTerm, PropertyManagementAgreement, RepairCase, MaintenanceRequest, InspectionReport, Vendor, Estimate, Invoice, MoveOutCase, RestorationCase, InquiryCase, OwnerReport.
+- [X] RE-T011 Add ACL mapping for branch, department, property, building, unit, owner, document type, approval status, and personal data category.
+- [X] RE-T012 Add tenant isolation tests for property/unit/contract/occupant data.
 
 ## Phase 3 - Risk and Evidence
 
-- [ ] RE-T020 Implement RealEstateRiskGateService using 010 RiskPolicy and RequiredEvidencePolicy.
-- [ ] RE-T021 Add high-risk tests for contract conditions, cost responsibility, move-out settlement, restoration, legal risk, personal data disclosure, official customer response.
-- [ ] RE-T022 Add tests requiring approved/effective citations and blocking draft/obsolete formal evidence.
+- [X] RE-T020 Implement RealEstateRiskGateService using 010 RiskPolicy and RequiredEvidencePolicy.
+- [X] RE-T021 Add high-risk tests for contract conditions, cost responsibility, move-out settlement, restoration, legal risk, personal data disclosure, official customer response.
+- [X] RE-T022 Add tests requiring approved/effective citations and blocking draft/obsolete formal evidence.
 
 ## Phase 4 - Workflows
 
-- [ ] RE-T030 Implement contract-question workflow.
-- [ ] RE-T031 Implement repair-investigation workflow.
-- [ ] RE-T032 Implement occupant-reply-draft workflow.
-- [ ] RE-T033 Implement owner-report-draft workflow.
-- [ ] RE-T034 Implement move-out-checklist-draft and restoration-explanation-draft workflows.
+- [X] RE-T030 Implement contract-question workflow.
+- [X] RE-T031 Implement repair-investigation workflow.
+- [X] RE-T032 Implement occupant-reply-draft workflow.
+- [X] RE-T033 Implement owner-report-draft workflow.
+- [X] RE-T034 Implement move-out-checklist-draft and restoration-explanation-draft workflows.
 
 ## Phase 5 - Draft Review
 
-- [ ] RE-T040 Implement RealEstateDraftArtifact payload schemas and artifact types.
-- [ ] RE-T041 Implement review assignment and status transition APIs.
-- [ ] RE-T042 Add no-auto-approval tests for AI-generated artifacts.
-- [ ] RE-T043 Add audit tests for draft generation, review assignment, and status transition.
+- [X] RE-T040 Implement RealEstateDraftArtifact payload schemas and artifact types.
+- [X] RE-T041 Implement review assignment and status transition APIs.
+- [X] RE-T042 Add no-auto-approval tests for AI-generated artifacts.
+- [X] RE-T043 Add audit tests for draft generation, review assignment, and status transition.
 
 ## Phase 6 - Dashboard / KPI / Governance
 
-- [ ] RE-T050 Implement RealEstateKPI calculations from audit/feedback/draft/evaluation sources.
-- [ ] RE-T051 Implement real estate dashboard widgets.
-- [ ] RE-T052 Implement governance status API.
-- [ ] RE-T053 Add dashboard ACL leakage tests and personal-data minimal-display tests.
+- [X] RE-T050 Implement RealEstateKPI calculations from audit/feedback/draft/evaluation sources.
+- [X] RE-T051 Implement real estate dashboard widgets.
+- [X] RE-T052 Implement governance status API.
+- [X] RE-T053 Add dashboard ACL leakage tests and personal-data minimal-display tests.
 
 ## Phase 7 - Contracts / PoC
 
-- [ ] RE-T060 Add OpenAPI contract tests for all `/real-estate/...` endpoints.
-- [ ] RE-T061 Build PoC dataset and acceptance tests for property contract question, repair lookup, occupant reply draft, owner report draft, and dashboard KPI.
+- [X] RE-T060 Add OpenAPI contract tests for all `/real-estate/...` endpoints.
+- [X] RE-T061 Build PoC dataset and acceptance tests for property contract question, repair lookup, occupant reply draft, owner report draft, and dashboard KPI.
 
 ## Requirement Traceability
 

@@ -1,4 +1,5 @@
 """T023 — US1: grounded answer with citations + used_chunks + freshness."""
+
 from __future__ import annotations
 
 import unittest
@@ -13,7 +14,9 @@ class TestAnswer(unittest.TestCase):
     def setUp(self) -> None:
         self.sys = fresh()
         self.sys.ingest_text(
-            tenant_id=T, collection_id="c", document_id="d1",
+            tenant_id=T,
+            collection_id="c",
+            document_id="d1",
             text="Backups run nightly at 02:00 UTC and are retained for thirty days.",
         )
         self.sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "alice")

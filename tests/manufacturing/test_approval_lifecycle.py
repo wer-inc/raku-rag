@@ -25,6 +25,7 @@ TDD: RED now because the approval-transition / external-import methods are unimp
 ``ManufacturingSystem``. Authoritative: FR-MFG-004/004a, contracts/mfg-openapi.md §A/§B,
 mfg-interfaces.md §2, data-model §B.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -70,8 +71,11 @@ class TestApprovalStateIdentifiable(unittest.TestCase):
         self.assertEqual(state.approval_status, "approved")
         self.assertEqual(state.approval_source, "workflow")
 
-        results = [r for r in self.sys.search(self.op, "torque specification flange bolt")
-                   if r.document_id == "spec1"]
+        results = [
+            r
+            for r in self.sys.search(self.op, "torque specification flange bolt")
+            if r.document_id == "spec1"
+        ]
         self.assertTrue(results, "approved spec must be searchable")
         self.assertEqual(results[0].approval_status, "approved")
 
@@ -83,8 +87,11 @@ class TestApprovalStateIdentifiable(unittest.TestCase):
             tenant_id=T, document_id="spec1", to_status="obsolete", actor=self.actor
         )
         self.assertEqual(state.approval_status, "obsolete")
-        results = [r for r in self.sys.search(self.op, "torque specification flange bolt")
-                   if r.document_id == "spec1"]
+        results = [
+            r
+            for r in self.sys.search(self.op, "torque specification flange bolt")
+            if r.document_id == "spec1"
+        ]
         self.assertTrue(results)
         self.assertEqual(results[0].approval_status, "obsolete")
         # An obsolete-only basis must not back an asserted answer (FR-MFG-006 consistency).
@@ -144,8 +151,11 @@ class TestImportedApprovalIsSourceOfTruth(unittest.TestCase):
         self.assertEqual(meta.effective_date, "2026-01-10")
 
         # Search/answer reflect the imported approval (the doc is now usable as approved evidence).
-        results = [r for r in self.sys.search(self.op, "torque specification flange bolt")
-                   if r.document_id == "spec1"]
+        results = [
+            r
+            for r in self.sys.search(self.op, "torque specification flange bolt")
+            if r.document_id == "spec1"
+        ]
         self.assertTrue(results)
         self.assertEqual(results[0].approval_status, "approved")
         ans = self.sys.answer(self.op, _Q)
@@ -198,8 +208,11 @@ class TestApprovalTransitionsAudited(unittest.TestCase):
         self.sys.import_external_approval(
             tenant_id=T,
             document_id="spec1",
-            external={"approval_status": "approved", "effective_date": "2026-01-10",
-                      "approval_source": "imported"},
+            external={
+                "approval_status": "approved",
+                "effective_date": "2026-01-10",
+                "approval_source": "imported",
+            },
             actor=self.actor,
         )
         after = self.sys.audit.read_all(self.actor)
@@ -207,8 +220,9 @@ class TestApprovalTransitionsAudited(unittest.TestCase):
             len(after) - before, 2, "approval transition AND external import must both be audited"
         )
         # Audit references the document by ID only (no body text).
-        self.assertTrue(any("spec1" in (e.resource_id or "") or "spec1" in e.document_ids_used
-                            for e in after))
+        self.assertTrue(
+            any("spec1" in (e.resource_id or "") or "spec1" in e.document_ids_used for e in after)
+        )
 
 
 if __name__ == "__main__":

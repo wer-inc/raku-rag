@@ -1,11 +1,36 @@
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import { VersioningType } from "@nestjs/common";
+import type { Request, Response, NextFunction } from "express";
 import { AppModule } from "./app.module";
+import { versionHeaderPolicy } from "./versioning/version-policy";
 
 // P0-T06 — NestJS skeleton boot with URI /v1 versioning. Routes are served under /v1/*.
 export async function createApp() {
   const app = await NestFactory.create(AppModule, { logger: ["error", "warn", "log"] });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const { headers } = versionHeaderPolicy(req.originalUrl ?? req.url ?? "");
+    for (const [name, value] of Object.entries(headers)) {
+      res.setHeader(name, value);
+    }
+    next();
+  });
+  const corsOrigins = (process.env.RAKU_CORS_ORIGIN ?? "http://localhost:3002,http://127.0.0.1:3002")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  app.enableCors({
+    origin(origin, callback) {
+      if (!origin || corsOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: ["authorization", "x-user-token", "content-type"],
+    exposedHeaders: ["api-version", "deprecation", "sunset", "link"],
+  });
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: "1" });
   return app;
 }

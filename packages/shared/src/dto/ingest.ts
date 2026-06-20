@@ -1,6 +1,7 @@
 export interface IngestRequest {
   collection_id: string;
   source_id: string;
+  document_id: string;
   /** object-storage ref (MinIO/S3) or inline upload id */
   ref: string;
   content_type?: string;
@@ -12,7 +13,10 @@ export type IngestionRunStatus =
   | "succeeded"
   | "failed"
   | "canceled"
-  | "partially_succeeded";
+  | "partially_succeeded"
+  | "dead_letter";
+
+export type SourceSyncStatus = "idle" | "queued" | "observing" | "syncing" | "failed";
 
 export interface IngestJob {
   ingestion_run_id: string;
@@ -22,12 +26,133 @@ export interface IngestJob {
   status: IngestionRunStatus;
 }
 
+export interface IngestResponse {
+  ingestion_run_id: string;
+  document_id: string;
+  status: IngestionRunStatus;
+  status_url: string;
+  failure_reason?: string;
+  chunk_count?: number;
+}
+
+export interface DeleteDocumentResponse {
+  job_id: string;
+  document_id: string;
+  status: "succeeded" | "failed";
+  tombstoned_chunks: number;
+  invalidated_cache_entries: number;
+  purged_chunks: number;
+  tombstoned_crops?: number;
+  invalidated_visual_cache_entries?: number;
+  tombstoned_visual_assets?: number;
+  tombstoned_visual_regions?: number;
+  tombstoned_visual_embeddings?: number;
+}
+
+export interface ReindexRequest {
+  source_id?: string;
+  document_ids?: string[];
+  reason?: "parser_version_change" | "chunking_config_change" | "embedding_model_change" | "manual" | "recovery";
+  target_parser_version?: string;
+  target_chunking_config_version?: string;
+  target_embedding_model_version?: string;
+}
+
+export interface ReindexResponse {
+  reindex_plan_id: string;
+  collection_id: string;
+  source_id?: string;
+  status: "planned" | "running" | "succeeded" | "failed" | "canceled";
+  status_url: string;
+  affected_document_count: number;
+  dagster_backfill_id?: string;
+}
+
+export interface IngestionRunSummary {
+  observed_count: number;
+  changed_count: number;
+  deleted_count: number;
+  skipped_count: number;
+  failed_count: number;
+}
+
+export interface AdminJobSummary {
+  job_id: string;
+  ingestion_run_id?: string;
+  type: string;
+  trigger?: string;
+  status: IngestionRunStatus;
+  source_id?: string;
+  document_id?: string;
+  failure_reason?: string;
+  retry_count?: number;
+  started_at?: string;
+  finished_at?: string;
+  dagster_run_id?: string;
+  dagster_run_url?: string;
+}
+
+export interface IngestionRunStatusResponse {
+  ingestion_run_id: string;
+  type: string;
+  trigger: string;
+  status: IngestionRunStatus;
+  collection_id?: string;
+  source_id?: string;
+  document_id?: string;
+  retry_count?: number;
+  failure_reason?: string;
+  started_at?: string;
+  finished_at?: string;
+  dagster_run_id?: string;
+  dagster_run_url?: string;
+  summary: IngestionRunSummary;
+  documents: DocumentProcessingStatusResponse[];
+  asset_materializations?: Array<{
+    dagster_asset_key: string;
+    partition_key?: string;
+    storage_uri?: string;
+  }>;
+  correlation_id?: string;
+}
+
+export interface SourceSyncStatusResponse extends IngestionRunSummary {
+  source_id: string;
+  collection_id: string;
+  status: SourceSyncStatus;
+  last_ingestion_run_id?: string;
+  freshness?: {
+    last_successful_sync_at?: string;
+  };
+  last_error?: string;
+  dagster_run_id?: string;
+  dagster_run_url?: string;
+}
+
+export interface DocumentProcessingStatusResponse {
+  document_id: string;
+  source_document_id?: string;
+  ingestion_run_id?: string;
+  content_checksum?: string;
+  parser_version?: string;
+  chunking_config_version?: string;
+  embedding_model_version?: string;
+  parse_status: IngestionRunStatus;
+  chunk_status: IngestionRunStatus;
+  embedding_status: IngestionRunStatus;
+  index_status: IngestionRunStatus;
+  last_indexed_at?: string;
+  last_error?: string;
+  dagster_run_id?: string;
+}
+
 /** SQS message contract (P1 worker consumes this); idempotency_key dedupes redelivery. */
 export interface IngestionJobMessage {
   idempotency_key: string;
   tenant_id: string;
   collection_id: string;
   source_id: string;
+  document_id: string;
   document_ref: string;
   content_type?: string;
 }

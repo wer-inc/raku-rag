@@ -11,6 +11,7 @@ UNIT coverage of:
 
 stdlib only; additive (new file). Does not touch the existing audit-writer unit test.
 """
+
 from __future__ import annotations
 
 import unittest

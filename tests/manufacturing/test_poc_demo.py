@@ -22,6 +22,7 @@ socket and does NOT modify any ``src/`` module.
 
 stdlib only.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -124,7 +125,8 @@ class PocSeedTest(unittest.TestCase):
         self.assertTrue(all_cms, "the trouble case must surface countermeasures")
         for c in all_cms:
             self.assertEqual(
-                c["type"], "candidate",
+                c["type"],
+                "candidate",
                 "Hard Rule 4: every past-case countermeasure displays as candidate, never definitive",
             )
             self.assertTrue(c["label"], "every candidate carries a past-example label")
@@ -156,7 +158,8 @@ class PocSeedTest(unittest.TestCase):
         ):
             self.assertIn(key, kpi, f"KPI {key!r} must be present")
         self.assertIn(
-            "obsolete_coolant", kpi["obsolete_document_candidates"],
+            "obsolete_coolant",
+            kpi["obsolete_document_candidates"],
             "the seeded obsolete doc must surface as an obsolete candidate",
         )
         self.assertEqual(tel["source"], "audit_log")

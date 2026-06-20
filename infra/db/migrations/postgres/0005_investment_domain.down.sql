@@ -1,0 +1,25 @@
+SET search_path TO public;
+
+DROP TABLE IF EXISTS investment_kpi_values;
+DROP TABLE IF EXISTS investment_gate_decisions;
+DROP TABLE IF EXISTS investment_risk_decisions;
+DROP TABLE IF EXISTS investment_disclosure_evidence;
+DROP TABLE IF EXISTS investment_compliance_reviews;
+DROP TABLE IF EXISTS investment_draft_reviews;
+DROP TABLE IF EXISTS investment_document_metadata;
+DROP TABLE IF EXISTS investment_esg_documents;
+DROP TABLE IF EXISTS investment_risk_reports;
+DROP TABLE IF EXISTS investment_research_memos;
+DROP TABLE IF EXISTS investment_inquiry_cases;
+DROP TABLE IF EXISTS investment_ddqs;
+DROP TABLE IF EXISTS investment_rfps;
+DROP TABLE IF EXISTS investment_compliance_rules;
+DROP TABLE IF EXISTS investment_guidelines;
+DROP TABLE IF EXISTS investment_marketing_materials;
+DROP TABLE IF EXISTS investment_monthly_reports;
+DROP TABLE IF EXISTS investment_fund_reports;
+DROP TABLE IF EXISTS investment_prospectuses;
+DROP TABLE IF EXISTS investment_fund_documents;
+DROP TABLE IF EXISTS investment_distribution_partners;
+DROP TABLE IF EXISTS investment_fund_share_classes;
+DROP TABLE IF EXISTS investment_funds;

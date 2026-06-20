@@ -33,6 +33,7 @@ two INDEPENDENT axes (data-model §D):
 stdlib only. Authoritative: spec FR-MFG-008/009; Hard Rule 4; quickstart S5; contracts/mfg-openapi.md
 §C; contracts/mfg-interfaces.md §5; data-model §D.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -105,9 +106,7 @@ class InMemoryTroubleCaseStore:
         self._by_document[(tenant_id, source_document_id)] = record
         self._by_case[(tenant_id, trouble_case.trouble_case_id)] = record
 
-    def resolve_by_document(
-        self, tenant_id: str, document_id: str
-    ) -> _TroubleCaseRecord | None:
+    def resolve_by_document(self, tenant_id: str, document_id: str) -> _TroubleCaseRecord | None:
         return self._by_document.get((tenant_id, document_id))
 
 
@@ -163,7 +162,9 @@ class TroubleCaseMatch:
     citations: tuple[TroubleCaseCitation, ...]
     relevance_score: float = 0.0
 
-    def to_result(self, trouble_case: TroubleCase, raw: tuple[Countermeasure, ...]) -> TroubleCaseResult:
+    def to_result(
+        self, trouble_case: TroubleCase, raw: tuple[Countermeasure, ...]
+    ) -> TroubleCaseResult:
         """Adapt to the Phase-2 :class:`TroubleCaseResult` interface shape (contracts §5)."""
         return TroubleCaseResult(
             trouble_case=trouble_case,
@@ -219,9 +220,7 @@ def split_countermeasures(countermeasures: tuple[Countermeasure, ...]) -> Counte
         elif cm.measure_class == MeasureClass.PERMANENT:
             permanent.append(display)
         # MeasureClass.UNKNOWN: not placed in either named bucket (kept off both axes).
-    return CountermeasureSplit(
-        provisional=tuple(provisional), permanent=tuple(permanent)
-    )
+    return CountermeasureSplit(provisional=tuple(provisional), permanent=tuple(permanent))
 
 
 # ================================================================================================
@@ -261,7 +260,9 @@ class TroubleCaseRetriever:
         """Return (matches, accessed_document_ids). Visibility is the 001 ACL pre-filter's decision."""
         tenant = principal.tenant_id
         # 001 retrieval — the ACL/tenant/tombstone PRE-filter runs inside store.search BEFORE scoring.
-        scored: list[ScoredChunk] = list(self._retrieval.retrieve(principal, symptom_query, profile))
+        scored: list[ScoredChunk] = list(
+            self._retrieval.retrieve(principal, symptom_query, profile)
+        )
 
         matches: list[TroubleCaseMatch] = []
         accessed: list[str] = []

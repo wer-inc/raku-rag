@@ -5,15 +5,15 @@ reuse the existing stdlib MVP implementations (already deterministic); Guardrail
 here. Every mock advertises a no-train / zero-retention capability so the no-train default is
 auditable (RT11/RT12). Real Bedrock/Cohere/Cognito adapters are deferred to later phases.
 """
+
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Sequence
 
 from raku_rag.core.security.token import TokenVerifier, sign_token
-from raku_rag.domain.models import Chunk, IdentityClaims, ScoredChunk
-from raku_rag.interfaces.base import EmbeddingProvider, LLMProvider, Reranker
+from raku_rag.domain.models import IdentityClaims, ScoredChunk
+from raku_rag.interfaces.base import Reranker
 from raku_rag.providers.embeddings import HashingEmbeddingProvider
 from raku_rag.providers.llms import ExtractiveLLMProvider
 from raku_rag.providers.rerankers import ScoreOrderReranker

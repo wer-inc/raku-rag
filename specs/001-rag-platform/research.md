@@ -408,6 +408,43 @@ Metrics:
 Reference:
 - Ragas docs: https://docs.ragas.io/en/stable/
 
+### R16b. Benchmark fallback decision record (2026-06-20 offline run)
+
+**Decision**: Lock the default PoC stack to metadata/code + vector + rerank with Cohere Embed
+Multilingual v3 and Bedrock/Cohere rerank. Keep OpenSearch, Qdrant, Titan embeddings, and parser
+provider fallbacks as explicit benchmark-triggered paths rather than defaults.
+
+**Benchmark evidence**: `tests/benchmarks/poc_stack_benchmark.py` now generates the deterministic
+20-50 document Japanese industry corpus and two-stage offline run. T106-T109 pin the comparison axes:
+parser/provider by source format, Cohere vs Titan retrieval, vector-only vs metadata/code/hybrid
+retrieval, answer quality, and hard gates. External provider measurements can replace the deterministic
+offline evaluator without changing the decision schema.
+
+**Fallback criteria**:
+- **OpenSearch hybrid search**: introduce only if `hybrid_metadata_code_vector_rerank` beats
+  `metadata_code_vector_rerank` by at least +0.03 recall@5 or +0.03 exact code lookup success on two
+  consecutive benchmark runs, without any hard-gate violation and with p95 latency under the active
+  SLO. Do not enable only for cosmetic keyword-score gains.
+- **Qdrant vector store**: introduce only if Postgres/pgvector cannot meet p95 latency or index-size
+  needs at the target corpus scale, or if vector recall@10 drops below 0.95 after tuning while Qdrant
+  restores it without weakening tenant/ACL filters. Tenant filter parity and deletion/tombstone checks
+  must remain zero leakage before any switch.
+- **Titan embeddings**: use Titan as fallback only if Cohere Embed Multilingual v3 is unavailable,
+  violates residency/provider policy, or benchmark cost/latency is materially worse while Titan stays
+  within 0.02 recall@5 and 0.02 exact code lookup success. Otherwise Cohere remains default for
+  Japanese multilingual retrieval.
+- **Parser provider fallback**: prefer customer-managed/AWS Textract under AWS-only policy. Enable
+  Azure Document Intelligence or Google Document AI only with customer opt-in, region/residency match,
+  zero-retention/no-train evidence, and parser table structure or spreadsheet cell citation accuracy at
+  least +0.05 above Textract/OSS for the affected source format. If ProviderPolicy denies a provider,
+  fallback must occur before raw document bytes are sent.
+- **OSS parser fallback**: use Tesseract/OSS only when external/cloud parsers are disallowed,
+  unavailable, or cost-prohibitive, and surface lower table/cell accuracy as a known limitation in the
+  benchmark recommendation.
+
+**Hard stop**: Any ACL leakage, tenant leakage, deleted-document reappearance, or raw-context logging
+violation blocks stack promotion regardless of quality or cost improvements.
+
 ---
 
 ## R17. Runtime / IaC Fit

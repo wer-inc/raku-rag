@@ -9,6 +9,7 @@ FR-MFG-004/005/006/007/015/030.
 
 TDD: RED now because ``raku_rag.manufacturing.app.ManufacturingSystem`` is unimplemented.
 """
+
 from __future__ import annotations
 
 import unittest

@@ -15,6 +15,7 @@ reference-only (the 001 Redactor already ran at write time; export re-applies it
 
 stdlib only.
 """
+
 from __future__ import annotations
 
 import csv
@@ -40,8 +41,13 @@ ISMAP_READINESS_MEMO = (
 
 # Patch keys that name a no-train / retention / opt-in change (for the audit action label, FR-MFG-019).
 _NO_TRAIN_PATCH_KEYS = frozenset(
-    {"no_train_default", "training_opt_in", "opt_in_contract_ref", "provider_no_train_required",
-     "no_train_fallback"}
+    {
+        "no_train_default",
+        "training_opt_in",
+        "opt_in_contract_ref",
+        "provider_no_train_required",
+        "no_train_fallback",
+    }
 )
 _RETENTION_PATCH_KEYS = frozenset({"retention_customer", "retention_audit"})
 
@@ -67,8 +73,18 @@ def _entry_to_dict(entry: AuditLogEntry, redactor: Redactor) -> dict:
     defence-in-depth for the export boundary (FR-MFG-023). Reference-ID / hash fields are left
     verbatim so a downstream importer can re-verify the chain.
     """
-    _verbatim = {"resource_id", "citation_ids", "document_ids_used", "prev_hash", "entry_hash",
-                 "log_id", "request_id", "trace_id", "tenant_id", "actor_id"}
+    _verbatim = {
+        "resource_id",
+        "citation_ids",
+        "document_ids_used",
+        "prev_hash",
+        "entry_hash",
+        "log_id",
+        "request_id",
+        "trace_id",
+        "tenant_id",
+        "actor_id",
+    }
     out: dict = {}
     for f in dataclasses.fields(entry):
         value = getattr(entry, f.name)
@@ -77,9 +93,7 @@ def _entry_to_dict(entry: AuditLogEntry, redactor: Redactor) -> dict:
         elif isinstance(value, tuple):
             value = list(value)
         elif isinstance(value, dict):
-            value = {
-                k: (redactor.redact(v) if isinstance(v, str) else v) for k, v in value.items()
-            }
+            value = {k: (redactor.redact(v) if isinstance(v, str) else v) for k, v in value.items()}
         elif isinstance(value, str) and f.name not in _verbatim:
             value = redactor.redact(value)
         out[f.name] = value
@@ -160,7 +174,10 @@ class GovernanceService:
                 "reference_ids_only": True,
             },
             "safety_gate": {"enabled": True, "high_risk_requires_approved_citation": True},
-            "draft_review": {"ai_output_always_draft": True, "reviewer_required_for_approval": True},
+            "draft_review": {
+                "ai_output_always_draft": True,
+                "reviewer_required_for_approval": True,
+            },
             "groundedness": {"enabled": True, "citation_required": True},
             "retention": {
                 "retention_customer_days": policy.retention_customer,

@@ -28,6 +28,7 @@ contracts/mfg-openapi.md §D and contracts/mfg-interfaces.md §6 — DraftGenera
 TDD: RED now because ``raku_rag.manufacturing.app.ManufacturingSystem`` has no draft entrypoints yet
 (missing-impl), NOT an unrelated import error. Assertion style mirrors tests/manufacturing/*.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -76,7 +77,9 @@ class TestGenerateResponseShape(unittest.TestCase):
         self.assertIn("doc_1", art.source_document_ids)
         self.assertIn("doc_2", art.source_document_ids)
         self.assertTrue(art.created_at, "created_at provenance must be set")
-        self.assertTrue(art.audit_log_ref, "audit_log_ref must reference the audit entry (FR-MFG-021)")
+        self.assertTrue(
+            art.audit_log_ref, "audit_log_ref must reference the audit entry (FR-MFG-021)"
+        )
 
     def test_every_kind_is_generated_as_draft(self) -> None:
         for kind in ALL_KINDS:
@@ -92,7 +95,9 @@ class TestGenerateResponseShape(unittest.TestCase):
     def test_generated_draft_is_retrievable(self) -> None:
         art = self.sys.generate_draft(principal=self.author, kind=DraftType.FAQ)
         got = self.sys.get_draft(T, art.artifact_id)
-        self.assertIsNotNone(got, "generated draft must be retrievable via get_draft (GET .../{id})")
+        self.assertIsNotNone(
+            got, "generated draft must be retrievable via get_draft (GET .../{id})"
+        )
         self.assertEqual(got.artifact_id, art.artifact_id)
         self.assertEqual(got.type, DraftType.FAQ)
 
@@ -133,9 +138,7 @@ class TestReviewResponseShape(unittest.TestCase):
         self.sys = fresh()
         self.author = claims(T, "author")
         self.art = self.sys.generate_draft(principal=self.author, kind=DraftType.QUALITY_REPORT)
-        self.sys.assign_reviewer(
-            tenant_id=T, artifact_id=self.art.artifact_id, reviewer_id="rev_2"
-        )
+        self.sys.assign_reviewer(tenant_id=T, artifact_id=self.art.artifact_id, reviewer_id="rev_2")
         self.reviewer = claims(T, "rev_2", roles=("reviewer",))
 
     def test_review_response_carries_reviewer_transition_fields(self) -> None:

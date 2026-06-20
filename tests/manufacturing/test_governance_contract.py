@@ -28,6 +28,7 @@ TDD: RED now because these governance entrypoints are unimplemented on Manufactu
 (missing-impl), NOT an unrelated import error. Assertion style mirrors
 tests/manufacturing/test_drafts_contract.py.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -82,9 +83,7 @@ class TestUpdateDataUsePolicyShape(unittest.TestCase):
     def test_opt_in_requires_contract_ref(self) -> None:
         sys = ManufacturingSystem()
         with self.assertRaises(ValueError):
-            sys.update_data_use_policy(
-                tenant_id=T, patch={"training_opt_in": True}, actor=_admin()
-            )
+            sys.update_data_use_policy(tenant_id=T, patch={"training_opt_in": True}, actor=_admin())
 
     def test_opt_in_with_contract_ref_succeeds(self) -> None:
         sys = ManufacturingSystem()
@@ -120,7 +119,9 @@ class TestGovernanceStatusShape(unittest.TestCase):
         status = sys.governance_status(T)
         self.assertIsInstance(status, dict)
         for key in ("no_train", "audit_coverage", "safety_gate", "draft_review", "groundedness"):
-            self.assertIn(key, status, f"governance status must present core feature {key!r} (FR-MFG-024)")
+            self.assertIn(
+                key, status, f"governance status must present core feature {key!r} (FR-MFG-024)"
+            )
 
     def test_ismap_memo_does_not_claim_compliance(self) -> None:
         # FR-MFG-026: MUST NOT claim "ISMAP registered / fully compliant".

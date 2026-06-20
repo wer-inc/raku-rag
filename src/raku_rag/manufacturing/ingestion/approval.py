@@ -19,6 +19,7 @@ the 001 path already reads, and re-propagates it onto the indexed chunks via the
 
 stdlib only. Structurally satisfies ``raku_rag.manufacturing.interfaces.ApprovalWorkflow``.
 """
+
 from __future__ import annotations
 
 import dataclasses

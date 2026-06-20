@@ -16,6 +16,7 @@ Grounding / safe-side content (FR-MFG-010b/011, reusing the US1 SafetyGate seman
 
 ``content`` is always ``json.dumps(default=str)``-serializable (stdlib only).
 """
+
 from __future__ import annotations
 
 from datetime import date

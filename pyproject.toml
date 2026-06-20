@@ -18,18 +18,44 @@ prod = [
   "alembic",
   "psycopg[binary]>=3",
   "pgvector",
+  "boto3",
   "pydantic>=2",
   "arq",
   "opentelemetry-sdk",
   "structlog",
 ]
-dev = ["pytest", "ruff", "black", "mypy"]
+dev = ["pytest", "ruff", "black", "mypy", "schemathesis"]
 # 002 manufacturing solution layer parsers (T002). CSV uses the stdlib; DOCX/XLSX need these.
 manufacturing = ["python-docx", "openpyxl"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+
+[tool.black]
+target-version = ["py311"]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+# Type-check the stable runtime baseline first. The manufacturing PoC layer,
+# infra contract tests, and exploratory adapters are still covered by ruff,
+# black, and the functional test gate while their annotations mature.
+files = [
+  "src/raku_rag/core",
+  "src/raku_rag/domain",
+  "src/raku_rag/interfaces",
+  "src/raku_rag/providers/mock",
+  "src/raku_rag/observability/redaction.py",
+  "src/raku_rag/persistence/provider_config_audit.py",
+  "workers/ingest/provider_policy.py",
+]
+warn_unused_configs = true
+check_untyped_defs = false
+disallow_incomplete_defs = false
+no_implicit_optional = true
+strict_optional = true
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

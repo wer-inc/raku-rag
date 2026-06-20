@@ -12,6 +12,8 @@ describe("answer facade (e2e)", () => {
   let app: INestApplication;
   let upstream: http.Server;
   let received: Record<string, unknown> | null = null;
+  let receivedMethod = "";
+  let receivedPath = "";
   const CANNED = {
     status: "ok",
     text: "stub answer",
@@ -27,11 +29,18 @@ describe("answer facade (e2e)", () => {
   beforeAll(async () => {
     process.env.NODE_ENV = "test";
     upstream = http.createServer((req, res) => {
+      receivedMethod = req.method ?? "";
+      receivedPath = req.url ?? "";
       let data = "";
       req.on("data", (c) => (data += c));
       req.on("end", () => {
         received = JSON.parse(data || "{}");
         res.setHeader("content-type", "application/json");
+        if (receivedMethod !== "POST" || receivedPath !== "/internal/answer") {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: "wrong upstream route" }));
+          return;
+        }
         res.end(JSON.stringify(CANNED));
       });
     });
@@ -68,6 +77,8 @@ describe("answer facade (e2e)", () => {
     expect(received?.query).toBe("maintenance interval");
     expect(received?.tenant_id).toBe("tenant_a");
     expect(received?.user_id).toBe("alice");
+    expect(receivedMethod).toBe("POST");
+    expect(receivedPath).toBe("/internal/answer");
   });
 
   it("SECURITY: tenant comes from the signed token, never from the request body", async () => {

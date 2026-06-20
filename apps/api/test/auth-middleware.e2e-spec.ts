@@ -27,6 +27,25 @@ describe("auth middleware (e2e)", () => {
     expect(res.status).toBe(401);
   });
 
+  it("unsigned or tampered X-User-Token -> 401", async () => {
+    const legacyUnsigned = Buffer.from(JSON.stringify({ tenant_id: "t", user_id: "u" }), "utf8").toString(
+      "base64url",
+    );
+    const unsigned = await request(app.getHttpServer())
+      .get("/v1/whoami")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", legacyUnsigned);
+    expect(unsigned.status).toBe(401);
+
+    const token = makeUserToken({ tenant_id: "t", user_id: "u", groups: [], roles: [] });
+    const tampered = `${token.slice(0, -1)}x`;
+    const badSig = await request(app.getHttpServer())
+      .get("/v1/whoami")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", tampered);
+    expect(badSig.status).toBe(401);
+  });
+
   it("valid api key + token -> principal claims parsed", async () => {
     const token = makeUserToken({
       tenant_id: "tenant_a",
@@ -44,6 +63,22 @@ describe("auth middleware (e2e)", () => {
       user_id: "alice",
       groups: ["ops"],
       roles: ["reader", "admin"],
+    });
+  });
+
+  it("accepts the same HMAC token format as the Python TokenVerifier", async () => {
+    const pythonSigned =
+      "eyJncm91cHMiOlsib3BzIl0sInJvbGVzIjpbInJlYWRlciJdLCJ0ZW5hbnRfaWQiOiJ0ZW5hbnRfYSIsInVzZXJfaWQiOiJhbGljZSJ9.3-86WyxafnZrzOKXG4W7YtXyKUGLscA_x-BgGtabFrU";
+    const res = await request(app.getHttpServer())
+      .get("/v1/whoami")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", pythonSigned);
+    expect(res.status).toBe(200);
+    expect(res.body.principal).toEqual({
+      tenant_id: "tenant_a",
+      user_id: "alice",
+      groups: ["ops"],
+      roles: ["reader"],
     });
   });
 });

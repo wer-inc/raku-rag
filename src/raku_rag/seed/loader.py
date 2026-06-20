@@ -10,9 +10,10 @@ Invariants enforced by the loader:
   the seed never duplicates.
 - **deny-by-default**: only explicitly-listed ACLGrant rows are seeded; no implicit grants.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)

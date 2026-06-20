@@ -3,6 +3,7 @@
 On failure the caller falls back to the un-reranked results (FR-030); only proceeds to answer if
 they still meet the threshold/evidence requirements.
 """
+
 from __future__ import annotations
 
 from typing import Sequence

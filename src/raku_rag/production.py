@@ -7,15 +7,23 @@ Everything else — the services (retrieval/answer/deletion/groundedness), the d
 ``CacheService`` — is reused unchanged. It therefore exposes the exact public surface the security hard
 gates exercise, so they run against real Postgres+RLS via adapter parity (see ``tests/helpers.fresh``).
 """
+
 from __future__ import annotations
+
+import hashlib
 
 from raku_rag.app import MvpSystem
 from raku_rag.core.config import Settings
 from raku_rag.core.security.token import TokenVerifier
+from raku_rag.domain.models import JobStatus
 from raku_rag.domain.models import QueryProfile
+from raku_rag.observability.audit import InMemoryAuditSink
+from raku_rag.observability.metrics import MetricsRecorder
+from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.persistence.postgres import (
     PostgresAclPolicy,
     PostgresDocumentRegistry,
+    PostgresIngestionRunStore,
     PostgresVectorStore,
     connect,
 )
@@ -24,14 +32,19 @@ from raku_rag.providers.embeddings import HashingEmbeddingProvider
 from raku_rag.providers.llms import ExtractiveLLMProvider
 from raku_rag.providers.parsers import TextParser
 from raku_rag.providers.rerankers import ScoreOrderReranker
+from raku_rag.providers.vlms import ExtractiveVLMProvider
 from raku_rag.services.answer import AnswerService
+from raku_rag.services.assets import AssetService
 from raku_rag.services.cache import CacheService
 from raku_rag.services.cost import CostService
+from raku_rag.services.crop import CropService
 from raku_rag.services.deletion import DeletionService
 from raku_rag.services.groundedness import GroundednessGate
 from raku_rag.services.ingestion import IngestionService
 from raku_rag.services.profile import ProfileRegistry
+from raku_rag.services.reindex import InMemoryReindexPlanStore, ReindexService
 from raku_rag.services.retrieval import RetrievalService
+from raku_rag.workers.ingestion import IngestionJobMessage, IngestionRun
 
 DEFAULT_DSN = "postgresql://raku:raku@127.0.0.1:5432/raku_parity"
 
@@ -53,6 +66,7 @@ class ProductionSystem(MvpSystem):
         self.registry = PostgresDocumentRegistry(self._conn)
         self.store = PostgresVectorStore(self._conn)
         self.acl = PostgresAclPolicy(self._conn)
+        self.ingestion_runs = PostgresIngestionRunStore(self._conn)
 
         # Reused, unchanged from MvpSystem.
         self.embedder = HashingEmbeddingProvider(dim=self.settings.embedding_dim)
@@ -60,8 +74,13 @@ class ProductionSystem(MvpSystem):
         self.chunker = SentenceChunker()
         self.reranker = ScoreOrderReranker()
         self.llm = ExtractiveLLMProvider()
+        self.vlm = ExtractiveVLMProvider()
         self.cost = CostService()
+        self.metrics = MetricsRecorder()
+        self.tracer = InMemoryTracer()
+        self.audit = InMemoryAuditSink()
         self.cache = CacheService()
+        self.crops = CropService()
         self.profiles = ProfileRegistry(
             QueryProfile(
                 score_threshold=self.settings.default_score_threshold,
@@ -72,15 +91,105 @@ class ProductionSystem(MvpSystem):
         self.token_verifier = TokenVerifier(self.settings.token_signing_secret)
 
         # Same service wiring as MvpSystem, over the swapped seams.
-        self.retrieval = RetrievalService(self.store, self.embedder, self.acl, self.reranker)
+        self.retrieval = RetrievalService(
+            self.store,
+            self.embedder,
+            self.acl,
+            self.reranker,
+            self.cost,
+            self.metrics,
+            self.tracer,
+        )
         self.gate = GroundednessGate()
         self.ingestion = IngestionService(
-            self.store, self.embedder, self.parser, self.chunker, self.registry
+            self.store,
+            self.embedder,
+            self.parser,
+            self.chunker,
+            self.registry,
+            self.metrics,
+            self.tracer,
         )
         self.answer_service = AnswerService(
-            self.retrieval, self.llm, self.gate, self.cost, self.registry.get
+            self.retrieval,
+            self.llm,
+            self.gate,
+            self.cost,
+            self.registry.get,
+            self.metrics,
+            self.tracer,
+            self.audit,
+            self.vlm,
         )
-        self.deletion = DeletionService(self.store, self.registry, self.cache)
+        self.deletion = DeletionService(
+            self.store, self.registry, self.cache, crop_store=self.crops.store
+        )
+        self.assets = AssetService(self.registry, self.store, self.acl, self.crops.store)
+        self.reindex_plans = InMemoryReindexPlanStore()
+        self.reindex = ReindexService(
+            self.store, self.embedder, self.parser, self.chunker, self.registry, self.reindex_plans
+        )
+
+    def ingest_document(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_id: str,
+        document_id: str,
+        document_ref: str,
+        raw: bytes,
+        content_type: str = "text/plain",
+    ) -> IngestionRun:
+        """Run the ingestion service through the same status projection used by the worker."""
+        checksum = hashlib.sha256(raw).hexdigest()
+        message = IngestionJobMessage(
+            idempotency_key=f"api:{collection_id}:{source_id}:{document_id}:{checksum}",
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            document_ref=document_ref,
+            content_type=content_type,
+        )
+        run, created = self.ingestion_runs.create_queued(message, trigger="api")
+        if not created and run.status == JobStatus.SUCCEEDED.value:
+            return run
+
+        self.ingestion_runs.mark_running(run)
+        job = self.ingestion.ingest(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            raw=raw,
+            content_type=content_type,
+        )
+        if job.status == JobStatus.SUCCEEDED.value:
+            self.ingestion_runs.mark_succeeded(run, chunk_count=job.chunk_count)
+        else:
+            self.ingestion_runs.mark_failed(
+                run, reason=job.failure_reason or "ingestion failed", retry_count=0
+            )
+
+        refreshed = self.ingestion_runs.get_for_tenant(tenant_id, run.ingestion_run_id)
+        return refreshed or run
+
+    def retry_ingestion_run(
+        self, *, tenant_id: str, ingestion_run_id: str, raw: bytes
+    ) -> IngestionRun | None:
+        previous = self.ingestion_runs.get_for_tenant(tenant_id, ingestion_run_id)
+        if previous is None:
+            return None
+        return self.ingest_document(
+            tenant_id=tenant_id,
+            collection_id=previous.collection_id,
+            source_id=previous.source_id,
+            document_id=previous.document_id,
+            document_ref=previous.document_ref,
+            raw=raw,
+            content_type=previous.content_type,
+        )
 
     def close(self) -> None:
         try:

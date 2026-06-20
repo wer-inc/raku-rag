@@ -13,16 +13,18 @@ read with no Dagster call.
 
 stdlib only.
 """
+
 from __future__ import annotations
 
 import csv
 import io
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 
 from raku_rag.core.errors import AnswerStatus
 from raku_rag.domain.models import IdentityClaims
+from raku_rag.eval.models import EvaluationRun
 from raku_rag.manufacturing.domain.audit import InMemoryAuditLogWriter
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus
 from raku_rag.manufacturing.telemetry.safety_metrics import SafetyTelemetry
@@ -116,9 +118,7 @@ class PocKpiReport:
         )
         unanswered = sum(1 for e in answer_entries if e.safety_block_reason is not None)
         grounded = sum(
-            1
-            for e in answer_entries
-            if e.decision == AnswerStatus.OK.value and e.citation_ids
+            1 for e in answer_entries if e.decision == AnswerStatus.OK.value and e.citation_ids
         )
 
         # self-resolution: the user got a grounded, self-serve answer without escalation.
@@ -170,9 +170,7 @@ class PocKpiReport:
             high_risk = tel.high_risk_query_count
             block_count = tel.safety_gate_block_count
         else:
-            high_risk = sum(
-                1 for e in answer_entries if e.high_risk_classification_result is True
-            )
+            high_risk = sum(1 for e in answer_entries if e.high_risk_classification_result is True)
             block_count = unanswered
 
         return cls(
@@ -211,3 +209,59 @@ class PocKpiReport:
                 value = json.dumps(value, ensure_ascii=False, sort_keys=True)
             writer.writerow([key, value])
         return buf.getvalue()
+
+
+MANUFACTURING_EVAL_METRIC_KEYS: tuple[str, ...] = tuple(f"manufacturing_{key}" for key in KPI_KEYS)
+
+MANUFACTURING_SAFETY_CHECKS: tuple[str, ...] = (
+    "manufacturing_high_risk_approved_citation_requirement",
+    "manufacturing_acl_leakage",
+    "manufacturing_tenant_isolation",
+    "manufacturing_deleted_reappearance",
+)
+
+
+def attach_manufacturing_kpis_to_evaluation_run(
+    run: EvaluationRun,
+    report: PocKpiReport,
+    *,
+    baseline_run: EvaluationRun | None = None,
+    safety_check_counts: dict[str, int] | None = None,
+) -> EvaluationRun:
+    """Return an EvaluationRun extended with FR-MFG-028 KPI and absolute safety gates."""
+
+    report_data = report.to_json()
+    metrics = dict(run.metrics)
+    for key in KPI_KEYS:
+        metrics[f"manufacturing_{key}"] = report_data[key]
+
+    baseline_comparison = dict(run.baseline_comparison)
+    if baseline_run is not None:
+        for key in MANUFACTURING_EVAL_METRIC_KEYS:
+            if key in baseline_run.metrics and _is_number(metrics.get(key)):
+                baseline_comparison[key] = float(metrics[key]) - float(baseline_run.metrics[key])
+
+    security_checks = dict(run.security_checks)
+    for name, count in _manufacturing_safety_counts(safety_check_counts or {}).items():
+        security_checks[name] = {"passed": count == 0, "count": count}
+
+    gate_result = (
+        "blocked"
+        if any(not dict(check).get("passed", False) for check in security_checks.values())
+        else run.gate_result
+    )
+    return replace(
+        run,
+        metrics=metrics,
+        baseline_comparison=baseline_comparison,
+        security_checks=security_checks,
+        gate_result=gate_result,
+    )
+
+
+def _manufacturing_safety_counts(raw: dict[str, int]) -> dict[str, int]:
+    return {name: int(raw.get(name, 0) or 0) for name in MANUFACTURING_SAFETY_CHECKS}
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)

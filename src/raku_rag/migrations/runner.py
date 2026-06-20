@@ -7,6 +7,7 @@ DB-API 2.0 connection; the local smoke uses stdlib ``sqlite3`` so it runs with n
 A migration is a ``NNNN_name.sql`` file. Applied versions are recorded in ``schema_migrations`` so
 re-running is a no-op (idempotent).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -104,9 +105,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dir", default="infra/db/migrations", help="migrations directory")
     ap.add_argument("--db", default=".local/dev.sqlite", help="sqlite path or postgres URL")
     args = ap.parse_args(argv)
-    os.makedirs(os.path.dirname(os.path.abspath(args.db)), exist_ok=True) if not args.db.startswith(
-        ("postgres://", "postgresql://")
-    ) else None
+    (
+        os.makedirs(os.path.dirname(os.path.abspath(args.db)), exist_ok=True)
+        if not args.db.startswith(("postgres://", "postgresql://"))
+        else None
+    )
     conn = _open(args.db)
     runner = MigrationRunner(conn, args.dir)
     applied = runner.apply()

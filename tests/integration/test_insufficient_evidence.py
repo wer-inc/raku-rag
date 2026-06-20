@@ -1,4 +1,5 @@
 """T024 — US1: no evidence → insufficient_evidence (推測しない, FR-014/SC-002)."""
+
 from __future__ import annotations
 
 import unittest
@@ -13,7 +14,9 @@ class TestInsufficientEvidence(unittest.TestCase):
     def setUp(self) -> None:
         self.sys = fresh()
         self.sys.ingest_text(
-            tenant_id=T, collection_id="c", document_id="d1",
+            tenant_id=T,
+            collection_id="c",
+            document_id="d1",
             text="The office cafeteria menu rotates weekly between four set lunches.",
         )
         self.sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "alice")

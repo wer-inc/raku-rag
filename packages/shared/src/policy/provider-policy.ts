@@ -15,9 +15,16 @@ export interface ProviderPolicy extends PolicyLifecycle {
   name: string;
   status: "active" | "draft" | "archived";
   parser_mode: ParserMode;
+  allowed_parser_providers?: string[];
+  allowed_ocr_providers?: string[];
+  allowed_llm_providers?: string[];
+  allowed_embedding_providers?: string[];
+  allowed_rerank_providers?: string[];
+  allowed_regions?: string[];
   no_train_required: boolean;
   zero_retention_required: boolean;
   cross_cloud_processing_allowed: boolean;
   customer_opt_in_required: boolean;
   customer_opt_in_status?: "pending" | "granted" | "revoked";
+  fallback_policy?: Record<string, unknown>;
 }

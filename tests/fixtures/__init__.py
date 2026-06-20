@@ -3,6 +3,7 @@
 Image / scanned-PDF parser fixtures are intentionally deferred to the visual-RAG phase (US6),
 consistent with the Phase 0/1 out-of-scope list.
 """
+
 from __future__ import annotations
 
 import json

@@ -3,6 +3,7 @@
 Verifies the mapping translates manufacturing scopes into 001 ACL inputs and DELEGATES the visibility
 decision to the existing 001 ``AclPolicy`` — it builds no bespoke authorization mechanism.
 """
+
 from __future__ import annotations
 
 import unittest
@@ -71,8 +72,9 @@ class TestDepartmentMapping(unittest.TestCase):
     def test_role_dimension_maps_to_base_acl_role(self) -> None:
         scope = ManufacturingScope(tenant_id=T, roles=("supervisor",))
         grants = grants_for_scope(scope)
-        self.assertTrue(any(g.subject_type == SubjectType.ROLE and g.subject_id == "supervisor"
-                            for g in grants))
+        self.assertTrue(
+            any(g.subject_type == SubjectType.ROLE and g.subject_id == "supervisor" for g in grants)
+        )
 
 
 class TestFactoryAndEquipmentScopeMapping(unittest.TestCase):
@@ -88,7 +90,9 @@ class TestFactoryAndEquipmentScopeMapping(unittest.TestCase):
 
     def test_factory_scope_drives_grant_scope(self) -> None:
         fac = Factory(tenant_id=T, factory_id="fac1")
-        scope = ManufacturingScope(tenant_id=T, department="press_dept", factory_ids=(fac.factory_id,))
+        scope = ManufacturingScope(
+            tenant_id=T, department="press_dept", factory_ids=(fac.factory_id,)
+        )
         grants = grants_for_scope(scope)
         _, fac_scope_id = factory_scope(fac)
         self.assertTrue(grants)
@@ -126,8 +130,11 @@ class TestDelegatesToBase001AclPolicy(unittest.TestCase):
         in_factory = _chunk(T, fac_collection, "docA")
         other_factory = _chunk(T, "factory:fac2", "docB")
         for ch in (in_factory, other_factory):
-            self.assertEqual(mapped_pred(ch), base_pred(ch),
-                             "mapping must delegate to the 001 AclPolicy predicate, not a bespoke one")
+            self.assertEqual(
+                mapped_pred(ch),
+                base_pred(ch),
+                "mapping must delegate to the 001 AclPolicy predicate, not a bespoke one",
+            )
 
     def test_deny_by_default_for_unmapped_subject(self) -> None:
         # A user with no matching department/role/factory grant is denied (001 deny-by-default).

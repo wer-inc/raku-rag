@@ -3,12 +3,12 @@
 These checks are intentionally static so the default stdlib gate stays Docker-free. The actual
 Postgres execution lives behind ``scripts/gate.sh b``.
 """
+
 from __future__ import annotations
 
 import re
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 UP = ROOT / "infra/db/migrations/postgres/0001_core_rls.sql"

@@ -3,6 +3,7 @@
 日本語境界 (。！？) と段落を尊重し、空白/バイト依存の分割をしない。各チャンクは原文上の
 (start, end) code-point オフセットを保持する（引用の正確性のため）。
 """
+
 from __future__ import annotations
 
 import re
