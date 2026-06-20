@@ -568,7 +568,7 @@ class ManufacturingSystem:
         """
         visible = self._mvp.acl.visibility(principal)
         seen: set[str] = set()
-        for chunk, _vec in self._mvp.store._items.values():
+        for chunk, _vec in self._mvp.store.iter_items():
             if chunk.tenant_id != principal.tenant_id or chunk.tombstone:
                 continue
             if collection_id is not None and chunk.collection_id != collection_id:
@@ -876,12 +876,12 @@ class ManufacturingSystem:
         now = datetime.fromisoformat(now_iso) if now_iso else datetime.now(timezone.utc)
         retention_days = self.retention.effective_retention(tenant_id).retention_customer_days
         cutoff = now - timedelta(days=retention_days)
-        # Snapshot first: expire_document mutates the registry (tombstone) under iteration.
+        # documents_for_tenant returns a snapshot tuple, so expiring (which tombstones registry docs)
+        # under iteration is safe.
         candidates = [
             doc.document_id
-            for (tid, _did), doc in list(self._mvp.registry._docs.items())
-            if tid == tenant_id
-            and not doc.tombstone
+            for doc in self._mvp.registry.documents_for_tenant(tenant_id)
+            if not doc.tombstone
             and doc.created_at
             and datetime.fromisoformat(doc.created_at) < cutoff
         ]

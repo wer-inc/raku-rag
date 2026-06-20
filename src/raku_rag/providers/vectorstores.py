@@ -25,6 +25,14 @@ class InMemoryVectorStore(VectorStore):
         for chunk, vec in chunks:
             self._items[chunk.chunk_id] = (chunk, vec)
 
+    def iter_items(self) -> tuple[tuple[Chunk, Vector], ...]:
+        """All stored (chunk, vector) pairs — the in-memory bulk accessor.
+
+        A public seam for callers that need to scan the whole store (e.g. metadata propagation,
+        the manufacturing ACL-denial survey) so they don't reach into the private ``_items`` dict.
+        """
+        return tuple(self._items.values())
+
     def search(
         self,
         tenant_id: str,

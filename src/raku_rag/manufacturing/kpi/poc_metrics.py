@@ -25,14 +25,13 @@ from datetime import datetime, timezone
 from raku_rag.core.errors import AnswerStatus
 from raku_rag.domain.models import IdentityClaims
 from raku_rag.eval.models import EvaluationRun
+
+# Shared audit-derivation primitives (action labels + entry filters) — single source of truth with
+# the writers (api/audit.py) and the dashboard (api/dashboard.py).
+from raku_rag.manufacturing.api import audit as audit_derive
 from raku_rag.manufacturing.domain.audit import InMemoryAuditLogWriter
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus
 from raku_rag.manufacturing.telemetry.safety_metrics import SafetyTelemetry
-
-_ANSWER_ACTION = "answer.safety_evaluated"
-_CITATION_ACTION = "citation.access"
-_FEEDBACK_ACTION = "feedback.low_rating"
-_FEEDBACK_LOW_DECISION = "low_rating"
 
 # The FR-MFG-028 KPI key set (data-model §I). Every key MUST be computable + exportable.
 KPI_KEYS: tuple[str, ...] = (
@@ -110,8 +109,8 @@ class PocKpiReport:
         (same audit-log source). Tenant scoping is inherited from the writer's ``read_all``.
         """
         entries = audit.read_all(principal)
-        answer_entries = [e for e in entries if e.action == _ANSWER_ACTION]
-        citation_entries = [e for e in entries if e.action == _CITATION_ACTION]
+        answer_entries = audit_derive.answer_entries(entries)
+        citation_entries = audit_derive.citation_entries(entries)
 
         total = len(answer_entries)
         ok = sum(1 for e in answer_entries if e.decision == AnswerStatus.OK.value)
@@ -129,9 +128,10 @@ class PocKpiReport:
         insufficient_evidence_rate = _rate(insufficient, total)
         # low_rating_rate: DERIVED from the audited feedback events (single source of truth). The
         # denominator is TOTAL feedback (= low_feedback / total_feedback), 0.0 when no feedback yet.
-        feedback_entries = [e for e in entries if e.action == _FEEDBACK_ACTION]
-        low_feedback = sum(1 for e in feedback_entries if e.decision == _FEEDBACK_LOW_DECISION)
-        low_rating_rate = _rate(low_feedback, len(feedback_entries))
+        feedback = audit_derive.feedback_entries(entries)
+        low_rating_rate = _rate(
+            len(audit_derive.low_rating_feedback_entries(entries)), len(feedback)
+        )
         # expert_interruption_reduction: proxy = the share of answers self-resolved (the expert was
         # NOT interrupted), the inverse of the unanswered/escalated share. Derived, idempotent.
         expert_interruption_reduction = _rate(ok, total)

@@ -64,7 +64,7 @@ class MetadataEnricher:
     ) -> int:
         """Write the metadata reference onto each indexed Chunk.metadata (FR-MFG-003). Returns count."""
         n = 0
-        for chunk, _vec in self._store._items.values():
+        for chunk, _vec in self._store.iter_items():
             if chunk.tenant_id == tenant_id and chunk.document_id == document_id:
                 chunk.metadata[MFG_META_KEY] = metadata
                 n += 1

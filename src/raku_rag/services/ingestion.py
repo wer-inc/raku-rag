@@ -41,6 +41,10 @@ class DocumentRegistry:
     def put(self, doc: Document) -> None:
         self._docs[(doc.tenant_id, doc.document_id)] = doc
 
+    def documents_for_tenant(self, tenant_id: str) -> tuple[Document, ...]:
+        """All documents for a tenant — the public accessor (so callers don't reach into ``_docs``)."""
+        return tuple(doc for (tid, _did), doc in self._docs.items() if tid == tenant_id)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()

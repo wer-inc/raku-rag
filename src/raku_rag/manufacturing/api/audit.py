@@ -70,7 +70,7 @@ def record_answer_decision(
         timestamp=_now(),
         request_id=correlation_id or None,
         actor_id=actor_id,
-        action="answer.safety_evaluated",
+        action=ANSWER_ACTION,
         resource_type="answer",
         resource_id=correlation_id or None,
         collection_id=collection_id,  # FR-MFG-030 collection axis (reference ID; None = cross-collection)
@@ -106,6 +106,34 @@ def record_answer_decision(
 LOW_RATING_THRESHOLD = 2
 FEEDBACK_ACTION = "feedback.low_rating"
 FEEDBACK_LOW_DECISION = "low_rating"
+
+# --- audit action labels = the SINGLE source of truth for every writer (record_*) AND every
+# audit-derived reader (api/dashboard.py, kpi/poc_metrics.py), so the labels cannot drift. The thin
+# filter helpers below are the shared derivation primitives those readers reuse.
+ANSWER_ACTION = "answer.safety_evaluated"
+CITATION_ACTION = "citation.access"
+
+
+def answer_entries(entries):
+    """Answer-path safety-decision entries (the high_risk / block / answer counters derive from these)."""
+    return [e for e in entries if e.action == ANSWER_ACTION]
+
+
+def citation_entries(entries):
+    """Citation-access entries (frequently-referenced-documents derives from these)."""
+    return [e for e in entries if e.action == CITATION_ACTION]
+
+
+def feedback_entries(entries):
+    """All answer-feedback entries (the low_rating_rate denominator)."""
+    return [e for e in entries if e.action == FEEDBACK_ACTION]
+
+
+def low_rating_feedback_entries(entries):
+    """Feedback entries the user rated LOW (the low-rating dashboard surface + KPI numerator)."""
+    return [
+        e for e in entries if e.action == FEEDBACK_ACTION and e.decision == FEEDBACK_LOW_DECISION
+    ]
 
 
 def record_answer_feedback(

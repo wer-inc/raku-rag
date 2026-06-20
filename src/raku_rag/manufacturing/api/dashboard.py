@@ -25,18 +25,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from raku_rag.domain.models import IdentityClaims
+
+# Audit-derivation primitives (action labels + entry filters) — the SINGLE source of truth shared by
+# the writers (api/audit.py) and the KPI report (kpi/poc_metrics.py), so the labels cannot drift.
+from raku_rag.manufacturing.api import audit as audit_derive
 from raku_rag.manufacturing.domain.audit import InMemoryAuditLogWriter
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus
 from raku_rag.manufacturing.telemetry.safety_metrics import SafetyTelemetry, SOURCE_AUDIT_LOG
-
-# Answer-path action label written by record_answer_decision (api/audit.py) — the single source row.
-_ANSWER_ACTION = "answer.safety_evaluated"
-# Citation-access action label written by ManufacturingSystem._audit_citation_access.
-_CITATION_ACTION = "citation.access"
-# Feedback-path labels written by record_answer_feedback (api/audit.py) — derivation keys for the
-# low-rating dashboard surface + KPI low_rating_rate (single source of truth, like safety telemetry).
-_FEEDBACK_ACTION = "feedback.low_rating"
-_FEEDBACK_LOW_DECISION = "low_rating"
 
 
 def _now() -> str:
@@ -158,8 +153,8 @@ class DashboardService:
         and the in-memory approval metadata — never a parallel store. Cross-tenant => 0/empty.
         """
         entries = self._audit.read_all(principal)
-        answer_entries = [e for e in entries if e.action == _ANSWER_ACTION]
-        citation_entries = [e for e in entries if e.action == _CITATION_ACTION]
+        answer_entries = audit_derive.answer_entries(entries)
+        citation_entries = audit_derive.citation_entries(entries)
 
         # unanswered: answer-path decisions that did NOT assert (a safety block was recorded).
         unanswered = sum(1 for e in answer_entries if e.safety_block_reason is not None)
@@ -169,11 +164,10 @@ class DashboardService:
         # 'low_rating'). Reference IDs only (the rated answer's correlation/resource_id or its surveyed
         # document_ids); never the comment body. Most-frequently-low-rated first.
         low_counter: Counter = Counter()
-        for e in entries:
-            if e.action == _FEEDBACK_ACTION and e.decision == _FEEDBACK_LOW_DECISION:
-                ref = e.resource_id or (e.document_ids_used[0] if e.document_ids_used else None)
-                if ref:
-                    low_counter[ref] += 1
+        for e in audit_derive.low_rating_feedback_entries(entries):
+            ref = e.resource_id or (e.document_ids_used[0] if e.document_ids_used else None)
+            if ref:
+                low_counter[ref] += 1
         low_rating = tuple(ref for ref, _n in low_counter.most_common())
 
         # frequent_questions: grouped by the recorded reason-code signature (reference labels only,
