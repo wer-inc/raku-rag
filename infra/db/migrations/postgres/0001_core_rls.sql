@@ -23,6 +23,12 @@ BEGIN
   END IF;
 END $$;
 
+-- Create core tables in `public`, NOT the connecting role's schema. The Tier B gate connects as a
+-- user that may share a name with the `raku` schema above; with the default search_path
+-- ("$user", public) that would land unqualified tables in the role schema, and they then vanish
+-- from the search_path after `SET ROLE raku_app` (caught by the Tier B RLS smoke in CI).
+SET search_path TO public;
+
 CREATE TABLE IF NOT EXISTS tenants (
   tenant_id text PRIMARY KEY,
   name text NOT NULL DEFAULT '',

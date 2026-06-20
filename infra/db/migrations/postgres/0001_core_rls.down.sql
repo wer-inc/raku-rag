@@ -1,6 +1,10 @@
 -- Rollback for 0001_core_rls.sql.
 -- Intended for throwaway/local Tier B verification before persistent data exists.
 
+-- Resolve unqualified names against public (the up migration creates tables there), regardless of
+-- the connecting role's name/schema.
+SET search_path TO public;
+
 DROP TABLE IF EXISTS audit_logs CASCADE;
 DROP TABLE IF EXISTS acl_grants CASCADE;
 DROP TABLE IF EXISTS chunks CASCADE;

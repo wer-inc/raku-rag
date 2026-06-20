@@ -71,6 +71,18 @@ class TierBMigrationSqlTest(unittest.TestCase):
         self.assertIn("metadata_schema_version integer NOT NULL DEFAULT 1", self.sql)
         self.assertIn("raw_content_stored boolean NOT NULL DEFAULT false", self.sql)
 
+    def test_tables_are_pinned_to_public_schema(self) -> None:
+        # The connecting user can share a name with the `raku` schema; "$user" in the default
+        # search_path would then land unqualified CREATE TABLE into the role schema, and those
+        # tables vanish after SET ROLE raku_app. Pin search_path to public BEFORE the first table.
+        # (The real Postgres execution in the Tier B CI caught this; this static check guards it.)
+        self.assertIn("SET search_path TO public", self.sql)
+        self.assertLess(
+            self.sql.index("SET search_path TO public"),
+            self.sql.index("CREATE TABLE"),
+            "search_path must be set to public before the first CREATE TABLE",
+        )
+
     def test_down_migration_drops_core_objects(self) -> None:
         for name in ("chunks", "documents", "collections", "tenants", "raku.current_tenant_id"):
             self.assertIn(name, self.down)
