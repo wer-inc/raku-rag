@@ -528,5 +528,29 @@ class IndustryRuntimeFrameworkIntegrationTest(unittest.TestCase):
         self.assertIn("im_advice", risk_event.metadata["matched_rules"])
 
 
+class InvestmentRegulatedPolicyTest(unittest.TestCase):
+    """GAP-F13: the declared MarketingMaterialPolicy governs the contradiction check at runtime."""
+
+    def test_marketing_policy_governs_disclosure_outcome(self) -> None:
+        from dataclasses import replace
+
+        system = InvestmentSystem()
+        user = InvestmentSystem.operator()
+        statements = ("過去実績は良好でした",)
+        # With risk-disclosure required (default), a performance claim with no disclosure is flagged.
+        _draft, with_req = system.marketing_material_check(user, statements)
+        self.assertEqual(with_req[0]["contradiction_type"], "risk_disclosure_missing")
+        # Flipping the policy field changes the runtime outcome (proves the policy governs).
+        relaxed = InvestmentSystem()
+        relaxed.profile = replace(
+            relaxed.profile,
+            marketing_material_policy=replace(
+                relaxed.profile.marketing_material_policy, risk_disclosure_required=False
+            ),
+        )
+        _draft2, without_req = relaxed.marketing_material_check(user, statements)
+        self.assertEqual(without_req, ())
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

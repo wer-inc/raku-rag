@@ -286,38 +286,60 @@ class InvestmentSystem:
         self.audit.record("investment.draft_generated", "draft", artifact_type="rfp_response")
         return draft
 
-    def marketing_material_check(self, user: IndustryUser, prompt: str) -> IndustryDraft:
+    def marketing_material_check(
+        self, user: IndustryUser, statements: tuple[str, ...]
+    ) -> tuple[IndustryDraft, tuple[dict, ...]]:
+        """FR-IM-031/034 — per-statement contradiction check vs approved sources, MarketingMaterialPolicy-driven.
+
+        Each statement is classified, matched to the approved source document type that governs it, and
+        screened for prohibited expressions / a missing risk disclosure. Returns the review draft AND
+        the per-statement contradiction_results (FR-IM-034 shape). No LLM — deterministic rule engine.
+        """
         self._regulated_query_count += 1
-        self._disclosure_inconsistency_count += 1
         self._marketing_material_review_count += 1
-        risk = self.risk_policy.evaluate(self.profile.risk_policy, prompt)
-        citations = self._approved_citations(
-            user,
-            "FUND-001_交付目論見書_2025",
-            "FUND-001_月報_2025-05",
-            "コンプライアンス規程_販売資料",
+        policy = self.profile.marketing_material_policy
+        assert policy is not None  # the investment profile is regulated
+        risk = self.risk_policy.evaluate(self.profile.risk_policy, " ".join(statements))
+        source_docs = tuple(
+            doc
+            for doc in self.documents.values()
+            if doc.fund_id in user.fund_scope
+            and self._accessible(user, doc)
+            and doc.approved
+            and doc.document_type
+            in {
+                "delivered_prospectus",
+                "requested_prospectus",
+                "monthly_report",
+                "compliance_manual",
+            }
         )
+        citations = tuple(doc.citation for doc in source_docs if doc.citation is not None)
+        contradictions = _check_marketing_statements(policy, statements, source_docs)
+        if any(item["severity"] in {"high", "review_required"} for item in contradictions):
+            self._disclosure_inconsistency_count += 1
+        body = tuple(
+            f"{item['statement']}: {item['recommended_action']}" for item in contradictions
+        ) or ("記載と承認済み根拠の間に明らかな矛盾は検出されませんでした。",)
         draft = IndustryDraft(
             artifact_type="marketing_material_comment",
             compliance_review_status="pending",
             reviewer_group="compliance_reviewers",
-            source_document_ids=("FUND-001_交付目論見書_2025", "FUND-001_月報_2025-05"),
+            source_document_ids=tuple(doc.document_id for doc in source_docs),
             source_citations=citations,
             disclosure_evidence_ids=("disc-marketing-001",),
-            body=(
-                "過去実績が将来成果を保証するように読める表現を修正してください。",
-                "performance_period と risk disclosure の根拠不足があります。",
-            ),
+            body=body,
             audit_events=self.audit.all(),
         )
         self._drafts.append(draft)
         self.audit.record(
             "investment.marketing_material_check",
-            "review_required",
+            "review_required" if contradictions else "answered",
             framework_decision=risk.decision,
             matched_rules=risk.matched_rules,
+            contradiction_count=len(contradictions),
         )
-        return draft
+        return draft, contradictions
 
     def monthly_commentary_draft(self, user: IndustryUser, prompt: str) -> IndustryDraft:
         citations = self._approved_citations(
@@ -409,3 +431,85 @@ class InvestmentSystem:
         }
         self.audit.record("investment.dashboard", "viewed", user=user.user_id)
         return IndustryDashboard(metrics=metrics, audit_events=self.audit.all())
+
+
+# --- GAP-F12 — deterministic, MarketingMaterialPolicy-driven per-statement contradiction engine ----
+def _check_marketing_statements(policy, statements, source_docs) -> tuple[dict, ...]:
+    """Per-statement: prohibited expression > missing risk disclosure > unsupported claim > consistent."""
+    results: list[dict] = []
+    docs_by_type: dict[str, str] = {}
+    for doc in source_docs:
+        docs_by_type.setdefault(_canonical_doc_type(doc.document_type), doc.document_id)
+    for index, raw in enumerate(statements):
+        statement = str(raw)
+        _category, source_types = _classify_marketing_claim(policy, statement)
+        matched_source = next((docs_by_type[t] for t in source_types if t in docs_by_type), None)
+        prohibited = next(
+            (rule for rule in policy.prohibited_expression_rules if rule[0] in statement), None
+        )
+        if prohibited is not None:
+            _, ctype, severity, action = prohibited
+            results.append(
+                _contradiction(index, statement, matched_source, ctype, severity, action)
+            )
+            continue
+        is_perf = any(kw in statement for kw in policy.performance_claim_keywords)
+        has_disclosure = any(kw in statement for kw in policy.risk_disclosure_keywords)
+        if is_perf and policy.risk_disclosure_required and not has_disclosure:
+            results.append(
+                _contradiction(
+                    index,
+                    statement,
+                    matched_source,
+                    "risk_disclosure_missing",
+                    "review_required",
+                    "過去実績には対象期間・基準日・手数料控除・将来成果を保証しない旨を併記",
+                )
+            )
+            continue
+        if policy.source_consistency_required and source_types and matched_source is None:
+            results.append(
+                _contradiction(
+                    index,
+                    statement,
+                    None,
+                    "unsupported_claim",
+                    "review_required",
+                    "承認済み有効な根拠資料が確認できません",
+                )
+            )
+            continue
+        # consistent: a governing approved source is present and no prohibited/disclosure issue.
+    return tuple(results)
+
+
+def _classify_marketing_claim(policy, statement: str):
+    if any(kw in statement for kw in policy.performance_claim_keywords):
+        return "performance_claim", policy.source_consistency_areas.get("performance_claim", ())
+    if any(kw in statement for kw in policy.risk_disclosure_keywords):
+        return "risk", policy.source_consistency_areas.get("risk", ())
+    return "general", ()
+
+
+def _canonical_doc_type(document_type: str) -> str:
+    if "prospectus" in document_type:
+        return "prospectus"
+    if document_type == "compliance_manual":
+        return "compliance_rule"
+    return document_type
+
+
+def _contradiction(
+    index, statement, matched_source, contradiction_type, severity, recommended_action
+) -> dict:
+    return {
+        "result_id": f"contradiction_{index}",
+        "statement": statement,
+        "matched_source": matched_source,
+        "contradiction_type": contradiction_type,
+        "category": contradiction_type,
+        "severity": severity,
+        "recommended_action": recommended_action,
+        "source_document_ids": [matched_source] if matched_source else [],
+        "audit_log_ref": "audit:investment:marketing_material_check",
+    }

@@ -128,6 +128,29 @@ class InvestmentApiServiceTest(unittest.TestCase):
         self.assertFalse(governance["advice_boundary"]["auto_advice"])
         self.assertFalse(governance["compliance_review"]["auto_approval"])
 
+    def test_marketing_check_is_per_statement_and_policy_driven(self) -> None:
+        # GAP-F12 (FR-IM-031/034): a REAL per-statement contradiction check — different inputs produce
+        # different outcomes (kills the static single-contradiction stub).
+        contradicting = self.service.marketing_material_check(
+            "tenant_alpha", ("product_staff",), {"statements": ["過去実績から将来成果を保証します"]}
+        )
+        results = contradicting["contradiction_results"]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["contradiction_type"], "prohibited_expression")
+        self.assertEqual(results[0]["severity"], "high")
+        self.assertIn("matched_source", results[0])
+        self.assertIn("recommended_action", results[0])
+        self.assertEqual(contradicting["status"], "review_required")
+        consistent = self.service.marketing_material_check(
+            "tenant_alpha", ("product_staff",), {"statements": ["信託報酬は目論見書記載の通りです"]}
+        )
+        self.assertEqual(consistent["contradiction_results"], [])
+        self.assertEqual(consistent["status"], "ok")
+        two = self.service.marketing_material_check(
+            "tenant_alpha", ("product_staff",), {"statements": ["元本保証です", "必ず増えます"]}
+        )
+        self.assertEqual(len(two["contradiction_results"]), 2)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

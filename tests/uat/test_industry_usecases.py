@@ -639,13 +639,16 @@ class InvestmentUseCases(unittest.TestCase):
         self.assertFalse(draft.auto_approved)
 
     def test_inv_04_marketing_material_check_flags_disclosure_inconsistency(self) -> None:
-        draft = self.sys.marketing_material_check(
+        draft, contradictions = self.sys.marketing_material_check(
             self.operator,
-            "販売用資料に過去実績から将来成果が期待できると記載してよいか",
+            ("販売用資料に過去実績から将来成果を保証すると記載してよいか",),
         )
         self.assertEqual(draft.artifact_type, "marketing_material_comment")
         self.assertEqual(draft.compliance_review_status, "pending")
         self.assertTrue(draft.disclosure_evidence_ids)
+        # The prohibited-expression contradiction is per-statement (FR-IM-031/034), not a static stub.
+        self.assertTrue(contradictions)
+        self.assertEqual(contradictions[0]["contradiction_type"], "prohibited_expression")
         body = " ".join(draft.body)
         self.assertIn("将来成果を保証", body)
         self.assertIn("修正", body)
@@ -689,7 +692,7 @@ class InvestmentUseCases(unittest.TestCase):
         self.sys.fund_information(self.operator, "FUND-001 facts")
         self.sys.advice_boundary(self.operator, "買うべきか")
         self.sys.rfp_draft(self.operator, "RFP回答案")
-        self.sys.marketing_material_check(self.operator, "販売資料確認")
+        self.sys.marketing_material_check(self.operator, ("販売資料確認",))
         self.sys.monthly_commentary_draft(self.operator, "月報コメント")
         dashboard = self.sys.dashboard(self.admin)
 

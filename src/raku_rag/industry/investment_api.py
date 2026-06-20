@@ -155,9 +155,21 @@ class InvestmentApiService:
 
     def fund_question(self, tenant_id: str, roles: tuple[str, ...], body: dict) -> dict:
         question = str(body.get("question") or "")
-        if _looks_like_advice(question):
-            return _answer_json(self.system.advice_boundary(self._user(tenant_id, roles), question))
-        return _answer_json(self.system.fund_information(self._user(tenant_id, roles), question))
+        user = self._user(tenant_id, roles)
+        # FR-IM-025 — advice gating now ALSO consults AdviceBoundaryPolicy (via the framework risk rule
+        # that tags advice-like intent as 'advice_boundary'), OR-merged with the keyword net so the
+        # declared policy governs at runtime WITHOUT narrowing the existing coverage.
+        if _looks_like_advice(question) or self._is_advice_intent(question):
+            return _answer_json(self.system.advice_boundary(user, question))
+        return _answer_json(self.system.fund_information(user, question))
+
+    def _is_advice_intent(self, question: str) -> bool:
+        """True iff AdviceBoundaryPolicy applies, i.e. the framework risk rule tags advice intent."""
+        policy = self.system.profile.advice_boundary_policy
+        if policy is None:
+            return False
+        decision = self.system.risk_policy.evaluate(self.system.profile.risk_policy, question)
+        return "advice_boundary" in decision.risk_categories
 
     def rfp_response_draft(self, tenant_id: str, roles: tuple[str, ...], body: dict) -> dict:
         draft = self.system.rfp_draft(self._user(tenant_id, roles), str(body.get("question") or ""))
@@ -202,19 +214,17 @@ class InvestmentApiService:
         return _draft_created_json(self._store_draft(draft, body))
 
     def marketing_material_check(self, tenant_id: str, roles: tuple[str, ...], body: dict) -> dict:
-        draft = self.system.marketing_material_check(
-            self._user(tenant_id, roles), " ".join(map(str, body.get("statements") or []))
+        statements = tuple(str(s) for s in (body.get("statements") or []) if str(s))
+        draft, contradictions = self.system.marketing_material_check(
+            self._user(tenant_id, roles), statements
         )
+        stored = self._store_draft(draft, body)
         return {
-            **_draft_created_json(self._store_draft(draft, body)),
-            "contradiction_results": [
-                {
-                    "severity": "review_required",
-                    "category": "performance_claim",
-                    "message": "過去実績が将来成果を保証するように読める表現です。",
-                    "source_document_ids": list(draft.source_document_ids),
-                }
-            ],
+            **_draft_created_json(stored),
+            "check_id": f"mmc_{stored.artifact_id}",
+            "status": "review_required" if contradictions else "ok",
+            "review_required": True,
+            "contradiction_results": list(contradictions),
             "disclosure_evidence_ids": list(draft.disclosure_evidence_ids),
         }
 

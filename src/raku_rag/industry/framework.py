@@ -495,6 +495,53 @@ class ComplianceReviewPolicy:
 
 
 @dataclass(frozen=True)
+class MarketingMaterialPolicy:
+    """FR-IM-032 — governs the per-statement marketing-material contradiction check (FR-IM-031/034).
+
+    The check is deterministic (no LLM): a statement is classified into a claim category, matched to
+    the approved source document type that governs it, and screened for prohibited expressions and a
+    missing risk disclosure. These tables are the policy the runtime reads (FR-IM-025/030/032 applied).
+    """
+
+    policy_id: str
+    industry_id: str
+    applicable_document_types: tuple[str, ...] = ("marketing_material",)
+    source_consistency_required: bool = True
+    risk_disclosure_required: bool = True
+    # claim category -> the approved/effective source document types whose content governs it.
+    source_consistency_areas: dict[str, tuple[str, ...]] = field(
+        default_factory=lambda: {
+            "performance_claim": ("prospectus", "monthly_report"),
+            "fee": ("prospectus",),
+            "risk": ("prospectus", "compliance_rule"),
+            "investment_policy": ("prospectus",),
+            "benchmark": ("prospectus",),
+            "performance_period": ("monthly_report",),
+        }
+    )
+    # (substring, contradiction_type, severity, recommended_action) — a banned marketing expression.
+    prohibited_expression_rules: tuple[tuple[str, str, str, str], ...] = (
+        (
+            "将来成果を保証",
+            "prohibited_expression",
+            "high",
+            "将来成果を保証する表現を削除し承認済み根拠による事実表記に修正",
+        ),
+        (
+            "元本保証",
+            "prohibited_expression",
+            "high",
+            "元本保証表現を削除しリスク開示を併記に修正",
+        ),
+        ("必ず", "prohibited_expression", "high", "断定的表現を削除し根拠とリスクを併記に修正"),
+    )
+    performance_claim_keywords: tuple[str, ...] = ("過去実績", "将来成果", "リターン", "期待")
+    risk_disclosure_keywords: tuple[str, ...] = ("リスク", "元本", "損失", "保証しない")
+    review_required: bool = True
+    citation_required: bool = True
+
+
+@dataclass(frozen=True)
 class IndustryProfile:
     industry_id: str
     name: str
@@ -519,6 +566,7 @@ class IndustryProfile:
     advice_boundary_policy: AdviceBoundaryPolicy | None = None
     disclosure_evidence_policy: DisclosureEvidencePolicy | None = None
     compliance_review_policy: ComplianceReviewPolicy | None = None
+    marketing_material_policy: MarketingMaterialPolicy | None = None
 
 
 class IndustryProfileService:
@@ -1562,6 +1610,7 @@ def _profile(
     disclosure_policy = None
     advice_policy = None
     regulated_policy = None
+    marketing_policy = None
     if regulated:
         regulated_policy = RegulatedActivityPolicy(
             policy_id=f"{industry_id}_regulated_activity",
@@ -1582,6 +1631,10 @@ def _profile(
             policy_id=f"{industry_id}_compliance_review",
             industry_id=industry_id,
             review_required_artifact_types=draft_types,
+        )
+        marketing_policy = MarketingMaterialPolicy(
+            policy_id=f"{industry_id}_marketing_material",
+            industry_id=industry_id,
         )
     return IndustryProfile(
         industry_id=industry_id,
@@ -1641,6 +1694,7 @@ def _profile(
         advice_boundary_policy=advice_policy,
         disclosure_evidence_policy=disclosure_policy,
         compliance_review_policy=compliance_policy,
+        marketing_material_policy=marketing_policy,
     )
 
 
