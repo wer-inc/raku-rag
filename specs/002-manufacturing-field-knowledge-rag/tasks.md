@@ -6,6 +6,8 @@
 
 **Tests**: spec/plan が safety hard-gate（SC-MFG-006/007/008/009/010/011）・contract・PoC KPI を明示要求するためテストタスクを含む。
 
+> **Ledger (2026-06-20)**: 完了タスクは `[x]`。未チェックは延期 — 本番アダプタ track（T007 SQLAlchemy/Alembic）と Dagster/sync-status track（T011a/T024a/T031a/T031b/T047a/T051a/T071a）、T071 EvaluationRunner は 001 eval 基盤が薄いため最小baselineに留め延期。判断根拠は `docs/loop-engineering.md` §8。T072 は `poc-ui/` stdlib デモで対応。実装は GitHub `wer-inc/raku-rag` の 12+ コミットを正本とする。
+
 **Base/framework reuse (do NOT redefine)**: 001-rag-platform（tenant 分離・ACL pre-filter・ingestion/diff-sync/backfill/evaluation/KPI materialization state・retrieval・answer・citation・groundedness・deletion(tombstone)・cost・observability・visual RAG・13 抽象）と 010-industry-solution-framework（IndustryProfile / MetadataSchema / RiskPolicy / DraftArtifact / KPI / Dashboard contract）を再利用する。AWS MVP の ingestion は SQS worker、Dagster は optional control plane 互換として扱う。本 layer は 001/010 の上に `src/raku_rag/manufacturing/` パッケージとして構築し、parser のみ 001 `providers/parsers.py` に追加する。
 
 **Organization**: User Story 単位。canonical 語 = **manufacturing metadata**（001 `Document.metadata` 格納）, **approval_status**(draft|pending_review|approved|obsolete), **DraftArtifact**(status 既定 draft), **high-risk query**, **SafetyGate**, **safety_block_reason**(approved_citation_missing|insufficient_evidence|other_block 相互排他), **DataUsePolicy**, **AuditLogEntry**。
@@ -24,10 +26,10 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 
 **Purpose**: 製造業 solution layer のパッケージ構造と依存・CI ゲート初期化（001 基盤は既存）
 
-- [ ] T001 Create solution-layer package structure `src/raku_rag/manufacturing/{domain,safety,ingestion,knowledge,drafts,governance,telemetry,kpi,api}` と `tests/manufacturing/` per plan.md（各 `__init__.py` 含む）
-- [ ] T002 Add parser dependencies to `pyproject.toml`: `python-docx`（DOCX）, `openpyxl`（XLSX）。CSV は stdlib。製造業 layer の optional-deps group として分離
-- [ ] T003 [P] Add manufacturing sample fixtures（承認済み DOCX マニュアル・XLSX/CSV 台帳・スキャン点検表・過去トラブル報告・obsolete 文書・draft 文書）in `tests/manufacturing/fixtures/`
-- [ ] T004 [P] Extend CI pipeline with **manufacturing safety hard-gate** stage（SC-MFG-006/007/008/009/010/011 を baseline 不問の absolute gate として実行）in `.github/workflows/ci.yml`
+- [x] T001 Create solution-layer package structure `src/raku_rag/manufacturing/{domain,safety,ingestion,knowledge,drafts,governance,telemetry,kpi,api}` と `tests/manufacturing/` per plan.md（各 `__init__.py` 含む）
+- [x] T002 Add parser dependencies to `pyproject.toml`: `python-docx`（DOCX）, `openpyxl`（XLSX）。CSV は stdlib。製造業 layer の optional-deps group として分離
+- [x] T003 [P] Add manufacturing sample fixtures（承認済み DOCX マニュアル・XLSX/CSV 台帳・スキャン点検表・過去トラブル報告・obsolete 文書・draft 文書）in `tests/manufacturing/fixtures/`
+- [x] T004 [P] Extend CI pipeline with **manufacturing safety hard-gate** stage（SC-MFG-006/007/008/009/010/011 を baseline 不問の absolute gate として実行）in `.github/workflows/ci.yml`
 
 ---
 
@@ -37,13 +39,13 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 
 **⚠️ CRITICAL**: 完了まで User Story 着手不可
 
-- [ ] T005 Define manufacturing metadata + domain entity schemas (Pydantic) in `src/raku_rag/manufacturing/domain/metadata.py`, `src/raku_rag/manufacturing/domain/entities.py` — ManufacturingDocumentMetadata（製造業タグ・safety/quality 分類・承認メタデータ approval_status/effective_date/approved_by/approved_at/obsolete_at/superseded_by/approval_source）, Factory/ProductionLine/Process/Equipment/AlarmCode/Product/Part/Customer/DefectType/FailureMode/TroubleCase/Countermeasure(**type + measure_class 2 軸**)/WorkInstruction/InspectionChecklist/QualityIssue/TrainingMaterial。全エンティティ `tenant_id` 必須（data-model.md §B/§C/§D）
-- [ ] T006 Define DraftArtifact / DataUsePolicy / AuditLogEntry / SafetyDecision / HighRiskClassification schemas in `src/raku_rag/manufacturing/domain/draft.py`, `policy.py`, `audit.py` — DraftArtifact(status 既定 draft, reviewer/audit trail fields), DataUsePolicy(no_train_default=true/training_opt_in=false/provider_no_train_required=true/no_train_fallback=block/retention 365/365), AuditLogEntry(参照ID・factory_id/department_id・safety_block_reason・high_risk_classification_result), SafetyDecision/HighRiskClassification value objects（data-model.md §E/§F/§G/§H）
+- [x] T005 Define manufacturing metadata + domain entity schemas (Pydantic) in `src/raku_rag/manufacturing/domain/metadata.py`, `src/raku_rag/manufacturing/domain/entities.py` — ManufacturingDocumentMetadata（製造業タグ・safety/quality 分類・承認メタデータ approval_status/effective_date/approved_by/approved_at/obsolete_at/superseded_by/approval_source）, Factory/ProductionLine/Process/Equipment/AlarmCode/Product/Part/Customer/DefectType/FailureMode/TroubleCase/Countermeasure(**type + measure_class 2 軸**)/WorkInstruction/InspectionChecklist/QualityIssue/TrainingMaterial。全エンティティ `tenant_id` 必須（data-model.md §B/§C/§D）
+- [x] T006 Define DraftArtifact / DataUsePolicy / AuditLogEntry / SafetyDecision / HighRiskClassification schemas in `src/raku_rag/manufacturing/domain/draft.py`, `policy.py`, `audit.py` — DraftArtifact(status 既定 draft, reviewer/audit trail fields), DataUsePolicy(no_train_default=true/training_opt_in=false/provider_no_train_required=true/no_train_fallback=block/retention 365/365), AuditLogEntry(参照ID・factory_id/department_id・safety_block_reason・high_risk_classification_result), SafetyDecision/HighRiskClassification value objects（data-model.md §E/§F/§G/§H）
 - [ ] T007 SQLAlchemy models + Alembic migration for manufacturing tables in `src/raku_rag/persistence/manufacturing_models.py`, `migrations/` — 全テーブル `tenant_id` 必須・001 ACL/tombstone 従属・tenant 越え参照禁止索引。manufacturing metadata は 001 `Document.metadata`(JSON) 格納方針（data-model.md §A/§B）(depends T005, T006)
-- [ ] T008 [P] Define manufacturing abstract interfaces in `src/raku_rag/manufacturing/interfaces.py` — MetadataEnricher, ApprovalWorkflow, HighRiskClassifier, SafetyGate, TroubleCaseRetriever, DraftGenerator, ReviewWorkflow, DataUsePolicyStore, NoTrainGuard, RetentionManager, AuditLogWriter, SafetyTelemetry（contracts/mfg-interfaces.md）
-- [ ] T009 Implement AuditLogWriter core（tenant-scoped・**参照IDのみ（PII/secret/本文非保存）**・001 Redactor 再利用・tenant 越え参照禁止）in `src/raku_rag/manufacturing/domain/audit.py` (depends T006, T008) — telemetry/KPI の単一真実源（FR-MFG-021/022/023, SC-MFG-010）
-- [ ] T010 Implement DataUsePolicyStore + 既定 seed（no_train_default=true, training_opt_in=false, provider_no_train_required=true, no_train_fallback=block, retention_customer=365, retention_audit=365）in `src/raku_rag/manufacturing/governance/no_train.py` (depends T006, T008) — GQ1/GQ2 確定値
-- [ ] T011 Implement ACL mapping helper（部署=001 ACL group/role, 工場=Factory, 役職=role, 設備領域=Process/Equipment metadata; **新規認可機構を作らず** 001 AclPolicy/visibility_filter を再利用）in `src/raku_rag/manufacturing/domain/acl_mapping.py` (depends T005) — FR-MFG-013
+- [x] T008 [P] Define manufacturing abstract interfaces in `src/raku_rag/manufacturing/interfaces.py` — MetadataEnricher, ApprovalWorkflow, HighRiskClassifier, SafetyGate, TroubleCaseRetriever, DraftGenerator, ReviewWorkflow, DataUsePolicyStore, NoTrainGuard, RetentionManager, AuditLogWriter, SafetyTelemetry（contracts/mfg-interfaces.md）
+- [x] T009 Implement AuditLogWriter core（tenant-scoped・**参照IDのみ（PII/secret/本文非保存）**・001 Redactor 再利用・tenant 越え参照禁止）in `src/raku_rag/manufacturing/domain/audit.py` (depends T006, T008) — telemetry/KPI の単一真実源（FR-MFG-021/022/023, SC-MFG-010）
+- [x] T010 Implement DataUsePolicyStore + 既定 seed（no_train_default=true, training_opt_in=false, provider_no_train_required=true, no_train_fallback=block, retention_customer=365, retention_audit=365）in `src/raku_rag/manufacturing/governance/no_train.py` (depends T006, T008) — GQ1/GQ2 確定値
+- [x] T011 Implement ACL mapping helper（部署=001 ACL group/role, 工場=Factory, 役職=role, 設備領域=Process/Equipment metadata; **新規認可機構を作らず** 001 AclPolicy/visibility_filter を再利用）in `src/raku_rag/manufacturing/domain/acl_mapping.py` (depends T005) — FR-MFG-013
 
 - [ ] T011a [P] Define manufacturing Dagster integration hooks in `src/raku_rag/dagster/assets/manufacturing.py`, `src/raku_rag/dagster/checks/manufacturing.py` — `manufacturing_metadata_enriched_elements`, approval_metadata_checksum observation, KPI materialization resources。online answer/search/Draft/review state machine からは Dagster を呼ばない（depends T005, T006, T008）
 
@@ -59,19 +61,19 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 
 ### Tests for User Story 1 ⚠️
 
-- [ ] T012 [P] [US1] Contract test `POST /v1/answer`（manufacturing 拡張: high_risk/safety_block_reason/obsolete_warning/requires_onsite_confirmation, citation の approval_status/effective_date）in `tests/manufacturing/test_answer_contract.py`（contracts/mfg-openapi.md §A）
-- [ ] T013 [P] [US1] Integration: 承認済みマニュアルに答えのある質問 → `ok` + approved 引用 + used_chunks in `tests/manufacturing/test_grounded_answer.py`（quickstart S2, US1-1）
-- [ ] T014 [P] [US1] **Safety hard-gate（SC-MFG-006）**: high-risk × approved/有効引用欠如 → 断定しない（`insufficient_evidence`, `safety_block_reason=approved_citation_missing`）in `tests/manufacturing/test_safety_gate.py`（quickstart S3, US1-2, FR-MFG-005/007）
-- [ ] T015 [P] [US1] **Safety hard-gate（SC-MFG-011）**: 根拠が obsolete のみ→一次根拠にせず obsolete_warning、draft のみ→正式根拠にしない in `tests/manufacturing/test_obsolete_draft_evidence.py`（quickstart S4, US1-3, FR-MFG-006）
+- [x] T012 [P] [US1] Contract test `POST /v1/answer`（manufacturing 拡張: high_risk/safety_block_reason/obsolete_warning/requires_onsite_confirmation, citation の approval_status/effective_date）in `tests/manufacturing/test_answer_contract.py`（contracts/mfg-openapi.md §A）
+- [x] T013 [P] [US1] Integration: 承認済みマニュアルに答えのある質問 → `ok` + approved 引用 + used_chunks in `tests/manufacturing/test_grounded_answer.py`（quickstart S2, US1-1）
+- [x] T014 [P] [US1] **Safety hard-gate（SC-MFG-006）**: high-risk × approved/有効引用欠如 → 断定しない（`insufficient_evidence`, `safety_block_reason=approved_citation_missing`）in `tests/manufacturing/test_safety_gate.py`（quickstart S3, US1-2, FR-MFG-005/007）
+- [x] T015 [P] [US1] **Safety hard-gate（SC-MFG-011）**: 根拠が obsolete のみ→一次根拠にせず obsolete_warning、draft のみ→正式根拠にしない in `tests/manufacturing/test_obsolete_draft_evidence.py`（quickstart S4, US1-3, FR-MFG-006）
 
 ### Implementation for User Story 1
 
-- [ ] T016 [US1] Implement HighRiskClassifier（**3 段カスケード**: metadata 分類タグ → ルール+キーワード意図 → 曖昧時のみ 001 LLMProvider 分類, **OR 判定・迷えば high-risk**, reason_codes/classification_source 返却）in `src/raku_rag/manufacturing/safety/classifier.py` (depends T008) — FR-MFG-015, research R2
-- [ ] T017 [US1] Implement SafetyGate（001 GroundednessGate **後段に 1 段上乗せ**: approved∧有効引用必須・obsolete_warning・requires_onsite_confirmation・`safety_block_reason` を **相互排他 1 コードに正規化**（approved_citation_missing→insufficient_evidence→other_block）・approval_status_at_use 記録）in `src/raku_rag/manufacturing/safety/gate.py` (depends T016) — FR-MFG-005/006/007/030, research R3
-- [ ] T018 [US1] Extend AnswerService for manufacturing（001 answer 経路に HighRiskClassifier→SafetyGate を結線, manufacturing_filters を 001 metadata filter へ写像, citation に approval_status/effective_date/approval_source 付与, manufacturing レスポンスブロック）in `src/raku_rag/manufacturing/api/answer_ext.py` (depends T016, T017, T011)
-- [ ] T019 [US1] Extend search で製造業 metadata filter + approval_status/effective_date を結果に付与、XLSX/CSV はセル座標(sheet/row/col)を引用範囲に in `src/raku_rag/manufacturing/api/search_ext.py` (depends T011) — FR-MFG-002/003, US2-2 連携
-- [ ] T020 [US1] Record high-risk 判定 / SafetyGate 判断 / approved-citation 必須判定 / obsolete・draft warning を AuditLogEntry に記録 in `src/raku_rag/manufacturing/api/answer_ext.py` (depends T009, T018) — FR-MFG-021
-- [ ] T021 [US1] Wire `/v1/answer` & `/v1/search` manufacturing router（001 router に拡張フィールドを加算のみ・既存契約非破壊）in `src/raku_rag/manufacturing/api/__init__.py` (depends T018, T019)
+- [x] T016 [US1] Implement HighRiskClassifier（**3 段カスケード**: metadata 分類タグ → ルール+キーワード意図 → 曖昧時のみ 001 LLMProvider 分類, **OR 判定・迷えば high-risk**, reason_codes/classification_source 返却）in `src/raku_rag/manufacturing/safety/classifier.py` (depends T008) — FR-MFG-015, research R2
+- [x] T017 [US1] Implement SafetyGate（001 GroundednessGate **後段に 1 段上乗せ**: approved∧有効引用必須・obsolete_warning・requires_onsite_confirmation・`safety_block_reason` を **相互排他 1 コードに正規化**（approved_citation_missing→insufficient_evidence→other_block）・approval_status_at_use 記録）in `src/raku_rag/manufacturing/safety/gate.py` (depends T016) — FR-MFG-005/006/007/030, research R3
+- [x] T018 [US1] Extend AnswerService for manufacturing（001 answer 経路に HighRiskClassifier→SafetyGate を結線, manufacturing_filters を 001 metadata filter へ写像, citation に approval_status/effective_date/approval_source 付与, manufacturing レスポンスブロック）in `src/raku_rag/manufacturing/api/answer_ext.py` (depends T016, T017, T011)
+- [x] T019 [US1] Extend search で製造業 metadata filter + approval_status/effective_date を結果に付与、XLSX/CSV はセル座標(sheet/row/col)を引用範囲に in `src/raku_rag/manufacturing/api/search_ext.py` (depends T011) — FR-MFG-002/003, US2-2 連携
+- [x] T020 [US1] Record high-risk 判定 / SafetyGate 判断 / approved-citation 必須判定 / obsolete・draft warning を AuditLogEntry に記録 in `src/raku_rag/manufacturing/api/answer_ext.py` (depends T009, T018) — FR-MFG-021
+- [x] T021 [US1] Wire `/v1/answer` & `/v1/search` manufacturing router（001 router に拡張フィールドを加算のみ・既存契約非破壊）in `src/raku_rag/manufacturing/api/__init__.py` (depends T018, T019)
 
 **Checkpoint**: US1 が seed データで独立機能（製造業メタ検索・approved 引用必須・obsolete/draft 安全側・根拠不足）
 
@@ -85,21 +87,21 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T022 [P] [US2] Integration: DOCX/XLSX/CSV 取り込み → 正規化・チャンク・index 化（001 ingestion 再利用）in `tests/manufacturing/test_ingest_formats.py`（quickstart S1, US2-1, FR-MFG-001）
-- [ ] T023 [P] [US2] Integration: XLSX/CSV のセル参照が引用範囲(sheet/row/col)として保持・解決される in `tests/manufacturing/test_cell_citation.py`（US2 edge, FR-MFG-002）
-- [ ] T024 [P] [US2] Integration: approval_status/effective_date 設定 → latest_approved/obsolete/有効日が検索・回答で識別、imported approval が source of truth として優先 in `tests/manufacturing/test_approval_lifecycle.py`（US2-2, FR-MFG-004/004a）
+- [x] T022 [P] [US2] Integration: DOCX/XLSX/CSV 取り込み → 正規化・チャンク・index 化（001 ingestion 再利用）in `tests/manufacturing/test_ingest_formats.py`（quickstart S1, US2-1, FR-MFG-001）
+- [x] T023 [P] [US2] Integration: XLSX/CSV のセル参照が引用範囲(sheet/row/col)として保持・解決される in `tests/manufacturing/test_cell_citation.py`（US2 edge, FR-MFG-002）
+- [x] T024 [P] [US2] Integration: approval_status/effective_date 設定 → latest_approved/obsolete/有効日が検索・回答で識別、imported approval が source of truth として優先 in `tests/manufacturing/test_approval_lifecycle.py`（US2-2, FR-MFG-004/004a）
 
 - [ ] T024a [P] [US2] Contract test: manufacturing sync/status APIs (`POST /v1/manufacturing/sources/{source_id}/sync`, `GET /v1/manufacturing/sources/{source_id}/sync-status`, `GET /v1/manufacturing/ingestion-runs/{ingestion_run_id}`) in `tests/manufacturing/test_sync_status_contract.py` — Dagster run fields are internal-operator only
 
 ### Implementation for User Story 2
 
-- [ ] T025 [P] [US2] Implement DocxParser（001 `Parser` 実装: 段落/表を正規化テキスト化）in `src/raku_rag/providers/parsers.py` — FR-MFG-001, research R1
-- [ ] T026 [P] [US2] Implement SpreadsheetParser（XLSX/CSV; 行/列/シート保持, **`sheet!R{row}C{col}` セルアンカー**で 001 offset_mapping をセル座標へ写像）in `src/raku_rag/providers/parsers.py` — FR-MFG-002, research R1
-- [ ] T027 [US2] Implement MetadataEnricher（ingest 時に製造業メタデータ・承認メタデータを 001 `Document.metadata` へ付与, `Chunk.metadata` 継承伝播）in `src/raku_rag/manufacturing/ingestion/metadata_enrichment.py` (depends T005, T008) — FR-MFG-003
-- [ ] T028 [US2] Implement ApprovalWorkflow（軽量 draft→pending_review→approved→obsolete + import_external で imported approval を source of truth 化, 全 transition を audit）in `src/raku_rag/manufacturing/ingestion/approval.py` (depends T009, T027) — FR-MFG-004/004a
-- [ ] T029 [US2] Extend `POST /v1/ingest` で manufacturing_metadata/approval 受理 + DOCX/XLSX/CSV 形式（001 非同期 ingestion 再利用, 画像/スキャンは 001 visual RAG 再利用）in `src/raku_rag/manufacturing/api/ingest_metadata.py` (depends T025, T026, T027)
-- [ ] T030 [US2] Implement `PUT /v1/manufacturing/documents/{id}/metadata` & `POST .../approval`（metadata 更新・承認遷移・external import）in `src/raku_rag/manufacturing/api/ingest_metadata.py` (depends T028)
-- [ ] T031 [US2] Record document ingest/parse/metadata enrichment/approval transition/external import を AuditLogEntry に記録 in `src/raku_rag/manufacturing/ingestion/metadata_enrichment.py` (depends T009) — FR-MFG-021
+- [x] T025 [P] [US2] Implement DocxParser（001 `Parser` 実装: 段落/表を正規化テキスト化）in `src/raku_rag/providers/parsers.py` — FR-MFG-001, research R1
+- [x] T026 [P] [US2] Implement SpreadsheetParser（XLSX/CSV; 行/列/シート保持, **`sheet!R{row}C{col}` セルアンカー**で 001 offset_mapping をセル座標へ写像）in `src/raku_rag/providers/parsers.py` — FR-MFG-002, research R1
+- [x] T027 [US2] Implement MetadataEnricher（ingest 時に製造業メタデータ・承認メタデータを 001 `Document.metadata` へ付与, `Chunk.metadata` 継承伝播）in `src/raku_rag/manufacturing/ingestion/metadata_enrichment.py` (depends T005, T008) — FR-MFG-003
+- [x] T028 [US2] Implement ApprovalWorkflow（軽量 draft→pending_review→approved→obsolete + import_external で imported approval を source of truth 化, 全 transition を audit）in `src/raku_rag/manufacturing/ingestion/approval.py` (depends T009, T027) — FR-MFG-004/004a
+- [x] T029 [US2] Extend `POST /v1/ingest` で manufacturing_metadata/approval 受理 + DOCX/XLSX/CSV 形式（001 非同期 ingestion 再利用, 画像/スキャンは 001 visual RAG 再利用）in `src/raku_rag/manufacturing/api/ingest_metadata.py` (depends T025, T026, T027)
+- [x] T030 [US2] Implement `PUT /v1/manufacturing/documents/{id}/metadata` & `POST .../approval`（metadata 更新・承認遷移・external import）in `src/raku_rag/manufacturing/api/ingest_metadata.py` (depends T028)
+- [x] T031 [US2] Record document ingest/parse/metadata enrichment/approval transition/external import を AuditLogEntry に記録 in `src/raku_rag/manufacturing/ingestion/metadata_enrichment.py` (depends T009) — FR-MFG-021
 
 - [ ] T031a [US2] Implement Dagster `manufacturing_metadata_enriched_elements` asset hook — parsed elements/chunks に ManufacturingDocumentMetadata と approval metadata を付与し、`approval_metadata_checksum` のみ変化時は metadata + safety/index filter update のみにする in `src/raku_rag/dagster/assets/manufacturing.py`, `src/raku_rag/manufacturing/ingestion/metadata_enrichment.py` (depends T011a, T027, T028)
 - [ ] T031b [US2] Implement manufacturing sync/status routers in `src/raku_rag/manufacturing/api/ingest_metadata.py` — SourceSyncState / IngestionRun / DocumentProcessingState を表示し、内部運用者ロールのみ dagster_run_id / run URL を返す（depends T024a, 001 status API）
@@ -116,15 +118,15 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T032 [P] [US3] Contract test `POST /v1/manufacturing/trouble-cases/search`（provisional/permanent 分離, label 候補・参考, citation approval_status）in `tests/manufacturing/test_trouble_cases_contract.py`（contracts/mfg-openapi.md §C）
-- [ ] T033 [P] [US3] Integration: 「振動増加＋異音」→類似 TroubleCase（FailureMode/Countermeasure/再発防止/引用）, **暫定/恒久に分けて表示**, ACL 権限外事例は出ない in `tests/manufacturing/test_trouble_cases.py`（quickstart S5, US3-1, FR-MFG-008）
+- [x] T032 [P] [US3] Contract test `POST /v1/manufacturing/trouble-cases/search`（provisional/permanent 分離, label 候補・参考, citation approval_status）in `tests/manufacturing/test_trouble_cases_contract.py`（contracts/mfg-openapi.md §C）
+- [x] T033 [P] [US3] Integration: 「振動増加＋異音」→類似 TroubleCase（FailureMode/Countermeasure/再発防止/引用）, **暫定/恒久に分けて表示**, ACL 権限外事例は出ない in `tests/manufacturing/test_trouble_cases.py`（quickstart S5, US3-1, FR-MFG-008）
 
 ### Implementation for User Story 3
 
-- [ ] T034 [P] [US3] Persist/seed manufacturing knowledge graph relations（TroubleCase↔FailureMode↔Countermeasure↔Document）in `src/raku_rag/persistence/manufacturing_models.py` (depends T007)
-- [ ] T035 [US3] Implement TroubleCaseRetriever（001 retrieval[ACL pre-filter]で TroubleCase 由来 Chunk 取得→エンティティ解決→FailureMode/Countermeasure/再発防止一覧）in `src/raku_rag/manufacturing/knowledge/trouble_cases.py` (depends T034, T011) — FR-MFG-008
-- [ ] T036 [US3] Implement Countermeasure 2 軸表示正規化（type=reference|candidate × measure_class=provisional|permanent|unknown; **permanent でも過去事例由来は「過去事例に基づく候補・参考」に正規化**, 暫定/恒久分離）in `src/raku_rag/manufacturing/knowledge/trouble_cases.py` (depends T035) — FR-MFG-009, Hard Rule 4, research R6
-- [ ] T037 [US3] Implement `POST /v1/manufacturing/trouble-cases/search` router + answer generation / citation access の audit 記録 in `src/raku_rag/manufacturing/api/trouble.py` (depends T035, T036, T009)
+- [x] T034 [P] [US3] Persist/seed manufacturing knowledge graph relations（TroubleCase↔FailureMode↔Countermeasure↔Document）in `src/raku_rag/persistence/manufacturing_models.py` (depends T007)
+- [x] T035 [US3] Implement TroubleCaseRetriever（001 retrieval[ACL pre-filter]で TroubleCase 由来 Chunk 取得→エンティティ解決→FailureMode/Countermeasure/再発防止一覧）in `src/raku_rag/manufacturing/knowledge/trouble_cases.py` (depends T034, T011) — FR-MFG-008
+- [x] T036 [US3] Implement Countermeasure 2 軸表示正規化（type=reference|candidate × measure_class=provisional|permanent|unknown; **permanent でも過去事例由来は「過去事例に基づく候補・参考」に正規化**, 暫定/恒久分離）in `src/raku_rag/manufacturing/knowledge/trouble_cases.py` (depends T035) — FR-MFG-009, Hard Rule 4, research R6
+- [x] T037 [US3] Implement `POST /v1/manufacturing/trouble-cases/search` router + answer generation / citation access の audit 記録 in `src/raku_rag/manufacturing/api/trouble.py` (depends T035, T036, T009)
 
 **Checkpoint**: 類似トラブル事例が原因/対策/再発防止つきで一覧化、暫定/恒久分離・候補表示・ACL 適用
 
@@ -138,17 +140,17 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T038 [P] [US4] Contract test `POST /v1/manufacturing/drafts` & `/assign` & `/review`（status=draft 固定, reviewer 遷移）in `tests/manufacturing/test_drafts_contract.py`（contracts/mfg-openapi.md §D）
-- [ ] T039 [P] [US4] **Safety hard-gate（SC-MFG-007）**: AI 生成物が `draft` 以外で自動確定されない（`created_by=ai` の自動 approved 拒否）, FAQ も draft 扱い, approved は reviewer のみ in `tests/manufacturing/test_draft_only.py`（quickstart S6, US4-1/3, FR-MFG-010, Hard Rule 1）
-- [ ] T040 [P] [US4] Integration: トラブル報告書/FAQ draft 生成 → source_citations/source_document_ids 付き, 未確定事項を draft 上で明示, 安全項目は approved 根拠が無ければ断定しない in `tests/manufacturing/test_draft_generation.py`（US4-2/3, FR-MFG-011）
+- [x] T038 [P] [US4] Contract test `POST /v1/manufacturing/drafts` & `/assign` & `/review`（status=draft 固定, reviewer 遷移）in `tests/manufacturing/test_drafts_contract.py`（contracts/mfg-openapi.md §D）
+- [x] T039 [P] [US4] **Safety hard-gate（SC-MFG-007）**: AI 生成物が `draft` 以外で自動確定されない（`created_by=ai` の自動 approved 拒否）, FAQ も draft 扱い, approved は reviewer のみ in `tests/manufacturing/test_draft_only.py`（quickstart S6, US4-1/3, FR-MFG-010, Hard Rule 1）
+- [x] T040 [P] [US4] Integration: トラブル報告書/FAQ draft 生成 → source_citations/source_document_ids 付き, 未確定事項を draft 上で明示, 安全項目は approved 根拠が無ければ断定しない in `tests/manufacturing/test_draft_generation.py`（US4-2/3, FR-MFG-011）
 
 ### Implementation for User Story 4
 
-- [ ] T041 [US4] Implement DraftGenerator（kind=checklist|trouble_report|quality_report|training|faq; **必ず status=draft**, source_citations/source_document_ids/template_id/created_by/audit_log_ref 付与, 安全項目は FR-MFG-005 準拠で断定しない）in `src/raku_rag/manufacturing/drafts/generator.py` (depends T006, T017) — FR-MFG-010/011, G1
-- [ ] T042 [US4] Implement ReviewWorkflow（draft→in_review→approved/rejected/archived, reviewer_id/role/group・assigned_at・reviewed_at・review_comment・approval_decision; approved は reviewer 判断のみ・多段承認/電子署名なし）in `src/raku_rag/manufacturing/drafts/review.py` (depends T006) — FR-MFG-010a
-- [ ] T043 [US4] Implement `POST /v1/manufacturing/drafts`, `/assign`, `/review`, `GET /{id}` routers in `src/raku_rag/manufacturing/api/drafts.py` (depends T041, T042)
-- [ ] T044 [US4] Record DraftArtifact 生成 / review assignment / status transition を AuditLogEntry に記録（audit trail: 生成時刻/生成者/テンプレート/使用文書一覧）in `src/raku_rag/manufacturing/drafts/generator.py`, `review.py` (depends T009) — FR-MFG-010b, Hard Rule 5
-- [ ] T045 [US4] Wire DraftArtifact 由来 InspectionChecklist/TrainingMaterial を draft として entities に接続 in `src/raku_rag/manufacturing/domain/entities.py` (depends T041)
+- [x] T041 [US4] Implement DraftGenerator（kind=checklist|trouble_report|quality_report|training|faq; **必ず status=draft**, source_citations/source_document_ids/template_id/created_by/audit_log_ref 付与, 安全項目は FR-MFG-005 準拠で断定しない）in `src/raku_rag/manufacturing/drafts/generator.py` (depends T006, T017) — FR-MFG-010/011, G1
+- [x] T042 [US4] Implement ReviewWorkflow（draft→in_review→approved/rejected/archived, reviewer_id/role/group・assigned_at・reviewed_at・review_comment・approval_decision; approved は reviewer 判断のみ・多段承認/電子署名なし）in `src/raku_rag/manufacturing/drafts/review.py` (depends T006) — FR-MFG-010a
+- [x] T043 [US4] Implement `POST /v1/manufacturing/drafts`, `/assign`, `/review`, `GET /{id}` routers in `src/raku_rag/manufacturing/api/drafts.py` (depends T041, T042)
+- [x] T044 [US4] Record DraftArtifact 生成 / review assignment / status transition を AuditLogEntry に記録（audit trail: 生成時刻/生成者/テンプレート/使用文書一覧）in `src/raku_rag/manufacturing/drafts/generator.py`, `review.py` (depends T009) — FR-MFG-010b, Hard Rule 5
+- [x] T045 [US4] Wire DraftArtifact 由来 InspectionChecklist/TrainingMaterial を draft として entities に接続 in `src/raku_rag/manufacturing/domain/entities.py` (depends T041)
 
 **Checkpoint**: 5 種ドラフトが draft 限定で生成・レビュー導線で確定、自動 approved なし、全 transition 監査
 
@@ -162,17 +164,17 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T046 [P] [US5] Contract test `GET /v1/manufacturing/dashboard`, `/safety-telemetry`, `/kpi`（source=audit_log, breakdown 相互排他）in `tests/manufacturing/test_dashboard_contract.py`（contracts/mfg-openapi.md §E）
-- [ ] T047 [P] [US5] **Telemetry hard-gate（SC-MFG-013）**: `safety_gate_block_count` 内訳（approved_citation_missing/insufficient_evidence/other_block）が **相互排他・1 ブロック 1 コード**、audit 由来で二重カウントなし、factory/department 軸集計 in `tests/manufacturing/test_safety_telemetry.py`（quickstart S10, US5-2, FR-MFG-030）
+- [x] T046 [P] [US5] Contract test `GET /v1/manufacturing/dashboard`, `/safety-telemetry`, `/kpi`（source=audit_log, breakdown 相互排他）in `tests/manufacturing/test_dashboard_contract.py`（contracts/mfg-openapi.md §E）
+- [x] T047 [P] [US5] **Telemetry hard-gate（SC-MFG-013）**: `safety_gate_block_count` 内訳（approved_citation_missing/insufficient_evidence/other_block）が **相互排他・1 ブロック 1 コード**、audit 由来で二重カウントなし、factory/department 軸集計 in `tests/manufacturing/test_safety_telemetry.py`（quickstart S10, US5-2, FR-MFG-030）
 
 - [ ] T047a [P] [US5] Integration: Dagster `manufacturing_dashboard_metrics` daily/manual materialization updates PostgreSQL result with `materialized_at` and dashboard reads it without calling Dagster in request path in `tests/manufacturing/test_kpi_materialization.py`
 
 ### Implementation for User Story 5
 
-- [ ] T048 [US5] Implement SafetyTelemetry 集計（**audit log を単一真実源**として high_risk_query_count / safety_gate_block_count[内訳] を tenant/collection/factory/department/time_range[hourly/daily/custom] で集計, retention は DataUsePolicy 準拠）in `src/raku_rag/manufacturing/telemetry/safety_metrics.py` (depends T009) — FR-MFG-030, G2/G3
-- [ ] T049 [US5] Implement PoC KPI 計測・export（self_resolution_rate/average_time_to_answer/grounded_answer_rate/insufficient_evidence_rate/low_rating_rate/unanswered_question_count/frequently_referenced_documents/obsolete_document_candidates/expert_interruption_reduction/high_risk_query_count/safety_gate_block_count, 001 evaluation/metrics 再利用）in `src/raku_rag/manufacturing/kpi/poc_metrics.py` (depends T009) — FR-MFG-014/028
-- [ ] T050 [US5] Implement knowledge-ops dashboard 集計（未回答/低評価/頻出質問/頻出文書/obsolete候補/ナレッジ不足, 001 feedback/observability 集計）in `src/raku_rag/manufacturing/telemetry/safety_metrics.py` (depends T009) — FR-MFG-012, US5-1
-- [ ] T051 [US5] Implement `GET /v1/manufacturing/dashboard`, `/safety-telemetry`, `/kpi`(format=json|csv) routers + dashboard access / KPI calc・export の audit 記録 in `src/raku_rag/manufacturing/api/dashboard.py` (depends T048, T049, T050) — request path は PostgreSQL materialized KPI を読み、Dagster を同期呼び出ししない
+- [x] T048 [US5] Implement SafetyTelemetry 集計（**audit log を単一真実源**として high_risk_query_count / safety_gate_block_count[内訳] を tenant/collection/factory/department/time_range[hourly/daily/custom] で集計, retention は DataUsePolicy 準拠）in `src/raku_rag/manufacturing/telemetry/safety_metrics.py` (depends T009) — FR-MFG-030, G2/G3
+- [x] T049 [US5] Implement PoC KPI 計測・export（self_resolution_rate/average_time_to_answer/grounded_answer_rate/insufficient_evidence_rate/low_rating_rate/unanswered_question_count/frequently_referenced_documents/obsolete_document_candidates/expert_interruption_reduction/high_risk_query_count/safety_gate_block_count, 001 evaluation/metrics 再利用）in `src/raku_rag/manufacturing/kpi/poc_metrics.py` (depends T009) — FR-MFG-014/028
+- [x] T050 [US5] Implement knowledge-ops dashboard 集計（未回答/低評価/頻出質問/頻出文書/obsolete候補/ナレッジ不足, 001 feedback/observability 集計）in `src/raku_rag/manufacturing/telemetry/safety_metrics.py` (depends T009) — FR-MFG-012, US5-1
+- [x] T051 [US5] Implement `GET /v1/manufacturing/dashboard`, `/safety-telemetry`, `/kpi`(format=json|csv) routers + dashboard access / KPI calc・export の audit 記録 in `src/raku_rag/manufacturing/api/dashboard.py` (depends T048, T049, T050) — request path は PostgreSQL materialized KPI を読み、Dagster を同期呼び出ししない
 - [ ] T051a [US5] Implement Dagster `manufacturing_dashboard_metrics` asset + daily schedule/manual refresh in `src/raku_rag/dagster/assets/manufacturing.py`, `src/raku_rag/dagster/jobs/manufacturing_kpi.py` — PoC KPI / safety telemetry を materialize し、`materialized_at`, `source_ingestion_run_id`, `dagster_run_id?` を保存（depends T047a, T048, T049）
 
 **Checkpoint**: 運用ダッシュボードと Safety Telemetry が集計表示、安全制御の「効いている件数」を可視化
@@ -187,14 +189,14 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 
 ### Tests for User Story 6 ⚠️
 
-- [ ] T052 [P] [US6] **Security hard-gate（SC-MFG-008）**: 権限外（工場/部署/役職/設備領域）ユーザーへ機密文書（顧客名・不良・図面）が search/answer/citation/trouble-cases/draft に出ない、tenant 越え参照拒否 in `tests/manufacturing/test_acl_mapping.py`（quickstart S7, US6-1, FR-MFG-013, 001 FR-022 継承）
+- [x] T052 [P] [US6] **Security hard-gate（SC-MFG-008）**: 権限外（工場/部署/役職/設備領域）ユーザーへ機密文書（顧客名・不良・図面）が search/answer/citation/trouble-cases/draft に出ない、tenant 越え参照拒否 in `tests/manufacturing/test_acl_mapping.py`（quickstart S7, US6-1, FR-MFG-013, 001 FR-022 継承）
 
 ### Implementation for User Story 6
 
-- [ ] T053 [US6] Finalize ACL mapping enforcement across all manufacturing endpoints（answer/search/trouble-cases/drafts/dashboard が T011 mapping helper を経由し 001 AclPolicy visibility_filter を強制）in `src/raku_rag/manufacturing/domain/acl_mapping.py` (depends T011, T021, T037, T043, T051)
-- [ ] T054 [P] [US6] Apply ACL mapping to manufacturing entities（Factory/Process/Equipment/Customer の機密度に応じた scope, Customer は ACL 対象）in `src/raku_rag/manufacturing/domain/entities.py` (depends T011)
-- [ ] T055 [US6] Record ACL denied / tenant isolation denied を AuditLogEntry に記録 in `src/raku_rag/manufacturing/domain/acl_mapping.py` (depends T009) — FR-MFG-021
-- [ ] T056 [US6] Seed factory/department actor 組織コンテキスト（factory_id/department_id）を AuditLogEntry に伝播（safety telemetry 集計軸用）in `src/raku_rag/manufacturing/domain/audit.py` (depends T009, T011) — FR-MFG-030
+- [x] T053 [US6] Finalize ACL mapping enforcement across all manufacturing endpoints（answer/search/trouble-cases/drafts/dashboard が T011 mapping helper を経由し 001 AclPolicy visibility_filter を強制）in `src/raku_rag/manufacturing/domain/acl_mapping.py` (depends T011, T021, T037, T043, T051)
+- [x] T054 [P] [US6] Apply ACL mapping to manufacturing entities（Factory/Process/Equipment/Customer の機密度に応じた scope, Customer は ACL 対象）in `src/raku_rag/manufacturing/domain/entities.py` (depends T011)
+- [x] T055 [US6] Record ACL denied / tenant isolation denied を AuditLogEntry に記録 in `src/raku_rag/manufacturing/domain/acl_mapping.py` (depends T009) — FR-MFG-021
+- [x] T056 [US6] Seed factory/department actor 組織コンテキスト（factory_id/department_id）を AuditLogEntry に伝播（safety telemetry 集計軸用）in `src/raku_rag/manufacturing/domain/audit.py` (depends T009, T011) — FR-MFG-030
 
 **Checkpoint**: 製造業スコープの ACL マッピングが全エンドポイントで強制、権限外漏洩 0（001 hard gate 継承）
 
@@ -204,16 +206,16 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 
 **Purpose**: no-train / audit coverage / retention / governance 表示の横断 overlay（spec G6: 第 3 branch を作らず 002 内に実装）。Base CR-001-A〜D は 001 へ委譲し、002 は最小実装＋policy/governance 表示を担う。
 
-- [ ] T057 Implement NoTrainGuard（opt-in 無しの学習/横断改善/別テナント改善利用を拒否, **capability_allowed**: provider_no_train_required かつ no-train 保証 provider 無し→False で **block**[GQ1], block 時 `temporarily_unavailable`）in `src/raku_rag/manufacturing/governance/no_train.py` (depends T010) — FR-MFG-016/017/018/029, research R9
-- [ ] T058 Implement RetentionManager（既定 顧客 365 / 監査 365, tenant 上書き[ガイド 30–3650], 失効は 001 tombstone/カスケードへ委譲）in `src/raku_rag/manufacturing/governance/retention.py` (depends T010) — FR-MFG-020, GQ2, research R11
-- [ ] T059 Implement tamper-evidence（AuditLogEntry の prev_hash/entry_hash hash chain）in `src/raku_rag/manufacturing/domain/audit.py` (depends T009) — FR-MFG-023, Base CR-001-A
-- [ ] T060 [P] **Governance hard-gate（SC-MFG-009）**: opt-in 無しの学習利用 0, no-train 非保証 capability が block される（temporarily_unavailable・推測なし）in `tests/manufacturing/test_no_train.py`（quickstart S8, FR-MFG-016〜018, GQ1）
-- [ ] T061 [P] **Audit hard-gate（SC-MFG-010）**: 規定イベント記録率 100%・欠落 0, **PII/secret/機密本文 混入 0（参照IDのみ）**, tenant 越え参照拒否 in `tests/manufacturing/test_audit_coverage.py`（quickstart S9, FR-MFG-021〜023）
-- [ ] T062 Implement `GET/PUT /v1/manufacturing/policy/data-use`（training_opt_in=true は opt_in_contract_ref 必須, 変更は policy_version 更新＋audit）in `src/raku_rag/manufacturing/api/policy.py` (depends T057, T058) — FR-MFG-018/019
-- [ ] T063 Implement `GET /v1/manufacturing/governance/status`（no_train/audit_coverage/safety_gate/draft_review/groundedness ＋ ismap_readiness_memo「見据えた設計」）in `src/raku_rag/manufacturing/api/policy.py` (depends T062) — FR-MFG-024/025/026
-- [ ] T064 Implement `GET /v1/manufacturing/audit/export`(format=jsonl|csv, 参照IDのみ・tenant スコープ限定) + admin no-train/retention/provider setting change の audit 記録 in `src/raku_rag/manufacturing/api/policy.py` (depends T059) — FR-MFG-021/023, Base CR-001-A/C
-- [ ] T065 Document Base Change Requests CR-001-A〜D（audit 構造化+tamper-evidence / provider no-train capability 検証 / retention・export / platform security NFR）as design memo for 001 integration in `specs/002-manufacturing-field-knowledge-rag/base-cr-notes.md` — FR-MFG-024/025, research R13
-- [ ] T066 Integration: **PoC v0 vertical slice（FR-MFG-027）** end-to-end（PDF/DOCX/XLSX/CSV 取り込み→メタデータ/import→設備/アラーム/工程/不良/部品検索→根拠付き回答[approved/obsolete/draft 反映・high-risk approved 必須]→DraftArtifact[自動 approved なし]→最小 demo→KPI 計測）in `tests/manufacturing/test_poc_vertical_slice.py`（quickstart S11）
+- [x] T057 Implement NoTrainGuard（opt-in 無しの学習/横断改善/別テナント改善利用を拒否, **capability_allowed**: provider_no_train_required かつ no-train 保証 provider 無し→False で **block**[GQ1], block 時 `temporarily_unavailable`）in `src/raku_rag/manufacturing/governance/no_train.py` (depends T010) — FR-MFG-016/017/018/029, research R9
+- [x] T058 Implement RetentionManager（既定 顧客 365 / 監査 365, tenant 上書き[ガイド 30–3650], 失効は 001 tombstone/カスケードへ委譲）in `src/raku_rag/manufacturing/governance/retention.py` (depends T010) — FR-MFG-020, GQ2, research R11
+- [x] T059 Implement tamper-evidence（AuditLogEntry の prev_hash/entry_hash hash chain）in `src/raku_rag/manufacturing/domain/audit.py` (depends T009) — FR-MFG-023, Base CR-001-A
+- [x] T060 [P] **Governance hard-gate（SC-MFG-009）**: opt-in 無しの学習利用 0, no-train 非保証 capability が block される（temporarily_unavailable・推測なし）in `tests/manufacturing/test_no_train.py`（quickstart S8, FR-MFG-016〜018, GQ1）
+- [x] T061 [P] **Audit hard-gate（SC-MFG-010）**: 規定イベント記録率 100%・欠落 0, **PII/secret/機密本文 混入 0（参照IDのみ）**, tenant 越え参照拒否 in `tests/manufacturing/test_audit_coverage.py`（quickstart S9, FR-MFG-021〜023）
+- [x] T062 Implement `GET/PUT /v1/manufacturing/policy/data-use`（training_opt_in=true は opt_in_contract_ref 必須, 変更は policy_version 更新＋audit）in `src/raku_rag/manufacturing/api/policy.py` (depends T057, T058) — FR-MFG-018/019
+- [x] T063 Implement `GET /v1/manufacturing/governance/status`（no_train/audit_coverage/safety_gate/draft_review/groundedness ＋ ismap_readiness_memo「見据えた設計」）in `src/raku_rag/manufacturing/api/policy.py` (depends T062) — FR-MFG-024/025/026
+- [x] T064 Implement `GET /v1/manufacturing/audit/export`(format=jsonl|csv, 参照IDのみ・tenant スコープ限定) + admin no-train/retention/provider setting change の audit 記録 in `src/raku_rag/manufacturing/api/policy.py` (depends T059) — FR-MFG-021/023, Base CR-001-A/C
+- [x] T065 Document Base Change Requests CR-001-A〜D（audit 構造化+tamper-evidence / provider no-train capability 検証 / retention・export / platform security NFR）as design memo for 001 integration in `specs/002-manufacturing-field-knowledge-rag/base-cr-notes.md` — FR-MFG-024/025, research R13
+- [x] T066 Integration: **PoC v0 vertical slice（FR-MFG-027）** end-to-end（PDF/DOCX/XLSX/CSV 取り込み→メタデータ/import→設備/アラーム/工程/不良/部品検索→根拠付き回答[approved/obsolete/draft 反映・high-risk approved 必須]→DraftArtifact[自動 approved なし]→最小 demo→KPI 計測）in `tests/manufacturing/test_poc_vertical_slice.py`（quickstart S11）
 
 **Checkpoint**: no-train block・audit 網羅・retention・governance 表示が成立、PoC v0 vertical slice が end-to-end で成立
 
@@ -221,10 +223,10 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 
 ## Phase 10: Polish & Cross-Cutting Concerns
 
-- [ ] T067 [P] quickstart S1〜S11 検証スクリプト in `tests/manufacturing/test_quickstart.py`
-- [ ] T068 [P] Documentation（solution-layer architecture, 製造業 parser/メタデータ追加ガイド, safety gate/draft/governance API 使用例, 001 再利用境界）in `docs/manufacturing/`
-- [ ] T069 [P] Unit tests（HighRiskClassifier カスケード, safety_block_reason 正規化, Countermeasure 2 軸正規化, approval lifecycle, audit redaction）in `tests/manufacturing/unit/`
-- [ ] T070 Security hardening review（audit に PII/secret/本文非保存, tenant 越え参照, draft 自動確定なし, no-train block, ACL マッピング漏れ）in `tests/manufacturing/test_security_review.py`
+- [x] T067 [P] quickstart S1〜S11 検証スクリプト in `tests/manufacturing/test_quickstart.py`
+- [x] T068 [P] Documentation（solution-layer architecture, 製造業 parser/メタデータ追加ガイド, safety gate/draft/governance API 使用例, 001 再利用境界）in `docs/manufacturing/`
+- [x] T069 [P] Unit tests（HighRiskClassifier カスケード, safety_block_reason 正規化, Countermeasure 2 軸正規化, approval lifecycle, audit redaction）in `tests/manufacturing/unit/`
+- [x] T070 Security hardening review（audit に PII/secret/本文非保存, tenant 越え参照, draft 自動確定なし, no-train block, ACL マッピング漏れ）in `tests/manufacturing/test_security_review.py`
 - [ ] T071 Extend 001 EvaluationRunner with PoC KPI + safety telemetry（baseline relative）と safety hard gate（absolute）の統合 in `src/raku_rag/manufacturing/kpi/poc_metrics.py`（001 eval/runner / Dagster scheduled evaluation run と連携）— FR-MFG-028, SC-MFG-012
 - [ ] T071a Implement Dagster manufacturing quality checks in `src/raku_rag/dagster/checks/manufacturing.py` — high-risk approved citation requirement satisfied、ACL leakage = 0、tenant isolation leakage = 0、deleted documents not searchable、spreadsheet citation cell_range valid、recall@k / citation accuracy baseline regression
 - [ ] T072 Minimal PoC Web UI / API demo（質問・回答・引用・文書状態・warning・feedback）in `poc-ui/` — FR-MFG-027
