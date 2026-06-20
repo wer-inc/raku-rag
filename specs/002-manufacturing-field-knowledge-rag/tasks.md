@@ -229,7 +229,7 @@ Web-service モジュラモノリス（plan.md）: 002 solution layer = `src/rak
 - [x] T070 Security hardening review（audit に PII/secret/本文非保存, tenant 越え参照, draft 自動確定なし, no-train block, ACL マッピング漏れ）in `tests/manufacturing/test_security_review.py`
 - [ ] T071 Extend 001 EvaluationRunner with PoC KPI + safety telemetry（baseline relative）と safety hard gate（absolute）の統合 in `src/raku_rag/manufacturing/kpi/poc_metrics.py`（001 eval/runner / Dagster scheduled evaluation run と連携）— FR-MFG-028, SC-MFG-012
 - [ ] T071a Implement Dagster manufacturing quality checks in `src/raku_rag/dagster/checks/manufacturing.py` — high-risk approved citation requirement satisfied、ACL leakage = 0、tenant isolation leakage = 0、deleted documents not searchable、spreadsheet citation cell_range valid、recall@k / citation accuracy baseline regression
-- [ ] T072 Minimal PoC Web UI / API demo（質問・回答・引用・文書状態・warning・feedback）in `poc-ui/` — FR-MFG-027
+- [x] T072 Minimal PoC Web UI / API demo（質問・回答・引用・文書状態・warning・feedback）in `poc-ui/` — FR-MFG-027
 
 ---
 

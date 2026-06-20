@@ -157,7 +157,8 @@ obsolete・draft 一次証拠(011) / no-train override(009) / audit 抑制(010) 
 - [x] T066 PoC v0 縦串(end-to-end) + T067 quickstart S1-S11 — capstone統合検証PASS（225テスト）。**capstoneが実バグ発見・修正**: 多doc構成でobsoleteが一次引用されるSC-MFG-011抜けをanswer_ext.pyで降格修正（孤立fixtureのT015は捕捉できず＝§3 fixture特異性の実例）。Verifyで T070 セキュリティレビュー5軸PASS（PII0/draft/no-train/ACL/deletion）
 - [x] T015 を多doc一次引用ケースで強化（capstone発見を専用 SC-MFG-011 ゲートに焼込・test-only・load-bearing）+ **§5分離ガードの保護対象を6ハードゲート全部に拡張**（旧 `test_*gate*` は `test_safety_gate` のみ保護の穴を修正、CIと整合）
 - [x] T069 追加unit（classifier/正規化/2軸/承認/redaction, +61, 計287テスト）+ T068 docs（`docs/manufacturing/` 5本・コード忠実）— additive・src無変更・境界レビューPASS
-- [ ] 残（framework依存・UI/本番track）: T072 PoC Web UI / T071a Dagster品質チェック / T071 EvaluationRunner統合
+- [x] T072 PoC 最小デモ（`poc-ui/` stdlib http.server）— 起動→curl で安全6挙動を実証・src無変更・gate covered。**🎯 002 = デモ可能な PoC v0 完成**
+- [ ] **002 freeze**。次の本筋は 001 production track（NestJS real /search・/answer・/ingest / DB・pgvector・RLS / SQS worker / OpenAPI contract / 永続 audit・cost・policy）。002残（本番track）: T007 SQLAlchemy / T011a・T071a Dagster / T071 eval最小
 - [x] CI: `.github/workflows/gate.yml`（全 push/PR で `gate.sh a`＋`all` を実行、PR は §5 分離を CI 強制, T004）— **ループ運用化**。`ci.yml` は 001 本番アダプタ用スケルトンとして温存
 - [ ] 各フェーズ末に L3 converge/analyze
 - [ ] 安定後（§0 Stage1 昇格条件）に L4 nightly `/schedule`（読み取り専用）
