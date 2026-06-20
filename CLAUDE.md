@@ -1,12 +1,15 @@
 <!-- SPECKIT START -->
-## Active Feature: 002-manufacturing-field-knowledge-rag (Solution Layer — implemented; tasks.md fully checked; committed on this branch, gate green)
+## Active Feature: 002-manufacturing-field-knowledge-rag (Solution Layer — implemented; T001–T072 checked + 20-item design-gap backlog open; committed, gate green)
 
 Manufacturing Field Knowledge RAG built **on top of** the 001 base platform (do NOT redefine base
 features — reference them). Plan & design artifacts complete (GQ1=block, GQ2=customer 1yr/audit 1yr
 resolved). `tasks.md` is fully checked (T001–T072 + sub-tasks, all `[x]` = 実装済み). The cross-spec
 implementation (002 manufacturing + 003/006/010 + observability/providers/workers/SDK/infra/tests) is
 committed on branch `002-manufacturing-field-knowledge-rag`; the GitHub `gate` workflow is green as of
-`1e2abb5`. Local `scripts/gate.sh all` GREEN is necessary but not sufficient — confirm the GitHub `gate` run
+`1e2abb5`. A 2026-06-20 design-vs-impl audit filed **20 confirmed gap-remediation items** (2 safety-boundary,
+reproduced) into the specs' `tasks.md` (§Gap Remediation Backlog) — implementation deferred; these are why
+"all tasks `[x]` + gate green" is necessary but NOT sufficient for "design complete". Local
+`scripts/gate.sh all` GREEN is also necessary but not sufficient — confirm the GitHub `gate` run
 (Tier A is stdlib-only; Tier B Postgres/RLS and RT1 compose smoke run only on GitHub runners).
 
 - Plan: `specs/002-manufacturing-field-knowledge-rag/plan.md` · Research: `specs/002-manufacturing-field-knowledge-rag/research.md`

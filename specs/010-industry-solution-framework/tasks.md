@@ -51,3 +51,6 @@
 - ISF-T030 to ISF-T033 cover KPIDefinition, DashboardWidgetDefinition, GovernanceProfile, ACL/no-train/audit inheritance, and SC-ISF-007/008.
 - ISF-T040 to ISF-T043 cover financial/regulated extensions used by 006.
 - ISF-T050 to ISF-T054 cover generic APIs, 002/003/006 mapping, version migration, and future industry compatibility.
+
+## Gap Remediation Backlog — design-vs-implementation audit (2026-06-20)
+- [ ] GAP-F13 [func] financial/regulated extension policies declared but NOT applied at runtime (FR-IM-025/026/030/032/054): RegulatedActivityPolicy / AdviceBoundaryPolicy / DisclosureEvidencePolicy / ComplianceReviewPolicy are attached to the investment profile (framework.py:437-494,1640) but never read/evaluated; MarketingMaterialPolicy is not even defined; the investment runtime returns hardcoded text and gates advice via a 4-keyword heuristic. A coarse net still exists (advice blocked, drafts forced to review, generic RequiredEvidence/Risk policies), but the declared policy logic does not govern the FRs. → drive the workflow from the policy objects + behavioral tests; or mark these tasks not-done.

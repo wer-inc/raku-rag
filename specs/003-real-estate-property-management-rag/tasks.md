@@ -55,3 +55,6 @@
 - RE-T040 to RE-T043 cover RealEstateDraftArtifact, RealEstateDraftReview, no auto approval, review transition, and audit events.
 - RE-T050 to RE-T053 cover dashboard, KPI, governance status, personal data redaction, ACL leakage prevention, and PoC KPI.
 - RE-T060 to RE-T061 cover API contracts and PoC acceptance scenarios for the real estate vertical slice.
+
+## Gap Remediation Backlog — design-vs-implementation audit (2026-06-20)
+- [ ] GAP-F14 [func] domain-table RLS UNTESTED across 003/004/005/006 (FR-RE-062/063, FR-IM-071/072, SC-RE-003/SC-IM-005): no live-Postgres cross-tenant test exercises real_estate_*/investment_*/industry_profile RLS; the only CI-wired live-DB gate (gate.sh b) applies ONLY 0001_core_rls.sql; postgres-migration-smoke.sh applies 0003-0006 but is not CI-wired and asserts isolation only on `documents`. FORCE RLS on the domain tables is verified only by SQL-text grep. → add a Tier-B cross-tenant test over the domain tables (apply 0003-0005, set current_tenant_id=A, assert tenant B sees 0 rows).

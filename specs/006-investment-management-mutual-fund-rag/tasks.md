@@ -60,3 +60,6 @@
 - IM-T040 to IM-T044 cover InvestmentDraftArtifact, InvestmentDraftReview, InvestmentComplianceReview, no auto approval, compliance review transitions, DisclosureEvidence audit, and contradiction audit.
 - IM-T050 to IM-T053 cover InvestmentKPI, dashboard, governance status, no-train, audit, retention, provider governance, and leakage tests.
 - IM-T060 to IM-T061 cover API contracts and PoC acceptance scenarios for the investment vertical slice.
+
+## Gap Remediation Backlog — design-vs-implementation audit (2026-06-20)
+- [ ] GAP-F12 [func] marketing-material contradiction check is a STUB (FR-IM-031/034, SC-IM-004; IM-T024/IM-T034 are `[X]`): `industry/investment_api.py:204` ignores body['statements'] and returns one fixed contradiction for any input; no per-statement matched_source/contradiction_type/recommended_action; MarketingMaterialPolicy (FR-IM-032) not defined; tests only assertTrue(results). → real per-statement comparison vs prospectus/terms/fees/risk/policy/benchmark; tests with a contradicting AND a consistent statement asserting different outcomes.
