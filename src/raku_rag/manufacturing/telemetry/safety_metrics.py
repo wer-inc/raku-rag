@@ -177,12 +177,11 @@ class SafetyTelemetry:
             return False
         if department_id is not None and entry.department_id != department_id:
             return False
-        if collection_id is not None:
-            # collection axis: an entry is in-collection iff any of its referenced docs are; the
-            # answer-path entry does not snapshot a collection_id, so collection scoping is applied
-            # by the caller (dashboard/kpi) which already resolves per-collection evidence. Here a
-            # collection filter with no per-entry collection field never excludes (caller-scoped).
-            pass
+        if collection_id is not None and entry.collection_id != collection_id:
+            # collection axis (FR-MFG-030 / SC-MFG-013): the answer-path entry now snapshots the
+            # answered collection_id, so a per-collection request excludes entries from other
+            # collections (and cross-collection answers, collection_id=None, only join the total).
+            return False
         if time_range is not None:
             start, end = time_range
             if start is not None and entry.timestamp < start:

@@ -104,6 +104,12 @@ REQUIRED_EVENT_TYPES: dict[str, callable] = {
     or "no_train" in _action(e)
     or "retention" in _action(e),
     "deletion": lambda e: "delet" in _action(e) or "tombstone" in _action(e),
+    # GAP-F3 — full FR-MFG-021 access/update coverage (these 4 were previously OMITTED from the closed
+    # list, so SC-MFG-010's "記録率100%, 欠落0" was falsely green for them). Tightening, never weakening.
+    "metadata_update": lambda e: "metadata" in _action(e) and "update" in _action(e),
+    "search_query": lambda e: "search" in _action(e),
+    "dashboard_access": lambda e: "dashboard" in _action(e),
+    "kpi_export": lambda e: "kpi" in _action(e),
 }
 
 
@@ -200,6 +206,24 @@ def _drive_end_to_end(sys: ManufacturingSystem) -> None:
 
     # 6) no-train / retention setting change (governance) — audited (FR-MFG-019).
     sys.update_data_use_policy(tenant_id=T, patch={"retention_customer": 730}, actor=admin)
+
+    # 6b) GAP-F3 — metadata UPDATE, standalone search, dashboard access, and KPI export are each an
+    #     audited FR-MFG-021 event (previously omitted from the closed coverage list). Reference IDs
+    #     only: the metadata.update entry carries no customer/body even though the metadata object does.
+    sys.update_metadata(
+        tenant_id=T,
+        document_id="conf1",
+        metadata=ManufacturingDocumentMetadata(
+            tenant_id=T,
+            document_id="conf1",
+            customer=SECRET_CUSTOMER,
+            approval_status=ApprovalStatus.APPROVED,
+            document_kind=DocumentKind.WORK_INSTRUCTION,
+        ),
+    )
+    sys.search(_op(), "disassemble the press safely")
+    sys.knowledge_ops_dashboard(admin)
+    sys.kpi(admin, format="json")
 
     # 7) deletion / tombstone (reuses 001 tombstone) — audited.
     sys.delete_document(tenant_id=T, document_id="conf1", actor=admin)

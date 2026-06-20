@@ -102,6 +102,9 @@ class AuditLogEntry:
     # actor organizational context for aggregation (FR-MFG-030)
     factory_id: str | None = None  # from Factory
     department_id: str | None = None  # from base ACL group/role
+    collection_id: str | None = (
+        None  # answered collection (FR-MFG-030 collection axis); reference ID
+    )
 
     # action
     action: str = ""

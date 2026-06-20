@@ -350,5 +350,60 @@ class TestTelemetryAxes(_Base):
         self.assertEqual(sum(bd.values()), _get(f1, "safety_gate_block_count"))
 
 
+class TestTelemetryCollectionAxis(unittest.TestCase):
+    """GAP-F2 — counts are groupable by COLLECTION (FR-MFG-030 / SC-MFG-013 collection axis).
+
+    Before the fix the collection branch was a no-op while compute() still labeled axis=COLLECTION, so
+    a per-collection request returned the tenant-wide counts (mis-scoped/inflated). Now the answer-path
+    audit entry snapshots the answered collection_id and the filter actually partitions.
+    """
+
+    def setUp(self) -> None:
+        from raku_rag.manufacturing.app import ManufacturingSystem
+
+        self.sys = ManufacturingSystem()
+        # one draft-only high-risk doc per collection -> each answer BLOCKS (approved_citation_missing).
+        for col in ("ca", "cb"):
+            self.sys.ingest_manufacturing(
+                tenant_id=T,
+                collection_id=col,
+                document_id=f"draft_{col}",
+                text="Draft note about working on the 400V panel — not yet approved.",
+                metadata=ManufacturingDocumentMetadata(
+                    tenant_id=T,
+                    document_id=f"draft_{col}",
+                    approval_status=ApprovalStatus.DRAFT,
+                    effective_date=None,
+                    document_kind=DocumentKind.WORK_INSTRUCTION,
+                    safety_category="electrical",
+                    hazard_tags=("感電", "高圧"),
+                ),
+            )
+            self.sys.grant(T, ScopeType.COLLECTION, col, SubjectType.USER, "op")
+        self.admin = _admin()
+        op = _op("op", dept="dept_press")
+        self.sys.answer(op, Q_HIGH_RISK_BLOCK, collection_id="ca")
+        self.sys.answer(op, Q_HIGH_RISK_BLOCK, collection_id="cb")
+
+    def test_collection_axis_partitions_the_total(self) -> None:
+        ca = self.sys.safety_telemetry(self.admin, collection_id="ca")
+        cb = self.sys.safety_telemetry(self.admin, collection_id="cb")
+        total = self.sys.safety_telemetry(self.admin)
+        self.assertEqual(_get(ca, "safety_gate_block_count"), 1)
+        self.assertEqual(_get(cb, "safety_gate_block_count"), 1)
+        self.assertEqual(
+            _get(ca, "safety_gate_block_count") + _get(cb, "safety_gate_block_count"),
+            _get(total, "safety_gate_block_count"),
+            "per-collection block count MUST sum to the tenant total (axis partition, FR-MFG-030)",
+        )
+        bd = _breakdown(ca)
+        self.assertEqual(sum(bd.values()), _get(ca, "safety_gate_block_count"))
+
+    def test_unknown_collection_is_empty(self) -> None:
+        cz = self.sys.safety_telemetry(self.admin, collection_id="cz")
+        self.assertEqual(_get(cz, "safety_gate_block_count"), 0)
+        self.assertEqual(_get(cz, "high_risk_query_count"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

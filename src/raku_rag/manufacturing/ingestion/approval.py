@@ -39,8 +39,22 @@ from raku_rag.manufacturing.interfaces import ApprovalState
 GetMeta = Callable[[str, str], ManufacturingDocumentMetadata | None]
 SetMeta = Callable[[str, str, ManufacturingDocumentMetadata], None]
 
-# Permissive lightweight forward lifecycle. Any of these target states is accepted by transition().
+# Lightweight FORWARD lifecycle (data-model §B State Transitions; FR-MFG-004 / Q1 "軽量承認ワークフロー",
+# complex routing out of scope). The workflow may advance the document forward — including skip-ahead
+# moves such as the draft->approved shortcut — but MUST NOT move it backward or resurrect an obsolete
+# doc. ``import_external`` is the source-of-truth path and deliberately bypasses this (FR-MFG-004a).
 _WORKFLOW_STATES: tuple[str, ...] = tuple(s.value for s in ApprovalStatus)
+
+# Forward rank per lifecycle state: a workflow transition is legal iff the target rank is >= the
+# current rank (idempotent or forward, skips allowed). A lower-rank target (approved->draft,
+# obsolete->approved) raises. Keyed by ApprovalStatus so a future enum member missing here KeyErrors
+# loudly rather than silently mis-ranking.
+_LIFECYCLE_RANK: dict[ApprovalStatus, int] = {
+    ApprovalStatus.DRAFT: 0,
+    ApprovalStatus.PENDING_REVIEW: 1,
+    ApprovalStatus.APPROVED: 2,
+    ApprovalStatus.OBSOLETE: 3,
+}
 
 
 def _now() -> str:
@@ -74,6 +88,7 @@ class ApprovalWorkflow:
         """Drive the lightweight workflow to ``to_status``; approval_source = workflow. Audited."""
         status = self._coerce_status(to_status)
         meta = self._require_meta(tenant_id, document_id)
+        self._assert_legal_transition(meta.approval_status, status)
 
         approved_by = actor.user_id if status == ApprovalStatus.APPROVED else meta.approved_by
         approved_at = _now() if status == ApprovalStatus.APPROVED else meta.approved_at
@@ -126,6 +141,20 @@ class ApprovalWorkflow:
         return self._to_state(updated)
 
     # --- helpers ---------------------------------------------------------------------------------
+    @staticmethod
+    def _assert_legal_transition(current: ApprovalStatus, target: ApprovalStatus) -> None:
+        """Block backward / obsolete-resurrection moves on the lightweight workflow path.
+
+        Forward (incl. skip-ahead, e.g. draft->approved) and idempotent same-state moves are allowed;
+        a target at a LOWER lifecycle rank raises (data-model §B State Transitions). The source-of-truth
+        ``import_external`` path is intentionally NOT routed through this guard (FR-MFG-004a).
+        """
+        if _LIFECYCLE_RANK[target] < _LIFECYCLE_RANK[current]:
+            raise ValueError(
+                f"illegal approval transition: {current.value!r} -> {target.value!r} "
+                f"(workflow is forward-only; use import_external for source-of-truth overrides)"
+            )
+
     def _coerce_status(self, to_status: str) -> ApprovalStatus:
         value = to_status.value if isinstance(to_status, ApprovalStatus) else str(to_status)
         if value not in _WORKFLOW_STATES:

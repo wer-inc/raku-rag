@@ -47,6 +47,7 @@ def record_answer_decision(
     citation_ids: tuple[str, ...] = (),
     principal: IdentityClaims | None = None,
     factory_id: str | None = None,
+    collection_id: str | None = None,
 ) -> None:
     """Record one answer-path safety decision. Counter (FR-MFG-021/030 telemetry source).
 
@@ -72,6 +73,7 @@ def record_answer_decision(
         action="answer.safety_evaluated",
         resource_type="answer",
         resource_id=correlation_id or None,
+        collection_id=collection_id,  # FR-MFG-030 collection axis (reference ID; None = cross-collection)
         decision=status,
         reason=(",".join(classification.reason_codes) if classification.reason_codes else None),
         high_risk_classification_result=classification.is_high_risk,

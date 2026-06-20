@@ -239,5 +239,71 @@ class TestFaqParity(unittest.TestCase):
         self.assertEqual(approved.reviewer_id, "faq_rev")
 
 
+class TestStateMachineOrdering(unittest.TestCase):
+    """GAP-F7 / data-model §F: in_review predecessor required; terminal states never re-open.
+
+    The SC-MFG-007 'AI cannot self-approve' invariant (TestAiCannotSelfApprove above) is the reviewer
+    axis; this pins the orthogonal source-status/terminality axis that was previously unguarded
+    (draft->approved skipping in_review succeeded, and a terminal approved could be re-opened).
+    """
+
+    def setUp(self) -> None:
+        self.sys = fresh()
+        self.author = claims(T, "author")
+        self.reviewer = claims(T, "rev_sm", roles=("reviewer",))
+
+    def _draft(self):
+        return self.sys.generate_draft(principal=self.author, kind=DraftType.CHECKLIST)
+
+    def test_approve_requires_in_review_predecessor(self) -> None:
+        art = self._draft()  # status=draft, NOT assigned
+        with self.assertRaises(Exception):
+            self.sys.review_draft(
+                tenant_id=T,
+                artifact_id=art.artifact_id,
+                reviewer=self.reviewer,
+                decision="approved",
+            )
+        self.assertEqual(
+            _status_value(self.sys.get_draft(T, art.artifact_id)), DraftStatus.DRAFT.value
+        )
+
+    def test_terminal_approved_is_not_reopened(self) -> None:
+        art = self._draft()
+        self.sys.assign_reviewer(tenant_id=T, artifact_id=art.artifact_id, reviewer_id="rev_sm")
+        self.sys.review_draft(
+            tenant_id=T, artifact_id=art.artifact_id, reviewer=self.reviewer, decision="approved"
+        )
+        with self.assertRaises(Exception):
+            self.sys.review_draft(
+                tenant_id=T,
+                artifact_id=art.artifact_id,
+                reviewer=self.reviewer,
+                decision="rejected",
+            )
+        self.assertEqual(
+            _status_value(self.sys.get_draft(T, art.artifact_id)), DraftStatus.APPROVED.value
+        )
+
+    def test_assign_does_not_reopen_a_terminal(self) -> None:
+        art = self._draft()
+        self.sys.assign_reviewer(tenant_id=T, artifact_id=art.artifact_id, reviewer_id="rev_sm")
+        self.sys.review_draft(
+            tenant_id=T, artifact_id=art.artifact_id, reviewer=self.reviewer, decision="approved"
+        )
+        with self.assertRaises(Exception):
+            self.sys.assign_reviewer(tenant_id=T, artifact_id=art.artifact_id, reviewer_id="rev_x")
+        self.assertEqual(
+            _status_value(self.sys.get_draft(T, art.artifact_id)), DraftStatus.APPROVED.value
+        )
+
+    def test_archive_directly_from_draft_is_allowed(self) -> None:
+        art = self._draft()
+        archived = self.sys.review_draft(
+            tenant_id=T, artifact_id=art.artifact_id, reviewer=self.reviewer, decision="archived"
+        )
+        self.assertEqual(_status_value(archived), DraftStatus.ARCHIVED.value)
+
+
 if __name__ == "__main__":
     unittest.main()

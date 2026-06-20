@@ -359,9 +359,30 @@ class ManufacturingSystem:
         document_id: str,
         metadata: ManufacturingDocumentMetadata,
     ) -> ManufacturingDocumentMetadata:
-        """Re-attach manufacturing metadata to an already-ingested document (FR-MFG-003)."""
+        """Re-attach manufacturing metadata to an already-ingested document (FR-MFG-003).
+
+        The metadata UPDATE is itself an audited governance event (FR-MFG-021: ManufacturingDocument
+        Metadata の作成・更新・削除) — reference IDs only, never the customer name / body.
+        """
         self._set_mfg_meta(tenant_id, document_id, metadata)
-        return self._enricher.attach(tenant_id, document_id, metadata)
+        result = self._enricher.attach(tenant_id, document_id, metadata)
+        ts = datetime_now_iso()
+        self.audit.record(
+            AuditLogEntry(
+                tenant_id=tenant_id,
+                log_id=f"metadata.update:{document_id}:{ts}",
+                timestamp=ts,
+                action="metadata.update",
+                resource_type="document",
+                resource_id=document_id,  # reference ID only
+                decision="updated",
+                approval_status_at_use=(
+                    metadata.approval_status.value if metadata.approval_status else None
+                ),
+                document_ids_used=(document_id,),
+            )
+        )
+        return result
 
     def transition_approval(
         self,
@@ -459,6 +480,7 @@ class ManufacturingSystem:
             # answer behaviour is unchanged when factory_id is omitted.
             principal=principal,
             factory_id=factory_id,
+            collection_id=collection_id,  # FR-MFG-030 collection axis (None = cross-collection answer)
         )
         # T061 — citation-access auditing (FR-MFG-021): when the answer path retrieves and SURVEYS
         # candidate citations as evidence (asserted citations, else the surveyed candidate documents),
@@ -531,8 +553,41 @@ class ManufacturingSystem:
         manufacturing_filters: dict | None = None,
     ):
         profile = self._mvp.profiles.resolve(collection_id)
-        return self._search.search(
+        results = self._search.search(
             principal, query, profile, manufacturing_filters=manufacturing_filters
+        )
+        # GAP-F3 — audit the search-query ACCESS (FR-MFG-021: search query). Reference IDs only: the
+        # ACL-visible result document_ids surveyed, never the query text / body / customer name.
+        self._audit_search_query(
+            principal=principal,
+            collection_id=collection_id,
+            document_ids=tuple(
+                dict.fromkeys(r.document_id for r in results if getattr(r, "document_id", None))
+            ),
+        )
+        return results
+
+    def _audit_search_query(
+        self,
+        *,
+        principal: IdentityClaims,
+        collection_id: str | None,
+        document_ids: tuple[str, ...],
+    ) -> None:
+        """Record a search-query access event (reference IDs only) — FR-MFG-021 / SC-MFG-010."""
+        ts = datetime_now_iso()
+        self.audit.record(
+            AuditLogEntry(
+                tenant_id=principal.tenant_id,
+                log_id=f"search.query:{collection_id or ''}:{ts}",
+                timestamp=ts,
+                actor_id=principal.user_id,
+                action="search.query",
+                resource_type="collection",
+                resource_id=collection_id,  # reference ID only; None for tenant-wide search
+                decision="executed",
+                document_ids_used=tuple(document_ids),
+            )
         )
 
     # --- drafts (US4: generate / assign / review / get; contracts §D) ------------------------------
@@ -762,6 +817,33 @@ class ManufacturingSystem:
         return result
 
     # --- US5: knowledge-ops dashboard / safety-telemetry / KPI (contracts §E; FR-MFG-012/028/030) --
+    def _audit_admin_access(
+        self,
+        *,
+        principal: IdentityClaims,
+        action: str,
+        resource_type: str,
+        decision: str = "accessed",
+    ) -> None:
+        """Record an admin read-view access (dashboard / safety-telemetry / KPI) — reference IDs only.
+
+        No body / query / customer name is stored; the entry carries NO high_risk / safety_block flag,
+        so it is inert for the audit-derived safety telemetry (single-source-of-truth scan), FR-MFG-021.
+        """
+        ts = datetime_now_iso()
+        self.audit.record(
+            AuditLogEntry(
+                tenant_id=principal.tenant_id,
+                log_id=f"{action}:{principal.tenant_id}:{ts}",
+                timestamp=ts,
+                actor_id=principal.user_id,
+                action=action,
+                resource_type=resource_type,
+                resource_id=principal.tenant_id,  # reference ID only
+                decision=decision,
+            )
+        )
+
     def knowledge_ops_dashboard(
         self,
         principal: IdentityClaims,
@@ -778,6 +860,9 @@ class ManufacturingSystem:
         (single source of truth) + in-memory approval metadata. Tenant-scoped; computed
         synchronously (no Dagster — T047a/T051a deferred, §8 C5).
         """
+        self._audit_admin_access(
+            principal=principal, action="dashboard.access", resource_type="dashboard"
+        )
         return self._dashboard.knowledge_ops_dashboard(
             principal,
             collection_id=collection_id,
@@ -803,6 +888,9 @@ class ManufacturingSystem:
         (single source of truth, idempotent GROUP/SUM). Restricts to a factory/department axis when
         supplied; ``source == 'audit_log'``. Tenant-scoped.
         """
+        self._audit_admin_access(
+            principal=principal, action="dashboard.access", resource_type="safety_telemetry"
+        )
         return self._dashboard.safety_telemetry(
             principal,
             collection_id=collection_id,
@@ -827,6 +915,9 @@ class ManufacturingSystem:
         counters reuse the SAME audit-derived telemetry as GET /safety-telemetry (consistency).
         Computed synchronously (no Dagster — T047a/T051a deferred, §8 C5).
         """
+        self._audit_admin_access(
+            principal=principal, action="kpi.export", resource_type="kpi", decision=format
+        )
         return self._dashboard.kpi(
             principal,
             collection_id=collection_id,

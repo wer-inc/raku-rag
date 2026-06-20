@@ -27,6 +27,21 @@ from raku_rag.manufacturing.domain.draft import DraftArtifact, DraftStatus
 # Reviewer decisions that the review endpoint accepts (contracts §D).
 _VALID_DECISIONS = ("approved", "rejected", "archived")
 
+# data-model §F source-status guards (orthogonal to the SC-MFG-007 reviewer rule in decide()).
+# draft -> in_review -> approved | rejected | archived ; draft -> archived ; terminals never re-open.
+_DECISION_SOURCES = {
+    "approved": (DraftStatus.IN_REVIEW,),  # approve requires an in_review predecessor
+    "rejected": (DraftStatus.IN_REVIEW,),  # reject requires an in_review predecessor
+    "archived": (DraftStatus.DRAFT, DraftStatus.IN_REVIEW),  # archive from draft|in_review
+}
+# assign (-> in_review) is legal from draft and idempotently from in_review (reviewer reassignment);
+# a terminal artifact (approved/rejected/archived) is never re-opened.
+_ASSIGN_SOURCES = (DraftStatus.DRAFT, DraftStatus.IN_REVIEW)
+
+
+class InvalidTransitionError(Exception):
+    """A draft-review transition not permitted from the artifact's current status (data-model §F)."""
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -50,6 +65,11 @@ class ReviewWorkflow:
         """draft -> in_review. Records who must review (single reviewer or group) + assigned_at."""
         if reviewer_id is None and reviewer_group is None:
             raise ValueError("assign requires a reviewer_id or reviewer_group")
+        if artifact.status not in _ASSIGN_SOURCES:
+            raise InvalidTransitionError(
+                f"cannot assign a reviewer from status={artifact.status.value!r} "
+                f"(in_review reachable only from draft; terminal states are not re-opened, §F)"
+            )
         artifact.status = DraftStatus.IN_REVIEW
         artifact.reviewer_id = reviewer_id
         artifact.reviewer_group = reviewer_group
@@ -74,6 +94,16 @@ class ReviewWorkflow:
         if decision not in _VALID_DECISIONS:
             raise ValueError(f"invalid review decision: {decision!r}")
 
+        # data-model §F source-status guard for non-approved decisions: terminals never re-open;
+        # reject needs an in_review predecessor; archive is reachable from draft|in_review. (approved
+        # is guarded inside its block below, AFTER the SC-MFG-007 reviewer check, so a no-reviewer
+        # approve still surfaces as PermissionError rather than a transition error.)
+        if decision != "approved" and artifact.status not in _DECISION_SOURCES[decision]:
+            raise InvalidTransitionError(
+                f"cannot {decision} from status={artifact.status.value!r} "
+                f"(legal sources: {[s.value for s in _DECISION_SOURCES[decision]]}, §F)"
+            )
+
         # The ONLY path to approved is an explicit, attributable human reviewer action.
         if decision == "approved":
             reviewer_id = getattr(reviewer, "user_id", None) if reviewer is not None else None
@@ -81,6 +111,11 @@ class ReviewWorkflow:
                 # AI self-approve / unattributable approval — reject; artifact unchanged.
                 raise PermissionError(
                     "approved requires an explicit reviewer (AI cannot self-approve, SC-MFG-007)"
+                )
+            if artifact.status not in _DECISION_SOURCES["approved"]:
+                raise InvalidTransitionError(
+                    f"cannot approve from status={artifact.status.value!r} "
+                    f"(approve requires an in_review predecessor, §F)"
                 )
             artifact.status = DraftStatus.APPROVED
             artifact.reviewer_id = reviewer_id

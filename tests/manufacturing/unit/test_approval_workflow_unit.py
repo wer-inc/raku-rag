@@ -164,5 +164,51 @@ class TestApprovalAudited(unittest.TestCase):
         self.assertEqual(last.resource_type, "document")
 
 
+def _meta_at(status: ApprovalStatus) -> ManufacturingDocumentMetadata:
+    return ManufacturingDocumentMetadata(tenant_id=_T, document_id=_DOC, approval_status=status)
+
+
+class TestForwardOnlyTransitionGuard(unittest.TestCase):
+    """GAP-F6 / data-model §B: the lightweight workflow blocks backward / obsolete-resurrection moves.
+
+    Forward (incl. skip-ahead) and idempotent moves stay legal (the "軽量承認ワークフロー" mandate);
+    only a move to a LOWER lifecycle rank raises. import_external (source of truth) bypasses the guard.
+    """
+
+    def test_backward_approved_to_draft_is_rejected(self) -> None:
+        h = _Harness(seed=_meta_at(ApprovalStatus.APPROVED))
+        with self.assertRaises(ValueError):
+            h.wf.transition(_T, _DOC, "draft", _actor())
+
+    def test_obsolete_to_approved_resurrection_is_rejected(self) -> None:
+        h = _Harness(seed=_meta_at(ApprovalStatus.OBSOLETE))
+        with self.assertRaises(ValueError):
+            h.wf.transition(_T, _DOC, "approved", _actor())
+
+    def test_pending_review_to_draft_is_rejected(self) -> None:
+        h = _Harness(seed=_meta_at(ApprovalStatus.PENDING_REVIEW))
+        with self.assertRaises(ValueError):
+            h.wf.transition(_T, _DOC, "draft", _actor())
+
+    def test_forward_skip_draft_to_approved_is_allowed(self) -> None:
+        h = _Harness(seed=_meta_at(ApprovalStatus.DRAFT))
+        self.assertEqual(
+            h.wf.transition(_T, _DOC, "approved", _actor()).approval_status, "approved"
+        )
+
+    def test_idempotent_same_state_is_allowed(self) -> None:
+        h = _Harness(seed=_meta_at(ApprovalStatus.APPROVED))
+        self.assertEqual(
+            h.wf.transition(_T, _DOC, "approved", _actor()).approval_status, "approved"
+        )
+
+    def test_import_external_bypasses_the_forward_guard(self) -> None:
+        # FR-MFG-004a: imported approval is source of truth and MAY resurrect an obsolete doc.
+        h = _Harness(seed=_meta_at(ApprovalStatus.OBSOLETE))
+        state = h.wf.import_external(_T, _DOC, {"approval_status": "approved"}, _actor())
+        self.assertEqual(state.approval_status, "approved")
+        self.assertEqual(state.approval_source, "imported")
+
+
 if __name__ == "__main__":
     unittest.main()
