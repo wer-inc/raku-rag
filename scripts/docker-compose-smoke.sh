@@ -51,22 +51,64 @@ if ! "${compose[@]}" up -d --wait postgres minio localstack trace-sink; then
   exit 1
 fi
 
-vector_present="$("${compose[@]}" exec -T postgres psql -U raku -d raku -tAc \
-  "SELECT 1 FROM pg_extension WHERE extname='vector';")"
-if [[ "$vector_present" != "1" ]]; then
+# `up --wait` only blocks on container healthchecks, which can go green BEFORE the one-shot init
+# scripts finish (Postgres `db/init` CREATE EXTENSION vector; LocalStack `ready.d` queue creation).
+# Poll each post-boot dependency instead of checking once, so the smoke is deterministic rather than
+# racing the init (the intermittent exit-255/exit-1 seen when an exec hit a not-yet-ready service).
+READINESS_TIMEOUT="${READINESS_TIMEOUT:-90}"
+retry() {
+  # retry <desc> <fn>: run <fn> until it succeeds or READINESS_TIMEOUT seconds elapse.
+  local desc="$1" fn="$2" deadline=$((SECONDS + READINESS_TIMEOUT))
+  until "$fn"; do
+    if ((SECONDS >= deadline)); then
+      echo "timed out after ${READINESS_TIMEOUT}s waiting for: ${desc}" >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+pgvector_ready() {
+  local present
+  present="$("${compose[@]}" exec -T postgres psql -U raku -d raku -tAc \
+    "SELECT 1 FROM pg_extension WHERE extname='vector';" 2>/dev/null || true)"
+  [[ "$(echo "$present" | tr -d '[:space:]')" == "1" ]]
+}
+if ! retry "pgvector extension" pgvector_ready; then
   echo "pgvector extension was not available in the compose Postgres." >&2
   exit 1
 fi
 
-"${compose[@]}" exec -T localstack awslocal sqs list-queues | grep -q "raku-ingest"
-"${compose[@]}" exec -T minio mc ready local >/dev/null
+ingest_queue_ready() {
+  "${compose[@]}" exec -T localstack awslocal sqs list-queues 2>/dev/null | grep -q "raku-ingest"
+}
+if ! retry "raku-ingest SQS queue" ingest_queue_ready; then
+  echo "raku-ingest SQS queue was not created on LocalStack." >&2
+  exit 1
+fi
 
-python - <<PY
+minio_ready() { "${compose[@]}" exec -T minio mc ready local >/dev/null 2>&1; }
+if ! retry "MinIO readiness" minio_ready; then
+  echo "MinIO did not report ready." >&2
+  exit 1
+fi
+
+trace_sink_ready() {
+  python3 - <<PY
 from urllib.request import urlopen
 
-with urlopen("${TRACE_SINK_HEALTH_URL}", timeout=10) as response:
-    if response.status >= 400:
-        raise SystemExit(f"trace-sink health returned {response.status}")
+try:
+    with urlopen("${TRACE_SINK_HEALTH_URL}", timeout=5) as response:
+        raise SystemExit(0 if response.status < 400 else 1)
+except SystemExit:
+    raise
+except Exception:
+    raise SystemExit(1)
 PY
+}
+if ! retry "trace-sink health" trace_sink_ready; then
+  echo "trace-sink health check did not pass at ${TRACE_SINK_HEALTH_URL}." >&2
+  exit 1
+fi
 
 echo "Docker compose local dependency smoke GREEN"

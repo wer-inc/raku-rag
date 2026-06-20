@@ -20,8 +20,15 @@ import json
 import hashlib
 from typing import Sequence
 
-import psycopg
-from psycopg.types.json import Json
+try:
+    # psycopg is a production-adapter dependency. The stdlib-only Tier A gate imports this module
+    # transitively (apps/answer-service → raku_rag.production → here) without psycopg installed, so
+    # defer the hard requirement to actual Postgres use and keep the module importable under stdlib.
+    import psycopg
+    from psycopg.types.json import Json
+except ModuleNotFoundError:  # pragma: no cover - exercised by the stdlib-only Tier A gate
+    psycopg = None  # type: ignore[assignment]
+    Json = None  # type: ignore[assignment]
 
 from raku_rag.core.security.acl import AclPolicy
 from raku_rag.domain.models import (
@@ -65,6 +72,10 @@ def connect(dsn: str, *, reset: bool = False) -> psycopg.Connection:
     ``reset=True`` (tests only) TRUNCATEs all core tables for a clean slate — done as the connecting
     superuser BEFORE dropping to ``raku_app``. Then ``SET ROLE raku_app`` so RLS applies to every query.
     """
+    if psycopg is None:  # pragma: no cover - clear failure if used without the optional dependency
+        raise RuntimeError(
+            "psycopg is required for the Postgres adapters; install 'psycopg[binary]'."
+        )
     conn = psycopg.connect(dsn, autocommit=True)
     with conn.cursor() as cur:
         if reset:

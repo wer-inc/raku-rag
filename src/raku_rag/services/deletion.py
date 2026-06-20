@@ -62,7 +62,12 @@ class DeletionService:
         # 1) immediate tombstone (document + chunks) → excluded from retrieval at once
         doc = self._registry.get(tenant_id, document_id)
         if doc:
+            # Persist the doc-level tombstone. In-memory relied on by-reference mutation, which is a
+            # no-op against the Postgres registry — so a later restore (re-ingest with the same
+            # checksum) was wrongly skipped by the ingestion idempotency guard and the purged chunks
+            # never came back, diverging from the in-memory backend. Writing it back restores parity.
             doc.tombstone = True
+            self._registry.put(doc)
         self._record(tenant_id, document_id)
         tombstoned = self._store.set_tombstone(tenant_id, document_id, True)
         # 2) invalidate any cached retrieval/answer depending on this document
@@ -103,6 +108,7 @@ class DeletionService:
             doc = self._registry.get(record.tenant_id, record.document_id)
             if doc:
                 doc.tombstone = True
+                self._registry.put(doc)  # persist on Postgres too (parity with in-memory mutation)
             self._store.set_tombstone(record.tenant_id, record.document_id, True)
             self._cache.invalidate_document(record.tenant_id, record.document_id)
             self._cache.invalidate_visual_artifacts(
