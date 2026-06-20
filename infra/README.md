@@ -14,3 +14,17 @@ docker compose -f infra/docker-compose.yml --profile observability up -d   # + l
 - **redis** (profile `cache`) — only if an adapter needs it.
 
 Phase 0 ships this config; Phase 1 wires the services into the runtime (RLS, ingestion, etc.).
+
+## Tier B bootstrap
+
+The 001 production track starts with the Postgres-only schema/RLS gate:
+
+```bash
+bash scripts/gate.sh b
+```
+
+This starts only `postgres`, creates a throwaway gate database, applies
+`infra/db/migrations/postgres/0001_core_rls.sql`, verifies that an application role scoped with
+`app.current_tenant_id` cannot read another tenant's document, runs the down migration, then applies
+the up migration again. The SQL lives under `infra/db/migrations/postgres/` so the default sqlite
+migration smoke remains Docker-free.

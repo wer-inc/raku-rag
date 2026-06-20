@@ -4,12 +4,13 @@
 # See docs/loop-engineering.md.
 #
 # Usage:
-#   scripts/gate.sh [a|all|separation]
+#   scripts/gate.sh [a|b|all|separation]
 #     a           Tier A hard gates only (zero-tolerance). DEFAULT. ~milliseconds, stdlib.
+#     b           Tier B Postgres/pgvector/RLS bootstrap gate. Requires Docker/compose.
 #     all         Full test suite (Tier A + integration + unit).
 #     separation  Invariant check (§5): block gate/test edits mixed with src/ edits.
 #
-# Exit codes: 0 = green, 1 = test failure (Tier A HALT), 3 = separation violation.
+# Exit codes: 0 = green, 1 = test failure, 2 = unavailable/usage, 3 = separation violation.
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -37,6 +38,69 @@ run_all() {
   banner "Full suite (Tier A + integration + unit)"
   python3 -m unittest discover -s tests -t . -p 'test_*.py' -q
   echo "Full suite: GREEN"
+}
+
+require_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker is required for Tier B but was not found on PATH." >&2
+    echo "Run Tier B in a local/CI environment with Docker Compose available." >&2
+    return 2
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    echo "Docker Compose v2 is required for Tier B." >&2
+    return 2
+  fi
+}
+
+run_tier_b() {
+  banner "Tier B — Postgres/pgvector/RLS bootstrap"
+  require_docker
+  local compose=(docker compose -f infra/docker-compose.yml)
+  local gate_db="${POSTGRES_DB:-raku}_tier_b_gate"
+  local user="${POSTGRES_USER:-raku}"
+
+  "${compose[@]}" up -d postgres
+  "${compose[@]}" exec -T postgres dropdb -U "$user" --if-exists "$gate_db"
+  "${compose[@]}" exec -T postgres createdb -U "$user" "$gate_db"
+
+  run_rls_smoke() {
+    "${compose[@]}" exec -T postgres psql -U "$user" -d "$gate_db" -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO tenants (tenant_id, name) VALUES ('tier_b_tenant_a', 'A')
+  ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
+INSERT INTO tenants (tenant_id, name) VALUES ('tier_b_tenant_b', 'B')
+  ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
+INSERT INTO collections (collection_id, tenant_id, name) VALUES ('tier_b_coll_a', 'tier_b_tenant_a', 'A')
+  ON CONFLICT (collection_id) DO UPDATE SET updated_at = now();
+INSERT INTO documents (document_id, tenant_id, collection_id, source_id, source_document_id, indexed_at)
+  VALUES ('tier_b_doc_a', 'tier_b_tenant_a', 'tier_b_coll_a', 'tier_b_src', 'tier_b_src_doc', now())
+  ON CONFLICT (document_id) DO UPDATE SET updated_at = now();
+INSERT INTO chunks (chunk_id, tenant_id, document_id, collection_id, text, position)
+  VALUES ('tier_b_chunk_a', 'tier_b_tenant_a', 'tier_b_doc_a', 'tier_b_coll_a', 'hello tier b', 0)
+  ON CONFLICT (chunk_id) DO UPDATE SET updated_at = now();
+
+SET ROLE raku_app;
+SET app.current_tenant_id = 'tier_b_tenant_a';
+SELECT 1 / CASE WHEN count(*) = 1 THEN 1 ELSE 0 END AS tenant_a_sees_own_doc
+  FROM documents WHERE document_id = 'tier_b_doc_a';
+SET app.current_tenant_id = 'tier_b_tenant_b';
+SELECT 1 / CASE WHEN count(*) = 0 THEN 1 ELSE 0 END AS tenant_b_cannot_see_doc
+  FROM documents WHERE document_id = 'tier_b_doc_a';
+RESET ROLE;
+SQL
+  }
+
+  "${compose[@]}" exec -T postgres psql -U "$user" -d "$gate_db" -v ON_ERROR_STOP=1 \
+    < infra/db/migrations/postgres/0001_core_rls.sql
+  run_rls_smoke
+  "${compose[@]}" exec -T postgres psql -U "$user" -d "$gate_db" -v ON_ERROR_STOP=1 \
+    < infra/db/migrations/postgres/0001_core_rls.down.sql
+  "${compose[@]}" exec -T postgres psql -U "$user" -d "$gate_db" -v ON_ERROR_STOP=1 \
+    < infra/db/migrations/postgres/0001_core_rls.sql
+  run_rls_smoke
+  "${compose[@]}" exec -T postgres dropdb -U "$user" "$gate_db"
+
+  python3 -m unittest tests.contract.test_tier_b_migration_sql -v
+  echo "Tier B bootstrap: GREEN"
 }
 
 # Invariant 5: verification/generation separation.
@@ -71,7 +135,8 @@ run_separation() {
 
 case "$MODE" in
   a)          run_tier_a ;;
+  b)          run_tier_b ;;
   all)        run_tier_a; run_all ;;
   separation) run_separation ;;
-  *) echo "unknown mode: $MODE (use: a | all | separation)" >&2; exit 2 ;;
+  *) echo "unknown mode: $MODE (use: a | b | all | separation)" >&2; exit 2 ;;
 esac
