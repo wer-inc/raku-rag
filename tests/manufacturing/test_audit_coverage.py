@@ -110,6 +110,10 @@ REQUIRED_EVENT_TYPES: dict[str, callable] = {
     "search_query": lambda e: "search" in _action(e),
     "dashboard_access": lambda e: "dashboard" in _action(e),
     "kpi_export": lambda e: "kpi" in _action(e),
+    # GAP-F4 — feedback / low-rating (FR-MFG-021): the 5th access/update category GAP-F3 deferred.
+    # An answer-feedback event is audited reference-IDs-only via record_answer_feedback; this closes
+    # SC-MFG-010 coverage to 100% (all 5 categories). The comment body never reaches the audit.
+    "feedback": lambda e: "feedback" in _action(e),
 }
 
 
@@ -224,6 +228,16 @@ def _drive_end_to_end(sys: ManufacturingSystem) -> None:
     sys.search(_op(), "disassemble the press safely")
     sys.knowledge_ops_dashboard(admin)
     sys.kpi(admin, format="json")
+
+    # 6c) GAP-F4 — a user rates an answer LOW (1-5 scale; <=2 = low). Audited reference-IDs-only via
+    #     record_answer_feedback (action 'feedback.low_rating'); the comment body is NOT passed to the
+    #     audit. Completes SC-MFG-010's 5th category (feedback / low rating).
+    sys.record_answer_feedback(
+        principal=_op(),
+        rating=1,
+        document_ids=("conf1",),
+        comment=SECRET_BODY,  # MUST NOT appear in the audit — proves the comment is dropped (PII=0)
+    )
 
     # 7) deletion / tombstone (reuses 001 tombstone) — audited.
     sys.delete_document(tenant_id=T, document_id="conf1", actor=admin)

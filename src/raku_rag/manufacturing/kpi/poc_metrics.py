@@ -31,6 +31,8 @@ from raku_rag.manufacturing.telemetry.safety_metrics import SafetyTelemetry
 
 _ANSWER_ACTION = "answer.safety_evaluated"
 _CITATION_ACTION = "citation.access"
+_FEEDBACK_ACTION = "feedback.low_rating"
+_FEEDBACK_LOW_DECISION = "low_rating"
 
 # The FR-MFG-028 KPI key set (data-model §I). Every key MUST be computable + exportable.
 KPI_KEYS: tuple[str, ...] = (
@@ -125,9 +127,11 @@ class PocKpiReport:
         self_resolution_rate = _rate(ok, total)
         grounded_answer_rate = _rate(grounded, total)
         insufficient_evidence_rate = _rate(insufficient, total)
-        # low_rating_rate: reuses the 001 feedback signal; no rating feedback is wired into the audit
-        # in this in-memory composition, so the rate is 0.0 (present + computable, additive).
-        low_rating_rate = 0.0
+        # low_rating_rate: DERIVED from the audited feedback events (single source of truth). The
+        # denominator is TOTAL feedback (= low_feedback / total_feedback), 0.0 when no feedback yet.
+        feedback_entries = [e for e in entries if e.action == _FEEDBACK_ACTION]
+        low_feedback = sum(1 for e in feedback_entries if e.decision == _FEEDBACK_LOW_DECISION)
+        low_rating_rate = _rate(low_feedback, len(feedback_entries))
         # expert_interruption_reduction: proxy = the share of answers self-resolved (the expert was
         # NOT interrupted), the inverse of the unanswered/escalated share. Derived, idempotent.
         expert_interruption_reduction = _rate(ok, total)

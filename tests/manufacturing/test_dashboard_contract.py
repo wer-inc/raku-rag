@@ -359,5 +359,39 @@ class TestKpiResponseShapeAndExport(unittest.TestCase):
         )
 
 
+class TestLowRatingFeedback(unittest.TestCase):
+    """GAP-F4: low_rating_answers + low_rating_rate are DERIVED from audited feedback (FR-MFG-012/028).
+
+    A low rating recorded via record_answer_feedback (reference-IDs-only audit entry) surfaces in the
+    dashboard low_rating_answers and the KPI low_rating_rate — derived from the single-source-of-truth
+    audit log, not the old hardcoded ()/0.0 stub.
+    """
+
+    def setUp(self) -> None:
+        from raku_rag.manufacturing.app import ManufacturingSystem
+
+        self.sys = ManufacturingSystem()
+        self.admin = _admin()
+
+    def test_dashboard_low_rating_answers_from_feedback_audit(self) -> None:
+        self.sys.record_answer_feedback(
+            principal=_op(), rating=1, document_ids=("appr1",), comment="unsafe"
+        )
+        dash = self.sys.knowledge_ops_dashboard(self.admin)
+        low = _attr_or_key(dash, "low_rating_answers") or ()
+        self.assertTrue(low, "a low-rated answer must surface in low_rating_answers (FR-MFG-012)")
+        self.assertIn("appr1", " ".join(str(x) for x in low))
+
+    def test_kpi_low_rating_rate_reflects_feedback(self) -> None:
+        # low_rating_rate = low_feedback / total_feedback (feedback-count denominator).
+        self.sys.record_answer_feedback(principal=_op(), rating=1, document_ids=("appr1",))
+        self.sys.record_answer_feedback(principal=_op(), rating=5, document_ids=("appr1",))
+        kpi = self.sys.kpi(self.admin, format="json")
+        self.assertAlmostEqual(kpi["low_rating_rate"], 0.5)
+
+    def test_no_feedback_low_rating_rate_is_zero(self) -> None:
+        self.assertEqual(self.sys.kpi(self.admin, format="json")["low_rating_rate"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

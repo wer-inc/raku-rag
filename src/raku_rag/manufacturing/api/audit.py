@@ -96,3 +96,51 @@ def record_answer_decision(
     if principal is not None:
         entry = stamp_org_context(entry, principal, factory_id=factory_id)
     writer.record(entry)
+
+
+# --- GAP-F4: low-rating / feedback funnel (FR-MFG-021/012/028) ---------------------------------
+# Rating scale = 1-5 (mirrors the 001 FeedbackRequest DTO); low = rating <= LOW_RATING_THRESHOLD.
+# Feedback is ALWAYS audited, carrying a low_rating flag + the numeric score (non-PII; numbers/bools
+# are not redacted); the low-rating views COUNT the low ones. The free-text comment is NEVER stored
+# in the audit (PII-risk, SC-MFG-010 = 0) — it is not even a parameter of this emitter.
+LOW_RATING_THRESHOLD = 2
+FEEDBACK_ACTION = "feedback.low_rating"
+FEEDBACK_LOW_DECISION = "low_rating"
+
+
+def record_answer_feedback(
+    writer: InMemoryAuditLogWriter,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    rating: int,
+    answer_correlation_id: str = "",
+    document_ids: tuple[str, ...] = (),
+    collection_id: str | None = None,
+) -> bool:
+    """Audit one answer-feedback event (reference IDs only). Returns True iff it is a LOW rating.
+
+    ``rating`` is 1-5 (001 FeedbackRequest convention); ``rating <= LOW_RATING_THRESHOLD`` is low.
+    The feedback is ALWAYS recorded; the low-rating flag/score lets the audit-derived dashboard/KPI
+    COUNT the low ones (single source of truth, like the safety telemetry). The comment body is
+    intentionally NOT a parameter — no free text reaches the audit (SC-MFG-010 = PII 0).
+    """
+    is_low = int(rating) <= LOW_RATING_THRESHOLD
+    ts = _now()
+    entry = AuditLogEntry(
+        tenant_id=tenant_id,
+        log_id=f"feedback:{answer_correlation_id or ts}:{ts}",
+        timestamp=ts,
+        request_id=answer_correlation_id or None,
+        actor_id=actor_id,
+        action=FEEDBACK_ACTION,
+        resource_type="answer",
+        resource_id=answer_correlation_id or None,  # reference ID only
+        collection_id=collection_id,
+        decision=(FEEDBACK_LOW_DECISION if is_low else "rating"),  # reference label, not body text
+        reason="feedback",  # reference label (a category), never the comment
+        document_ids_used=tuple(document_ids),
+        client_metadata={"rating": int(rating), "low_rating": is_low},  # numeric/bool: not redacted
+    )
+    writer.record(entry)
+    return is_low

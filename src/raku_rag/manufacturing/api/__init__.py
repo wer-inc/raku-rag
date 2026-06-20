@@ -18,7 +18,7 @@ from raku_rag.manufacturing.api.answer_ext import (
     ManufacturingAnswerService,
     ManufacturingCitation,
 )
-from raku_rag.manufacturing.api.audit import record_answer_decision
+from raku_rag.manufacturing.api.audit import record_answer_decision, record_answer_feedback
 from raku_rag.manufacturing.api.ingest_metadata import ManufacturingSyncStatusService
 from raku_rag.manufacturing.api.search_ext import (
     ManufacturingSearchResult,
@@ -33,4 +33,5 @@ __all__ = [
     "ManufacturingSearchResult",
     "ManufacturingSearchService",
     "record_answer_decision",
+    "record_answer_feedback",
 ]

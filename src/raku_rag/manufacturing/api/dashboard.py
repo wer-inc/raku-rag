@@ -33,6 +33,10 @@ from raku_rag.manufacturing.telemetry.safety_metrics import SafetyTelemetry, SOU
 _ANSWER_ACTION = "answer.safety_evaluated"
 # Citation-access action label written by ManufacturingSystem._audit_citation_access.
 _CITATION_ACTION = "citation.access"
+# Feedback-path labels written by record_answer_feedback (api/audit.py) — derivation keys for the
+# low-rating dashboard surface + KPI low_rating_rate (single source of truth, like safety telemetry).
+_FEEDBACK_ACTION = "feedback.low_rating"
+_FEEDBACK_LOW_DECISION = "low_rating"
 
 
 def _now() -> str:
@@ -160,9 +164,17 @@ class DashboardService:
         # unanswered: answer-path decisions that did NOT assert (a safety block was recorded).
         unanswered = sum(1 for e in answer_entries if e.safety_block_reason is not None)
 
-        # low_rating_answers: reuses the 001 feedback signal; in this in-memory composition no rating
-        # feedback is wired through the audit yet, so the surface is present-and-empty (additive).
-        low_rating: tuple = ()
+        # low_rating_answers: DERIVED from the audit log (single source of truth) — the answers a
+        # user/reviewer rated low via record_answer_feedback (action 'feedback.low_rating', decision
+        # 'low_rating'). Reference IDs only (the rated answer's correlation/resource_id or its surveyed
+        # document_ids); never the comment body. Most-frequently-low-rated first.
+        low_counter: Counter = Counter()
+        for e in entries:
+            if e.action == _FEEDBACK_ACTION and e.decision == _FEEDBACK_LOW_DECISION:
+                ref = e.resource_id or (e.document_ids_used[0] if e.document_ids_used else None)
+                if ref:
+                    low_counter[ref] += 1
+        low_rating = tuple(ref for ref, _n in low_counter.most_common())
 
         # frequent_questions: grouped by the recorded reason-code signature (reference labels only,
         # never the query body — SC-MFG-010). Surfaces the topics asked most.

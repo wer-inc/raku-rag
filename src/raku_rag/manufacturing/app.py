@@ -21,12 +21,12 @@ stdlib only.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from raku_rag.app import MvpSystem
 from raku_rag.core.config import Settings
 from raku_rag.domain.models import IdentityClaims, ScopeType, SubjectType
-from raku_rag.manufacturing.api import record_answer_decision
+from raku_rag.manufacturing.api import record_answer_decision, record_answer_feedback
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, ManufacturingAnswerService
 from raku_rag.manufacturing.api.dashboard import DashboardService
 from raku_rag.manufacturing.api.drafts import DraftService
@@ -851,7 +851,92 @@ class ManufacturingSystem:
         )
         return result
 
+    # --- governance: retention enforcement (GAP-F1; FR-MFG-020, GQ2; reuses 001 tombstone) ---------
+    def expire_document(self, *, tenant_id: str, document_id: str, actor: IdentityClaims):
+        """Expire a single document past its retention window via the REUSED 001 tombstone path.
+
+        Delegates to the same 001 DeletionService as delete_document (tombstone + cascade); an expired
+        document never reappears in search/answer/citation (SC-003). Audited as a deletion (reference
+        IDs only) — reuses the delete_document funnel so the audit-coverage closed list is unchanged.
+        """
+        return self.delete_document(tenant_id=tenant_id, document_id=document_id, actor=actor)
+
+    def run_retention_sweep(
+        self, *, tenant_id: str, actor: IdentityClaims, now_iso: str | None = None
+    ) -> tuple[str, ...]:
+        """Expire every live document whose age exceeds the tenant's effective customer-data retention.
+
+        Age is computed from the 001 ``Document.created_at`` (ISO UTC, set at ingest). The window is
+        ``effective_retention(tenant_id).retention_customer_days`` (GQ2 default 365, clamped to
+        30..3650). Each past-window document is expired via :meth:`expire_document` (001 tombstone +
+        cascade, SC-003). Returns the expired document_ids; emits ONE summary audit entry (reference
+        IDs only — the count + the expired ids, never body/customer). NOT auto-scheduled: an admin
+        endpoint / future Dagster job must invoke it; this is the honest minimal wiring.
+        """
+        now = datetime.fromisoformat(now_iso) if now_iso else datetime.now(timezone.utc)
+        retention_days = self.retention.effective_retention(tenant_id).retention_customer_days
+        cutoff = now - timedelta(days=retention_days)
+        # Snapshot first: expire_document mutates the registry (tombstone) under iteration.
+        candidates = [
+            doc.document_id
+            for (tid, _did), doc in list(self._mvp.registry._docs.items())
+            if tid == tenant_id
+            and not doc.tombstone
+            and doc.created_at
+            and datetime.fromisoformat(doc.created_at) < cutoff
+        ]
+        expired: list[str] = []
+        for document_id in candidates:
+            self.expire_document(tenant_id=tenant_id, document_id=document_id, actor=actor)
+            expired.append(document_id)
+        ts = datetime_now_iso()
+        self.audit.record(
+            AuditLogEntry(
+                tenant_id=tenant_id,
+                log_id=f"retention.sweep:{tenant_id}:{ts}",
+                timestamp=ts,
+                actor_id=actor.user_id if actor else None,
+                action="retention.sweep",
+                resource_type="data_use_policy",
+                resource_id=tenant_id,  # reference ID only
+                decision="swept",
+                reason=f"retention_days={retention_days};expired={len(expired)}",
+                document_ids_used=tuple(expired),
+            )
+        )
+        return tuple(expired)
+
     # --- US5: knowledge-ops dashboard / safety-telemetry / KPI (contracts §E; FR-MFG-012/028/030) --
+    def record_answer_feedback(
+        self,
+        *,
+        principal: IdentityClaims,
+        rating: int,
+        answer_correlation_id: str = "",
+        document_ids: tuple[str, ...] = (),
+        comment: str | None = None,
+        collection_id: str | None = None,
+    ) -> bool:
+        """POST /v1/manufacturing/answers/{id}/feedback (FR-MFG-021/012/028).
+
+        Records a user/reviewer rating of an answer as an audited, reference-IDs-only event (the
+        SINGLE source of truth). The low-rating dashboard surface + KPI low_rating_rate are DERIVED
+        from this audit action (api/dashboard.py / kpi/poc_metrics.py), never a parallel store.
+
+        ``comment`` is accepted for API parity with the 001 FeedbackRequest but is INTENTIONALLY
+        DROPPED here: no free-text body reaches the audit log (SC-MFG-010 = PII/secret/body 0).
+        Returns True iff the rating is low (<= LOW_RATING_THRESHOLD).
+        """
+        return record_answer_feedback(
+            self.audit,
+            tenant_id=principal.tenant_id,
+            actor_id=principal.user_id,
+            rating=rating,
+            answer_correlation_id=answer_correlation_id,
+            document_ids=tuple(document_ids),
+            collection_id=collection_id,
+        )
+
     def _audit_admin_access(
         self,
         *,
