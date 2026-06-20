@@ -60,6 +60,13 @@ run_tier_b() {
   local user="${POSTGRES_USER:-raku}"
 
   "${compose[@]}" up -d postgres
+  for _ in $(seq 1 30); do
+    if "${compose[@]}" exec -T postgres pg_isready -U "$user" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  "${compose[@]}" exec -T postgres pg_isready -U "$user"
   "${compose[@]}" exec -T postgres dropdb -U "$user" --if-exists "$gate_db"
   "${compose[@]}" exec -T postgres createdb -U "$user" "$gate_db"
 
@@ -114,7 +121,7 @@ run_separation() {
   # The protected set = the 001 security gates, the 6 named 002 hard-gate test files, the unit gate
   # tests, and this gate script itself. (Not every test_*.py — only the hard gates; new feature tests
   # are free to land with their impl.)
-  local protected='^(tests/security/|tests/manufacturing/unit/|tests/manufacturing/test_(safety_gate|obsolete_draft_evidence|draft_only|acl_mapping|no_train|audit_coverage)\.py|scripts/gate\.sh$)'
+  local protected='^(tests/security/|tests/contract/test_tier_b_.*\.py|infra/db/migrations/postgres/|tests/manufacturing/unit/|tests/manufacturing/test_(safety_gate|obsolete_draft_evidence|draft_only|acl_mapping|no_train|audit_coverage)\.py|scripts/gate\.sh$)'
   if ! git rev-parse HEAD >/dev/null 2>&1; then
     # No commits yet: nothing is "modified", invariant not yet enforceable.
     echo "no commits yet — separation guard inactive (becomes active after first commit)"; return 0

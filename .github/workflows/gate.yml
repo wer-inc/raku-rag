@@ -27,6 +27,42 @@ jobs:
       - name: Full suite
         run: bash scripts/gate.sh all
 
+  tier-b:
+    name: Tier B Postgres/pgvector/RLS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Detect Tier B relevant changes
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            changed="$(git diff --name-only "$base"...HEAD)"
+          elif git rev-parse "${{ github.event.before }}" >/dev/null 2>&1; then
+            changed="$(git diff --name-only "${{ github.event.before }}"..."${{ github.sha }}")"
+          else
+            changed="$(git diff-tree --no-commit-id --name-only -r "${{ github.sha }}")"
+          fi
+          printf '%s\n' "$changed"
+          relevant="$(printf '%s\n' "$changed" | grep -E '^(infra/db/|infra/docker-compose\.yml|scripts/gate\.sh|tests/contract/test_tier_b_|src/raku_rag/(persistence|providers|services)/|\.github/workflows/gate\.yml|docs/production-gate-strategy\.md)' || true)"
+          if [ -n "$relevant" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Tier B relevant changes:"; printf '%s\n' "$relevant"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No Tier B relevant changes; skipping Docker-backed gate."
+          fi
+      - name: Tier B bootstrap gate
+        if: steps.changes.outputs.run == 'true'
+        run: bash scripts/gate.sh b
+
   separation:
     name: Verification/generation separation (PR)
     runs-on: ubuntu-latest
@@ -40,7 +76,7 @@ jobs:
       - name: Block weakening of an existing hard gate
         run: |
           base="${{ github.event.pull_request.base.sha }}"
-          protected_re='^(tests/security/|tests/manufacturing/unit/|tests/manufacturing/test_(safety_gate|obsolete_draft_evidence|draft_only|acl_mapping|no_train|audit_coverage)\.py|scripts/gate\.sh$)'
+          protected_re='^(tests/security/|tests/contract/test_tier_b_.*\.py|infra/db/migrations/postgres/|tests/manufacturing/unit/|tests/manufacturing/test_(safety_gate|obsolete_draft_evidence|draft_only|acl_mapping|no_train|audit_coverage)\.py|scripts/gate\.sh$)'
           mod_protected="$(git diff --diff-filter=M --name-only "$base"...HEAD | grep -E "$protected_re" || true)"
           src_changed="$(git diff --name-only "$base"...HEAD | grep -E '^src/' || true)"
           if [ -n "$mod_protected" ] && [ -n "$src_changed" ]; then
