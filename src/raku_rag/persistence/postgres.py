@@ -9,8 +9,9 @@ These mirror the in-memory MVP adapters (``providers/vectorstores.InMemoryVector
   (tenant → tombstone → ``visible``), so the existing security hard gates pass unchanged (adapter parity).
 - Every connection drops to the non-superuser ``raku_app`` role and sets ``app.current_tenant_id`` per
   operation, so **RLS is genuinely exercised** (a superuser would bypass it).
-- pgvector ANN ranking is step 3; Step 2 scores with the **same Python cosine** as the in-memory store
-  (the security gates test presence/absence + ``last_prefiltered_count``, not ANN ordering).
+- ranking uses pgvector (``ORDER BY embedding <=> q`` = cosine distance) over the RLS-tenant live set,
+  with the ACL filter applied in Python AFTER ranking and BEFORE ``top_k`` — so ``top_k`` never truncates
+  before ACL (see ``search``). ``retrieval_score`` = ``1 - cosine_distance`` (the in-memory cosine).
 """
 from __future__ import annotations
 
@@ -31,7 +32,6 @@ from raku_rag.domain.models import (
     SubjectType,
 )
 from raku_rag.interfaces.base import Vector, VectorStore, VisibilityPredicate
-from raku_rag.providers.embeddings import cosine
 
 _APP_ROLE = "raku_app"
 # child → parent order, so TRUNCATE ... CASCADE is unambiguous.
@@ -176,24 +176,35 @@ class PostgresVectorStore(VectorStore):
     def search(
         self, tenant_id: str, query_vec: Vector, *, visible: VisibilityPredicate, top_k: int
     ) -> list[ScoredChunk]:
+        """pgvector distance ranking, ACL post-filter, THEN top_k.
+
+        Step 3 moves ranking to pgvector (``ORDER BY embedding <=> q`` = cosine distance) over the
+        RLS-tenant + live set, but deliberately applies NO SQL ``LIMIT`` before the Python ACL filter:
+        a ``LIMIT k`` in SQL would truncate the candidate set before ACL and silently drop visible
+        chunks that rank just past it. So we rank-order the whole visible-tenant set, drop non-visible
+        chunks in Python (reused AclPolicy, order preserved), set ``last_prefiltered_count``, and only
+        then take ``top_k`` — identical semantics to the in-memory store. ``retrieval_score`` =
+        ``1 - cosine_distance`` = the cosine similarity the in-memory store reports (ranking parity).
+        """
         _use_tenant(self._conn, tenant_id)  # RLS scopes the tenant
+        qlit = _vec_literal(query_vec)
         with self._conn.cursor() as cur:
             cur.execute(
                 "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, token_count, "
                 "position, heading_path, offset_mapping, metadata, embedding_model_version, tombstone, "
-                "embedding::text FROM chunks WHERE tombstone = false"
+                "(embedding <=> %s::vector) AS distance FROM chunks WHERE tombstone = false "
+                "ORDER BY embedding <=> %s::vector, chunk_id",  # cosine-distance rank; chunk_id breaks ties
+                (qlit, qlit),
             )
             rows = cur.fetchall()
-        candidates: list[tuple[Chunk, list[float]]] = []
-        for r in rows:
+        candidates: list[ScoredChunk] = []
+        for r in rows:  # rows already in best-first distance order
             chunk = _row_to_chunk(r)
-            if not visible(chunk):  # ACL pre-filter in Python (reused AclPolicy)
+            if not visible(chunk):  # ACL post-filter in Python — AFTER ranking, BEFORE top_k
                 continue
-            candidates.append((chunk, json.loads(r[13])))
+            candidates.append(ScoredChunk(chunk=chunk, retrieval_score=1.0 - float(r[13])))
         self.last_prefiltered_count = len(candidates)
-        scored = [ScoredChunk(chunk=c, retrieval_score=cosine(query_vec, v)) for c, v in candidates]
-        scored.sort(key=lambda s: s.retrieval_score, reverse=True)
-        return scored[:top_k]
+        return candidates[:top_k]
 
     def set_tombstone(self, tenant_id: str, document_id: str, value: bool) -> int:
         _use_tenant(self._conn, tenant_id)
