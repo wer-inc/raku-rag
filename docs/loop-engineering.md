@@ -161,7 +161,17 @@ obsolete・draft 一次証拠(011) / no-train override(009) / audit 抑制(010) 
 - [x] **002 freeze**。次の本筋 = 001 production track。**最初の一手は「API実装」でなく「本番trackのL1 No（ゲート）設計」** → `docs/production-gate-strategy.md`（Tier A–E・アダプタparity・compose Postgres+pgvector・実装順）
 - [x] 001 production track **Step 2「Postgres parity」完成**: Tier B（migration/RLS/contract）+ Postgres-backed `ProductionSystem`（PostgresVectorStore/Registry/AclPolicy・ACL判定は Python の AclPolicy 再利用、tenant+tombstone+RLS は Postgres）。**既存 security ハードゲート（ACL漏洩 / tenant分離 incl. `last_prefiltered_count` / 削除再出現）が実Postgres+RLS に対し parity で green（CI tier-b）**。Tier A の 4ms ループ不変。ローカル PG14+pgvector 導入で高速ループ確立（`SET=%s`→`set_config` の実行差分を秒で潰した）
 - [x] Step 3 **pgvector ランキング parity 完成**: search を `ORDER BY embedding <=> q`（cosine距離）へ移行、ACL は Python で **ranking後・top_k前**に適用（SQL LIMIT を ACL前に置かない＝可視行を切り捨てない）、`retrieval_score = 1 - distance`。in-memory MvpSystem を oracle に順位一致 + **top_k×ACL境界の敵対テスト**を CI tier-b で強制。security parity 無傷・Tier A 不変
-- [ ] 次: Step 4 NestJS `/answer`(Tier D, ProductionSystem を叩く) / Step 5 SQS worker(Tier C)
+- [x] Step 4a/4b **製品HTTP縦串 完成**: `web → NestJS /v1/answer(薄いfacade・認証/契約) → Python answer-service(/internal/answer) → ProductionSystem(Postgres+pgvector+RLS)`。**RAG真実は再実装せず**、テナント/identity は署名トークン由来（body無視）。最小 chat UI（tenant/user切替で ACL・テナント分離を可視化）。**Tier D**（facade契約 e2e: 認証必須 / tenant-from-token-not-body / forward+passthrough / 502）を CI 毎push強制。end-to-end 実証: `alice@demo` 接地回答+citation、クロステナント `bob@other` は漏洩なし
+
+  縦串の起動（ローカルデモ）:
+  ```
+  POSTGRES_URL=postgresql://raku:raku@127.0.0.1:5432/raku_parity PYTHONPATH=src \
+    python3 apps/answer-service/server.py --seed --port 8088          # 1) RAG真実(Postgresコア)
+  ANSWER_SERVICE_URL=http://127.0.0.1:8088 API_PORT=3000 \
+    npm run start --workspace @raku-rag/api                            # 2) NestJS facade(/v1/answer)
+  npm run dev:web   # 3) tenant/user を切替えて ACL/テナント分離を確認
+  ```
+- [ ] 次: Step 5 SQS worker 実 ingestion(Tier C) / Step 4 残: OpenAPI 契約の固定・トークンHMAC本検証（現状は base64url の mock 境界）
 - [x] CI: `.github/workflows/gate.yml`（全 push/PR で `gate.sh a`＋`all` を実行、PR は §5 分離を CI 強制, T004）— **ループ運用化**。`ci.yml` は 001 本番アダプタ用スケルトンとして温存
 - [ ] 各フェーズ末に L3 converge/analyze
 - [ ] 安定後（§0 Stage1 昇格条件）に L4 nightly `/schedule`（読み取り専用）
