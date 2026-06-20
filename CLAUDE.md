@@ -1,9 +1,13 @@
 <!-- SPECKIT START -->
-## Active Feature: 002-manufacturing-field-knowledge-rag (Solution Layer — tasks generated, ready for /speckit-implement)
+## Active Feature: 002-manufacturing-field-knowledge-rag (Solution Layer — implemented; tasks.md fully checked; committed on this branch, gate green)
 
 Manufacturing Field Knowledge RAG built **on top of** the 001 base platform (do NOT redefine base
 features — reference them). Plan & design artifacts complete (GQ1=block, GQ2=customer 1yr/audit 1yr
-resolved). `tasks.md` is generated (71 tasks T001–T072 across 10 phases); next step is `/speckit-analyze` (preflight) → `/speckit-implement`.
+resolved). `tasks.md` is fully checked (T001–T072 + sub-tasks, all `[x]` = 実装済み). The cross-spec
+implementation (002 manufacturing + 003/006/010 + observability/providers/workers/SDK/infra/tests) is
+committed on branch `002-manufacturing-field-knowledge-rag`; the GitHub `gate` workflow is green as of
+`1e2abb5`. Local `scripts/gate.sh all` GREEN is necessary but not sufficient — confirm the GitHub `gate` run
+(Tier A is stdlib-only; Tier B Postgres/RLS and RT1 compose smoke run only on GitHub runners).
 
 - Plan: `specs/002-manufacturing-field-knowledge-rag/plan.md` · Research: `specs/002-manufacturing-field-knowledge-rag/research.md`
 - Data model: `specs/002-manufacturing-field-knowledge-rag/data-model.md` · Contracts: `specs/002-manufacturing-field-knowledge-rag/contracts/` (mfg-openapi.md, mfg-interfaces.md)
