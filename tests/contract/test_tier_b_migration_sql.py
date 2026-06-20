@@ -28,6 +28,9 @@ class TierBMigrationSqlTest(unittest.TestCase):
             "data_sources",
             "documents",
             "chunks",
+            "source_sync_states",
+            "ingestion_runs",
+            "document_processing_states",
             "acl_grants",
             "audit_logs",
             "query_profiles",
@@ -46,6 +49,21 @@ class TierBMigrationSqlTest(unittest.TestCase):
         self.assertIn("idx_documents_tenant_collection_live", self.sql)
         self.assertIn("idx_chunks_tenant_collection_live", self.sql)
 
+    def test_ingestion_state_projection_tables_exist(self) -> None:
+        for field in (
+            "idempotency_key text NOT NULL",
+            "sqs_message_id text NOT NULL DEFAULT ''",
+            "document_ref text NOT NULL DEFAULT ''",
+            "retry_count integer NOT NULL DEFAULT 0",
+            "chunk_count integer NOT NULL DEFAULT 0",
+            "UNIQUE (tenant_id, idempotency_key)",
+            "UNIQUE (tenant_id, document_id)",
+            "idx_ingestion_runs_status",
+            "idx_document_processing_states_lookup",
+            "idx_source_sync_states_status",
+        ):
+            self.assertIn(field, self.sql)
+
     def test_rls_is_forced_and_bound_to_session_tenant(self) -> None:
         for table in (
             "tenants",
@@ -53,6 +71,9 @@ class TierBMigrationSqlTest(unittest.TestCase):
             "data_sources",
             "documents",
             "chunks",
+            "source_sync_states",
+            "ingestion_runs",
+            "document_processing_states",
             "acl_grants",
             "audit_logs",
             "query_profiles",
@@ -84,7 +105,16 @@ class TierBMigrationSqlTest(unittest.TestCase):
         )
 
     def test_down_migration_drops_core_objects(self) -> None:
-        for name in ("chunks", "documents", "collections", "tenants", "raku.current_tenant_id"):
+        for name in (
+            "document_processing_states",
+            "ingestion_runs",
+            "source_sync_states",
+            "chunks",
+            "documents",
+            "collections",
+            "tenants",
+            "raku.current_tenant_id",
+        ):
             self.assertIn(name, self.down)
         self.assertNotIn("DROP ROLE", self.down.upper())
 

@@ -125,6 +125,75 @@ CREATE TABLE IF NOT EXISTS chunks (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS source_sync_states (
+  source_id text PRIMARY KEY,
+  tenant_id text NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  collection_id text NOT NULL REFERENCES collections(collection_id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'idle'
+    CHECK (status IN ('idle', 'queued', 'observing', 'syncing', 'failed')),
+  last_manifest_checksum text NOT NULL DEFAULT '',
+  last_ingestion_run_id text,
+  observed_count integer NOT NULL DEFAULT 0,
+  changed_count integer NOT NULL DEFAULT 0,
+  deleted_count integer NOT NULL DEFAULT 0,
+  skipped_count integer NOT NULL DEFAULT 0,
+  failed_count integer NOT NULL DEFAULT 0,
+  last_synced_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ingestion_runs (
+  ingestion_run_id text PRIMARY KEY,
+  tenant_id text NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  collection_id text NOT NULL REFERENCES collections(collection_id) ON DELETE CASCADE,
+  source_id text,
+  document_id text,
+  type text NOT NULL DEFAULT 'upload_ingest'
+    CHECK (type IN ('scheduled_sync', 'manual_sync', 'upload_ingest', 'reindex', 'backfill',
+                    'cleanup', 'evaluation', 'kpi_materialization')),
+  trigger text NOT NULL DEFAULT 'sqs'
+    CHECK (trigger IN ('api', 'sqs', 'manual', 'scheduled', 'dagster')),
+  status text NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'canceled',
+                      'partially_succeeded', 'dead_letter')),
+  idempotency_key text NOT NULL,
+  document_ref text NOT NULL DEFAULT '',
+  content_type text NOT NULL DEFAULT 'text/plain',
+  sqs_message_id text NOT NULL DEFAULT '',
+  retry_count integer NOT NULL DEFAULT 0,
+  chunk_count integer NOT NULL DEFAULT 0,
+  failure_reason text NOT NULL DEFAULT '',
+  dagster_run_id text,
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, idempotency_key)
+);
+
+CREATE TABLE IF NOT EXISTS document_processing_states (
+  processing_state_id text PRIMARY KEY,
+  tenant_id text NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  collection_id text NOT NULL REFERENCES collections(collection_id) ON DELETE CASCADE,
+  document_id text NOT NULL,
+  source_id text,
+  ingestion_run_id text REFERENCES ingestion_runs(ingestion_run_id) ON DELETE SET NULL,
+  status text NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'canceled',
+                      'partially_succeeded', 'dead_letter')),
+  content_checksum text NOT NULL DEFAULT '',
+  parser_version text NOT NULL DEFAULT '',
+  chunking_config_version text NOT NULL DEFAULT '',
+  embedding_model_version text NOT NULL DEFAULT '',
+  chunk_count integer NOT NULL DEFAULT 0,
+  failure_reason text NOT NULL DEFAULT '',
+  started_at timestamptz,
+  finished_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, document_id)
+);
+
 CREATE TABLE IF NOT EXISTS acl_grants (
   grant_id text PRIMARY KEY,
   tenant_id text NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
@@ -191,6 +260,18 @@ CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
   ON chunks USING hnsw (embedding vector_cosine_ops)
   WHERE embedding IS NOT NULL AND tombstone = false;
 
+CREATE INDEX IF NOT EXISTS idx_source_sync_states_status
+  ON source_sync_states (tenant_id, collection_id, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ingestion_runs_status
+  ON ingestion_runs (tenant_id, collection_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ingestion_runs_source
+  ON ingestion_runs (tenant_id, source_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_document_processing_states_lookup
+  ON document_processing_states (tenant_id, document_id, status);
+
 CREATE INDEX IF NOT EXISTS idx_acl_grants_lookup
   ON acl_grants (tenant_id, scope_type, scope_id, subject_type, subject_id);
 
@@ -203,6 +284,9 @@ ALTER TABLE collections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE data_sources ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE chunks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE source_sync_states ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ingestion_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE document_processing_states ENABLE ROW LEVEL SECURITY;
 ALTER TABLE acl_grants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
@@ -212,6 +296,9 @@ ALTER TABLE collections FORCE ROW LEVEL SECURITY;
 ALTER TABLE data_sources FORCE ROW LEVEL SECURITY;
 ALTER TABLE documents FORCE ROW LEVEL SECURITY;
 ALTER TABLE chunks FORCE ROW LEVEL SECURITY;
+ALTER TABLE source_sync_states FORCE ROW LEVEL SECURITY;
+ALTER TABLE ingestion_runs FORCE ROW LEVEL SECURITY;
+ALTER TABLE document_processing_states FORCE ROW LEVEL SECURITY;
 ALTER TABLE acl_grants FORCE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY;
 
@@ -221,6 +308,9 @@ DROP POLICY IF EXISTS tenant_isolation_collections ON collections;
 DROP POLICY IF EXISTS tenant_isolation_data_sources ON data_sources;
 DROP POLICY IF EXISTS tenant_isolation_documents ON documents;
 DROP POLICY IF EXISTS tenant_isolation_chunks ON chunks;
+DROP POLICY IF EXISTS tenant_isolation_source_sync_states ON source_sync_states;
+DROP POLICY IF EXISTS tenant_isolation_ingestion_runs ON ingestion_runs;
+DROP POLICY IF EXISTS tenant_isolation_document_processing_states ON document_processing_states;
 DROP POLICY IF EXISTS tenant_isolation_acl_grants ON acl_grants;
 DROP POLICY IF EXISTS tenant_isolation_audit_logs ON audit_logs;
 
@@ -248,6 +338,18 @@ CREATE POLICY tenant_isolation_chunks ON chunks
   USING (tenant_id = raku.current_tenant_id())
   WITH CHECK (tenant_id = raku.current_tenant_id());
 
+CREATE POLICY tenant_isolation_source_sync_states ON source_sync_states
+  USING (tenant_id = raku.current_tenant_id())
+  WITH CHECK (tenant_id = raku.current_tenant_id());
+
+CREATE POLICY tenant_isolation_ingestion_runs ON ingestion_runs
+  USING (tenant_id = raku.current_tenant_id())
+  WITH CHECK (tenant_id = raku.current_tenant_id());
+
+CREATE POLICY tenant_isolation_document_processing_states ON document_processing_states
+  USING (tenant_id = raku.current_tenant_id())
+  WITH CHECK (tenant_id = raku.current_tenant_id());
+
 CREATE POLICY tenant_isolation_acl_grants ON acl_grants
   USING (tenant_id = raku.current_tenant_id())
   WITH CHECK (tenant_id = raku.current_tenant_id());
@@ -258,5 +360,6 @@ CREATE POLICY tenant_isolation_audit_logs ON audit_logs
 
 GRANT USAGE ON SCHEMA public, raku TO raku_app;
 GRANT SELECT, INSERT, UPDATE, DELETE
-  ON tenants, query_profiles, collections, data_sources, documents, chunks, acl_grants, audit_logs
+  ON tenants, query_profiles, collections, data_sources, documents, chunks, source_sync_states,
+     ingestion_runs, document_processing_states, acl_grants, audit_logs
   TO raku_app;

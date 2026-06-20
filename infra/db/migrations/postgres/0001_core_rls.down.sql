@@ -7,6 +7,9 @@ SET search_path TO public;
 
 DROP TABLE IF EXISTS audit_logs CASCADE;
 DROP TABLE IF EXISTS acl_grants CASCADE;
+DROP TABLE IF EXISTS document_processing_states CASCADE;
+DROP TABLE IF EXISTS ingestion_runs CASCADE;
+DROP TABLE IF EXISTS source_sync_states CASCADE;
 DROP TABLE IF EXISTS chunks CASCADE;
 DROP TABLE IF EXISTS documents CASCADE;
 DROP TABLE IF EXISTS data_sources CASCADE;
