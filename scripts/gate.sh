@@ -111,6 +111,9 @@ SQL
   echo "--- Tier B security parity (Postgres-backed ProductionSystem) ---"
   RAKU_TEST_BACKEND=postgres POSTGRES_URL="postgresql://${user}:${pass}@localhost:5432/${gate_db}" \
     python3 -m unittest discover -s tests/security -t . -q
+  echo "--- Tier B ranking/smoke parity (tests/postgres) ---"
+  POSTGRES_URL="postgresql://${user}:${pass}@localhost:5432/${gate_db}" \
+    python3 -m unittest discover -s tests/postgres -t . -q
 
   "${compose[@]}" exec -T postgres dropdb -U "$user" "$gate_db"
 
