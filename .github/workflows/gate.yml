@@ -66,6 +66,52 @@ jobs:
         if: steps.changes.outputs.run == 'true'
         run: bash scripts/gate.sh b
 
+  tier-d:
+    name: Tier D NestJS /v1/answer facade (e2e)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect Tier D relevant changes
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            changed="$(git diff --name-only "$base"...HEAD)"
+          elif git rev-parse "${{ github.event.before }}" >/dev/null 2>&1; then
+            changed="$(git diff --name-only "${{ github.event.before }}"..."${{ github.sha }}")"
+          else
+            changed="$(git diff-tree --no-commit-id --name-only -r "${{ github.sha }}")"
+          fi
+          printf '%s\n' "$changed"
+          relevant="$(printf '%s\n' "$changed" | grep -E '^(apps/api/|apps/answer-service/|apps/web/|packages/shared/|package(-lock)?\.json|\.github/workflows/gate\.yml)' || true)"
+          if [ -n "$relevant" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Tier D relevant changes:"; printf '%s\n' "$relevant"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No Tier D relevant changes; skipping NestJS e2e."
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.changes.outputs.run == 'true'
+        with:
+          node-version: "20"
+      - name: Install workspace deps
+        if: steps.changes.outputs.run == 'true'
+        run: npm install --no-audit --no-fund
+      - name: Build shared contracts
+        if: steps.changes.outputs.run == 'true'
+        run: npm run build:shared
+      # The facade contract e2e stubs the Python answer-service upstream (no Postgres needed): auth
+      # required; tenant taken from the signed token, not the body; request forwarded; response passed
+      # through. RAG correctness itself is the Tier B parity gate.
+      - name: Tier D — NestJS facade e2e
+        if: steps.changes.outputs.run == 'true'
+        run: npm run test:api
+
   separation:
     name: Verification/generation separation (PR)
     runs-on: ubuntu-latest
