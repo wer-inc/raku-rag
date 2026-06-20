@@ -175,6 +175,50 @@ _INTENT_KEYWORDS: dict[str, tuple[str, ...]] = {
         "対策",
         "事故後",
     ),
+    # Hands-on physical intervention / cover-or-guard bypass / manual machine operation. These catch
+    # genuinely dangerous, IMPERATIVE field actions phrased WITHOUT an explicit hazard word (e.g. "open
+    # the inner housing", "reach into the moving rollers ... by hand", "run the cycle without the
+    # cover", "restart the cycle manually"), which the labeled classes above otherwise miss — a recall
+    # hole that let such a query fall through to is_high_risk=False (FR-MFG-015 「迷えば high-risk」).
+    # Phrased as concrete physical-action substrings (not bare verbs) so informational/locational
+    # queries ("where is ... located inside building") stay non-high-risk. NOTE: this widens recall for
+    # KNOWN danger phrasings only; full semantic recall on novel phrasings still needs a production
+    # danger-classification LLM (the MVP ExtractiveLLMProvider has none) — see GAP-S1.
+    "physical_intervention": (
+        "reach into",
+        "reach in to",
+        "by hand",
+        "bare hand",
+        "with bare hands",
+        "manually",
+        "inner housing",
+        "open the housing",
+        "open the inner",
+        "remove the cover",
+        "without the cover",
+        "without cover",
+        "without the guard",
+        "without a guard",
+        "moving roller",
+        "moving part",
+        "while running",
+        "while in motion",
+        "in motion",
+        "clear the blockage",
+        "run the cycle",
+        "restart the cycle",
+        "start the cycle",
+        "run the machine",
+        "start the machine",
+        "手で",
+        "素手",
+        "手動",
+        "カバーを外",
+        "ガードを外",
+        "稼働中",
+        "可動部",
+        "回転中",
+    ),
 }
 
 # Metadata category fields whose mere presence (non-empty) implies physical / safety / quality work.

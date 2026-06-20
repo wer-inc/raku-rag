@@ -163,5 +163,51 @@ class TestClearlyBenign(unittest.TestCase):
         self.assertIsNone(r.classification_source)
 
 
+class TestPhysicalInterventionKeywordRecall(unittest.TestCase):
+    """GAP-S1: a LONGER (>=3 content tokens) keyword-free dangerous query must still fail safe.
+
+    Before the physical_intervention reason code, these imperative hands-on / cover-bypass / manual
+    machine-operation queries carried no labeled danger keyword AND were too long to trip the terse
+    ambiguity branch, so they returned is_high_risk=False — the SafetyGate's approved-citation
+    requirement (FR-MFG-005/SC-MFG-006) then never fired. They must classify high-risk (FR-MFG-015
+    「迷えば high-risk」). Precision negative controls confirm informational queries stay non-high-risk.
+    """
+
+    def setUp(self) -> None:
+        self.clf = RuleHighRiskClassifier()
+
+    def test_keyword_free_dangerous_queries_fail_safe_to_high_risk(self) -> None:
+        dangerous = (
+            "open the inner housing then proceed",
+            "reach into the moving rollers and clear the blockage by hand",
+            "override the controller and run the cycle without the cover",
+            "cut the locked wire and restart the cycle manually",
+        )
+        for q in dangerous:
+            with self.subTest(query=q):
+                r = self.clf.classify(q, [])
+                self.assertTrue(
+                    r.is_high_risk,
+                    f"a keyword-free physical-intervention query must fail safe to high-risk: {q!r}",
+                )
+                self.assertIn("physical_intervention", r.reason_codes)
+                self.assertEqual(r.classification_source, ClassificationSource.KEYWORD)
+
+    def test_informational_queries_stay_non_high_risk(self) -> None:
+        # Precision negative control: longer benign informational/locational queries must NOT trip the
+        # new reason code (otherwise the approved-citation gate would over-fire on benign questions).
+        benign = (
+            "where is the employee cafeteria located inside building seven",
+            "what is the effective date of the approved torque specification manual",
+            "who approved the latest revision of the assembly work instruction",
+        )
+        for q in benign:
+            with self.subTest(query=q):
+                r = self.clf.classify(q, [])
+                self.assertFalse(
+                    r.is_high_risk, f"a benign informational query must stay non-high-risk: {q!r}"
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -237,6 +237,15 @@ class ManufacturingSystem:
     def get_mfg_meta(
         self, tenant_id: str, document_id: str
     ) -> ManufacturingDocumentMetadata | None:
+        # A source-deleted (tombstoned) document must NOT resurface via the metadata resolver
+        # (GAP-S2 / top risk: deleted-content reappearance). The draft path resolves a citation's
+        # approval state from here WITHOUT going through the tombstone-excluding 001 retrieval, so a
+        # stale APPROVED+effective entry could otherwise confirm a draft safety item for a document
+        # that has been withdrawn/recalled. A later restore (re-ingest) un-tombstones the registry doc
+        # and re-populates the resolver, so this also honors the restore path.
+        doc = self._mvp.registry.get(tenant_id, document_id)
+        if doc is not None and doc.tombstone:
+            return None
         return self._mfg_meta.get((tenant_id, document_id))
 
     def _set_mfg_meta(
