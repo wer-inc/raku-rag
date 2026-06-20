@@ -16,6 +16,7 @@ prod = [
   "uvicorn",
   "sqlalchemy>=2",
   "alembic",
+  "psycopg[binary]>=3",
   "pgvector",
   "pydantic>=2",
   "arq",
