@@ -58,6 +58,7 @@ run_tier_b() {
   local compose=(docker compose -f infra/docker-compose.yml)
   local gate_db="${POSTGRES_DB:-raku}_tier_b_gate"
   local user="${POSTGRES_USER:-raku}"
+  local pass="${POSTGRES_PASSWORD:-raku}"
 
   "${compose[@]}" up -d postgres
   for _ in $(seq 1 30); do
@@ -104,6 +105,13 @@ SQL
   "${compose[@]}" exec -T postgres psql -U "$user" -d "$gate_db" -v ON_ERROR_STOP=1 \
     < infra/db/migrations/postgres/0001_core_rls.sql
   run_rls_smoke
+
+  # Python security parity: the SAME proven hard gates (ACL leak / tenant isolation incl.
+  # last_prefiltered_count / deletion reappearance) against Postgres+RLS via the ProductionSystem.
+  echo "--- Tier B security parity (Postgres-backed ProductionSystem) ---"
+  RAKU_TEST_BACKEND=postgres POSTGRES_URL="postgresql://${user}:${pass}@localhost:5432/${gate_db}" \
+    python3 -m unittest discover -s tests/security -t . -q
+
   "${compose[@]}" exec -T postgres dropdb -U "$user" "$gate_db"
 
   python3 -m unittest tests.contract.test_tier_b_migration_sql -v
