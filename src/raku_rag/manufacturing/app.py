@@ -181,7 +181,12 @@ class ManufacturingSystem:
         )
         # US4 — DraftArtifact generation + lightweight review workflow (FR-MFG-010/010a/010b).
         # Reuses the shared AuditLogWriter + US1 SafetyGate semantics; AI output is always draft.
-        self._drafts = DraftService(audit=self.audit, get_mfg_meta=self.get_mfg_meta, today=today)
+        self._drafts = DraftService(
+            audit=self.audit,
+            get_mfg_meta=self.get_mfg_meta,
+            can_use_source=self._can_use_draft_source,
+            today=today,
+        )
         # US3 — similar past TroubleCase retrieval (FR-MFG-008/009, Hard Rule 4). The knowledge graph
         # is registered in an in-memory store; the retriever runs the symptom query through the SAME
         # reused 001 RetrievalService (deny-by-default ACL PRE-filter) — no parallel authz path — and
@@ -234,6 +239,20 @@ class ManufacturingSystem:
         apply_scope(self._mvp.acl, scope)
 
     # --- metadata resolver ------------------------------------------------------------------------
+    def _can_use_draft_source(self, principal: IdentityClaims, document_id: str) -> bool:
+        """SC-MFG-008 draft-source guard: a draft may use a document as a source ONLY if it is not
+        tombstoned AND is ACL-readable by ``principal`` under the SAME 001 AclPolicy the retrieval
+        pre-filter consults (data-model.md:86,146-147). A document_id that resolves to no 001
+        Document references nothing real and therefore cannot leak — it is allowed. Reuses
+        self._mvp.registry (tombstone state) + self._mvp.acl (deny-by-default) — no new mechanism.
+        """
+        doc = self._mvp.registry.get(principal.tenant_id, document_id)
+        if doc is None:
+            return True  # never-ingested id: nothing to leak
+        if doc.tombstone:
+            return False  # deleted-content reappearance guard (data-model.md:86)
+        return self._mvp.acl.can_read_document(principal, doc)
+
     def get_mfg_meta(
         self, tenant_id: str, document_id: str
     ) -> ManufacturingDocumentMetadata | None:
@@ -405,6 +424,22 @@ class ManufacturingSystem:
     ) -> ApprovalState:
         """Import an upstream approval as source of truth, overriding the workflow (FR-MFG-004a)."""
         return self._approval.import_external(tenant_id, document_id, external, actor)
+
+    def supersede_document(
+        self,
+        *,
+        tenant_id: str,
+        document_id: str,
+        superseded_by: str,
+        actor: IdentityClaims,
+    ) -> ApprovalState:
+        """Obsolete ``document_id`` by supersession, recording superseded_by (FR-MFG-004/021).
+
+        Drives the lightweight workflow approved->obsolete (forward, legal under the GAP-F6 guard)
+        and stamps superseded_by + obsolete_at; approval_source = workflow. Audited. The superseding
+        document is NOT auto-approved — it must go through its own review (Hard Rule 1).
+        """
+        return self._approval.supersede(tenant_id, document_id, superseded_by, actor)
 
     # --- manufacturing sync/status (T031b; wraps 001 control-plane state) -------------------------
     def request_source_sync(

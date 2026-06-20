@@ -210,5 +210,38 @@ class TestForwardOnlyTransitionGuard(unittest.TestCase):
         self.assertEqual(state.approval_source, "imported")
 
 
+class TestSupersede(unittest.TestCase):
+    """GAP-F9: obsolete-by-supersession writes superseded_by (data-model §B State Transitions)."""
+
+    def test_supersede_obsoletes_and_records_superseded_by(self) -> None:
+        h = _Harness(seed=_meta_at(ApprovalStatus.APPROVED))
+        state = h.wf.supersede(_T, _DOC, "new_spec", _actor())
+        self.assertEqual(state.approval_status, "obsolete")
+        self.assertEqual(state.approval_source, "workflow")
+        self.assertEqual(state.superseded_by, "new_spec")
+        stored = h.metas[(_T, _DOC)]
+        self.assertEqual(stored.approval_status, ApprovalStatus.OBSOLETE)
+        self.assertEqual(stored.superseded_by, "new_spec")
+        self.assertTrue(stored.obsolete_at, "supersede must stamp obsolete_at")
+
+    def test_supersede_is_audited_reference_ids_only(self) -> None:
+        h = _Harness(seed=_meta_at(ApprovalStatus.APPROVED))
+        actor = _actor()
+        before = len(h.audit.read_all(actor))
+        h.wf.supersede(_T, _DOC, "new_spec", actor)
+        entries = h.audit.read_all(actor)
+        self.assertEqual(len(entries) - before, 1)
+        last = entries[-1]
+        self.assertEqual(last.action, "approval.supersede")
+        self.assertEqual(last.resource_type, "document")
+        self.assertIn(_DOC, last.document_ids_used)
+        self.assertIn("new_spec", last.document_ids_used)
+
+    def test_supersede_forward_only_is_honored(self) -> None:
+        # OBSOLETE->OBSOLETE is an idempotent-forward move (legal); the guard is reused, no resurrection.
+        h = _Harness(seed=_meta_at(ApprovalStatus.OBSOLETE))
+        self.assertEqual(h.wf.supersede(_T, _DOC, "new_spec", _actor()).superseded_by, "new_spec")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -26,6 +26,7 @@ from __future__ import annotations
 import unittest
 
 from raku_rag.domain.models import ScopeType, SubjectType
+from raku_rag.manufacturing.api.answer_ext import ONSITE_CONFIRMATION_NOTICE
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus, DocumentKind
 from tests.manufacturing.helpers import T, claims, fresh, mfg_meta
 
@@ -204,6 +205,11 @@ class TestPositiveControl(unittest.TestCase):
         self.assertEqual(ans.citations[0].approval_status, "approved")
         # High-risk hazardous work surfaces the on-site confirmation requirement (FR-MFG-007).
         self.assertTrue(ans.requires_onsite_confirmation)
+        self.assertEqual(
+            ans.notice,
+            ONSITE_CONFIRMATION_NOTICE,
+            "high-risk hazardous work must surface the on-site confirmation NOTICE text (FR-MFG-007)",
+        )
 
 
 class TestAmbiguousIsFailSafe(unittest.TestCase):
@@ -273,6 +279,9 @@ class TestPrecisionNegativeControl(unittest.TestCase):
         self.assertIsNone(ans.safety_block_reason)
         self.assertFalse(
             ans.requires_onsite_confirmation, "no on-site confirmation for a non-high-risk query"
+        )
+        self.assertIsNone(
+            ans.notice, "a non-high-risk query must not carry the on-site confirmation notice"
         )
 
 

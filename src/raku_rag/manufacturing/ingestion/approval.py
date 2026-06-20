@@ -140,6 +140,51 @@ class ApprovalWorkflow:
         )
         return self._to_state(updated)
 
+    # --- (1b) obsolete-by-supersession (writes superseded_by) ------------------------------------
+    def supersede(
+        self,
+        tenant_id: str,
+        document_id: str,
+        superseded_by: str,
+        actor: IdentityClaims,
+    ) -> ApprovalState:
+        """Obsolete ``document_id`` BY SUPERSESSION, recording the superseding doc.
+
+        data-model §B State Transitions: ``approved → superseded → obsolete も可; superseded_by 設定``.
+        There is no ``superseded`` ApprovalStatus member — supersession is OBSOLETE-with-a-pointer:
+        drive the lightweight workflow forward to OBSOLETE (a legal forward move under the GAP-F6
+        guard; APPROVED->OBSOLETE is forward) AND stamp ``superseded_by`` + ``obsolete_at``.
+        approval_source = workflow. Audited (FR-MFG-004/021); the superseding doc is NOT auto-approved.
+        """
+        meta = self._require_meta(tenant_id, document_id)
+        self._assert_legal_transition(meta.approval_status, ApprovalStatus.OBSOLETE)
+        updated = dataclasses.replace(
+            meta,
+            approval_status=ApprovalStatus.OBSOLETE,
+            approval_source=ApprovalSource.WORKFLOW,
+            obsolete_at=meta.obsolete_at or _now(),
+            superseded_by=superseded_by,
+        )
+        self._persist(tenant_id, document_id, updated)
+        ts = _now()
+        self._audit.record(
+            AuditLogEntry(
+                tenant_id=tenant_id,
+                log_id=f"approval.supersede:{document_id}:{ts}",
+                timestamp=ts,
+                actor_id=actor.user_id if actor else None,
+                actor_role=(",".join(actor.roles) if actor and actor.roles else None),
+                action="approval.supersede",
+                resource_type="document",
+                resource_id=document_id,  # reference ID only — never body text
+                decision=updated.approval_status.value,
+                reason=superseded_by,  # the superseding doc id (reference ID only)
+                approval_status_at_use=updated.approval_status.value,
+                document_ids_used=(document_id, superseded_by),
+            )
+        )
+        return self._to_state(updated)
+
     # --- helpers ---------------------------------------------------------------------------------
     @staticmethod
     def _assert_legal_transition(current: ApprovalStatus, target: ApprovalStatus) -> None:
@@ -188,6 +233,7 @@ class ApprovalWorkflow:
             effective_date=meta.effective_date,
             approved_by=meta.approved_by,
             approved_at=meta.approved_at,
+            superseded_by=meta.superseded_by,
         )
 
     def _audit_transition(

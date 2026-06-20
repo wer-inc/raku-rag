@@ -33,6 +33,10 @@ from raku_rag.manufacturing.drafts.review import ReviewWorkflow
 from typing import Callable
 
 GetMfgMeta = Callable[[str, str], ManufacturingDocumentMetadata | None]
+# (principal, document_id) -> may this principal use this doc as a draft source? True iff the doc is
+# NOT tombstoned AND is ACL-readable, OR resolves to no 001 Document at all (a never-ingested id
+# references nothing and therefore cannot leak -> keep it). SC-MFG-008 / data-model.md:86,146-147.
+CanUseSource = Callable[[IdentityClaims, str], bool]
 
 
 def _now() -> str:
@@ -47,9 +51,11 @@ class DraftService:
         *,
         audit: InMemoryAuditLogWriter,
         get_mfg_meta: GetMfgMeta | None = None,
+        can_use_source: CanUseSource | None = None,
         today: date | None = None,
     ) -> None:
         self._audit = audit
+        self._can_use_source = can_use_source
         self._generator = DraftGenerator(get_mfg_meta=get_mfg_meta, today=today)
         self._review = ReviewWorkflow()
         # (tenant_id, artifact_id) -> canonical DraftArtifact (the system of record).
@@ -73,6 +79,21 @@ class DraftService:
         draft_type = coerce_kind(kind)
         artifact_id = f"art_{next(self._ids)}"
         created_at = _now()
+
+        # SC-MFG-008 / data-model.md:86,146-147 — a draft must NOT surface a tombstoned or
+        # ACL-unreadable document via its provenance/grounding. EXCLUDE such sources (and their
+        # citations) up-front so source_document_ids / source_citations / content are all clean.
+        # Reuses the SAME 001 deny-by-default ACL + tombstone decision (no parallel authz path); a
+        # never-ingested id resolves to no Document and is kept (it references nothing -> cannot leak).
+        if self._can_use_source is not None:
+            context_citations = tuple(
+                c
+                for c in (context_citations or ())
+                if self._can_use_source(principal, c.document_id)
+            )
+            source_document_ids = tuple(
+                d for d in (source_document_ids or ()) if self._can_use_source(principal, d)
+            )
 
         artifact = self._generator.generate(
             artifact_id=artifact_id,

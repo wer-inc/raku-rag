@@ -66,7 +66,9 @@ class SafetyTelemetryView:
     safety_gate_block_count: int = 0
     block_breakdown: dict = field(default_factory=dict)
     axis: dict = field(default_factory=dict)
-    time_range: tuple | None = None
+    # contracts/mfg-openapi.md §E res 200: time_range is the object {from, to, granularity}.
+    # from/to are null when no input window is supplied; granularity echoes the query param.
+    time_range: dict = field(default_factory=dict)
     source: str = SOURCE_AUDIT_LOG
     correlation_id: str = ""
 
@@ -127,7 +129,11 @@ class DashboardService:
                 "department_id": department_id,
                 "collection_id": collection_id,
             },
-            time_range=time_range,
+            time_range={
+                "from": time_range[0] if time_range else None,
+                "to": time_range[1] if time_range else None,
+                "granularity": granularity,
+            },
             source=SOURCE_AUDIT_LOG,
             correlation_id=f"telemetry:{_now()}",
         )

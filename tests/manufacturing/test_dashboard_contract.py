@@ -235,6 +235,27 @@ class TestSafetyTelemetryResponseShape(unittest.TestCase):
             "safety telemetry MUST declare source=='audit_log' (single source of truth, FR-MFG-030)",
         )
 
+    def test_time_range_is_object_with_granularity_echoed(self) -> None:
+        # GAP-M3 / contracts §E: time_range is the object {from, to, granularity}; the granularity
+        # query param (hourly|daily|custom) is reflected back in the response.
+        tel = self.sys.safety_telemetry(
+            self.admin, time_range=("2026-06-01", "2026-06-20"), granularity="hourly"
+        )
+        tr = _attr_or_key(tel, "time_range")
+        self.assertIsInstance(tr, dict, "time_range MUST be an object {from, to, granularity}")
+        self.assertEqual(set(tr.keys()), {"from", "to", "granularity"})
+        self.assertEqual(tr["from"], "2026-06-01")
+        self.assertEqual(tr["to"], "2026-06-20")
+        self.assertEqual(tr["granularity"], "hourly", "granularity query param MUST be echoed")
+
+    def test_time_range_defaults_to_null_window_with_default_granularity(self) -> None:
+        # No window supplied -> from/to are null, granularity defaults to 'daily'.
+        tr = _attr_or_key(self.sys.safety_telemetry(self.admin), "time_range")
+        self.assertIsInstance(tr, dict)
+        self.assertIsNone(tr["from"])
+        self.assertIsNone(tr["to"])
+        self.assertEqual(tr["granularity"], "daily")
+
     def test_telemetry_is_tenant_scoped(self) -> None:
         # Another tenant's admin sees none of this tenant's high-risk / block activity.
         other = _admin(tenant="tenant_other", user="admin-other")

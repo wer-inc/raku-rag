@@ -38,6 +38,7 @@ class ApprovalState:
     effective_date: str | None = None
     approved_by: str | None = None
     approved_at: str | None = None
+    superseded_by: str | None = None  # set by ApprovalWorkflow.supersede (data-model §B)
 
 
 # --- §2 Ingestion: metadata enrichment + lightweight approval workflow ---
@@ -61,6 +62,12 @@ class ApprovalWorkflow(ABC):
     @abstractmethod
     def import_external(self, tenant_id: str, document_id: str, external: dict) -> ApprovalState:
         """Import approval_source=imported as the source of truth (FR-MFG-004a)."""
+
+    @abstractmethod
+    def supersede(
+        self, tenant_id: str, document_id: str, superseded_by: str, actor: IdentityClaims
+    ) -> ApprovalState:
+        """Obsolete a doc by supersession, recording superseded_by (data-model §B State Transitions)."""
 
 
 # --- §3 High-risk classification ---

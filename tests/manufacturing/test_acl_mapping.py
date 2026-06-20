@@ -39,7 +39,7 @@ import unittest
 from raku_rag.core.errors import TenantIsolationError
 from raku_rag.core.security.acl import AclPolicy
 from raku_rag.core.tenancy import enforce_same_tenant
-from raku_rag.domain.models import Chunk, ScopeType, SubjectType
+from raku_rag.domain.models import Chunk, Citation, ScopeType, SubjectType
 from raku_rag.manufacturing.domain.acl_mapping import (
     ManufacturingScope,
     acl_policy_for_scopes,
@@ -173,6 +173,53 @@ class TestUs6AclMappingHardGate(unittest.TestCase):
         self.assertNotIn(CONF_DOC, body)
         self.assertNotIn(CUSTOMER, body)
         self.assertNotIn(DEFECT, body)
+
+    def test_unauthorized_draft_rejects_directly_passed_confidential_source(self) -> None:
+        # GAP-F11 (ACL leakage via drafts, SC-MFG-008): the unauthorized user passes the confidential
+        # id DIRECTLY (a forged citation + source_document_ids), bypassing the ACL-filtered answer path
+        # the test above relied on. The draft path itself MUST exclude it from provenance/citations.
+        forged = Citation(
+            kind="text",
+            document_id=CONF_DOC,
+            source_id="src",
+            version=1,
+            retrieval_score=0.99,
+            chunk_id=f"{CONF_DOC}#0",
+        )
+        draft = self.sys.generate_draft(
+            principal=self.unauthorized,
+            kind=DraftType.QUALITY_REPORT,
+            context_citations=(forged,),
+            source_document_ids=(CONF_DOC,),
+        )
+        self.assertNotIn(CONF_DOC, draft.source_document_ids)
+        self.assertNotIn(CONF_DOC, " ".join(draft.source_citations))
+        body = repr(draft.content)
+        self.assertNotIn(CONF_DOC, body)
+        self.assertNotIn(CUSTOMER, body)
+        self.assertNotIn(DEFECT, body)
+
+    def test_authorized_user_directly_passed_source_is_kept(self) -> None:
+        # POSITIVE CONTROL: the authorized factory-B/quality user MAY use their own confidential doc
+        # as a draft source — blocks a degenerate "drop everything" implementation.
+        draft = self.sys.generate_draft(
+            principal=self.authorized,
+            kind=DraftType.QUALITY_REPORT,
+            source_document_ids=(CONF_DOC,),
+        )
+        self.assertIn(CONF_DOC, draft.source_document_ids)
+
+    def test_tombstoned_source_excluded_from_draft(self) -> None:
+        # GAP-F10 (deleted-content via drafts): a deleted (tombstoned) doc the user COULD otherwise
+        # read must still be excluded from a draft source (data-model.md:86 immediate tombstone
+        # exclusion). doc_factoryA is readable by the unauthorized user until it is deleted.
+        self.sys.delete_document(tenant_id=T, document_id="doc_factoryA", actor=self.unauthorized)
+        draft = self.sys.generate_draft(
+            principal=self.unauthorized,
+            kind=DraftType.QUALITY_REPORT,
+            source_document_ids=("doc_factoryA",),
+        )
+        self.assertNotIn("doc_factoryA", draft.source_document_ids)
 
     # ---------------------------------------------------------------------------------------------
     # (2) PRE-FILTER (not post-filter): the confidential chunk is excluded BEFORE scoring.
