@@ -831,6 +831,32 @@ def _ingest_response_json(job) -> dict:
     }
 
 
+def _mfg_metadata_from_body(body: dict, tenant_id: str, document_id: str):
+    """P1-1: build ManufacturingDocumentMetadata from the ingest request, or None if absent.
+
+    Accepts either a single ``manufacturing`` object (the to_mapping()/from_mapping() shape) or the
+    contract's split ``manufacturing_metadata`` + ``approval`` blocks (mfg-openapi.md). tenant_id and
+    document_id are taken from the authenticated principal / request, never from the metadata block.
+    """
+    raw = body.get("manufacturing")
+    if raw is None:
+        meta_block = body.get("manufacturing_metadata") or {}
+        approval_block = body.get("approval") or {}
+        if not meta_block and not approval_block:
+            return None
+        raw = {**meta_block, **approval_block}
+        # contract alias: document_type -> document_kind (data-model §B)
+        if "document_type" in raw and "document_kind" not in raw:
+            raw["document_kind"] = raw.pop("document_type")
+    if not isinstance(raw, dict):
+        return None
+    from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
+
+    return ManufacturingDocumentMetadata.from_mapping(
+        {**raw, "tenant_id": tenant_id, "document_id": document_id}
+    )
+
+
 def _job_summary_json(run) -> dict:
     return {
         "job_id": run.ingestion_run_id,
@@ -1135,6 +1161,9 @@ def make_handler(system: ProductionSystem):
                         if not body.get(field):
                             raise KeyError(field)
                     raw = connector.fetch(str(body["document_ref"]))
+                    mfg_meta = _mfg_metadata_from_body(
+                        body, principal.tenant_id, str(body["document_id"])
+                    )
                     job = system.ingest_document(
                         tenant_id=principal.tenant_id,
                         collection_id=str(body["collection_id"]),
@@ -1143,6 +1172,7 @@ def make_handler(system: ProductionSystem):
                         document_ref=str(body["document_ref"]),
                         raw=raw,
                         content_type=str(body.get("content_type") or "text/plain"),
+                        manufacturing_metadata=mfg_meta,
                     )
                     self._send(
                         202 if job.status in {"queued", "running", "succeeded"} else 200,
