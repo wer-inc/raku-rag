@@ -11,10 +11,10 @@ Companion to `rag-production-readiness.md` (audit + backlog) and `eval-plan.md`.
 
 **実装した変更:**
 - `apps/{web,api}/Dockerfile` — `npm prune --omit=dev` after build (build stage) so dev tooling is NOT shipped in runtime images → removes the 3 dev CVEs for real (also good image hardening). worker is Python — unaffected.
-- `.trivyignore` (NEW) — the 6 prod CVEs accepted with per-package justification (multer DoS, 0 CRITICAL, behind edge rate-limiting; next info-disclosure/SSRF, server-side ACL enforced) + follow-ups (multer→2.2.0 override; Next.js 15 migration). Dev CVEs deliberately NOT listed (gate must still catch a dev dep leaking into prod).
+- `.trivyignore` (NEW) — accepted CVEs with per-package justification + follow-ups. **First blocking CI run corrected the triage:** prune dropped each image 13→4 HIGH; glob+tmp were removed, but **picomatch (CVE-2026-33671, ReDoS) SURVIVES prune** (hoisted via @nestjs/cli/@angular-devkit/chokidar in the npm-workspaces monorepo) — so it's accepted too (not on the request path; follow-up: pin →4.0.4). Final accepted set = 7 CVEs: picomatch (1) + multer ×4 + next ×2.
 - `.github/workflows/deploy-checks.yml` — `trivyignores: .trivyignore` + **`exit-code: "0"`→`"1"` (BLOCKING)**.
 
-**検証:** deploy-checks.yml valid YAML; `trivyignores` confirmed a real v0.36.0 input; `.trivyignore` parses to exactly the 6 CVE IDs. Trivy itself can't run locally (no Docker) — CI deploy-checks is the authority for the blocking result.
+**検証:** Trivy can't run locally (no Docker) — CI deploy-checks is the authority. First blocking run FAILED on api/web (picomatch survived prune, not yet ignored) → corrected `.trivyignore`; re-verified on CI.
 
 **Risk PR-014 → Fixed; PR-012 Trivy-flip thread closed.** Remaining real-infra: AWS CD/OIDC (#3), rollback/backup (#4), real-data EXPLAIN + load p50/p95/p99 (#2).
 
