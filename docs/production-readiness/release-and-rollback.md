@@ -108,8 +108,14 @@ release commit (all §1.1 gates GREEN)
 
 ## 4. Trivy: when to flip from report-only to blocking
 
-`deploy-checks.yml` runs Trivy at `exit-code: "0"` (report-only) with `ignore-unfixed: true` today, so a
-new scanner doesn't block builds on a wall of pre-existing base-image CVEs. Flip to blocking deliberately:
+**DONE 2026-06-21 — Trivy is now BLOCKING** (`deploy-checks.yml` `exit-code: "1"`, `ignore-unfixed: true`,
+`severity: HIGH,CRITICAL`, `trivyignores: .trivyignore`). The procedure below is the record of how the
+flip was done and the cadence to maintain. First-report triage: OS base layers were 0 HIGH/CRITICAL;
+dev-tooling CVEs (glob/picomatch/tmp via jest) were removed from the runtime images by
+`npm prune --omit=dev`; the 6 remaining prod-dep CVEs (next ×2, multer ×4 — all 0 CRITICAL) are accepted
+in the committed `.trivyignore` with justification + follow-ups (multer→2.2.0 override; Next.js 15 migration).
+
+The original "flip deliberately" procedure (kept for the cadence + future reports):
 
 1. **Triage** the first full report per image (api/web/worker): classify each HIGH/CRITICAL as *fixable* (bump base image / dep) or *accepted/unfixable*.
 2. Add accepted findings to a committed **`.trivyignore`** (CVE id + justification + review date) — this is the allowlist, analogous to `.secrets.baseline`.

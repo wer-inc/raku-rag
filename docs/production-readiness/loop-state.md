@@ -5,6 +5,23 @@ Companion to `rag-production-readiness.md` (audit + backlog) and `eval-plan.md`.
 
 ---
 
+## Loop 21 — 2026-06-21 — #5 Trivy flipped to BLOCKING after real CVE triage (PR-014 → Fixed)
+
+**Triage of the real CI Trivy report** (api/web/worker images): OS/debian base layers **0 HIGH/CRITICAL**; 9 distinct HIGH npm CVEs (0 CRITICAL). Root cause: both node Dockerfiles `COPY` the FULL `node_modules` (incl. devDeps) into runtime. `npm why` split them: dev = glob/picomatch/tmp (3, via jest); prod = next ×2 + multer ×4 (6).
+
+**実装した変更:**
+- `apps/{web,api}/Dockerfile` — `npm prune --omit=dev` after build (build stage) so dev tooling is NOT shipped in runtime images → removes the 3 dev CVEs for real (also good image hardening). worker is Python — unaffected.
+- `.trivyignore` (NEW) — accepted advisories (0 CRITICAL) with per-package justification + follow-ups. **Iterated on CI to nail the true survivor set** (the box-drawing Trivy table wraps, so early CVE→package mapping was wrong). Final, evidence-based: `npm prune --omit=dev` (per-image 13→4 HIGH) **removes glob+tmp** (verified: adding them changed the count by 0); **picomatch survives** prune (hoisted via @nestjs/cli/@angular-devkit/chokidar) → accepted by CVE-2026-33671; **multer** (prod) accepted by 4 CVEs; **next** (frontend, 3 advisories) was the persistent blocker because Trivy's DB keys its advisories by **EITHER CVE or GHSA depending on the DB snapshot** (one run showed CVE-2026-44573/44578, another GHSA-8h8q/h25m/q4gf) — fixed by listing BOTH id forms. Follow-up: prod-only runtime install + multer→2.2.0 + Next.js 15. **GREEN on CI: 19 pass, 0 fail (both api+web image builds pass under blocking Trivy).**
+- `.github/workflows/deploy-checks.yml` — `trivyignores: .trivyignore` + **`exit-code: "0"`→`"1"` (BLOCKING)**.
+
+**検証:** Trivy can't run locally (no Docker) — CI deploy-checks is the authority. Took several CI iterations to read the wrapped table correctly (key lesson: Trivy reports npm advisories by GHSA *or* CVE; ignore by the exact ID it prints). Re-verified green on CI.
+
+**Risk PR-014 → Fixed; PR-012 Trivy-flip thread closed.** Remaining real-infra: AWS CD/OIDC (#3), rollback/backup (#4), real-data EXPLAIN + load p50/p95/p99 (#2).
+
+**次のループ:** push branch → PR → CI deploy-checks Trivy (blocking) confirms → merge.
+
+---
+
 ## Loop 20 — 2026-06-21 — P1-1 Postgres-data step + Tier-B VERIFIED on real Postgres (PR-003 → Fixed)
 
 **Discovery:** a real **PostgreSQL 14 + pgvector 0.8.0** is reachable in this environment (DSN `…/raku_parity`) — Tier-B is runnable here, not only on CI runners. (Updates the prior "Tier-B only on runners" assumption.)

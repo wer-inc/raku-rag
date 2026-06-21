@@ -96,5 +96,9 @@ jobs:
           format: table
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          # Report-only until the base-image CVE set is triaged; flip to '1' to block on findings.
-          exit-code: "0"
+          # Accepted CVEs are enumerated + justified in the committed .trivyignore.
+          trivyignores: .trivyignore
+          # BLOCKING (2026-06-21): HIGH/CRITICAL now fail the build. The dev-tooling CVEs were removed
+          # from the runtime images (npm prune --omit=dev in apps/{api,web}/Dockerfile); the remaining
+          # prod-dep CVEs (next, multer — all 0 CRITICAL) are accepted in .trivyignore with follow-ups.
+          exit-code: "1"

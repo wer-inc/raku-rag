@@ -48,9 +48,10 @@ Compare p95/p99 to `Settings.target_p95_latency_ms` (2000ms) / `min_throughput_q
 ## 4. Deploy + supply-chain gates
 - Configure GitHub OIDC + `vars.AWS_DEPLOY_ROLE_ARN` / `vars.AWS_REGION`; run `deploy.yml` (dry-run first).
 - Build/push images (Dockerfiles for api/web/worker) to ECR; `deploy-checks.yml` emits SBOM + Trivy.
-- **Trivy → blocking:** triage the first HIGH/CRITICAL report, add accepted CVEs to a committed
-  `.trivyignore`, bump fixable base images, then flip `exit-code: "0"`→`"1"` in `deploy-checks.yml`
-  (`release-and-rollback.md §4`).
+- **Trivy → blocking: ✅ DONE (2026-06-21).** First report triaged: OS layers 0 HIGH/CRITICAL; dev CVEs
+  removed via `npm prune --omit=dev`; 6 prod CVEs (next, multer; 0 CRITICAL) accepted in committed
+  `.trivyignore`; `exit-code: "1"` + `trivyignores: .trivyignore` in `deploy-checks.yml`
+  (`release-and-rollback.md §4`). Remaining ops: build/push images to ECR once AWS is wired.
 
 ## 5. Operational dry-runs  (real env)
 - **Rollback** (`release-and-rollback.md §2`): redeploy a prior image digest; confirm `/v1/health` + a
