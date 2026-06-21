@@ -5,6 +5,24 @@ Companion to `rag-production-readiness.md` (audit + backlog) and `eval-plan.md`.
 
 ---
 
+## Loop 20 — 2026-06-21 — P1-1 Postgres-data step + Tier-B VERIFIED on real Postgres (PR-003 → Fixed)
+
+**Discovery:** a real **PostgreSQL 14 + pgvector 0.8.0** is reachable in this environment (DSN `…/raku_parity`) — Tier-B is runnable here, not only on CI runners. (Updates the prior "Tier-B only on runners" assumption.)
+
+**実装した変更 (PR-003 remaining "Postgres-data" step):**
+- `src/raku_rag/production.py` — `ProductionSystem.attach_manufacturing_metadata()` persists `ManufacturingDocumentMetadata.to_mapping()` (jsonb-safe) into `Document.metadata`; `ingest_manufacturing()` = reused 001 text-ingest + attach. In-memory path untouched (no regression); the deployed resolver reads it back via `from_mapping`.
+- `tests/postgres/test_manufacturing_overlay_parity.py` (NEW, Tier B) — over real Postgres: to_mapping→jsonb→from_mapping round-trip; draft-only high-risk **blocked**; approved+effective **answers** (no over-block).
+- `.github/workflows/gate.yml` — tier-b change-detection now also triggers on `src/raku_rag/production.py` + `tests/postgres/` (so the gate runs on the runner's real Postgres).
+- `scripts/postgres-migration-smoke.sh` — extended to **0007** (apply + evaluation_runs column check + down): full 0001..0007 chain.
+
+**検証 (REAL Postgres):** 001 security parity **49 OK** over Postgres (`RAKU_TEST_BACKEND=postgres`); `tests/postgres` **7 OK** (incl. the 3 new); migration smoke **0001..0007 GREEN** with tenant RLS (`tenant_a_sees=1`, `tenant_b_cannot=1`); HNSW index present on `chunks` (runtime EXPLAIN index-scan needs production-scale rows — table had 3, planner correctly Seq-Scans tiny tables: an honest data-volume gap, not an index regression). Tier A GREEN (319), full suite GREEN, lint clean.
+
+**Risk PR-003 → Fixed** (overlay on the deployed path + jsonb round-trip + high-risk gate verified over real Postgres). Thin remaining thread: call `ingest_manufacturing`/`attach_manufacturing_metadata` from the actual ingest API/worker so production-ingested docs carry mfg metadata; chunk-level metadata over Postgres (search `manufacturing_filters`) is a separate follow-up.
+
+**次のループ:** push branch `004-tier-b-p1-1-postgres` → PR → CI tier-b confirms on the runner → merge. Then remaining real-infra gates: real-data EXPLAIN + load p50/p95/p99 (#2), AWS CD/OIDC (#3), rollback/backup dry-run (#4), Trivy-blocking flip after CVE triage (#5).
+
+---
+
 ## Loop 19 — 2026-06-21 — PR #1 opened, CI greened, adversarial pre-merge verify, GAP-S3 secondary-slot fix
 
 **PR #1 + CI:** pushed `003-production-readiness-hardening`, opened **PR #1** (base `002`). First CI run was red; triaged 5 real failures (all in NON-protected files, §5 intact): Trivy action tag `@0.28.0`→`@v0.36.0` (hash-pinned `setup-trivy`, immune to the upstream `setup-trivy@v0.2.1` tag deletion); detect-secrets false-positive on a planted probe fixture → inline `# pragma: allowlist secret`; **Tier-B Postgres first-init race** → TCP `pg_isready` pre-warm step in `gate.yml` (gate.sh untouched); new-branch `before=000…0` diff-128 → `git rev-parse --verify` + force-run fallback; black format debt on 5 landed-perf files. Result: **all CI green** on `ff8323c` (Tier A/B, security-hard-gate, eval-gate, separation, RT1, Tier D, image-build+SBOM+Trivy, CDK).

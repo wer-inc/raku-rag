@@ -11,6 +11,7 @@ gates exercise, so they run against real Postgres+RLS via adapter parity (see ``
 from __future__ import annotations
 
 import hashlib
+from typing import TYPE_CHECKING
 
 from raku_rag.app import MvpSystem
 from raku_rag.core.config import Settings
@@ -45,6 +46,9 @@ from raku_rag.services.profile import ProfileRegistry
 from raku_rag.services.reindex import InMemoryReindexPlanStore, ReindexService
 from raku_rag.services.retrieval import RetrievalService
 from raku_rag.workers.ingestion import IngestionJobMessage, IngestionRun
+
+if TYPE_CHECKING:
+    from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
 
 DEFAULT_DSN = "postgresql://raku:raku@127.0.0.1:5432/raku_parity"
 
@@ -178,6 +182,51 @@ class ProductionSystem(MvpSystem):
 
         refreshed = self.ingestion_runs.get_for_tenant(tenant_id, run.ingestion_run_id)
         return refreshed or run
+
+    def attach_manufacturing_metadata(
+        self, tenant_id: str, document_id: str, metadata: "ManufacturingDocumentMetadata"
+    ) -> "ManufacturingDocumentMetadata | None":
+        """P1-1: persist ``ManufacturingDocumentMetadata`` onto the Postgres ``Document.metadata`` as a
+        jsonb-safe mapping (``to_mapping()``), so the safety overlay's registry resolver reads it back
+        (``from_mapping``) over the DEPLOYED ProductionSystem — not only the in-memory MvpSystem.
+
+        The overlay resolves per-document approval state from ``Document.metadata``; the in-memory path
+        can stash the dataclass, but a dataclass does not survive a jsonb round-trip, so the deployed
+        path persists the mapping form. Returns the metadata, or ``None`` if the document is absent.
+        """
+        from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY
+
+        doc = self.registry.get(tenant_id, document_id)
+        if doc is None:
+            return None
+        doc.metadata[MFG_META_KEY] = metadata.to_mapping()
+        self.registry.put(doc)
+        return metadata
+
+    def ingest_manufacturing(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        document_id: str,
+        text: str,
+        metadata: "ManufacturingDocumentMetadata",
+        source_id: str = "src",
+    ):
+        """P1-1 deployed manufacturing ingest: run the reused 001 text-ingest path then persist the
+        manufacturing metadata (jsonb-safe) so the safety overlay runs over real Postgres. Mirrors
+        ``ManufacturingSystem.ingest_manufacturing`` but persists ``to_mapping()`` into
+        ``Document.metadata`` for the Postgres round-trip (the resolver reads it via ``from_mapping``).
+        """
+        job = self.ingest_text(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            document_id=document_id,
+            text=text,
+            source_id=source_id,
+        )
+        self.attach_manufacturing_metadata(tenant_id, document_id, metadata)
+        return job
 
     def retry_ingestion_run(
         self, *, tenant_id: str, ingestion_run_id: str, raw: bytes
