@@ -6,18 +6,25 @@
 # OS/debian base layers scan 0 HIGH/CRITICAL. Root-cause fixes landed (2026-06-21):
 #   - next: upgraded 14 -> 15.5.x — FIXED (the 5 next advisories CVE-2026-44573/44578 + GHSA-8h8q/h25m/
 #     q4gf are gone), so they are intentionally NOT listed (the gate fails if they reappear).
-#   - glob / tmp / picomatch (dev-only build tooling via jest / @nestjs/cli -> @angular-devkit /
-#     chokidar): the runtime images now do a CLEAN prod-only install (`rm -rf node_modules &&
-#     npm ci --omit=dev` in apps/{api,web}/Dockerfile) so these are ABSENT from the image — NOT listed.
+#   - glob / tmp (dev-only build tooling via jest / @nestjs/cli): the runtime images now do a CLEAN
+#     prod-only install (`rm -rf node_modules && npm ci --omit=dev` in apps/{api,web}/Dockerfile), so
+#     these are ABSENT from the image — verified gone, NOT listed.
 #
-# The ONLY remaining accepted advisories are multer's:
+# Two transitive advisories genuinely persist in the prod image and are accepted:
+#
+# ── picomatch 4.0.1 (transitive) — Regular-expression Denial of Service (ReDoS) ──────────────────────
+# HIGH, 0 CRITICAL. picomatch is a PROD transitive (pulled by next 15's dependency tree, also by
+# build tooling), so it survives the prod-only install; it is glob-matching used at build/route-scan
+# time, NOT on the request path with user input. An npm `overrides` to 4.0.4 is NOT honored in this
+# npm-workspaces environment (it leaves picomatch "invalid", breaking strict `npm ci` — verified).
+# FOLLOW-UP: pin picomatch -> 4.0.4 once the override is honored (or when next ships a patched picomatch).
+CVE-2026-33671
 #
 # ── multer 2.0.2 (transitive PROD dep) — Denial of Service (malformed/deeply-nested/dropped uploads) ──
 # HIGH, 0 CRITICAL, no RCE. multer is HARD-PINNED to exactly 2.0.2 by @nestjs/platform-express@10.4.22
-# (an exact "2.0.2", not a range), and an npm `overrides` to 2.2.0 is not honored in this workspace
-# (it leaves multer "invalid", which would break the strict `npm ci`). A clean fix requires the NestJS 11
-# upgrade (its platform-express depends on a patched multer). Mitigated meanwhile: the NestJS API is the
-# internal facade behind edge rate-limiting (PR-011); the impact is availability-only.
+# (an exact "2.0.2", not a range); an npm override is not honored here either. A clean fix requires the
+# NestJS 10 -> 11 upgrade (its platform-express depends on a patched multer). Mitigated meanwhile: the
+# NestJS API is the internal facade behind edge rate-limiting (PR-011); availability-only.
 # FOLLOW-UP: upgrade @nestjs/* 10 -> 11 (pulls a fixed multer), then remove these.
 CVE-2026-2359
 CVE-2026-3304
