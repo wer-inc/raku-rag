@@ -19,6 +19,9 @@ export class IngestController {
       document_id: body?.document_id,
       document_ref: body?.ref,
       content_type: body?.content_type ?? "text/plain",
+      // P1-1: forward optional manufacturing approval/safety metadata so the answer-service persists
+      // it on the Document (the safety overlay resolves approval state from there).
+      manufacturing: body?.manufacturing,
     };
     const upstream = await fetch(`${base}/internal/ingest`, {
       method: "POST",

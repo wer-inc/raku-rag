@@ -1,3 +1,30 @@
+/**
+ * Manufacturing approval/safety metadata supplied at ingest (mfg-openapi.md). Forwarded verbatim to
+ * the answer-service, which persists it on the Document so the safety overlay (high-risk gate,
+ * draft/obsolete demotion) fires for production-ingested docs. tenant_id/document_id are NOT taken
+ * from here — the server uses the authenticated principal + the request document_id.
+ */
+export interface ManufacturingIngestMetadata {
+  approval_status?: "draft" | "pending_review" | "approved" | "obsolete";
+  effective_date?: string | null;
+  approval_source?: "imported" | "workflow";
+  approved_by?: string;
+  approved_at?: string;
+  obsolete_at?: string;
+  superseded_by?: string;
+  document_kind?: string;
+  safety_category?: string;
+  quality_category?: string;
+  equipment_operation_category?: string;
+  hazard_tags?: string[];
+  equipment_id?: string;
+  process_id?: string;
+  alarm_code?: string;
+  defect_type?: string;
+  part_no?: string;
+  customer?: string;
+}
+
 export interface IngestRequest {
   collection_id: string;
   source_id: string;
@@ -5,6 +32,8 @@ export interface IngestRequest {
   /** object-storage ref (MinIO/S3) or inline upload id */
   ref: string;
   content_type?: string;
+  /** optional manufacturing approval/safety metadata (drives the safety overlay) */
+  manufacturing?: ManufacturingIngestMetadata;
 }
 
 export type IngestionRunStatus =

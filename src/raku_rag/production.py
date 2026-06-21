@@ -148,8 +148,14 @@ class ProductionSystem(MvpSystem):
         document_ref: str,
         raw: bytes,
         content_type: str = "text/plain",
+        manufacturing_metadata: "ManufacturingDocumentMetadata | None" = None,
     ) -> IngestionRun:
-        """Run the ingestion service through the same status projection used by the worker."""
+        """Run the ingestion service through the same status projection used by the worker.
+
+        P1-1: when ``manufacturing_metadata`` is supplied (the deployed ingest boundary passes it from
+        the request's ``manufacturing`` block), persist it onto the Document on success so the safety
+        overlay can resolve approval state for production-ingested docs — not just in-memory fixtures.
+        """
         checksum = hashlib.sha256(raw).hexdigest()
         message = IngestionJobMessage(
             idempotency_key=f"api:{collection_id}:{source_id}:{document_id}:{checksum}",
@@ -175,6 +181,10 @@ class ProductionSystem(MvpSystem):
         )
         if job.status == JobStatus.SUCCEEDED.value:
             self.ingestion_runs.mark_succeeded(run, chunk_count=job.chunk_count)
+            if manufacturing_metadata is not None:
+                # Persist mfg approval metadata so the safety overlay (high-risk gate, draft/obsolete
+                # demotion) fires for this production-ingested document (P1-1 write path).
+                self.attach_manufacturing_metadata(tenant_id, document_id, manufacturing_metadata)
         else:
             self.ingestion_runs.mark_failed(
                 run, reason=job.failure_reason or "ingestion failed", retry_count=0
