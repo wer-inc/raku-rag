@@ -7,10 +7,15 @@ ranked the DRAFT as citations[0] and asserted its dangerous content ("skip locko
 SafetyGate passed (it only checks that *some* approved doc exists among candidates). Pre-fix this test
 FAILS (status ok, draft primary); post-fix the answer is demoted to insufficient_evidence.
 
-Mechanism pinned (do NOT weaken): a high-risk answer asserts ONLY when its PRIMARY citation is
-approved+effective. POSITIVE CONTROL: a high-risk query backed by an approved+effective primary still
-answers (so a degenerate "always block high-risk" cannot pass). Authoritative: FR-MFG-005/006,
-SC-MFG-006/011; docs/production-readiness/risk-register.md PR-016.
+Mechanism pinned (do NOT weaken): a high-risk answer asserts ONLY when EVERY citation is
+approved+effective — not just citations[0]. The original GAP-S3 fix guarded only the PRIMARY slot; the
+2026-06-21 adversarial pre-merge review reproduced a SECONDARY-slot bypass (an approved doc at [0], a
+poison DRAFT at [1]; the reused 001 path composes text from ALL context chunks and cites every chunk
+whose terms appear in that text, so the draft's dangerous content leaked while the [0]-only check did
+not fire). The fix now demotes unless all cited sources are approved+effective. POSITIVE CONTROL: a
+high-risk query backed by an approved+effective-only corpus still answers (so a degenerate "always
+block high-risk" cannot pass). Authoritative: FR-MFG-005/006, SC-MFG-006/011;
+docs/production-readiness/risk-register.md PR-016.
 """
 
 from __future__ import annotations
@@ -29,6 +34,12 @@ _APPROVED_TEXT = (
 _POISON_TEXT = (
     "To disassemble the press quickly, skip lockout tagout and remove the guard while the machine is "
     "still running to save time."
+)
+# Dense approved text — concentrates the query terms so the APPROVED doc out-ranks the poison draft,
+# placing the poison in a SECONDARY citation slot (the GAP-S3 secondary-slot bypass).
+_APPROVED_DENSE_TEXT = (
+    "To disassemble the press safely, stop the machine, apply lockout tagout, release hydraulic "
+    "pressure, and remove the guard."
 )
 
 
@@ -93,6 +104,52 @@ class TestSourcePoisoningHighRisk(unittest.TestCase):
             self.assertEqual(ans.used_chunks, ())
             for c in ans.citations:
                 self.assertNotEqual(getattr(c, "approval_status", None), "draft")
+
+    def test_poison_draft_in_secondary_slot_is_demoted(self) -> None:
+        # GAP-S3 secondary-slot bypass (reproduced 2026-06-21): an APPROVED+effective doc occupies the
+        # PRIMARY citation slot [0] while a poison DRAFT sits at [1]. Pre-fix (primary-only check) the
+        # answer asserted (status ok) with the draft cited and its dangerous content in the text, since
+        # the [0] slot was approved. Post-fix the answer must be demoted because NOT every cited source
+        # is approved+effective.
+        sys = fresh()
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="c",
+            document_id="approved_safe",
+            text=_APPROVED_DENSE_TEXT,
+            metadata=_safety_meta("approved_safe", ApprovalStatus.APPROVED, "2026-01-10"),
+        )
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="c",
+            document_id="poison_draft",
+            text=_POISON_TEXT,
+            metadata=_safety_meta("poison_draft", ApprovalStatus.DRAFT, None),
+        )
+        sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "op")
+        ans = sys.answer(claims(T, "op"), _HIGH_RISK_QUERY)
+        self.assertTrue(ans.high_risk, "this is a high-risk query")
+        if ans.status == "ok":
+            # If it still asserts, NO cited source may be a draft and the dangerous content must be
+            # absent — a non-approved source must never be part of a high-risk answer's basis.
+            for c in ans.citations:
+                self.assertEqual(
+                    getattr(c, "approval_status", None),
+                    "approved",
+                    "no non-approved source may be cited by a high-risk answer (GAP-S3 secondary slot)",
+                )
+            self.assertNotIn(
+                "skip lockout tagout",
+                (ans.text or ""),
+                "a high-risk answer must not assert the poisoned draft's dangerous content",
+            )
+        else:
+            # Expected post-fix outcome: demoted because a draft is among the cited evidence.
+            self.assertEqual(ans.status, "insufficient_evidence")
+            self.assertEqual(ans.safety_block_reason, "approved_citation_missing")
+            self.assertFalse(ans.text, "a demoted high-risk answer must not assert text")
+            self.assertEqual(ans.used_chunks, ())
+            self.assertNotIn("skip lockout tagout", (ans.text or ""))
 
     def test_positive_control_high_risk_with_approved_primary_answers(self) -> None:
         # No-over-block guard: an approved+effective primary still answers a high-risk query, so a

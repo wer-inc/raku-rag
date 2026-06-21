@@ -245,29 +245,31 @@ class ManufacturingAnswerService:
         # doc exists among candidates. Two demotions guard the PRIMARY-evidence invariant:
         #  - (FR-MFG-006/SC-MFG-011) obsolete PRIMARY with no approved+effective among the CITED
         #    evidence => an obsolete doc is never primary (existing behavior; applies to any answer).
-        #  - (GAP-S3/SC-MFG-006) a HIGH-RISK answer whose PRIMARY citation is not approved+effective =>
-        #    a high-risk assertion must rest on approved+effective evidence; a draft/obsolete/pending
-        #    top citation must NEVER be the basis even when an approved doc is cited elsewhere (source
-        #    poisoning). Demote to insufficient_evidence instead of asserting from the poisoned source.
+        #  - (GAP-S3/SC-MFG-006) a HIGH-RISK assertion must rest ENTIRELY on approved+effective
+        #    evidence. Guarding only the PRIMARY (citations[0]) slot is insufficient: the REUSED 001
+        #    answer path composes the answer TEXT from ALL context chunks and then cites every chunk
+        #    whose terms appear in that text, so a draft/obsolete/pending source in ANY cited slot can
+        #    still contaminate a high-risk answer's text and citation list (source poisoning via a
+        #    SECONDARY citation, even when an approved doc is primary). Demote to insufficient_evidence
+        #    unless EVERY cited source is approved+effective.
         if base.status == AnswerStatus.OK.value and mfg_citations:
             primary = mfg_citations[0]
-            primary_meta = self._get_mfg_meta(tenant, primary.document_id)
-            primary_is_approved_effective = is_approved_effective(primary_meta, today=self._today)
-            cited_has_approved_effective = any(
+            cited_approved_effective = [
                 is_approved_effective(self._get_mfg_meta(tenant, c.document_id), today=self._today)
                 for c in mfg_citations
-            )
-            high_risk_primary_unsupported = (
-                classification.is_high_risk and not primary_is_approved_effective
+            ]
+            cited_has_approved_effective = any(cited_approved_effective)
+            high_risk_unsupported = classification.is_high_risk and not all(
+                cited_approved_effective
             )
             obsolete_primary_unsupported = (
                 primary.approval_status == ApprovalStatus.OBSOLETE.value
                 and not cited_has_approved_effective
             )
-            if high_risk_primary_unsupported or obsolete_primary_unsupported:
+            if high_risk_unsupported or obsolete_primary_unsupported:
                 block_reason = (
                     SafetyBlockReason.APPROVED_CITATION_MISSING
-                    if high_risk_primary_unsupported
+                    if high_risk_unsupported
                     else SafetyBlockReason.INSUFFICIENT_EVIDENCE
                 )
                 blocked = ManufacturingAnswer(
