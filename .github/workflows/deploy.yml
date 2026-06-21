@@ -1,0 +1,83 @@
+name: deploy
+
+# P1-12 tail: SAFE CD skeleton. It is intentionally inert until an operator configures AWS OIDC.
+# - Manual only (workflow_dispatch); never auto-runs on push.
+# - Environment-gated: `production` should require a reviewer (GitHub Environment protection rules).
+# - No secrets in the repo: AWS auth is OIDC role assumption; the role ARN is a repo/env VARIABLE.
+# - dry_run defaults to true → prints the plan and changes nothing. A real deploy needs dry_run=false
+#   AND the environment approval AND the role/region vars set.
+# See docs/production-readiness/release-and-rollback.md §3 for the full CD path + rollback policy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [staging, production]
+        default: staging
+      image_tag:
+        description: Image tag / digest to deploy (rollback = a previous digest)
+        type: string
+        required: true
+      dry_run:
+        description: Print the plan only (no AWS changes)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # OIDC web-identity for AWS role assumption (no static keys)
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }} # production should have required reviewers configured
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight (skeleton is inert until OIDC is configured)
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "${AWS_DEPLOY_ROLE_ARN}" ]; then echo "::error::set repo/env variable AWS_DEPLOY_ROLE_ARN (OIDC role to assume)"; missing=1; fi
+          if [ -z "${AWS_REGION}" ]; then echo "::error::set repo/env variable AWS_REGION"; missing=1; fi
+          if [ "$missing" -ne 0 ]; then
+            echo "This is a CD skeleton. Configure GitHub OIDC + the AWS deploy role, then re-run."
+            echo "See docs/production-readiness/release-and-rollback.md §3."
+            exit 1
+          fi
+          echo "Preflight OK for environment=${ENVIRONMENT}, image_tag=${IMAGE_TAG}, dry_run=${{ inputs.dry_run }}"
+
+      - name: Plan (always; the documented CD sequence)
+        run: |
+          set -euo pipefail
+          echo "PLAN for ${ENVIRONMENT} @ ${IMAGE_TAG}:"
+          echo "  1. assume ${AWS_DEPLOY_ROLE_ARN} via OIDC in ${AWS_REGION}"
+          echo "  2. push images raku-rag-{api,web,worker}:${IMAGE_TAG} to ECR (immutable)"
+          echo "  3. apply expand-only DB migrations to the ${ENVIRONMENT} cluster"
+          echo "  4. cdk deploy --context stage=${ENVIRONMENT}"
+          echo "  5. smoke (/v1/health, grounded answer, cross-tenant probe), then record rollback target"
+
+      - name: Configure AWS credentials (OIDC)
+        if: ${{ !inputs.dry_run }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: CDK deploy
+        if: ${{ !inputs.dry_run }}
+        working-directory: infra/cdk
+        run: |
+          set -euo pipefail
+          npm ci
+          npx cdk deploy --require-approval never --context stage="${ENVIRONMENT}"
+          # Image build/push to ECR and migration apply are account-specific (ECR URIs, DB endpoint);
+          # wire them here once the account is provisioned — see release-and-rollback.md §3.
