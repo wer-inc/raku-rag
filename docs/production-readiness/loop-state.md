@@ -5,6 +5,18 @@ Companion to `rag-production-readiness.md` (audit + backlog) and `eval-plan.md`.
 
 ---
 
+## Loop 22 — 2026-06-21 — P1-9 SQS worker/DLQ ops boundary fixed (SQS vs Dagster separation)
+
+**実装した変更:**
+- `src/raku_rag/workers/queue/sqs.py` — `SqsTaskQueue` now takes `SQS_DLQ_URL` and `SQS_MAX_RECEIVE_COUNT`; normal failures only shorten visibility, while the final receive returns `True`, copies the original message to the DLQ when configured, and deletes the source message so app state and queue state do not drift.
+- `workers/ingest/worker.py` — added production `--serve` mode for long-lived ECS polling; `--drain` remains local/maintenance only. The worker passes DLQ config into the SQS adapter.
+- `infra/cdk/lib/raku-rag-stack.ts` — ECS worker command changed from `--drain` to `--serve`; worker receives `SQS_DLQ_URL`/`SQS_MAX_RECEIVE_COUNT` and can send to the DLQ.
+- `workers/ingest/README.md` — documents `--serve` vs `--drain` and keeps Dagster as offline control plane for reindex/backfill/evaluation/KPI, not request-time answer/search.
+
+**検証:** targeted unit/integration/contract tests GREEN (11): SQS retry vs final DLQ projection, ingestion worker DLQ state projection, CDK worker long-running command + DLQ env. `py_compile` GREEN; worker `--serve --max-idle-polls 1` smoke GREEN.
+
+**Risk PR-010 → Fixed.** Remaining Dagster productionization is separate: add real Dagster webserver/daemon/EcsRunLauncher if you want the optional control plane on ECS, without putting Dagster in the hot answer/search path.
+
 ## Loop 21 — 2026-06-21 — #5 Trivy flipped to BLOCKING after real CVE triage (PR-014 → Fixed)
 
 **Triage of the real CI Trivy report** (api/web/worker images): OS/debian base layers **0 HIGH/CRITICAL**; 9 distinct HIGH npm CVEs (0 CRITICAL). Root cause: both node Dockerfiles `COPY` the FULL `node_modules` (incl. devDeps) into runtime. `npm why` split them: dev = glob/picomatch/tmp (3, via jest); prod = next ×2 + multer ×4 (6).

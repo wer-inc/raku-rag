@@ -30,7 +30,7 @@ class FakeSqsClient:
 
 
 class TestSqsTaskQueue(unittest.TestCase):
-    def test_send_receive_ack_and_fail(self) -> None:
+    def test_send_receive_ack_and_retry_failure(self) -> None:
         client = FakeSqsClient()
         queue = SqsTaskQueue("http://sqs/raku-ingest", client=client)
 
@@ -57,6 +57,36 @@ class TestSqsTaskQueue(unittest.TestCase):
         moved = queue.fail(envelope, "retry")
         self.assertFalse(moved)
         self.assertEqual(client.visibility[0]["VisibilityTimeout"], 5)
+
+    def test_final_failure_projects_to_dlq_and_deletes_source_message(self) -> None:
+        client = FakeSqsClient()
+        queue = SqsTaskQueue(
+            "http://sqs/raku-ingest",
+            client=client,
+            dead_letter_queue_url="http://sqs/raku-ingest-dlq",
+            max_receive_count=3,
+        )
+        client.messages = [
+            {
+                "MessageId": "m-final",
+                "ReceiptHandle": "rh-final",
+                "Body": json.dumps({"idempotency_key": "k", "document_id": "d"}),
+                "Attributes": {"ApproximateReceiveCount": "3"},
+            }
+        ]
+
+        envelope = queue.receive()[0]
+        moved = queue.fail(envelope, "parser failed")
+
+        self.assertTrue(moved)
+        self.assertEqual(client.sent[0]["QueueUrl"], "http://sqs/raku-ingest-dlq")
+        self.assertEqual(json.loads(client.sent[0]["MessageBody"])["document_id"], "d")
+        self.assertEqual(
+            client.sent[0]["MessageAttributes"]["OriginalMessageId"]["StringValue"],
+            "m-final",
+        )
+        self.assertEqual(client.deleted[0]["ReceiptHandle"], "rh-final")
+        self.assertEqual(client.visibility, [])
 
 
 if __name__ == "__main__":

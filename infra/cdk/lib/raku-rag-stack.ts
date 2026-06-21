@@ -278,11 +278,12 @@ export class RakuRagStack extends cdk.Stack {
     });
     this.attachRuntimePolicies(workerTask.taskRole, documentBucket, dataKey);
     ingestionQueue.grantConsumeMessages(workerTask.taskRole);
+    deadLetterQueue.grantSendMessages(workerTask.taskRole);
     database.secret?.grantRead(workerTask.taskRole);
 
     workerTask.addContainer("PythonIngestWorkerContainer", {
       image: ecs.ContainerImage.fromRegistry("public.ecr.aws/docker/library/python:3.12-slim"),
-      command: ["python", "-m", "workers.ingest.worker", "--drain"],
+      command: ["python", "-m", "workers.ingest.worker", "--serve"],
       essential: true,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "worker",
@@ -293,6 +294,8 @@ export class RakuRagStack extends cdk.Stack {
         RAKU_WORKER_BACKEND: "postgres",
         DOCUMENT_BUCKET: documentBucket.bucketName,
         SQS_QUEUE_URL: ingestionQueue.queueUrl,
+        SQS_DLQ_URL: deadLetterQueue.queueUrl,
+        SQS_MAX_RECEIVE_COUNT: "5",
         DATABASE_HOST: database.clusterEndpoint.hostname,
         DATABASE_PORT: database.clusterEndpoint.port.toString(),
         DATABASE_NAME: "raku_rag",
