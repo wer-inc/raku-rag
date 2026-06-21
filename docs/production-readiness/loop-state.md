@@ -11,10 +11,10 @@ Companion to `rag-production-readiness.md` (audit + backlog) and `eval-plan.md`.
 
 **実装した変更:**
 - `apps/{web,api}/Dockerfile` — `npm prune --omit=dev` after build (build stage) so dev tooling is NOT shipped in runtime images → removes the 3 dev CVEs for real (also good image hardening). worker is Python — unaffected.
-- `.trivyignore` (NEW) — accepted CVEs with per-package justification + follow-ups. **First blocking CI run corrected the triage:** prune dropped each image 13→4 HIGH; glob+tmp were removed, but **picomatch (CVE-2026-33671, ReDoS) SURVIVES prune** (hoisted via @nestjs/cli/@angular-devkit/chokidar in the npm-workspaces monorepo) — so it's accepted too (not on the request path; follow-up: pin →4.0.4). Final accepted set = 7 CVEs: picomatch (1) + multer ×4 + next ×2.
+- `.trivyignore` (NEW) — all 9 npm HIGH CVEs (0 CRITICAL) accepted with per-package justification + follow-ups. **Two blocking CI runs corrected the triage:** `npm prune --omit=dev` drops most dev weight (per-image 13→4 HIGH) but npm-workspaces HOISTING leaves the build-tooling deps (glob CVE-2025-64756, tmp CVE-2026-44705, picomatch CVE-2026-33671 — via jest/@nestjs/cli/@angular-devkit/chokidar) in the image; prune does NOT remove them. They're not on the request path → accepted. Set = build-tooling (3) + multer ×4 + next ×2. Real fix (follow-up): clean prod-only runtime install (`rm -rf node_modules && npm ci --omit=dev`) + multer→2.2.0 override + Next.js 15.
 - `.github/workflows/deploy-checks.yml` — `trivyignores: .trivyignore` + **`exit-code: "0"`→`"1"` (BLOCKING)**.
 
-**検証:** Trivy can't run locally (no Docker) — CI deploy-checks is the authority. First blocking run FAILED on api/web (picomatch survived prune, not yet ignored) → corrected `.trivyignore`; re-verified on CI.
+**検証:** Trivy can't run locally (no Docker) — CI deploy-checks is the authority. Iterated twice on CI (picomatch, then glob+tmp also survive prune) to enumerate the true survivor set; re-verified green on CI.
 
 **Risk PR-014 → Fixed; PR-012 Trivy-flip thread closed.** Remaining real-infra: AWS CD/OIDC (#3), rollback/backup (#4), real-data EXPLAIN + load p50/p95/p99 (#2).
 
