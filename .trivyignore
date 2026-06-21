@@ -21,10 +21,14 @@ CVE-2026-3304
 CVE-2026-3520
 CVE-2026-5079
 #
-# ── next (Next.js 14 frontend) — Trivy keys these advisories by GHSA, not CVE ──────────────────────
+# ── next (Next.js 14 frontend) ─────────────────────────────────────────────────────────────────────
 # DoS / middleware information disclosure / SSRF via crafted requests. HIGH, 0 CRITICAL. Fixed only in
 # Next.js 15.5.16 / 16.2.5 (MAJOR upgrade). Mitigated: tenant isolation, ACL deny-by-default, and
 # groundedness are enforced SERVER-SIDE in the API / answer-service, not in Next. FOLLOW-UP: Next.js 15.
+# NOTE: Trivy's DB keys these advisories by EITHER CVE or GHSA depending on the DB snapshot, so BOTH
+# id forms are listed (ignore-by-exact-id; the unused form is a harmless no-op).
+CVE-2026-44573
+CVE-2026-44578
 GHSA-8h8q-6873-q5fj
 GHSA-h25m-26qc-wcjf
 GHSA-q4gf-8mx6-v5v3
