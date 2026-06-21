@@ -5,6 +5,23 @@ Companion to `rag-production-readiness.md` (audit + backlog) and `eval-plan.md`.
 
 ---
 
+## Loop 21 — 2026-06-21 — #5 Trivy flipped to BLOCKING after real CVE triage (PR-014 → Fixed)
+
+**Triage of the real CI Trivy report** (api/web/worker images): OS/debian base layers **0 HIGH/CRITICAL**; 9 distinct HIGH npm CVEs (0 CRITICAL). Root cause: both node Dockerfiles `COPY` the FULL `node_modules` (incl. devDeps) into runtime. `npm why` split them: dev = glob/picomatch/tmp (3, via jest); prod = next ×2 + multer ×4 (6).
+
+**実装した変更:**
+- `apps/{web,api}/Dockerfile` — `npm prune --omit=dev` after build (build stage) so dev tooling is NOT shipped in runtime images → removes the 3 dev CVEs for real (also good image hardening). worker is Python — unaffected.
+- `.trivyignore` (NEW) — the 6 prod CVEs accepted with per-package justification (multer DoS, 0 CRITICAL, behind edge rate-limiting; next info-disclosure/SSRF, server-side ACL enforced) + follow-ups (multer→2.2.0 override; Next.js 15 migration). Dev CVEs deliberately NOT listed (gate must still catch a dev dep leaking into prod).
+- `.github/workflows/deploy-checks.yml` — `trivyignores: .trivyignore` + **`exit-code: "0"`→`"1"` (BLOCKING)**.
+
+**検証:** deploy-checks.yml valid YAML; `trivyignores` confirmed a real v0.36.0 input; `.trivyignore` parses to exactly the 6 CVE IDs. Trivy itself can't run locally (no Docker) — CI deploy-checks is the authority for the blocking result.
+
+**Risk PR-014 → Fixed; PR-012 Trivy-flip thread closed.** Remaining real-infra: AWS CD/OIDC (#3), rollback/backup (#4), real-data EXPLAIN + load p50/p95/p99 (#2).
+
+**次のループ:** push branch → PR → CI deploy-checks Trivy (blocking) confirms → merge.
+
+---
+
 ## Loop 20 — 2026-06-21 — P1-1 Postgres-data step + Tier-B VERIFIED on real Postgres (PR-003 → Fixed)
 
 **Discovery:** a real **PostgreSQL 14 + pgvector 0.8.0** is reachable in this environment (DSN `…/raku_parity`) — Tier-B is runnable here, not only on CI runners. (Updates the prior "Tier-B only on runners" assumption.)

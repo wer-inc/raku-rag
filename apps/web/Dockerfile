@@ -7,7 +7,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 COPY . .
 RUN npm ci \
  && npm run build:shared \
- && npm run build --workspace @raku-rag/web
+ && npm run build --workspace @raku-rag/web \
+ && npm prune --omit=dev
 
 FROM node:22-slim AS runtime
 WORKDIR /repo

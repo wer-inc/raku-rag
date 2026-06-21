@@ -1,0 +1,25 @@
+# Trivy ignore file — accepted HIGH CVEs (0 CRITICAL) in production npm dependencies.
+# Reviewed 2026-06-21 (see docs/production-readiness/risk-register.md PR-014). The Trivy gate is
+# BLOCKING (deploy-checks.yml exit-code 1); every entry here is an explicit, justified acceptance.
+#
+# NOTE: dev-only CVEs (glob CVE-2025-64756, picomatch CVE-2026-33671, tmp CVE-2026-44705 — all via
+# jest/build tooling) are deliberately NOT listed here. They are removed from the runtime images by
+# `npm prune --omit=dev` in apps/{api,web}/Dockerfile, so the gate must still FAIL if a dev dependency
+# ever leaks into a production image. Do not add dev CVEs here — fix the image instead.
+#
+# ── multer (transitive prod dep via @nestjs/platform-express) ──────────────────────────────────────
+# Denial of Service via malformed / deeply-nested / dropped multipart uploads. Severity HIGH, 0
+# CRITICAL, no RCE. Mitigated: the NestJS API is the internal facade behind edge rate-limiting (PR-011);
+# DoS is availability-only. FOLLOW-UP: bump multer -> 2.2.0 via an npm override to fully remediate.
+CVE-2026-2359
+CVE-2026-3304
+CVE-2026-3520
+CVE-2026-5079
+#
+# ── next (Next.js 14 frontend) ─────────────────────────────────────────────────────────────────────
+# Middleware information disclosure + Server-Side Request Forgery via crafted requests. Severity HIGH,
+# 0 CRITICAL. Fixed only in Next.js 15.5.16 / 16.2.5 (a MAJOR upgrade). Mitigated: tenant isolation,
+# ACL deny-by-default, and groundedness are enforced SERVER-SIDE in the API / answer-service, not in the
+# Next.js layer. FOLLOW-UP: Next.js 15 migration (tracked).
+CVE-2026-44573
+CVE-2026-44578
