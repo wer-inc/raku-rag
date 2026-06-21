@@ -320,6 +320,18 @@ sequenceDiagram
 
 Full Japanese BM25 / morphological hybrid search は PoC 評価後に追加する。Aurora PostgreSQL の拡張で足りない場合は OpenSearch を fallback とする。
 
+### RAG Performance Budget（CR: performance）
+
+Production answer path は measurement first とし、最初の patch は高速化ではなく request 単位の observability を優先する。QueryProfile / RetrievalProfile / Settings の既定値は以下を初期 budget とする。
+
+- `max_synchronous_llm_calls=1`: answer generation 以外の query rewrite / HyDE / LLM judge / citation deep validation は常時同期実行しない。低 confidence など profile 条件に一致する場合だけ budget 内で実行する。
+- `vector_top_k=50`: vector search の初期候補上限。ACL・tenant・metadata filter は search 時点で pushdown する。
+- `rerank_candidate_limit=20`: reranker へ渡す候補の上限。retrieve candidates と rerank input count は分けて測る。
+- `final_context_limit=8`: LLM context に入れる chunk 数の上限。
+- `max_context_tokens=8000`: context token budget。超過時は score/rerank 順で切り詰め、足りなければ `insufficient_evidence` / `temporarily_unavailable` とする。
+
+Hot path の trace span は `embed_query`、`vector_search`、`metadata_filter`、`rerank`、`build_prompt`、`llm_generate` に分ける。request-level metric は `request_id` に集約し、`tenant_id/user_id` は hash 化して raw identity を保存しない。
+
 ### Query / Answer Pipeline（同期）
 
 ```mermaid
@@ -458,6 +470,8 @@ sequenceDiagram
 - **Tracing**: OpenTelemetry、相関ID を ingestion/indexing/retrieval/generation/evaluation に
   伝播（SC-005 トレース100%）。
 - **Metrics**: 段階別 latency/throughput/error rate/cost を Prometheus 互換で公開（FR-017）。
+- **RAG hot-path metrics**: answer request ごとに `request_id`、hash 化した `tenant_id/user_id`、`llm_call_count`、`retrieval_ms`、`rerank_ms`、`generation_ms`、`total_ms`、`retrieved_chunks`、`rerank_input_count`、`context_tokens`、`prompt_tokens`、`completion_tokens`、`cache_hit` を保存する。raw query / raw context は LoggingPolicy の opt-in がない限り保存しない。
+- **Performance readiness dashboard**: p50/p95/p99、queue time、provider rate limit、cache hit rate、LLM/token count、retrieval/rerank/generation breakdown を tenant/profile ごとに比較できるようにする。
 - **Logging**: 構造化JSON、**redaction 必須**（PII/secret をログ・トレース・プロンプト保存・
   評価データ・エラー出力に残さない; FR-024a）。
 - **アラート**: ACL post-check 差分、削除再出現検知、budget 超過、失敗ジョブ滞留、品質回帰。
@@ -504,6 +518,8 @@ API レスポンス status: `ok` / `insufficient_evidence` / `budget_exceeded` /
     境界に影響しないことを確認。
 - **eval**: EvaluationRunner を CI/定期で実行し baseline 比較。
 - **observability**: トレース欠落ゼロ（SC-005）の検証。
+- **performance**: k6/Locust または Python benchmark で large corpus / many tenants / long documents / high concurrency の synthetic query を実行し、p50/p95/p99、error rate、queue time、retrieval_ms/rerank_ms/generation_ms、LLM call count、token count、cache hit rate を regression gate にする。
+- **profile budget**: QueryProfile/RetrievalProfile の `max_synchronous_llm_calls`、`vector_top_k`、`rerank_candidate_limit`、`final_context_limit`、`max_context_tokens` が OpenAPI/DTO/実装で一致し、無制限 rerank/prompt stuffing を防ぐことを contract + unit test で確認する。
 
 CI 構成: lint/type → unit → contract → integration → **security hard gate** → eval gate。
 security hard gate を通らない変更は baseline に関係なくマージ不可。
@@ -624,6 +640,9 @@ tests/
 | Langfuse raw context leakage | 顧客本文・機密 context が trace に残る | LoggingPolicy で raw context 保存を default off。citation IDs/chunk IDs/prompt version/model metadata/cost/latency を保存し、input/output は redaction/sampling |
 | SQS-only operations become hard for backfill/reindex | 差分同期、再index、embedding migration、評価、KPI が増えると運用が重くなる | SQS を MVP default としつつ、SourceSyncState/Manifest/ProcessingState/IngestionRun/ReindexPlan を Dagster-compatible に保つ |
 | Vercel hosting residency mismatch | フロント hosting の telemetry/region が顧客要件に合わない | Vercel AI SDK は採用可、hosting は ProviderPolicy/ResidencyProfile に従う。AWS-hosted Next.js を fallback |
+| Multi-step synchronous LLM calls | query rewrite / HyDE / answer generation / citation validation / LLM judge を直列実行すると p95/p99 と cost が跳ねる | `max_synchronous_llm_calls=1` を既定にし、追加 LLM call は条件付きまたは非同期 sampling/eval に逃がす。`llm_call_count` を request-level metric 化 |
+| Unbounded rerank/context | reranker input と prompt token が増え、latency/cost が悪化し品質も lost-in-the-middle で落ちる | `vector_top_k=50`、`rerank_candidate_limit=20`、`final_context_limit=8`、`max_context_tokens=8000` を profile budget として enforced/tested にする |
+| Metadata/ACL post-filter only | 候補を大量取得してから捨てるため遅く、候補不足再検索や security risk を生む | tenant/ACL/metadata filter pushdown と ANN/metadata index を readiness gate にし、post-check は二重防御としてのみ使う |
 
 ## Constitution Check (Post-Design Re-evaluation)
 

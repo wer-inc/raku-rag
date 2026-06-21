@@ -15,6 +15,7 @@ export interface RetrievalProfile extends PolicyLifecycle {
   rerank_enabled: boolean;
   rerank_candidate_limit: number;
   final_context_limit: number;
+  max_context_tokens: number;
   minimum_evidence_count: number;
   fallback_behavior: "insufficient_evidence" | "vector_only_disabled" | "temporarily_unavailable";
 }

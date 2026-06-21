@@ -14,8 +14,11 @@ class Settings:
     default_score_threshold: float = 0.10
     default_top_k: int = 5
     default_minimum_evidence_count: int = 1
-    rerank_top_n: int = 50
+    rerank_top_n: int = 20
     max_document_bytes: int = 25 * 1024 * 1024
+    max_context_tokens: int = 8_000
+    max_context_chunks: int = 8
+    max_synchronous_llm_calls: int = 1
     max_chunks_per_document: int = 10_000
     max_chunk_chars: int = 400
     max_concurrent_queries: int = 32
@@ -72,6 +75,19 @@ def settings_from_env(env: dict | None = None) -> Settings:
             )
         ),
         rerank_top_n=int(_parse("RAKU_RERANK_TOP_N", Settings.rerank_top_n, int)),
+        max_context_tokens=int(
+            _parse("RAKU_MAX_CONTEXT_TOKENS", Settings.max_context_tokens, int)
+        ),
+        max_context_chunks=int(
+            _parse("RAKU_MAX_CONTEXT_CHUNKS", Settings.max_context_chunks, int)
+        ),
+        max_synchronous_llm_calls=int(
+            _parse(
+                "RAKU_MAX_SYNCHRONOUS_LLM_CALLS",
+                Settings.max_synchronous_llm_calls,
+                int,
+            )
+        ),
         max_document_bytes=int(_parse("RAKU_MAX_DOCUMENT_BYTES", Settings.max_document_bytes, int)),
         max_chunks_per_document=int(
             _parse("RAKU_MAX_CHUNKS_PER_DOCUMENT", Settings.max_chunks_per_document, int)

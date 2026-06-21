@@ -137,6 +137,7 @@ parser/chunking/embedding 変更や backfill の計画。Dagster backfill の入
 - `profile_id` (PK), `tenant_id`
 - `score_threshold`, `top_k`, `minimum_evidence_count`
 - `rerank_enabled`, `rerank_top_n`, `query_rewrite_enabled`
+- `max_synchronous_llm_calls`, `max_context_tokens`, `max_context_chunks`
 - `self_eval_enabled`, `self_eval_criteria`
 - `embedding_provider`, `llm_provider`, `llm_model`（cheaper model 選択; FR-033）
 
@@ -195,6 +196,7 @@ deny-by-default の許可レコード。
 - Redaction/logging fields: `pii_redaction_applied`, `secret_redaction_applied`, `logging_policy_id?`,
   `raw_content_stored=false` by default
 - Trace: OTel span（永続化せず exporter 経由）。`correlation_id` / `trace_id` で AuditLog と突合。
+- RagHotPathMetric（永続化は backend 方針に従う request-level metric）: `request_id`, `tenant_id_hash`, `user_id_hash`, `profile_id`, `status`, `llm_call_count`, `retrieval_ms`, `rerank_ms`, `generation_ms`, `total_ms`, `retrieved_chunks`, `rerank_input_count`, `context_tokens`, `prompt_tokens`, `completion_tokens`, `cache_hit`。raw query / raw context / raw identity は持たない。
 
 ---
 
@@ -218,6 +220,7 @@ QueryProfile から参照される retrieval strategy の正本。初期は vect
 - `keyword_match_enabled`, `keyword_strategy`: `postgres_fts | pg_bigm | pgroonga | opensearch | disabled`
 - `vector_search_enabled`, `vector_top_k`, `vector_score_threshold`
 - `rerank_enabled`, `rerank_provider`, `rerank_model`, `rerank_candidate_limit`, `final_context_limit`
+- `max_context_tokens`
 - `exact_candidate_limit`, `hybrid_candidate_limit`, `minimum_evidence_count`
 - `high_risk_required_evidence_policy_id?`, `fallback_behavior`: `insufficient_evidence | vector_only_disabled | temporarily_unavailable`
 - `created_at`, `updated_at`

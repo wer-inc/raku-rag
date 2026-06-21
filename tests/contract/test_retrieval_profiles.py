@@ -29,7 +29,10 @@ class RetrievalProfileContractTest(unittest.TestCase):
         self.assertIn("vector_only_disabled", service)
         self.assertIn("metadata_filter_required", service)
         self.assertIn("identifier_match_enabled", service)
-        self.assertIn("rerank_candidate_limit > 80", service)
+        self.assertIn("rerank_candidate_limit must be between 1 and 80", service)
+        self.assertIn("max_context_tokens", service)
+        self.assertIn("max_context_tokens must be positive", service)
+        self.assertIn("final_context_limit must be positive", service)
 
     def test_candidate_union_contract_includes_metadata_identifier_vector_and_rerank(self) -> None:
         service = (ROOT / "apps/api/src/retrieval/retrieval-profile.service.ts").read_text(
@@ -43,6 +46,7 @@ class RetrievalProfileContractTest(unittest.TestCase):
             "findIdentifierMatches",
             "rerank_candidate_limit",
             "final_context_limit",
+            "max_context_tokens",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, service)

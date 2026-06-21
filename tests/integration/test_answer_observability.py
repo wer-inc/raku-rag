@@ -58,6 +58,24 @@ class TestAnswerObservability(unittest.TestCase):
         )
         self.assertTrue(all(span.status == "ok" for span in spans))
 
+        hot_paths = self.sys.metrics.rag_hot_path_metrics(ans.correlation_id)
+        self.assertEqual(len(hot_paths), 1)
+        hot = hot_paths[0]
+        self.assertEqual(hot.status, "ok")
+        self.assertEqual(hot.llm_call_count, 1)
+        self.assertGreaterEqual(hot.retrieval_ms, 0.0)
+        self.assertGreaterEqual(hot.rerank_ms, 0.0)
+        self.assertGreaterEqual(hot.generation_ms, 0.0)
+        self.assertGreaterEqual(hot.total_ms, hot.generation_ms)
+        self.assertGreaterEqual(hot.retrieved_chunks, len(ans.used_chunks))
+        self.assertGreaterEqual(hot.rerank_input_count, hot.retrieved_chunks)
+        self.assertGreater(hot.context_tokens, 0)
+        self.assertGreaterEqual(hot.prompt_tokens, hot.context_tokens)
+        self.assertGreater(hot.completion_tokens, 0)
+        self.assertFalse(hot.cache_hit)
+        self.assertNotEqual(hot.tenant_id_hash, T)
+        self.assertNotEqual(hot.user_id_hash, "alice")
+
         events = self.sys.audit.events(T, correlation_id=ans.correlation_id)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].action, "answer")
@@ -83,6 +101,16 @@ class TestAnswerObservability(unittest.TestCase):
         events = self.sys.audit.events(T, correlation_id=ans.correlation_id)
         self.assertEqual(events[0].decision, "budget_exceeded")
         self.assertEqual(events[0].reason, "budget")
+
+        hot_paths = self.sys.metrics.rag_hot_path_metrics(ans.correlation_id)
+        self.assertEqual(len(hot_paths), 1)
+        hot = hot_paths[0]
+        self.assertEqual(hot.status, "budget_exceeded")
+        self.assertEqual(hot.llm_call_count, 0)
+        self.assertEqual(hot.retrieved_chunks, 0)
+        self.assertEqual(hot.rerank_input_count, 0)
+        self.assertEqual(hot.prompt_tokens, 0)
+        self.assertFalse(hot.cache_hit)
 
 
 if __name__ == "__main__":

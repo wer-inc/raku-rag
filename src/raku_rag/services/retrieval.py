@@ -1,4 +1,4 @@
-"""T026 — RetrievalService: ACL pre-filter retrieval + double-defense post-check (FR-022).
+"""T026 - RetrievalService: ACL pre-filter retrieval + double-defense post-check (FR-022).
 
 The ACL/tenant/tombstone filter is enforced inside VectorStore.search as a PRE-filter. This service
 additionally re-asserts visibility on every returned chunk (fail-closed) and applies rerank.
@@ -16,8 +16,15 @@ from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.services.cost import CostService
 
 
+MAX_RERANK_CANDIDATES = 80
+
+
 def _token_count(text: str) -> int:
     return len(text.split())
+
+
+def _rerank_candidate_limit(profile: QueryProfile) -> int:
+    return max(0, min(int(profile.rerank_top_n), MAX_RERANK_CANDIDATES))
 
 
 class RetrievalService:
@@ -59,6 +66,8 @@ class RetrievalService:
             else _null_span()
         )
         with span_cm as span:
+            rerank_candidate_limit = _rerank_candidate_limit(profile)
+            search_top_k = max(1, profile.top_k, rerank_candidate_limit)
             query_vec = self._embedder.embed([query])[0]
             if self._cost:
                 self._cost.record_tokens(
@@ -75,29 +84,39 @@ class RetrievalService:
                 principal.tenant_id,
                 query_vec,
                 visible=visible,
-                top_k=max(profile.top_k, profile.rerank_top_n),
+                top_k=search_top_k,
             )
             # Double defense: re-assert ACL on every result (fail-closed if anything slipped through).
             for s in scored:
                 self._acl.assert_visible(principal, s.chunk)
-            if profile.rerank_enabled and self._reranker is not None:
+            retrieval_ms = (time.perf_counter() - started) * 1000
+            rerank_ms = 0.0
+            rerank_input_count = 0
+            if profile.rerank_enabled and self._reranker is not None and rerank_candidate_limit > 0:
+                rerank_input = scored[:rerank_candidate_limit]
+                rerank_input_count = len(rerank_input)
+                rerank_started = time.perf_counter()
                 try:
-                    scored = self._reranker.rerank(query, scored, profile.rerank_top_n)
+                    scored = self._reranker.rerank(query, rerank_input, rerank_candidate_limit)
                 except Exception:
-                    pass  # fail-safe: fall back to un-reranked (FR-030); gate decides if usable
+                    scored = rerank_input  # fail-safe: fall back to capped un-reranked results.
+                rerank_ms = (time.perf_counter() - rerank_started) * 1000
             result = scored[: profile.top_k]
             if self._metrics:
-                self._metrics.increment(
-                    "retrieval_requests_total",
-                    labels={"tenant_id": principal.tenant_id, "profile_id": profile.profile_id},
-                )
-                self._metrics.observe(
-                    "retrieval_result_count",
-                    len(result),
-                    labels={"tenant_id": principal.tenant_id, "profile_id": profile.profile_id},
-                )
+                metric_labels = {"tenant_id": principal.tenant_id, "profile_id": profile.profile_id}
+                self._metrics.increment("retrieval_requests_total", labels=metric_labels)
+                self._metrics.observe("retrieval_result_count", len(result), labels=metric_labels)
+                self._metrics.observe("retrieval_rerank_input_count", rerank_input_count, labels=metric_labels)
+                self._metrics.observe("retrieval_rerank_ms", rerank_ms, labels=metric_labels)
             if hasattr(span, "finish"):
-                span.finish("ok", result_count=len(result))
+                span.finish(
+                    "ok",
+                    result_count=len(result),
+                    retrieved_chunks=len(result),
+                    rerank_input_count=rerank_input_count,
+                    retrieval_ms=retrieval_ms,
+                    rerank_ms=rerank_ms,
+                )
             if self._metrics:
                 self._metrics.record_stage(
                     "retrieval",

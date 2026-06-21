@@ -73,6 +73,10 @@ class MvpSystem:
                 score_threshold=self.settings.default_score_threshold,
                 top_k=self.settings.default_top_k,
                 minimum_evidence_count=self.settings.default_minimum_evidence_count,
+                rerank_top_n=self.settings.rerank_top_n,
+                max_context_tokens=self.settings.max_context_tokens,
+                max_context_chunks=self.settings.max_context_chunks,
+                max_synchronous_llm_calls=self.settings.max_synchronous_llm_calls,
             )
         )
         self.token_verifier = TokenVerifier(self.settings.token_signing_secret)

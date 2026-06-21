@@ -630,3 +630,15 @@ US1+US2(MVP) → US3(API/SDK) → US4(評価ゲート) → US5(監視) → **US6
 - [X] T109 [P] Benchmark security hard gates — ACL leakage = 0, tenant leakage = 0, deleted documents not searchable, raw context logging violation = 0
 - [X] T110 [P] Add fallback decision record in `specs/001-rag-platform/research.md` after benchmark run — OpenSearch/Qdrant/Titan/parser provider fallback criteria
 - [X] T111 [P] Residency fallback for frontend hosting — document Vercel AI SDK usage vs AWS-hosted Next.js fallback in `infra/cdk/README.md` and `apps/web/README.md`
+
+## Phase 11: RAG Performance Guardrails
+
+- [X] T112 [P0] Add RAG hot-path metrics in `src/raku_rag/observability/metrics.py` and `src/raku_rag/services/answer.py` — record request_id, hashed tenant/user IDs, llm_call_count, retrieval_ms, rerank_ms, generation_ms, total_ms, retrieved_chunks, rerank_input_count, context_tokens, prompt_tokens, completion_tokens, cache_hit.
+- [X] T113 [P0] Add retrieval/rerank span attributes in `src/raku_rag/services/retrieval.py` — split retrieval_ms from rerank_ms and record rerank_input_count.
+- [X] T114 [P0] Add performance budget fields to QueryProfile, Settings, shared DTOs, and OpenAPI — max_synchronous_llm_calls, max_context_tokens, max_context_chunks.
+- [X] T115 [P0] Add RetrievalProfile max_context_tokens and default caps — vector_top_k=50, rerank_candidate_limit=20, final_context_limit=8, max_context_tokens=8000.
+- [X] T116 [P1] Add contract/unit/integration tests for hot-path metrics, hashed identity, OpenAPI schema fields, and environment-configured caps.
+- [ ] T117 [P1] Add load-test scenario for large corpus / many tenants / long documents / high concurrency with p50/p95/p99 and retrieval/rerank/generation breakdown.
+- [ ] T118 [P1] Verify authorization/tenant/metadata filter pushdown with EXPLAIN/query-plan checks and fail readiness when post-filter-only search is detected.
+- [ ] T119 [P1] Move LLM-as-judge and citation deep validation out of the synchronous production path except for profile-gated sampling/eval.
+- [X] T120 [P1] Enforce rerank/context caps in the production answer path and regression-test that unbounded rerank/prompt stuffing cannot occur.

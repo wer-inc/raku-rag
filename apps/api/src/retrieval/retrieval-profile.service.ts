@@ -130,7 +130,7 @@ export class RetrievalProfileService {
 
   assertProfileSafe(profile: Pick<
     RetrievalProfileSettings,
-    "metadata_filter_required" | "identifier_match_enabled" | "vector_search_enabled" | "rerank_candidate_limit"
+    "metadata_filter_required" | "identifier_match_enabled" | "vector_search_enabled" | "rerank_candidate_limit" | "final_context_limit" | "max_context_tokens"
   > & { keyword_match_enabled?: boolean }): void {
     const hasNonVectorGate =
       profile.metadata_filter_required ||
@@ -139,8 +139,14 @@ export class RetrievalProfileService {
     if (profile.vector_search_enabled && !hasNonVectorGate) {
       throw new Error("vector_only_disabled: retrieval profile must use metadata or identifier gates");
     }
-    if (profile.rerank_candidate_limit > 80) {
-      throw new Error("rerank_candidate_limit must be bounded at 80 or below");
+    if (profile.rerank_candidate_limit <= 0 || profile.rerank_candidate_limit > 80) {
+      throw new Error("rerank_candidate_limit must be between 1 and 80");
+    }
+    if (profile.max_context_tokens <= 0) {
+      throw new Error("max_context_tokens must be positive");
+    }
+    if ("final_context_limit" in profile && Number(profile.final_context_limit) <= 0) {
+      throw new Error("final_context_limit must be positive");
     }
   }
 

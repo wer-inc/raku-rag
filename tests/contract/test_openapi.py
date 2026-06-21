@@ -155,6 +155,16 @@ class OpenApiContractTest(unittest.TestCase):
         schemas = self.doc["components"]["schemas"]
         self.assertIn("object_storage", schemas["AdminDataSource"]["properties"]["type"]["enum"])
         self.assertIn("captioning_enabled", schemas["QueryProfileSettings"]["properties"])
+        for field in (
+            "max_context_tokens",
+            "max_context_chunks",
+            "max_synchronous_llm_calls",
+        ):
+            with self.subTest(query_profile_field=field):
+                self.assertIn(field, schemas["QueryProfileSettings"]["properties"])
+                self.assertIn(field, schemas["QueryProfileUpsertRequest"]["properties"])
+        self.assertIn("max_context_tokens", schemas["RetrievalProfileSettings"]["properties"])
+        self.assertIn("max_context_tokens", schemas["RetrievalProfileUpsertRequest"]["properties"])
         self.assertIn(
             "aws_only", schemas["ProviderPolicySettings"]["properties"]["parser_mode"]["enum"]
         )
