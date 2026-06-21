@@ -123,6 +123,8 @@ class EvaluationRun:
     security_checks: dict = field(default_factory=dict)
     gate_result: str = "passed"
     examples: tuple[EvaluationExampleResult, ...] = ()
+    probe_results: tuple[dict, ...] = ()
+    probes_executed: bool = False
     created_at: str = field(default_factory=_now)
 
     def to_dict(self) -> dict:
@@ -137,6 +139,8 @@ class EvaluationRun:
             "security_checks": dict(self.security_checks),
             "gate_result": self.gate_result,
             "examples": [example.__dict__ for example in self.examples],
+            "probe_results": [dict(result) for result in self.probe_results],
+            "probes_executed": self.probes_executed,
             "created_at": self.created_at,
         }
 
