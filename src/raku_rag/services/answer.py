@@ -172,12 +172,29 @@ class AnswerService:
                 context.append(replace(s.chunk, text=sanitized) if neutralized else s.chunk)
             if context_injection:
                 # The injected instruction is neutralized, not obeyed; the answer stays grounded in
-                # the legitimate content. Recorded so the event is not a silent pass (cf. P1-8).
+                # the legitimate content. Recorded so the event is not a silent pass (cf. P1-8) — at
+                # PARITY with the query-injection path: log + audit sink + metric (PR-002 hardening),
+                # not log-only.
                 log(
                     "answer.prompt_injection_context_neutralized",
                     correlation_id=cid,
                     count=context_injection,
                 )
+                self._record_audit(
+                    principal,
+                    cid,
+                    "answer",
+                    "prompt_injection_context_neutralized",
+                    reason="prompt_injection_context",
+                )
+                if self._metrics:
+                    self._metrics.increment(
+                        "prompt_injection_context_neutralized_total",
+                        labels={
+                            "tenant_id": principal.tenant_id,
+                            "profile_id": profile.profile_id,
+                        },
+                    )
             context_tokens = sum(_token_count(c.text) for c in context)
             prompt_tokens = _token_count(query) + context_tokens
             visual_regions = tuple(
