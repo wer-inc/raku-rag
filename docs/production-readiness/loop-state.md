@@ -5,6 +5,21 @@ Companion to `rag-production-readiness.md` (audit + backlog) and `eval-plan.md`.
 
 ---
 
+## Loop 23 — 2026-06-21 — Root-cause campaign for the 4 mitigations/partials (PRs #4–8 merged) + doc reconcile
+
+Driven by the user's "根本解決を求めます" goal — convert each band-aid to a genuine fix, each a verified CI-green merged PR.
+
+- **PR-001 → Fixed (PR #7):** the eval gate now has a real probe for EVERY SECURITY_CHECK. Added `unauthorized_context` + 4 visual probes (the last caller-count-only ones) to `DEFAULT_PROBES`; `tests/unit/test_security_check_probe_coverage.py` pins full coverage + each new probe blocks a leaky stub / is unavailable on a no-op. (PR #6 first loosened the protected suite assertion to a superset — §5-safe test-only change — to allow the expansion.)
+- **PR-002 → Fixed/Hardened (PR #5):** the injection guard normalizes (zero-width strip) + uses whitespace-flexible AI-directed patterns, closing the reworded/whitespaced/zero-width bypasses the pre-merge review reproduced; context-neutralization is audited+metered (parity with the query path). Benign manufacturing "override/safety" ops phrasing stays unflagged. Honest limit: a deterministic denylist is defense-in-depth; full closure needs a generative-LLM grounding prompt + Guardrails.
+- **PR-003 → write path closed (PR #4):** `/internal/ingest` (+ NestJS DTO/controller) parses a `manufacturing` block and persists it via `ingest_document(manufacturing_metadata=…)`; Tier-B verified over real Postgres. The safety overlay now gets metadata for production-ingested docs (was inert).
+- **PR-014 → CVEs root-caused (PR #8):** Next.js 14→15.5 fixes the 5 `next` advisories; clean prod-only image install removes glob/tmp. picomatch (prod via next) + multer (hard-pinned by @nestjs/platform-express@10) accepted — **npm `overrides` are not honored in this workspace** (verified twice; leaves deps "invalid", breaking `npm ci`). Follow-up: NestJS 10→11.
+
+**Verification:** every PR — ruff+black, Tier A + full suite, detect-secrets, §5 separation; #4 Tier-B on real Postgres; #8 blocking Trivy on real images (api+web). All merged into 002; CI green on each.
+
+**残り (product release, real-infra/migration — your environment):** AWS CD/OIDC, rollback/backup dry-run, production-scale load p50/p95/p99, real-data EXPLAIN, NestJS 10→11 (closes multer + picomatch overrides).
+
+---
+
 ## Loop 22 — 2026-06-21 — P1-9 SQS worker/DLQ ops boundary fixed (SQS vs Dagster separation)
 
 **実装した変更:**
