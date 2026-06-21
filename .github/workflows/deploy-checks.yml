@@ -87,7 +87,10 @@ jobs:
           name: sbom-${{ matrix.name }}
           path: sbom-${{ matrix.name }}.spdx.json
       - name: Vulnerability scan (Trivy, HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@v0.28.0
+        # v0.36.0 hash-pins its internal aquasecurity/setup-trivy (commit 3fb12ec = v0.2.6), so it
+        # is immune to the upstream tag-deletion that broke older releases (e.g. v0.28.0 referenced
+        # setup-trivy@v0.2.1, which no longer resolves).
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ matrix.tag }}
           format: table
