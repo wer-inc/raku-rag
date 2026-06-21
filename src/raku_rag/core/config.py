@@ -75,12 +75,8 @@ def settings_from_env(env: dict | None = None) -> Settings:
             )
         ),
         rerank_top_n=int(_parse("RAKU_RERANK_TOP_N", Settings.rerank_top_n, int)),
-        max_context_tokens=int(
-            _parse("RAKU_MAX_CONTEXT_TOKENS", Settings.max_context_tokens, int)
-        ),
-        max_context_chunks=int(
-            _parse("RAKU_MAX_CONTEXT_CHUNKS", Settings.max_context_chunks, int)
-        ),
+        max_context_tokens=int(_parse("RAKU_MAX_CONTEXT_TOKENS", Settings.max_context_tokens, int)),
+        max_context_chunks=int(_parse("RAKU_MAX_CONTEXT_CHUNKS", Settings.max_context_chunks, int)),
         max_synchronous_llm_calls=int(
             _parse(
                 "RAKU_MAX_SYNCHRONOUS_LLM_CALLS",

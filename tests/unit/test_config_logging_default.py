@@ -29,10 +29,10 @@ class TestLoggingDefault(unittest.TestCase):
                 "RAKU_MAX_CHUNKS_PER_DOCUMENT": "12",
                 "RAKU_MAX_CHUNK_CHARS": "80",
                 "RAKU_MAX_CONCURRENT_QUERIES": "4",
-                "RAKU_TARGET_P95_LATENCY_MS": "750",                "RAKU_MAX_CONTEXT_TOKENS": "6000",
+                "RAKU_TARGET_P95_LATENCY_MS": "750",
+                "RAKU_MAX_CONTEXT_TOKENS": "6000",
                 "RAKU_MAX_CONTEXT_CHUNKS": "6",
                 "RAKU_MAX_SYNCHRONOUS_LLM_CALLS": "1",
-
                 "RAKU_TARGET_VISUAL_P95_LATENCY_MS": "1500",
                 "RAKU_MIN_THROUGHPUT_QPS": "2.5",
             }

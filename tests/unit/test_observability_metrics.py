@@ -39,7 +39,6 @@ class TestObservabilityMetrics(unittest.TestCase):
         self.assertIn("rag_stage_errors_total", metrics)
         self.assertIn("rag_stage_cost_total", metrics)
 
-
     def test_rag_hot_path_metrics_hash_identity_and_record_required_fields(self) -> None:
         metrics = MetricsRecorder()
 

@@ -43,16 +43,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          before="${{ github.event.before }}"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
             changed="$(git diff --name-only "$base"...HEAD)"
-          elif git rev-parse "${{ github.event.before }}" >/dev/null 2>&1; then
-            changed="$(git diff --name-only "${{ github.event.before }}"..."${{ github.sha }}")"
+          elif git rev-parse --verify --quiet "${before}^{commit}" >/dev/null 2>&1; then
+            changed="$(git diff --name-only "$before"..."${{ github.sha }}")"
           else
-            changed="$(git diff-tree --no-commit-id --name-only -r "${{ github.sha }}")"
+            # New branch / no valid 'before' (first push reports before=000…0): cannot compute an
+            # incremental diff, so DON'T silently skip a Docker-backed gate — force it to run.
+            changed="__FORCE_RUN__"
           fi
           printf '%s\n' "$changed"
-          relevant="$(printf '%s\n' "$changed" | grep -E '^(infra/db/|infra/docker-compose\.yml|scripts/gate\.sh|tests/contract/test_tier_b_|src/raku_rag/(persistence|providers|services)/|\.github/workflows/gate\.yml|docs/production-gate-strategy\.md)' || true)"
+          if [ "$changed" = "__FORCE_RUN__" ]; then
+            relevant="forced (new branch / no diff base)"
+          else
+            relevant="$(printf '%s\n' "$changed" | grep -E '^(infra/db/|infra/docker-compose\.yml|scripts/gate\.sh|tests/contract/test_tier_b_|src/raku_rag/(persistence|providers|services)/|\.github/workflows/gate\.yml|docs/production-gate-strategy\.md)' || true)"
+          fi
           if [ -n "$relevant" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "Tier B relevant changes:"; printf '%s\n' "$relevant"
@@ -63,6 +70,34 @@ jobs:
       - name: Install Postgres driver (parity)
         if: steps.changes.outputs.run == 'true'
         run: python -m pip install --quiet 'psycopg[binary]'
+      - name: Pre-warm Postgres past first-init (avoid temp-server race)
+        if: steps.changes.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose=(docker compose -f infra/docker-compose.yml)
+          "${compose[@]}" up -d postgres
+          # The official postgres image runs a SHORT-LIVED temp server on the unix socket during
+          # first-init (logs "accepting connections", then shuts down to restart on TCP). A socket
+          # pg_isready false-positives on it, after which gate.sh races dropdb into "the database
+          # system is shutting down". Force TCP (-h 127.0.0.1): the temp init server is socket-only,
+          # so TCP succeeds only once the REAL server is up. Require 3 consecutive successes.
+          user="${POSTGRES_USER:-raku}"
+          ok=0
+          for _ in $(seq 1 90); do
+            if "${compose[@]}" exec -T postgres pg_isready -h 127.0.0.1 -U "$user" >/dev/null 2>&1; then
+              ok=$((ok + 1)); [ "$ok" -ge 3 ] && break
+            else
+              ok=0
+            fi
+            sleep 1
+          done
+          if [ "$ok" -lt 3 ]; then
+            echo "::error::Postgres did not become ready on TCP after first-init"
+            "${compose[@]}" logs postgres | tail -50
+            exit 1
+          fi
+          "${compose[@]}" exec -T postgres pg_isready -h 127.0.0.1 -U "$user"
       - name: Tier B bootstrap gate
         if: steps.changes.outputs.run == 'true'
         run: bash scripts/gate.sh b
@@ -94,16 +129,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          before="${{ github.event.before }}"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
             changed="$(git diff --name-only "$base"...HEAD)"
-          elif git rev-parse "${{ github.event.before }}" >/dev/null 2>&1; then
-            changed="$(git diff --name-only "${{ github.event.before }}"..."${{ github.sha }}")"
+          elif git rev-parse --verify --quiet "${before}^{commit}" >/dev/null 2>&1; then
+            changed="$(git diff --name-only "$before"..."${{ github.sha }}")"
           else
-            changed="$(git diff-tree --no-commit-id --name-only -r "${{ github.sha }}")"
+            # New branch / no valid 'before' (first push reports before=000…0): cannot compute an
+            # incremental diff, so DON'T silently skip the e2e gate — force it to run.
+            changed="__FORCE_RUN__"
           fi
           printf '%s\n' "$changed"
-          relevant="$(printf '%s\n' "$changed" | grep -E '^(apps/api/|apps/answer-service/|apps/web/|packages/shared/|package(-lock)?\.json|\.github/workflows/gate\.yml)' || true)"
+          if [ "$changed" = "__FORCE_RUN__" ]; then
+            relevant="forced (new branch / no diff base)"
+          else
+            relevant="$(printf '%s\n' "$changed" | grep -E '^(apps/api/|apps/answer-service/|apps/web/|packages/shared/|package(-lock)?\.json|\.github/workflows/gate\.yml)' || true)"
+          fi
           if [ -n "$relevant" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "Tier D relevant changes:"; printf '%s\n' "$relevant"

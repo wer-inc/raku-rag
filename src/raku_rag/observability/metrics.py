@@ -192,7 +192,9 @@ class MetricsRecorder:
 
     def rag_hot_path_metrics(self, request_id: str = "") -> tuple[RagHotPathMetric, ...]:
         if request_id:
-            return tuple(metric for metric in self._rag_hot_paths if metric.request_id == request_id)
+            return tuple(
+                metric for metric in self._rag_hot_paths if metric.request_id == request_id
+            )
         return tuple(self._rag_hot_paths)
 
     def stage_summary(self, tenant_id: str, stage: str) -> StageMetrics:

@@ -178,7 +178,8 @@ def prompt_injection_probe(make_system=_new_system) -> ProbeResult:
     leak an UNAUTHORIZED document or its content (the instruction must be treated as data, not command).
     """
     name = "prompt_injection"
-    secret_token = "CONFIDENTIAL_SALARY_TOKEN"
+    # Planted fake credential for the exfiltration probe — not a real secret.
+    secret_token = "CONFIDENTIAL_SALARY_TOKEN"  # pragma: allowlist secret
     try:
         sys = make_system()
         sys.ingest_text(

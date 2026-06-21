@@ -44,7 +44,8 @@ class TestRagPerformanceCaps(unittest.TestCase):
         hot = self.sys.metrics.rag_hot_path_metrics(ans.correlation_id)[0]
         self.assertLessEqual(hot.rerank_input_count, 2)
         retrieval_span = next(
-            span for span in self.sys.tracer.spans(correlation_id=ans.correlation_id)
+            span
+            for span in self.sys.tracer.spans(correlation_id=ans.correlation_id)
             if span.name == "retrieval.retrieve"
         )
         self.assertLessEqual(int(retrieval_span.attributes["rerank_input_count"]), 2)
@@ -69,7 +70,8 @@ class TestRagPerformanceCaps(unittest.TestCase):
         self.assertEqual(hot.llm_call_count, 1)
         self.assertLessEqual(len(ans.used_chunks), 1)
         generation_span = next(
-            span for span in self.sys.tracer.spans(correlation_id=ans.correlation_id)
+            span
+            for span in self.sys.tracer.spans(correlation_id=ans.correlation_id)
             if span.name == "generation.generate"
         )
         self.assertEqual(generation_span.attributes["context_chunks"], 1)
@@ -95,7 +97,12 @@ class TestRagPerformanceCaps(unittest.TestCase):
         ans = self.sys.answer(self.alice, "when do backups run?", "c")
 
         self.assertEqual(ans.status, "insufficient_evidence")
-        self.assertFalse(any(span.name == "generation.generate" for span in self.sys.tracer.spans(correlation_id=ans.correlation_id)))
+        self.assertFalse(
+            any(
+                span.name == "generation.generate"
+                for span in self.sys.tracer.spans(correlation_id=ans.correlation_id)
+            )
+        )
         hot = self.sys.metrics.rag_hot_path_metrics(ans.correlation_id)[0]
         self.assertEqual(hot.llm_call_count, 0)
         self.assertEqual(hot.context_tokens, 0)
