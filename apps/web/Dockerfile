@@ -5,10 +5,15 @@ FROM node:22-slim AS build
 WORKDIR /repo
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY . .
+# Build with full deps, then do a CLEAN prod-only install so dev tooling (jest/@nestjs/cli/
+# @angular-devkit and their transitive globs — glob/tmp/picomatch) is ABSENT from the runtime image,
+# not merely pruned (npm prune leaves hoisted dev deps in an npm-workspaces monorepo). Build artifacts
+# (.next, packages/shared/dist) live outside node_modules and survive the wipe.
 RUN npm ci \
  && npm run build:shared \
  && npm run build --workspace @raku-rag/web \
- && npm prune --omit=dev
+ && rm -rf node_modules \
+ && npm ci --omit=dev
 
 FROM node:22-slim AS runtime
 WORKDIR /repo

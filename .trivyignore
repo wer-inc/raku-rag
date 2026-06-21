@@ -3,32 +3,30 @@
 # BLOCKING (deploy-checks.yml exit-code 1); every entry is an explicit, justified acceptance and the
 # gate still FAILS on any NEW package/advisory not listed here (allowlist model, like .secrets.baseline).
 #
-# OS/debian base layers scan 0 HIGH/CRITICAL. `npm prune --omit=dev` in apps/{api,web}/Dockerfile
-# removes the dev-only build tooling it CAN remove — glob (CVE-2025-64756) and tmp (CVE-2026-44705) are
-# verified GONE (adding them here changed the count by 0), so they are intentionally NOT listed and the
-# gate will fail if they reappear. Only advisories that genuinely persist in the image are accepted:
+# OS/debian base layers scan 0 HIGH/CRITICAL. Root-cause fixes landed (2026-06-21):
+#   - next: upgraded 14 -> 15.5.x — FIXED (the 5 next advisories CVE-2026-44573/44578 + GHSA-8h8q/h25m/
+#     q4gf are gone), so they are intentionally NOT listed (the gate fails if they reappear).
+#   - glob / tmp (dev-only build tooling via jest / @nestjs/cli): the runtime images now do a CLEAN
+#     prod-only install (`rm -rf node_modules && npm ci --omit=dev` in apps/{api,web}/Dockerfile), so
+#     these are ABSENT from the image — verified gone, NOT listed.
 #
-# ── picomatch (transitive, ReDoS; survives prune via @nestjs/cli -> @angular-devkit / chokidar hoist) ──
-# HIGH, 0 CRITICAL, not on the request path. FOLLOW-UP: pin picomatch -> 4.0.4 via npm override.
+# Two transitive advisories genuinely persist in the prod image and are accepted:
+#
+# ── picomatch 4.0.1 (transitive) — Regular-expression Denial of Service (ReDoS) ──────────────────────
+# HIGH, 0 CRITICAL. picomatch is a PROD transitive (pulled by next 15's dependency tree, also by
+# build tooling), so it survives the prod-only install; it is glob-matching used at build/route-scan
+# time, NOT on the request path with user input. An npm `overrides` to 4.0.4 is NOT honored in this
+# npm-workspaces environment (it leaves picomatch "invalid", breaking strict `npm ci` — verified).
+# FOLLOW-UP: pin picomatch -> 4.0.4 once the override is honored (or when next ships a patched picomatch).
 CVE-2026-33671
 #
-# ── multer (transitive prod dep via @nestjs/platform-express) ──────────────────────────────────────
-# Denial of Service via malformed / deeply-nested / dropped multipart uploads. 0 CRITICAL, no RCE.
-# Mitigated: internal API facade behind edge rate-limiting (PR-011); availability-only.
-# FOLLOW-UP: bump multer -> 2.2.0 via an npm override.
+# ── multer 2.0.2 (transitive PROD dep) — Denial of Service (malformed/deeply-nested/dropped uploads) ──
+# HIGH, 0 CRITICAL, no RCE. multer is HARD-PINNED to exactly 2.0.2 by @nestjs/platform-express@10.4.22
+# (an exact "2.0.2", not a range); an npm override is not honored here either. A clean fix requires the
+# NestJS 10 -> 11 upgrade (its platform-express depends on a patched multer). Mitigated meanwhile: the
+# NestJS API is the internal facade behind edge rate-limiting (PR-011); availability-only.
+# FOLLOW-UP: upgrade @nestjs/* 10 -> 11 (pulls a fixed multer), then remove these.
 CVE-2026-2359
 CVE-2026-3304
 CVE-2026-3520
 CVE-2026-5079
-#
-# ── next (Next.js 14 frontend) ─────────────────────────────────────────────────────────────────────
-# DoS / middleware information disclosure / SSRF via crafted requests. HIGH, 0 CRITICAL. Fixed only in
-# Next.js 15.5.16 / 16.2.5 (MAJOR upgrade). Mitigated: tenant isolation, ACL deny-by-default, and
-# groundedness are enforced SERVER-SIDE in the API / answer-service, not in Next. FOLLOW-UP: Next.js 15.
-# NOTE: Trivy's DB keys these advisories by EITHER CVE or GHSA depending on the DB snapshot, so BOTH
-# id forms are listed (ignore-by-exact-id; the unused form is a harmless no-op).
-CVE-2026-44573
-CVE-2026-44578
-GHSA-8h8q-6873-q5fj
-GHSA-h25m-26qc-wcjf
-GHSA-q4gf-8mx6-v5v3
