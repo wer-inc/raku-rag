@@ -2,8 +2,8 @@
 #
 # Host-Postgres smoke for RT2/RT3:
 #   - applies pgvector init SQL
-#   - applies 0001/0002/0003/0004/0005/0006 Postgres migrations
-#   - verifies vector extension and tenant RLS
+#   - applies 0001/0002/0003/0004/0005/0006/0007 Postgres migrations
+#   - verifies vector extension, tenant RLS, and the 0007 evaluation_runs columns
 #   - applies down migrations
 #
 # This complements `scripts/gate.sh b`, which remains the Docker Compose-backed Tier B gate.
@@ -34,6 +34,7 @@ as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/000
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0004_real_estate_domain.sql
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0005_investment_domain.sql
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0006_manufacturing_domain.sql
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0007_eval_run_persistence.sql
 
 vector_version="$(as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -Atc \
   "SELECT extname || ':' || extversion FROM pg_extension WHERE extname = 'vector';")"
@@ -53,6 +54,16 @@ required_table_count="$(as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -Atc \
 	     );")"
 if [[ "$required_table_count" != "13" ]]; then
   echo "expected 13 required tables, found $required_table_count" >&2
+  exit 1
+fi
+
+# 0007 (eval-run persistence) ALTERs evaluation_runs additively — verify the new columns landed.
+eval_run_columns="$(as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -Atc \
+  "SELECT count(*) FROM information_schema.columns
+   WHERE table_name='evaluation_runs'
+     AND column_name IN ('gate_result','baseline_comparison','probe_results','probes_executed');")"
+if [[ "$eval_run_columns" != "4" ]]; then
+  echo "expected 4 evaluation_runs columns from 0007, found $eval_run_columns" >&2
   exit 1
 fi
 
@@ -88,6 +99,8 @@ SELECT 1 / CASE WHEN count(*) = 0 THEN 1 ELSE 0 END AS tenant_b_cannot_see_doc
 RESET ROLE;
 SQL
 
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
+  -f infra/db/migrations/postgres/0007_eval_run_persistence.down.sql
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
   -f infra/db/migrations/postgres/0006_manufacturing_domain.down.sql
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \

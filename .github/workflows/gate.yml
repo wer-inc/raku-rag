@@ -58,7 +58,7 @@ jobs:
           if [ "$changed" = "__FORCE_RUN__" ]; then
             relevant="forced (new branch / no diff base)"
           else
-            relevant="$(printf '%s\n' "$changed" | grep -E '^(infra/db/|infra/docker-compose\.yml|scripts/gate\.sh|tests/contract/test_tier_b_|src/raku_rag/(persistence|providers|services)/|\.github/workflows/gate\.yml|docs/production-gate-strategy\.md)' || true)"
+            relevant="$(printf '%s\n' "$changed" | grep -E '^(infra/db/|infra/docker-compose\.yml|scripts/gate\.sh|tests/contract/test_tier_b_|tests/postgres/|src/raku_rag/(persistence|providers|services)/|src/raku_rag/production\.py|\.github/workflows/gate\.yml|docs/production-gate-strategy\.md)' || true)"
           fi
           if [ -n "$relevant" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
