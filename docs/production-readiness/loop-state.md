@@ -5,6 +5,23 @@ Companion to `rag-production-readiness.md` (audit + backlog) and `eval-plan.md`.
 
 ---
 
+## Loop 19 — 2026-06-21 — PR #1 opened, CI greened, adversarial pre-merge verify, GAP-S3 secondary-slot fix
+
+**PR #1 + CI:** pushed `003-production-readiness-hardening`, opened **PR #1** (base `002`). First CI run was red; triaged 5 real failures (all in NON-protected files, §5 intact): Trivy action tag `@0.28.0`→`@v0.36.0` (hash-pinned `setup-trivy`, immune to the upstream `setup-trivy@v0.2.1` tag deletion); detect-secrets false-positive on a planted probe fixture → inline `# pragma: allowlist secret`; **Tier-B Postgres first-init race** → TCP `pg_isready` pre-warm step in `gate.yml` (gate.sh untouched); new-branch `before=000…0` diff-128 → `git rev-parse --verify` + force-run fallback; black format debt on 5 landed-perf files. Result: **all CI green** on `ff8323c` (Tier A/B, security-hard-gate, eval-gate, separation, RT1, Tier D, image-build+SBOM+Trivy, CDK).
+
+**Adversarial pre-merge verification (Workflow, 10 agents — review + refute):** `no-weakening` **SAFE both rounds** (ACL pre-filter, deletion, citation, groundedness intact — no regression); `ci-fix-soundness` SAFE; `eval-gate-real` confirmed probes computed + fail-closed (flake not reproducible over 200 runs). **GAP-S3 → HIGH, reproduced by both agents:** the demotion guarded only `citations[0]`; with approved`[0]`+draft`[1]`, the draft's dangerous text leaked into a high-risk answer (cited at `[1]`, no demotion). Injection denylist bypass + log-only neutralization noted as MEDIUM residuals (PR-002, not regressions).
+
+**実装した変更 (GAP-S3 secondary-slot fix — SAFETY BOUNDARY, human-directed):**
+- `src/raku_rag/manufacturing/api/answer_ext.py` — high-risk demotion now fires unless **EVERY** citation is approved+effective (was `[0]`-only). Covers text contamination at the root (any contaminating chunk is necessarily cited).
+- `tests/manufacturing/test_source_poisoning.py` — `test_poison_draft_in_secondary_slot_is_demoted` (verified FAIL pre-fix / PASS post-fix); primary-slot + positive control retained.
+- `src/raku_rag/eval/probes.py` — `source_poisoning_probe` runs BOTH orderings (primary + secondary); secondary scenario leaks pre-fix (1) → 0 post-fix. Release-blocking.
+
+**検証:** reproduction confirmed (revert→FAIL/leak=1, restore→PASS/leak=0); Tier A GREEN (319), full suite GREEN (667), ruff+black+detect-secrets clean, separation OK. Commit `2d7abf0` (`fix(002)!`). Risk **PR-016 → Fixed (two rounds)**.
+
+**次のループ:** push the GAP-S3 fix, confirm CI green, **merge PR #1** (user chose fix-then-merge). Then the irreducible real-infra remainder (Tier-B/Postgres data path, load+EXPLAIN, CD→AWS, Trivy-flip, rollback/backup dry-run) + final human release GO. Injection denylist hardening (PR-002 residual) is a candidate follow-up.
+
+---
+
 ## Loop 18 — 2026-06-21 — P1-1 NestJS facade (ManufacturingController) — P1-1 complete at app layer
 
 **実装した変更:**
