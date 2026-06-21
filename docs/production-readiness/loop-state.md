@@ -11,10 +11,10 @@ Companion to `rag-production-readiness.md` (audit + backlog) and `eval-plan.md`.
 
 **実装した変更:**
 - `apps/{web,api}/Dockerfile` — `npm prune --omit=dev` after build (build stage) so dev tooling is NOT shipped in runtime images → removes the 3 dev CVEs for real (also good image hardening). worker is Python — unaffected.
-- `.trivyignore` (NEW) — all 9 npm HIGH CVEs (0 CRITICAL) accepted with per-package justification + follow-ups. **Two blocking CI runs corrected the triage:** `npm prune --omit=dev` drops most dev weight (per-image 13→4 HIGH) but npm-workspaces HOISTING leaves the build-tooling deps (glob CVE-2025-64756, tmp CVE-2026-44705, picomatch CVE-2026-33671 — via jest/@nestjs/cli/@angular-devkit/chokidar) in the image; prune does NOT remove them. They're not on the request path → accepted. Set = build-tooling (3) + multer ×4 + next ×2. Real fix (follow-up): clean prod-only runtime install (`rm -rf node_modules && npm ci --omit=dev`) + multer→2.2.0 override + Next.js 15.
+- `.trivyignore` (NEW) — accepted advisories (0 CRITICAL) with per-package justification + follow-ups. **Iterated on CI to nail the true survivor set** (the box-drawing Trivy table wraps, so early CVE→package mapping was wrong). Final, evidence-based: `npm prune --omit=dev` (per-image 13→4 HIGH) **removes glob+tmp** (verified: adding them changed the count by 0); **picomatch survives** prune (hoisted via @nestjs/cli/@angular-devkit/chokidar) → accepted by CVE-2026-33671; **multer** (prod) accepted by 4 CVEs; **next** (frontend) — Trivy keys its 3 advisories by **GHSA, not CVE** (the real blocker: my CVE next-entries never matched) → accepted by GHSA-8h8q-6873-q5fj / h25m-26qc-wcjf / q4gf-8mx6-v5v3. Follow-up: prod-only runtime install + multer→2.2.0 + Next.js 15.
 - `.github/workflows/deploy-checks.yml` — `trivyignores: .trivyignore` + **`exit-code: "0"`→`"1"` (BLOCKING)**.
 
-**検証:** Trivy can't run locally (no Docker) — CI deploy-checks is the authority. Iterated twice on CI (picomatch, then glob+tmp also survive prune) to enumerate the true survivor set; re-verified green on CI.
+**検証:** Trivy can't run locally (no Docker) — CI deploy-checks is the authority. Took several CI iterations to read the wrapped table correctly (key lesson: Trivy reports npm advisories by GHSA *or* CVE; ignore by the exact ID it prints). Re-verified green on CI.
 
 **Risk PR-014 → Fixed; PR-012 Trivy-flip thread closed.** Remaining real-infra: AWS CD/OIDC (#3), rollback/backup (#4), real-data EXPLAIN + load p50/p95/p99 (#2).
 
