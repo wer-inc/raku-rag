@@ -10,6 +10,7 @@ Invariants:
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import Callable, Sequence
 
 from raku_rag.core.errors import AnswerStatus, ProviderUnavailable
@@ -34,6 +35,7 @@ from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.services.cost import CostService
 from raku_rag.services.groundedness import GroundednessGate
+from raku_rag.services.injection import PromptInjectionGuard
 from raku_rag.services.retrieval import RetrievalService
 
 _EST_QUERY_COST = 1.0
@@ -57,6 +59,7 @@ class AnswerService:
         tracer: InMemoryTracer | None = None,
         audit: InMemoryAuditSink | None = None,
         vlm: VLMProvider | None = None,
+        injection_guard: PromptInjectionGuard | None = None,
     ) -> None:
         self._retrieval = retrieval
         self._llm = llm
@@ -67,6 +70,8 @@ class AnswerService:
         self._tracer = tracer
         self._audit = audit
         self._vlm = vlm
+        # P1-2: prompt-injection defense runs in the live flow (default-on, provider-agnostic).
+        self._injection_guard = injection_guard or PromptInjectionGuard()
 
     def answer(self, principal: IdentityClaims, query: str, profile: QueryProfile) -> Answer:
         cid = new_correlation_id()
@@ -144,7 +149,35 @@ class AnswerService:
                     span.finish("ok", answer_status=status, reason="context_budget")
                 return Answer(status=status, used_chunks=(), correlation_id=cid)
 
-            context: Sequence[Chunk] = [s.chunk for s in evidence]
+            # P1-2 prompt-injection defense (defense-in-depth; never widens ACL/groundedness). Both
+            # the user query and the retrieved context are untrusted. A query that tries to override
+            # the system is REFUSED; instructions embedded in retrieved chunks are NEUTRALIZED before
+            # they reach the model (treated as inert data, never obeyed).
+            query_injection = self._injection_guard.inspect(query)
+            if query_injection.detected:
+                log("answer.prompt_injection_query", correlation_id=cid)
+                status = AnswerStatus.INSUFFICIENT_EVIDENCE.value
+                self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
+                self._record_audit(principal, cid, "answer", status, reason="prompt_injection")
+                self._record_hot_path(principal, cid, profile, status, total_started=total_started)
+                if hasattr(span, "finish"):
+                    span.finish("ok", answer_status=status, reason="prompt_injection")
+                return Answer(status=status, used_chunks=(), correlation_id=cid)
+
+            context_injection = 0
+            context: list[Chunk] = []
+            for s in evidence:
+                sanitized, neutralized = self._injection_guard.neutralize(s.chunk.text)
+                context_injection += neutralized
+                context.append(replace(s.chunk, text=sanitized) if neutralized else s.chunk)
+            if context_injection:
+                # The injected instruction is neutralized, not obeyed; the answer stays grounded in
+                # the legitimate content. Recorded so the event is not a silent pass (cf. P1-8).
+                log(
+                    "answer.prompt_injection_context_neutralized",
+                    correlation_id=cid,
+                    count=context_injection,
+                )
             context_tokens = sum(_token_count(c.text) for c in context)
             prompt_tokens = _token_count(query) + context_tokens
             visual_regions = tuple(

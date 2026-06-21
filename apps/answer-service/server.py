@@ -39,6 +39,12 @@ sys.path.insert(0, str(_ROOT / "src"))
 
 from raku_rag.domain.models import ACLGrant, IdentityClaims, ScopeType, SubjectType  # noqa: E402
 from raku_rag.eval import EvaluationRunner, EvaluationSet  # noqa: E402
+from raku_rag.manufacturing.wiring import (  # noqa: E402
+    build_manufacturing_answer_service,
+)
+from raku_rag.persistence.evaluation_runs import (  # noqa: E402
+    InMemoryEvaluationRunRepository,
+)
 from raku_rag.industry import (  # noqa: E402
     IndustryApiService,
     InvestmentApiService,
@@ -505,11 +511,15 @@ class _AdminSettingsStore:
 
 
 class _EvalFeedbackStore:
-    def __init__(self, system: ProductionSystem) -> None:
+    def __init__(self, system: ProductionSystem, run_repository=None) -> None:
         self._system = system
         self._sets: dict[tuple[str, str], EvaluationSet] = {}
         self._runs: dict[tuple[str, str], dict] = {}
         self._feedback: dict[tuple[str, str], dict] = {}
+        # P2-9: eval runs are persisted via a repository so results are trendable across releases.
+        # Default in-memory; production wires PostgresEvaluationRunRepository(system._conn) once
+        # migration 0007 is applied (the durable, RLS-scoped evaluation_runs table).
+        self._runs_repo = run_repository or InMemoryEvaluationRunRepository()
 
     def create_set(self, tenant_id: str, body: dict) -> dict:
         eval_set = EvaluationSet.register(tenant_id=tenant_id, items=body.get("items") or ())
@@ -525,7 +535,7 @@ class _EvalFeedbackStore:
         eval_set = self._sets.get((tenant_id, eval_set_id))
         if eval_set is None:
             raise KeyError("eval_set_id")
-        run = EvaluationRunner(self._system).run(
+        run = EvaluationRunner(self._system, run_repository=self._runs_repo).run(
             eval_set,
             principal=principal,
             collection_id=str(body.get("collection_id") or "") or None,
@@ -536,7 +546,14 @@ class _EvalFeedbackStore:
         return {"run_id": run.run_id, "status_url": f"/v1/evaluations/runs/{run.run_id}"}
 
     def get_run(self, tenant_id: str, run_id: str) -> dict | None:
+        # Read from the durable repository first (trendable across releases); fall back to the cache.
+        stored = self._runs_repo.get(tenant_id, run_id)
+        if stored is not None:
+            return stored.to_dict()
         return self._runs.get((tenant_id, run_id))
+
+    def list_runs(self, tenant_id: str, eval_set_id: str | None = None) -> list[dict]:
+        return [run.to_dict() for run in self._runs_repo.list_runs(tenant_id, eval_set_id)]
 
     def create_feedback(self, tenant_id: str, body: dict, actor: str) -> dict:
         digest = hashlib.sha256(
@@ -634,6 +651,41 @@ def _answer_json(ans) -> dict:
             else None
         ),
         "correlation_id": ans.correlation_id,
+    }
+
+
+def _manufacturing_answer_json(ans) -> dict:
+    """Serialize a ManufacturingAnswer: base answer fields + the safety extension nested under
+    ``manufacturing`` (P1-1 deployment exposure; GAP-M02 nesting). Citations carry approval provenance.
+    """
+    return {
+        "status": ans.status,
+        "text": ans.text,
+        "confidence": ans.confidence,
+        "citations": [
+            {
+                "kind": c.kind,
+                "document_id": c.document_id,
+                "chunk_id": c.chunk_id,
+                "source_id": c.source_id,
+                "version": c.version,
+                "retrieval_score": c.retrieval_score,
+                "approval_status": c.approval_status,
+                "effective_date": c.effective_date,
+                "approval_source": c.approval_source,
+            }
+            for c in ans.citations
+        ],
+        "used_chunks": list(ans.used_chunks),
+        "correlation_id": ans.correlation_id,
+        "manufacturing": {
+            "high_risk": ans.high_risk,
+            "high_risk_reason_codes": list(ans.high_risk_reason_codes),
+            "safety_block_reason": ans.safety_block_reason,
+            "obsolete_warning": ans.obsolete_warning,
+            "requires_onsite_confirmation": ans.requires_onsite_confirmation,
+            "notice": ans.notice,
+        },
     }
 
 
@@ -1055,6 +1107,22 @@ def make_handler(system: ProductionSystem):
                     query = str(body.get("query") or "")
                     collection_id = body.get("collection_id")
                     self._send(200, _answer_json(system.answer(principal, query, collection_id)))
+                elif path == "/internal/manufacturing/answer":
+                    # P1-1: the manufacturing safety overlay (high-risk gate, approved+effective
+                    # evidence requirement, draft/obsolete never primary) on the deployed answer path.
+                    principal = _claims(body)
+                    query = str(body.get("query") or "")
+                    collection_id = body.get("collection_id")
+                    service = build_manufacturing_answer_service(system)
+                    profile = system.profiles.resolve(collection_id)
+                    mfg_ans, *_ = service.answer(
+                        principal,
+                        query,
+                        profile,
+                        intent_hint=body.get("intent_hint"),
+                        manufacturing_filters=body.get("manufacturing_filters"),
+                    )
+                    self._send(200, _manufacturing_answer_json(mfg_ans))
                 elif path == "/internal/search":
                     principal = _claims(body)
                     query = str(body.get("query") or "")
