@@ -17,11 +17,18 @@ from raku_rag.providers.task_queue import QueueEnvelope
 class SqsTaskQueue:
     queue_url: str
     client: object | None = None
+    dead_letter_queue_url: str = ""
+    max_receive_count: int = 5
     wait_time_seconds: int = 1
     visibility_timeout: int = 30
     retry_visibility_timeout: int = 5
 
     def __post_init__(self) -> None:
+        if not self.dead_letter_queue_url:
+            self.dead_letter_queue_url = os.environ.get("SQS_DLQ_URL", "")
+        self.max_receive_count = int(
+            os.environ.get("SQS_MAX_RECEIVE_COUNT", str(self.max_receive_count))
+        )
         if self.client is None:
             try:
                 import boto3  # type: ignore
@@ -67,6 +74,35 @@ class SqsTaskQueue:
 
     def fail(self, envelope: QueueEnvelope, reason: str) -> bool:
         assert self.client is not None
+        if envelope.receive_count >= self.max_receive_count:
+            if self.dead_letter_queue_url:
+                self.client.send_message(
+                    QueueUrl=self.dead_letter_queue_url,
+                    MessageBody=json.dumps(envelope.body),
+                    MessageAttributes={
+                        "OriginalMessageId": {
+                            "DataType": "String",
+                            "StringValue": envelope.message_id,
+                        },
+                        "FailureReason": {
+                            "DataType": "String",
+                            "StringValue": reason[:1024],
+                        },
+                    },
+                )
+                self.client.delete_message(
+                    QueueUrl=self.queue_url,
+                    ReceiptHandle=envelope.receipt_handle,
+                )
+            else:
+                # In AWS, the queue redrive policy will move the message to its DLQ after the
+                # final failed receive. Returning True keeps the app status projection in sync.
+                self.client.change_message_visibility(
+                    QueueUrl=self.queue_url,
+                    ReceiptHandle=envelope.receipt_handle,
+                    VisibilityTimeout=self.retry_visibility_timeout,
+                )
+            return True
         self.client.change_message_visibility(
             QueueUrl=self.queue_url,
             ReceiptHandle=envelope.receipt_handle,

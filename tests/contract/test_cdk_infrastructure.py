@@ -43,6 +43,19 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             "blockPublicAccess",
             "enforceSSL",
             "deadLetterQueue",
+            "deadLetterQueue.grantSendMessages",
+            "SQS_DLQ_URL",
+            "SQS_MAX_RECEIVE_COUNT",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.stack)
+
+    def test_worker_service_is_long_running_and_has_dlq_projection(self) -> None:
+        for token in (
+            'command: ["python", "-m", "workers.ingest.worker", "--serve"]',
+            "SQS_QUEUE_URL",
+            "SQS_DLQ_URL",
+            "deadLetterQueue.queueUrl",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)

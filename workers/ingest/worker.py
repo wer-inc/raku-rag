@@ -1,6 +1,6 @@
 """Python ingest worker runtime entrypoint.
 
-The default smoke path still needs no services. When ``SQS_QUEUE_URL`` is set, ``--once``/``--drain``
+The default smoke path still needs no services. When ``SQS_QUEUE_URL`` is set, ``--once``/``--drain``/``--serve``
 consume SQS messages via ``SqsTaskQueue`` and run the 001 ingestion pipeline. Set
 ``RAKU_WORKER_BACKEND=postgres`` plus ``POSTGRES_URL`` to project IngestionRun /
 DocumentProcessingState into Postgres.
@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 
 # Allow running directly (PYTHONPATH=src) or from repo root.
 _SRC = os.path.join(os.path.dirname(__file__), "..", "..", "src")
@@ -74,7 +75,14 @@ def build_worker_from_env() -> IngestionWorker:
         runs = IngestionRunStore()
 
     queue_url = os.environ.get("SQS_QUEUE_URL")
-    queue = SqsTaskQueue(queue_url) if queue_url else InMemoryMessageQueue()
+    queue = (
+        SqsTaskQueue(
+            queue_url,
+            dead_letter_queue_url=os.environ.get("SQS_DLQ_URL", ""),
+        )
+        if queue_url
+        else InMemoryMessageQueue()
+    )
     return IngestionWorker(
         queue=queue,
         connector=FileConnector(),
@@ -83,7 +91,15 @@ def build_worker_from_env() -> IngestionWorker:
     )
 
 
-def serve(*, once: bool = False, drain: bool = False, max_messages: int = 100) -> int:
+def serve(
+    *,
+    once: bool = False,
+    drain: bool = False,
+    forever: bool = False,
+    max_messages: int = 100,
+    idle_sleep_seconds: float = 5.0,
+    max_idle_polls: int = 0,
+) -> int:
     worker = build_worker_from_env()
     if once:
         processed = worker.process_once()
@@ -97,6 +113,22 @@ def serve(*, once: bool = False, drain: bool = False, max_messages: int = 100) -
             f"failed={stats.failed} dead_lettered={stats.dead_lettered}"
         )
         return 0
+    if forever:
+        idle_polls = 0
+        print("worker serving — polling ingestion queue")
+        try:
+            while True:
+                processed = worker.process_once()
+                if processed:
+                    idle_polls = 0
+                    continue
+                idle_polls += 1
+                if max_idle_polls and idle_polls >= max_idle_polls:
+                    break
+                time.sleep(idle_sleep_seconds)
+        except KeyboardInterrupt:
+            print("worker stopping")
+        return 0
     print("worker booted — use --once or --drain to consume ingestion messages")
     return 0
 
@@ -106,11 +138,31 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--smoke", action="store_true", help="boot smoke check, then exit 0")
     ap.add_argument("--once", action="store_true", help="process at most one queue message")
     ap.add_argument("--drain", action="store_true", help="process queue messages until empty")
+    ap.add_argument("--serve", action="store_true", help="poll the queue continuously")
     ap.add_argument("--max-messages", type=int, default=100, help="max messages for --drain")
+    ap.add_argument(
+        "--idle-sleep-seconds",
+        type=float,
+        default=5.0,
+        help="sleep duration between empty polls in --serve mode",
+    )
+    ap.add_argument(
+        "--max-idle-polls",
+        type=int,
+        default=0,
+        help="test hook: stop --serve after this many empty polls; 0 means never stop",
+    )
     args = ap.parse_args(argv)
     if args.smoke:
         return smoke()
-    return serve(once=args.once, drain=args.drain, max_messages=args.max_messages)
+    return serve(
+        once=args.once,
+        drain=args.drain,
+        forever=args.serve,
+        max_messages=args.max_messages,
+        idle_sleep_seconds=args.idle_sleep_seconds,
+        max_idle_polls=args.max_idle_polls,
+    )
 
 
 if __name__ == "__main__":
