@@ -325,6 +325,175 @@ def source_poisoning_probe(make_system=_new_mfg_system) -> ProbeResult:
         return _unavailable(name, f"probe error: {type(exc).__name__}")
 
 
+def unauthorized_context_probe(make_system=_new_system) -> ProbeResult:
+    """An unauthorized principal's ANSWER must never draw on a document they cannot read — the
+    unauthorized chunk must not enter the answer CONTEXT (cited/used/quoted). Distinct from
+    acl_leakage (which also checks search): this pins the answer-path context channel."""
+    name = "unauthorized_context"
+    try:
+        sys = make_system()
+        sys.ingest_text(
+            tenant_id="probe_t",
+            collection_id="open",
+            document_id="doc_ok",
+            text="The standard torque for the M8 flange bolt is twelve newton meters.",
+        )
+        marker = "RX99_RESTRICTED_MARGIN"  # unique marker present ONLY in the unauthorized doc
+        sys.ingest_text(
+            tenant_id="probe_t",
+            collection_id="restricted",
+            document_id="doc_secret",
+            text=f"{marker}: the gross margin on the flange line is forty percent.",
+        )
+        sys.grant("probe_t", ScopeType.COLLECTION, "open", SubjectType.USER, "op")
+        op = _claims("probe_t", "op")
+        control = sys.answer(op, "what is the torque for the M8 flange bolt?")
+        if not (
+            control.status == "ok" and any(c.document_id == "doc_ok" for c in control.citations)
+        ):
+            return _unavailable(name, "positive control failed: authorized doc not answerable")
+        ans = sys.answer(op, f"what is {marker} and the flange line gross margin?")
+        leaks = sum(1 for c in ans.citations if c.document_id == "doc_secret")
+        leaks += sum(1 for u in ans.used_chunks if "doc_secret" in str(u))
+        if marker in (ans.text or ""):
+            leaks += 1
+        return _result(name, leaks, "unauthorized document entered the answer context")
+    except Exception as exc:  # pragma: no cover - defensive fail-closed
+        return _unavailable(name, f"probe error: {type(exc).__name__}")
+
+
+def _visual_two_doc_harness(make_system):
+    """Ingest an authorized + an UNAUTHORIZED visual doc; grant only the authorized. Returns
+    (sys, principal, authorized_result, unauthorized_result). Raises (=> unavailable) if the system
+    has no visual ingestion path."""
+    sys = make_system()
+    auth = sys.ingest_visual_fixture(
+        tenant_id="probe_t",
+        collection_id="vis_open",
+        document_id="vimg_ok",
+        image=b"OCR: Pump panel shows alarm AL-42, status nominal.",
+    )
+    unauth = sys.ingest_visual_fixture(
+        tenant_id="probe_t",
+        collection_id="vis_restricted",
+        document_id="vimg_secret",
+        image=b"OCR: Restricted panel shows code RX99 and the override bypass step.",
+    )
+    sys.grant("probe_t", ScopeType.COLLECTION, "vis_open", SubjectType.USER, "op")
+    return sys, _claims("probe_t", "op"), auth, unauth
+
+
+def visual_acl_leakage_probe(make_system=_new_system) -> ProbeResult:
+    """A principal without the grant must never see another collection's visual document."""
+    name = "visual_acl_leakage"
+    try:
+        sys, op, _auth, _unauth = _visual_two_doc_harness(make_system)
+        control = sys.answer(op, "what alarm does the pump panel show?")
+        if not (
+            control.status == "ok" and any(c.document_id == "vimg_ok" for c in control.citations)
+        ):
+            return _unavailable(
+                name, "positive control failed: authorized visual doc not answerable"
+            )
+        leaks = sum(
+            1
+            for r in sys.search(op, "restricted panel code RX99 override bypass")
+            if r.chunk.document_id == "vimg_secret"
+        )
+        ans = sys.answer(op, "what code RX99 is on the restricted panel?")
+        leaks += sum(1 for c in ans.citations if c.document_id == "vimg_secret")
+        return _result(
+            name, leaks, "unauthorized visual document surfaced to a principal without grant"
+        )
+    except Exception as exc:  # pragma: no cover - defensive fail-closed
+        return _unavailable(name, f"probe error: {type(exc).__name__}")
+
+
+def visual_deleted_reappearance_probe(make_system=_new_system) -> ProbeResult:
+    """A tombstoned visual document must not reappear in search/answer."""
+    name = "visual_deleted_reappearance"
+    try:
+        sys = make_system()
+        sys.ingest_visual_fixture(
+            tenant_id="probe_t",
+            collection_id="vis",
+            document_id="vimg",
+            image=b"OCR: Inspection photo shows weld seam defect D-7.",
+        )
+        sys.grant("probe_t", ScopeType.COLLECTION, "vis", SubjectType.USER, "op")
+        op = _claims("probe_t", "op")
+        before = sys.answer(op, "what weld seam defect is shown?")
+        if not (before.status == "ok" and any(c.document_id == "vimg" for c in before.citations)):
+            return _unavailable(
+                name, "positive control failed: visual doc not retrievable pre-delete"
+            )
+        sys.deletion.delete("probe_t", "vimg")
+        leaks = sum(
+            1 for r in sys.search(op, "weld seam defect D-7") if r.chunk.document_id == "vimg"
+        )
+        after = sys.answer(op, "what weld seam defect is shown?")
+        if (
+            after.status == "ok"
+            or after.used_chunks
+            or any(c.document_id == "vimg" for c in after.citations)
+        ):
+            leaks += 1
+        return _result(name, leaks, "deleted visual document reappeared after tombstone")
+    except Exception as exc:  # pragma: no cover - defensive fail-closed
+        return _unavailable(name, f"probe error: {type(exc).__name__}")
+
+
+def visual_unauthorized_context_probe(make_system=_new_system) -> ProbeResult:
+    """Unauthorized visual content must not enter the answer context (cited/used/quoted)."""
+    name = "visual_unauthorized_context"
+    try:
+        sys, op, _auth, _unauth = _visual_two_doc_harness(make_system)
+        control = sys.answer(op, "what alarm does the pump panel show?")
+        if not (
+            control.status == "ok" and any(c.document_id == "vimg_ok" for c in control.citations)
+        ):
+            return _unavailable(
+                name, "positive control failed: authorized visual doc not answerable"
+            )
+        ans = sys.answer(op, "show the restricted panel code RX99 and the override bypass step")
+        leaks = sum(1 for c in ans.citations if c.document_id == "vimg_secret")
+        leaks += sum(1 for u in ans.used_chunks if "vimg_secret" in str(u))
+        if "RX99" in (ans.text or ""):
+            leaks += 1
+        return _result(name, leaks, "unauthorized visual content entered the answer context")
+    except Exception as exc:  # pragma: no cover - defensive fail-closed
+        return _unavailable(name, f"probe error: {type(exc).__name__}")
+
+
+def visual_thumbnail_crop_leakage_probe(make_system=_new_system) -> ProbeResult:
+    """A crop/thumbnail (asset_id / crop_uri) of an UNAUTHORIZED visual region must never be referenced
+    in a citation served to a principal without the grant."""
+    name = "visual_thumbnail_crop_leakage"
+    try:
+        sys, op, _auth, unauth = _visual_two_doc_harness(make_system)
+        control = sys.answer(op, "what alarm does the pump panel show?")
+        if not (
+            control.status == "ok" and any(c.document_id == "vimg_ok" for c in control.citations)
+        ):
+            return _unavailable(
+                name, "positive control failed: authorized visual doc not answerable"
+            )
+        unauth_asset = getattr(getattr(unauth, "asset", None), "asset_id", None)
+        ans = sys.answer(op, "show the restricted panel crop with code RX99")
+        leaks = 0
+        for c in ans.citations:
+            if c.document_id == "vimg_secret":
+                leaks += 1
+            if unauth_asset and getattr(c, "asset_id", None) == unauth_asset:
+                leaks += 1
+            crop = getattr(c, "crop_uri", "") or ""
+            if "vimg_secret" in crop or (unauth_asset and unauth_asset in crop):
+                leaks += 1
+        return _result(name, leaks, "unauthorized visual crop/thumbnail referenced in a citation")
+    except Exception as exc:  # pragma: no cover - defensive fail-closed
+        return _unavailable(name, f"probe error: {type(exc).__name__}")
+
+
 # Each probe owns its harness factory (base MvpSystem; manufacturing for source-poisoning), so the
 # suite calls them with no args. Tests inject leaky/deny stubs by calling a probe directly.
 #
@@ -332,12 +501,21 @@ def source_poisoning_probe(make_system=_new_mfg_system) -> ProbeResult:
 # vulnerability it reproduced (a draft becoming the PRIMARY citation/asserted text when an approved doc
 # coexists) was fixed in manufacturing/api/answer_ext.py (GAP-S3/PR-016 — demote to insufficient_
 # evidence). The mechanism is pinned by tests/manufacturing/test_source_poisoning.py.
+#
+# unauthorized_context + the 4 visual probes were added (P0-1 root-cause) so EVERY release-blocking
+# SECURITY_CHECK is computed by a real probe — none are caller-count-only. Coverage is pinned by
+# tests/unit/test_security_check_probe_coverage.py.
 DEFAULT_PROBES = (
     acl_leakage_probe,
     deleted_reappearance_probe,
     tenant_isolation_probe,
+    unauthorized_context_probe,
     prompt_injection_probe,
     source_poisoning_probe,
+    visual_acl_leakage_probe,
+    visual_deleted_reappearance_probe,
+    visual_unauthorized_context_probe,
+    visual_thumbnail_crop_leakage_probe,
 )
 
 
