@@ -30,6 +30,9 @@ class TestLoggingDefault(unittest.TestCase):
                 "RAKU_MAX_CHUNK_CHARS": "80",
                 "RAKU_MAX_CONCURRENT_QUERIES": "4",
                 "RAKU_TARGET_P95_LATENCY_MS": "750",
+                "RAKU_MAX_CONTEXT_TOKENS": "6000",
+                "RAKU_MAX_CONTEXT_CHUNKS": "6",
+                "RAKU_MAX_SYNCHRONOUS_LLM_CALLS": "1",
                 "RAKU_TARGET_VISUAL_P95_LATENCY_MS": "1500",
                 "RAKU_MIN_THROUGHPUT_QPS": "2.5",
             }
@@ -40,6 +43,9 @@ class TestLoggingDefault(unittest.TestCase):
         self.assertEqual(s.max_chunk_chars, 80)
         self.assertEqual(s.max_concurrent_queries, 4)
         self.assertEqual(s.target_p95_latency_ms, 750.0)
+        self.assertEqual(s.max_context_tokens, 6000)
+        self.assertEqual(s.max_context_chunks, 6)
+        self.assertEqual(s.max_synchronous_llm_calls, 1)
         self.assertEqual(s.target_visual_p95_latency_ms, 1500.0)
         self.assertEqual(s.min_throughput_qps, 2.5)
 

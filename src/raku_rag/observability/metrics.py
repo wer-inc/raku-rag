@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 
 OBSERVABILITY_STAGES: tuple[str, ...] = ("ingestion", "retrieval", "generation", "evaluation")
@@ -18,6 +19,12 @@ def _p95(values: tuple[float, ...]) -> float:
     ordered = sorted(values)
     index = max(0, min(len(ordered) - 1, int(round((len(ordered) - 1) * 0.95))))
     return float(ordered[index])
+
+
+def _identity_hash(value: str) -> str:
+    if not value:
+        return ""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass(frozen=True)
@@ -40,12 +47,53 @@ class StageMetrics:
         }
 
 
+@dataclass(frozen=True)
+class RagHotPathMetric:
+    request_id: str
+    tenant_id_hash: str
+    user_id_hash: str
+    profile_id: str
+    status: str
+    llm_call_count: int
+    retrieval_ms: float
+    rerank_ms: float
+    generation_ms: float
+    total_ms: float
+    retrieved_chunks: int
+    rerank_input_count: int
+    context_tokens: int
+    prompt_tokens: int
+    completion_tokens: int
+    cache_hit: bool
+
+    def to_dict(self) -> dict:
+        return {
+            "request_id": self.request_id,
+            "tenant_id_hash": self.tenant_id_hash,
+            "user_id_hash": self.user_id_hash,
+            "profile_id": self.profile_id,
+            "status": self.status,
+            "llm_call_count": self.llm_call_count,
+            "retrieval_ms": self.retrieval_ms,
+            "rerank_ms": self.rerank_ms,
+            "generation_ms": self.generation_ms,
+            "total_ms": self.total_ms,
+            "retrieved_chunks": self.retrieved_chunks,
+            "rerank_input_count": self.rerank_input_count,
+            "context_tokens": self.context_tokens,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "cache_hit": self.cache_hit,
+        }
+
+
 @dataclass
 class MetricsRecorder:
     _counters: dict[tuple[str, tuple[tuple[str, str], ...]], float] = field(default_factory=dict)
     _observations: dict[tuple[str, tuple[tuple[str, str], ...]], list[float]] = field(
         default_factory=dict
     )
+    _rag_hot_paths: list[RagHotPathMetric] = field(default_factory=list)
 
     def increment(
         self, name: str, value: float = 1.0, *, labels: dict[str, str] | None = None
@@ -82,6 +130,72 @@ class MetricsRecorder:
             self.increment("rag_stage_errors_total", labels=status_labels)
         if cost:
             self.increment("rag_stage_cost_total", max(0.0, cost), labels=stage_labels)
+
+    def record_rag_hot_path(
+        self,
+        *,
+        request_id: str,
+        tenant_id: str,
+        user_id: str,
+        profile_id: str,
+        status: str,
+        llm_call_count: int = 0,
+        retrieval_ms: float = 0.0,
+        rerank_ms: float = 0.0,
+        generation_ms: float = 0.0,
+        total_ms: float = 0.0,
+        retrieved_chunks: int = 0,
+        rerank_input_count: int = 0,
+        context_tokens: int = 0,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        cache_hit: bool = False,
+    ) -> RagHotPathMetric:
+        """Record request-level RAG latency/count/token metrics without raw identities."""
+        metric = RagHotPathMetric(
+            request_id=request_id,
+            tenant_id_hash=_identity_hash(tenant_id),
+            user_id_hash=_identity_hash(user_id),
+            profile_id=profile_id,
+            status=status,
+            llm_call_count=max(0, int(llm_call_count)),
+            retrieval_ms=max(0.0, float(retrieval_ms)),
+            rerank_ms=max(0.0, float(rerank_ms)),
+            generation_ms=max(0.0, float(generation_ms)),
+            total_ms=max(0.0, float(total_ms)),
+            retrieved_chunks=max(0, int(retrieved_chunks)),
+            rerank_input_count=max(0, int(rerank_input_count)),
+            context_tokens=max(0, int(context_tokens)),
+            prompt_tokens=max(0, int(prompt_tokens)),
+            completion_tokens=max(0, int(completion_tokens)),
+            cache_hit=bool(cache_hit),
+        )
+        self._rag_hot_paths.append(metric)
+        labels = {
+            "tenant_id_hash": metric.tenant_id_hash,
+            "profile_id": profile_id,
+            "status": status,
+            "cache_hit": "true" if metric.cache_hit else "false",
+        }
+        self.increment("rag_requests_total", labels=labels)
+        self.observe("rag_request_total_ms", metric.total_ms, labels=labels)
+        self.observe("rag_retrieval_ms", metric.retrieval_ms, labels=labels)
+        self.observe("rag_rerank_ms", metric.rerank_ms, labels=labels)
+        self.observe("rag_generation_ms", metric.generation_ms, labels=labels)
+        self.observe("rag_llm_call_count", metric.llm_call_count, labels=labels)
+        self.observe("rag_retrieved_chunks", metric.retrieved_chunks, labels=labels)
+        self.observe("rag_rerank_input_count", metric.rerank_input_count, labels=labels)
+        self.observe("rag_context_tokens", metric.context_tokens, labels=labels)
+        self.observe("rag_prompt_tokens", metric.prompt_tokens, labels=labels)
+        self.observe("rag_completion_tokens", metric.completion_tokens, labels=labels)
+        return metric
+
+    def rag_hot_path_metrics(self, request_id: str = "") -> tuple[RagHotPathMetric, ...]:
+        if request_id:
+            return tuple(
+                metric for metric in self._rag_hot_paths if metric.request_id == request_id
+            )
+        return tuple(self._rag_hot_paths)
 
     def stage_summary(self, tenant_id: str, stage: str) -> StageMetrics:
         if stage not in OBSERVABILITY_STAGES:

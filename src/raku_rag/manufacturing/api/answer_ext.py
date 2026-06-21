@@ -240,16 +240,38 @@ class ManufacturingAnswerService:
         # primary evidence": so if the answer asserted with an obsolete PRIMARY (top) citation and NO
         # approved+effective document is among the actually-cited evidence, the obsolete doc would be
         # the real basis of the assertion — demote to insufficient_evidence (reference-only + warning).
+        # The REUSED 001 answer path ranks evidence by score and may place a DRAFT/OBSOLETE document
+        # as the TOP (primary) citation even though the SafetyGate only surveyed that *some* approved
+        # doc exists among candidates. Two demotions guard the PRIMARY-evidence invariant:
+        #  - (FR-MFG-006/SC-MFG-011) obsolete PRIMARY with no approved+effective among the CITED
+        #    evidence => an obsolete doc is never primary (existing behavior; applies to any answer).
+        #  - (GAP-S3/SC-MFG-006) a HIGH-RISK assertion must rest ENTIRELY on approved+effective
+        #    evidence. Guarding only the PRIMARY (citations[0]) slot is insufficient: the REUSED 001
+        #    answer path composes the answer TEXT from ALL context chunks and then cites every chunk
+        #    whose terms appear in that text, so a draft/obsolete/pending source in ANY cited slot can
+        #    still contaminate a high-risk answer's text and citation list (source poisoning via a
+        #    SECONDARY citation, even when an approved doc is primary). Demote to insufficient_evidence
+        #    unless EVERY cited source is approved+effective.
         if base.status == AnswerStatus.OK.value and mfg_citations:
             primary = mfg_citations[0]
-            cited_has_approved_effective = any(
+            cited_approved_effective = [
                 is_approved_effective(self._get_mfg_meta(tenant, c.document_id), today=self._today)
                 for c in mfg_citations
+            ]
+            cited_has_approved_effective = any(cited_approved_effective)
+            high_risk_unsupported = classification.is_high_risk and not all(
+                cited_approved_effective
             )
-            if (
+            obsolete_primary_unsupported = (
                 primary.approval_status == ApprovalStatus.OBSOLETE.value
                 and not cited_has_approved_effective
-            ):
+            )
+            if high_risk_unsupported or obsolete_primary_unsupported:
+                block_reason = (
+                    SafetyBlockReason.APPROVED_CITATION_MISSING
+                    if high_risk_unsupported
+                    else SafetyBlockReason.INSUFFICIENT_EVIDENCE
+                )
                 blocked = ManufacturingAnswer(
                     status=AnswerStatus.INSUFFICIENT_EVIDENCE.value,
                     text=None,
@@ -258,8 +280,11 @@ class ManufacturingAnswerService:
                     correlation_id=base.correlation_id,
                     high_risk=classification.is_high_risk,
                     high_risk_reason_codes=classification.reason_codes,
-                    safety_block_reason=SafetyBlockReason.INSUFFICIENT_EVIDENCE.value,
-                    obsolete_warning=True,
+                    safety_block_reason=block_reason.value,
+                    obsolete_warning=(
+                        primary.approval_status == ApprovalStatus.OBSOLETE.value
+                        or decision.obsolete_warning
+                    ),
                     requires_onsite_confirmation=decision.requires_onsite_confirmation,
                     notice=notice,
                 )

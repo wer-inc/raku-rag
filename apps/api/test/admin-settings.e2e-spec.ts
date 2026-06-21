@@ -87,7 +87,10 @@ describe("admin settings facade (e2e)", () => {
             top_k: body.top_k,
             minimum_evidence_count: 2,
             rerank_enabled: true,
-            rerank_top_n: 50,
+            rerank_top_n: 20,
+            max_context_tokens: body.max_context_tokens ?? 8000,
+            max_context_chunks: body.max_context_chunks ?? 8,
+            max_synchronous_llm_calls: body.max_synchronous_llm_calls ?? 1,
             captioning_enabled: body.captioning_enabled,
             profile_version: 1,
             schema_version: 1,
@@ -136,6 +139,7 @@ describe("admin settings facade (e2e)", () => {
             rerank_enabled: body.rerank_enabled,
             rerank_candidate_limit: 50,
             final_context_limit: 5,
+            max_context_tokens: body.max_context_tokens ?? 8000,
             minimum_evidence_count: 2,
             fallback_behavior: "insufficient_evidence",
             profile_version: 1,
@@ -334,6 +338,7 @@ describe("admin settings facade (e2e)", () => {
         identifier_fields: ["model_number"],
         vector_top_k: 20,
         rerank_enabled: true,
+        max_context_tokens: 8000,
       });
     expect(retrieval.status).toBe(200);
     expect(retrieval.body.identifier_fields).toContain("model_number");

@@ -16,6 +16,7 @@ function profile(overrides: Partial<RetrievalProfileSettings> = {}): RetrievalPr
     rerank_enabled: true,
     rerank_candidate_limit: 50,
     final_context_limit: 3,
+    max_context_tokens: 8000,
     minimum_evidence_count: 1,
     fallback_behavior: "insufficient_evidence",
     profile_version: 1,

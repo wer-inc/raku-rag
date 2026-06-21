@@ -1,0 +1,100 @@
+name: deploy-checks
+
+# P1-12 (production-readiness PR-012/PR-014): the deployment outer-frame. Validates that the CDK app
+# synthesizes, the container images BUILD, and each image gets an SBOM + a vulnerability scan — so
+# "deploy" is no longer manual+unverified with placeholder images. No runtime RAG behavior is touched.
+# Path-gated so unrelated (docs/spec/py-core-only) changes don't pay the Docker build cost.
+on:
+  push:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "workers/**"
+      - "infra/**"
+      - "src/**"
+      - "**/Dockerfile"
+      - ".dockerignore"
+      - "package.json"
+      - "package-lock.json"
+      - "pyproject.toml"
+      - ".github/workflows/deploy-checks.yml"
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "workers/**"
+      - "infra/**"
+      - "src/**"
+      - "**/Dockerfile"
+      - ".dockerignore"
+      - "package.json"
+      - "package-lock.json"
+      - "pyproject.toml"
+      - ".github/workflows/deploy-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cdk-synth:
+    name: CDK synth
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDK app deps
+        run: npm ci
+        working-directory: infra/cdk
+      - name: Build + synth (must produce a template, no errors)
+        run: npm run build && npm run synth -- --quiet
+        working-directory: infra/cdk
+
+  image-build-scan:
+    name: Image build + SBOM + scan (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: apps/api/Dockerfile
+            tag: raku-rag-api:ci
+          - name: web
+            dockerfile: apps/web/Dockerfile
+            tag: raku-rag-web:ci
+          - name: worker
+            dockerfile: workers/ingest/Dockerfile
+            tag: raku-rag-worker:ci
+    env:
+      IMAGE_TAG: ${{ matrix.tag }}
+      DOCKERFILE: ${{ matrix.dockerfile }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image (context = repo root)
+        run: docker build -f "$DOCKERFILE" -t "$IMAGE_TAG" .
+      - name: Generate SBOM (syft, SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ matrix.tag }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.name }}.spdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.name }}
+          path: sbom-${{ matrix.name }}.spdx.json
+      - name: Vulnerability scan (Trivy, HIGH/CRITICAL)
+        # v0.36.0 hash-pins its internal aquasecurity/setup-trivy (commit 3fb12ec = v0.2.6), so it
+        # is immune to the upstream tag-deletion that broke older releases (e.g. v0.28.0 referenced
+        # setup-trivy@v0.2.1, which no longer resolves).
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ matrix.tag }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          # Report-only until the base-image CVE set is triaged; flip to '1' to block on findings.
+          exit-code: "0"

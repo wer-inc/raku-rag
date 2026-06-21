@@ -57,6 +57,37 @@ class SchemaLockMigrationSqlTest(unittest.TestCase):
         ):
             self.assertTableHas(table, "tenant_id text NOT NULL")
 
+    def test_evaluation_run_persistence_columns_present(self) -> None:
+        # 0007 (P2-9): full eval-run persistence is an additive ALTER (not in the CREATE TABLE body),
+        # so assert against the concatenated SQL. These columns let runs be trended across releases.
+        for column in (
+            "eval_set_id text",
+            "baseline boolean NOT NULL DEFAULT false",
+            "gate_result text NOT NULL DEFAULT 'passed'",
+            "baseline_comparison jsonb NOT NULL DEFAULT '{}'::jsonb",
+            "probe_results jsonb NOT NULL DEFAULT '[]'::jsonb",
+            "probes_executed boolean NOT NULL DEFAULT false",
+        ):
+            with self.subTest(column=column):
+                self.assertIn(column, self.sql)
+        self.assertIn("idx_evaluation_runs_trend", self.sql)
+        # the additive ALTER must target the existing evaluation_runs table (created in 0002)
+        self.assertIn("ALTER TABLE evaluation_runs", self.sql)
+
+    def test_evaluation_run_persistence_has_down_migration(self) -> None:
+        down = (MIGRATIONS / "0007_eval_run_persistence.down.sql").read_text(encoding="utf-8")
+        self.assertIn("DROP INDEX IF EXISTS idx_evaluation_runs_trend", down)
+        for column in (
+            "probes_executed",
+            "probe_results",
+            "baseline_comparison",
+            "gate_result",
+            "baseline",
+            "eval_set_id",
+        ):
+            with self.subTest(column=column):
+                self.assertIn(f"DROP COLUMN IF EXISTS {column}", down)
+
     def test_visual_and_metadata_schema_versions_are_present(self) -> None:
         for table in ("documents", "chunks", "visual_assets", "layout_regions"):
             self.assertTableHas(

@@ -64,7 +64,7 @@ describe("Bedrock Cohere rerank service", () => {
       answer_id: "answer_1",
       query: "alarm E-152 reset",
       candidates: [candidate(0), candidate(1), candidate(2)],
-      rerank_candidate_limit: 50,
+      rerank_candidate_limit: 20,
       final_context_limit: 5,
     });
 
@@ -103,9 +103,9 @@ describe("Bedrock Cohere rerank service", () => {
     ]);
   });
 
-  it("bounds Bedrock input to 50-80 candidates and returns only 5-12 final contexts", async () => {
+  it("bounds Bedrock input to configured candidates and returns only 5-12 final contexts", async () => {
     const client = new FakeBedrockRuntime({
-      results: Array.from({ length: 50 }, (_, index) => ({
+      results: Array.from({ length: 20 }, (_, index) => ({
         index,
         relevance_score: 1 - index / 100,
       })),
@@ -116,13 +116,13 @@ describe("Bedrock Cohere rerank service", () => {
       tenant_id: "tenant_a",
       query: "bounded candidate set",
       candidates: Array.from({ length: 90 }, (_, index) => candidate(index)),
-      rerank_candidate_limit: 50,
+      rerank_candidate_limit: 20,
       final_context_limit: 5,
     });
     const body = JSON.parse(client.calls[0].body) as { documents: string[] };
 
-    expect(body.documents).toHaveLength(50);
-    expect(result.trace.candidate_count).toBe(50);
+    expect(body.documents).toHaveLength(20);
+    expect(result.trace.candidate_count).toBe(20);
     expect(result.candidates).toHaveLength(5);
     await expect(
       service.rerank({
@@ -132,13 +132,13 @@ describe("Bedrock Cohere rerank service", () => {
         rerank_candidate_limit: 81,
         final_context_limit: 5,
       }),
-    ).rejects.toThrow(/between 50 and 80/);
+    ).rejects.toThrow(/between 1 and 80/);
     await expect(
       service.rerank({
         tenant_id: "tenant_a",
         query: "too few final",
         candidates: [candidate(0)],
-        rerank_candidate_limit: 50,
+        rerank_candidate_limit: 20,
         final_context_limit: 4,
       }),
     ).rejects.toThrow(/between 5 and 12/);
@@ -153,7 +153,7 @@ describe("Bedrock Cohere rerank service", () => {
       tenant_id: "tenant_a",
       query: "fallback",
       candidates: [candidate(0, 0.2), candidate(1, 0.9), candidate(2, 0.4)],
-      rerank_candidate_limit: 50,
+      rerank_candidate_limit: 20,
       final_context_limit: 5,
     });
 

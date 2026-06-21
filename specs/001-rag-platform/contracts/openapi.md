@@ -146,10 +146,10 @@ DocumentProcessingState の詳細。
 - res 200: `[{ retrieval_profile_id, name, version, status, metadata_filter_required, identifier_match_enabled, vector_search_enabled, rerank_enabled }]`
 
 #### GET /v1/admin/retrieval-profiles/{retrieval_profile_id}
-- res 200: `{ retrieval_profile_id, metadata_filter_required, identifier_fields, keyword_strategy, vector_top_k, vector_score_threshold, rerank_provider, rerank_model, rerank_candidate_limit, final_context_limit, minimum_evidence_count, fallback_behavior }`
+- res 200: `{ retrieval_profile_id, metadata_filter_required, identifier_fields, keyword_strategy, vector_top_k, vector_score_threshold, rerank_provider, rerank_model, rerank_candidate_limit, final_context_limit, max_context_tokens, minimum_evidence_count, fallback_behavior }`
 
 #### PUT /v1/admin/retrieval-profiles/{retrieval_profile_id}
-- req: `{ metadata_filter_required, identifier_match_enabled, identifier_fields, keyword_strategy, vector_top_k, rerank_enabled, rerank_candidate_limit, final_context_limit, minimum_evidence_count, reason }`
+- req: `{ metadata_filter_required, identifier_match_enabled, identifier_fields, keyword_strategy, vector_top_k, rerank_enabled, rerank_candidate_limit, final_context_limit, max_context_tokens, minimum_evidence_count, reason }`
 - res 200: `{ retrieval_profile_id, version, provider_config_audit_event_id }`
 
 #### POST /v1/admin/retrieval-profiles/{retrieval_profile_id}/benchmark
@@ -173,7 +173,7 @@ DocumentProcessingState の詳細。
 
 ### Admin 設定 API
 - `GET/PUT /v1/admin/datasources/{id}`（同期スケジュール含む）
-- `GET/PUT /v1/admin/query-profiles/{id}`（score_threshold/top_k/rerank/llm_model 等）
+- `GET/PUT /v1/admin/query-profiles/{id}`（score_threshold/top_k/rerank/llm_model/max_synchronous_llm_calls/max_context_tokens/max_context_chunks 等）
 - `GET/PUT /v1/admin/acl`（ACLGrant の付与/取消; deny-by-default）
 - `GET/PUT /v1/admin/budgets`（tenant/collection/query budget）
 

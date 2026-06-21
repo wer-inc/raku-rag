@@ -24,6 +24,12 @@
 - CR 制約: 既存の Groundedness / Traceability / Security / マルチテナント / 削除 / コスト / 評価の全制約を画像モダリティにも同等に適用する。visual asset・layout region・visual chunk・crop にも `tenant_id` と ACL を必須とし、document の ACL を継承。削除は tombstone＋カスケードで visual asset / OCR テキスト / region / crop / generated caption / visual embedding / サムネイル / 各種 cache まで及ぶ。retrieval は ACL pre-filter、VLM へ渡す画像・領域も権限確認済みに限定する。
 - CR: **captioning は optional enrichment**。図表・画像・スクリーンショット・PDFページ・layout region に対し自動キャプション（`generated_caption_text`）を生成できるが、tenant/collection/ingestion option/cost budget で有効・無効を切り替えられる。生成キャプションは**検索補助**に用い、画像内容に関する回答の**一次根拠としては扱わない**（一次根拠＝元画像 / page image / crop / visual region / OCR region）。caption のみで裏付けできない場合は VLM が元画像または crop を確認し、caption が不確実・曖昧・画像と矛盾する場合は推測回答をしない。`region_type=caption`（レイアウト種別）と `generated_caption_text`（生成物）は区別する。
 
+### Session 2026-06-21 — CR: RAG performance guardrails
+
+- CR: production answer path は **measurement first** とし、1リクエストごとに `request_id`、hash 化した `tenant_id/user_id`、`llm_call_count`、`retrieval_ms`、`rerank_ms`、`generation_ms`、`total_ms`、`retrieved_chunks`、`rerank_input_count`、`context_tokens`、`prompt_tokens`、`completion_tokens`、`cache_hit` を記録する。raw query / raw context / raw identity は既定で保存しない。
+- CR: 同期 RAG hot path の性能予算を QueryProfile/RetrievalProfile で制御する。既定は `max_synchronous_llm_calls=1`、`vector_top_k=50`、`rerank_candidate_limit=20`、`final_context_limit=8`、`max_context_tokens=8000` とし、query rewrite / HyDE / LLM judge / citation deep validation は常時同期実行しない。
+- CR: ACL・tenant・業界 metadata filter は検索時点で pushdown し、post-filter のみに依存しない。rerank 対象数、最終 context chunk 数、context token 数は上限を必須にし、p50/p95/p99・同時実行・large corpus/many tenants/long document を performance readiness gate で検証する。
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - 根拠付き回答を得る (Priority: P1)
@@ -140,6 +146,9 @@
 - [CR:画像] VLM が画像内容を根拠付けできない場合は、テキスト同様に「根拠不足」を返す（post-generation evidence check を画像引用にも適用）。
 - [CR:画像] VLM provider 障害時は fail-closed とし、回答生成せず `temporarily_unavailable` を返す（OCRテキストだけで推測しない）。
 - [CR:画像] 画像内に PII（顔・署名・カード番号等）が検出された場合、policy に従い retrieval/回答時に該当領域をマスク（redaction）し、ログ・評価データに原画像を残さない。
+- [CR:performance] reranker 入力、最終 context chunk 数、context token 数が profile 上限を超える場合は、上限内に切り詰めるか `insufficient_evidence` / `temporarily_unavailable` を返し、無制限に prompt へ詰め込まない。
+- [CR:performance] query rewrite / HyDE / LLM judge / citation deep validation などの追加 LLM call は、`max_synchronous_llm_calls` を超える場合は同期 hot path では実行せず、非同期 sampling / eval / CI に回す。
+- [CR:performance] ACL・tenant・metadata filter を検索後アプリ側で大量に捨てるだけの実装は不可。DB/index 側の pre-filter が無効な場合は performance/security risk として trace と readiness report に記録する。
 
 ## Requirements *(mandatory)*
 
@@ -165,7 +174,9 @@
 
 - **FR-009**: システムは、ユーザーの権限とメタデータフィルタを考慮して関連チャンクを検索しなければならない。検索には日本語・多言語に対応した embedding を用いる（hybrid search 採用時は日本語向け analyzer/tokenizer の利用を plan フェーズで検討する）。
 - **FR-010**: 検索は、query rewrite・metadata filter・top_k・score threshold・rerank の各設定を変更可能でなければならない。
+- **FR-010a**: query rewrite / HyDE / step-back prompt 等の query transformation は、低 confidence や profile 明示時など条件付きでのみ同期実行し、`max_synchronous_llm_calls` を超えてはならない。常時多段 LLM call を本番 hot path に入れてはならない。
 - **FR-011**: システムは、検索結果を必要に応じてrerankし、回答生成に用いなければならない。
+- **FR-011a**: rerank は bounded candidate set にのみ適用しなければならない。RetrievalProfile は `vector_top_k`、`rerank_candidate_limit`、`final_context_limit`、`max_context_tokens` を持ち、既定では retrieve 50 → rerank 20 以下 → final context 8 chunks / 8000 tokens 以下を目安にする。
 - **FR-012**: システムは、検索された根拠に基づく回答を生成し、実際に引用した根拠チャンクのみを出典として返さなければならない。
 - **FR-013**: 回答には、引用元・`document_id`・`chunk_id`・該当テキスト範囲・信頼度・使用チャンク一覧を含めなければならない。
 - **FR-014**: 根拠が不足する場合、システムは推測で回答せず「根拠不足」を明示して返さなければならない。判定は2段階とする：
@@ -179,6 +190,9 @@
 - **FR-015**: すべての検索結果・回答は、`source_id`・`document_id`・`chunk_id`・`version`・`retrieval_score` に追跡可能でなければならない。
 - **FR-016**: 各処理（取り込み・索引・検索・生成・評価）は、監査ログとトレース（相関ID）を残さなければならない。
 - **FR-017**: 各段階のレイテンシ・スループット・エラー率・コストはメトリクスとして公開されなければならない。
+- **FR-017a**: answer request hot path は、相関IDごとに `llm_call_count`、`retrieval_ms`、`rerank_ms`、`generation_ms`、`total_ms`、`retrieved_chunks`、`rerank_input_count`、`context_tokens`、`prompt_tokens`、`completion_tokens`、`cache_hit` を記録しなければならない。
+- **FR-017b**: hot path metrics は tenant/user 識別子を hash 化して保存し、raw user query・raw retrieved context・raw identity を既定で保存してはならない。LoggingPolicy の raw opt-in があっても security hard gate の対象とする。
+- **FR-017c**: production readiness dashboard/eval は平均 latency だけでなく p50/p95/p99、error rate、queue time、provider rate limit、LLM call count、token count、cache hit rate を表示・比較できなければならない。
 
 **API・管理**
 
@@ -211,6 +225,9 @@
 **信頼性・性能**
 
 - **FR-029**: p95レイテンシ・スループット・同時実行数・最大文書サイズ・最大チャンク数を設定可能にしなければならない。
+- **FR-029a**: performance budget は QueryProfile / RetrievalProfile / runtime Settings から設定可能でなければならない。必須項目は `max_synchronous_llm_calls`、`max_context_tokens`、`max_context_chunks`、`vector_top_k`、`rerank_candidate_limit`、`final_context_limit`。
+- **FR-029b**: load/performance test は average latency だけで合格としてはならない。large corpus / many tenants / long documents / high concurrency の synthetic query で p50/p95/p99、error rate、queue time、retrieval/rerank/generation breakdown を測定しなければならない。
+- **FR-029c**: vector search は tenant/ACL/metadata filter pushdown と ANN / metadata index を前提に設計しなければならない。pgvector 等で index 未設定または post-filter 依存の場合は production readiness gate を fail させる。
 - **FR-030**: プロバイダ障害時は、指数バックオフ付きリトライ・dead-letter queue・サーキットブレーカーを採用しなければならない。原則 **fail-closed** とし、誤った部分結果や根拠不足の回答を返してはならない。コンポーネント別の既定動作は以下とする：
   - **Parser失敗**: 対象文書を failed としてマークし失敗理由を保存、再実行可能にする。正常に解析できていない文書は検索対象にしない。
   - **Embedding失敗**: リトライ後も失敗した場合は indexing job を failed とする。embedding が存在しない chunk は vector search 対象にしない。
@@ -256,7 +273,7 @@
 
 - **Tenant / Project(Collection)**: データ分離の境界。所属する DataSource・Document・評価設定・ACL のスコープを定める。ACL粒度の基本単位（tenant / project(collection) / document）。
 - **Identity Claims**: 呼び出しアプリが署名付きトークンで表明する `user_id`・`groups`・`roles`。基盤が検証し、ACLフィルタ・監査・検索/回答制御に用いる（基盤はパスワード/ログインを管理しない）。
-- **QueryProfile**: 検索・回答の挙動設定。`score_threshold`・`top_k`・`minimum_evidence_count`・rerank・query rewrite・自己評価基準を保持し、collection 単位で設定可能。
+- **QueryProfile**: 検索・回答の挙動設定。`score_threshold`・`top_k`・`minimum_evidence_count`・rerank・query rewrite・自己評価基準に加え、`max_synchronous_llm_calls`・`max_context_tokens`・`max_context_chunks` を保持し、collection 単位で設定可能。
 - **DataSource**: 取り込み元の定義（アップロード、ローカル/オブジェクトストレージ、将来の外部ソース）。同期スケジュールを持つ。
 - **Document**: `tenant_id`・`source_id`・`document_id`・`version`・`checksum`・`metadata`・`ACL`・`created_at`・`updated_at`・`indexed_at`・`tombstone`(削除状態) を持つ取り込み単位。
 - **Chunk**: `tenant_id`・`chunk_id`・`document_id`・`text`・`token_count`・`position`・`heading_path`・`metadata`・`embedding_model_version`・原文との offset mapping を持つ検索単位。`modality`（text | visual）を持ち、document の ACL を継承する。

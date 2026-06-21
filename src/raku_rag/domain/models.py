@@ -99,8 +99,11 @@ class QueryProfile:
     top_k: int = 5
     minimum_evidence_count: int = 1
     rerank_enabled: bool = True
-    rerank_top_n: int = 50
+    rerank_top_n: int = 20
     query_rewrite_enabled: bool = False
+    max_context_tokens: int = 8_000
+    max_context_chunks: int = 8
+    max_synchronous_llm_calls: int = 1
     self_eval_enabled: bool = True
     llm_model: str = "extractive-mvp"
 

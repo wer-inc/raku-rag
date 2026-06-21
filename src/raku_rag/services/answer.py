@@ -10,6 +10,7 @@ Invariants:
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import Callable, Sequence
 
 from raku_rag.core.errors import AnswerStatus, ProviderUnavailable
@@ -34,6 +35,7 @@ from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.services.cost import CostService
 from raku_rag.services.groundedness import GroundednessGate
+from raku_rag.services.injection import PromptInjectionGuard
 from raku_rag.services.retrieval import RetrievalService
 
 _EST_QUERY_COST = 1.0
@@ -57,6 +59,7 @@ class AnswerService:
         tracer: InMemoryTracer | None = None,
         audit: InMemoryAuditSink | None = None,
         vlm: VLMProvider | None = None,
+        injection_guard: PromptInjectionGuard | None = None,
     ) -> None:
         self._retrieval = retrieval
         self._llm = llm
@@ -67,9 +70,12 @@ class AnswerService:
         self._tracer = tracer
         self._audit = audit
         self._vlm = vlm
+        # P1-2: prompt-injection defense runs in the live flow (default-on, provider-agnostic).
+        self._injection_guard = injection_guard or PromptInjectionGuard()
 
     def answer(self, principal: IdentityClaims, query: str, profile: QueryProfile) -> Answer:
         cid = new_correlation_id()
+        total_started = time.perf_counter()
         span_cm = (
             self._tracer.span(
                 "answer.answer",
@@ -91,6 +97,13 @@ class AnswerService:
                 self._record_audit(
                     principal, cid, "answer", AnswerStatus.BUDGET_EXCEEDED.value, reason="budget"
                 )
+                self._record_hot_path(
+                    principal,
+                    cid,
+                    profile,
+                    AnswerStatus.BUDGET_EXCEEDED.value,
+                    total_started=total_started,
+                )
                 if hasattr(span, "finish"):
                     span.finish("ok", answer_status=AnswerStatus.BUDGET_EXCEEDED.value)
                 return Answer(
@@ -105,12 +118,68 @@ class AnswerService:
                 status = AnswerStatus.INSUFFICIENT_EVIDENCE.value
                 self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
                 self._record_audit(principal, cid, "answer", status, reason=pre.reason)
+                self._record_hot_path(
+                    principal,
+                    cid,
+                    profile,
+                    status,
+                    total_started=total_started,
+                )
                 if hasattr(span, "finish"):
                     span.finish("ok", answer_status=status)
                 return Answer(status=status, used_chunks=(), correlation_id=cid)
 
-            evidence: list[ScoredChunk] = list(pre.evidence)
-            context: Sequence[Chunk] = [s.chunk for s in evidence]
+            evidence = self._cap_evidence(list(pre.evidence), profile)
+            if len(evidence) < profile.minimum_evidence_count:
+                log("answer.insufficient_context_budget", correlation_id=cid)
+                status = AnswerStatus.INSUFFICIENT_EVIDENCE.value
+                self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
+                self._record_audit(principal, cid, "answer", status, reason="context_budget")
+                context_tokens = self._evidence_token_count(evidence)
+                self._record_hot_path(
+                    principal,
+                    cid,
+                    profile,
+                    status,
+                    total_started=total_started,
+                    context_tokens=context_tokens,
+                    prompt_tokens=_token_count(query) + context_tokens,
+                )
+                if hasattr(span, "finish"):
+                    span.finish("ok", answer_status=status, reason="context_budget")
+                return Answer(status=status, used_chunks=(), correlation_id=cid)
+
+            # P1-2 prompt-injection defense (defense-in-depth; never widens ACL/groundedness). Both
+            # the user query and the retrieved context are untrusted. A query that tries to override
+            # the system is REFUSED; instructions embedded in retrieved chunks are NEUTRALIZED before
+            # they reach the model (treated as inert data, never obeyed).
+            query_injection = self._injection_guard.inspect(query)
+            if query_injection.detected:
+                log("answer.prompt_injection_query", correlation_id=cid)
+                status = AnswerStatus.INSUFFICIENT_EVIDENCE.value
+                self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
+                self._record_audit(principal, cid, "answer", status, reason="prompt_injection")
+                self._record_hot_path(principal, cid, profile, status, total_started=total_started)
+                if hasattr(span, "finish"):
+                    span.finish("ok", answer_status=status, reason="prompt_injection")
+                return Answer(status=status, used_chunks=(), correlation_id=cid)
+
+            context_injection = 0
+            context: list[Chunk] = []
+            for s in evidence:
+                sanitized, neutralized = self._injection_guard.neutralize(s.chunk.text)
+                context_injection += neutralized
+                context.append(replace(s.chunk, text=sanitized) if neutralized else s.chunk)
+            if context_injection:
+                # The injected instruction is neutralized, not obeyed; the answer stays grounded in
+                # the legitimate content. Recorded so the event is not a silent pass (cf. P1-8).
+                log(
+                    "answer.prompt_injection_context_neutralized",
+                    correlation_id=cid,
+                    count=context_injection,
+                )
+            context_tokens = sum(_token_count(c.text) for c in context)
+            prompt_tokens = _token_count(query) + context_tokens
             visual_regions = tuple(
                 self._layout_region_from_chunk(c) for c in context if c.modality == Modality.VISUAL
             )
@@ -142,29 +211,43 @@ class AnswerService:
                             visual_regions=len(visual_regions),
                         )
             except Exception as exc:  # fail-closed (FR-030)
+                generation_ms = (time.perf_counter() - generation_started) * 1000
                 if self._metrics:
                     self._metrics.record_stage(
                         "generation",
                         tenant_id=principal.tenant_id,
                         status="llm_unavailable",
-                        latency_ms=(time.perf_counter() - generation_started) * 1000,
+                        latency_ms=generation_ms,
                     )
                 log("answer.llm_unavailable", correlation_id=cid)
                 self._record_metric(principal.tenant_id, profile.profile_id, "llm_unavailable", 0)
                 self._record_audit(principal, cid, "answer", "failed", reason="llm_unavailable")
+                self._record_hot_path(
+                    principal,
+                    cid,
+                    profile,
+                    "llm_unavailable",
+                    total_started=total_started,
+                    llm_call_count=1,
+                    generation_ms=generation_ms,
+                    context_tokens=context_tokens,
+                    prompt_tokens=prompt_tokens,
+                )
                 raise ProviderUnavailable("LLM provider failed") from exc
+            generation_ms = (time.perf_counter() - generation_started) * 1000
+            completion_tokens = _token_count(text)
             if self._metrics:
                 self._metrics.record_stage(
                     "generation",
                     tenant_id=principal.tenant_id,
                     status="ok",
-                    latency_ms=(time.perf_counter() - generation_started) * 1000,
+                    latency_ms=generation_ms,
                 )
 
             self._cost.record_tokens(
                 principal.tenant_id,
                 kind="llm_prompt_tokens",
-                tokens=_token_count(query) + sum(_token_count(c.text) for c in context),
+                tokens=prompt_tokens,
                 trace_id=cid,
                 query_id=profile.profile_id,
                 metadata={"model": getattr(self._llm, "model", "")},
@@ -172,7 +255,7 @@ class AnswerService:
             self._cost.record_tokens(
                 principal.tenant_id,
                 kind="llm_completion_tokens",
-                tokens=_token_count(text),
+                tokens=completion_tokens,
                 trace_id=cid,
                 query_id=profile.profile_id,
                 metadata={"model": getattr(self._llm, "model", "")},
@@ -197,6 +280,18 @@ class AnswerService:
                 status = AnswerStatus.INSUFFICIENT_EVIDENCE.value
                 self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
                 self._record_audit(principal, cid, "answer", status, reason=post.reason)
+                self._record_hot_path(
+                    principal,
+                    cid,
+                    profile,
+                    status,
+                    total_started=total_started,
+                    llm_call_count=1,
+                    generation_ms=generation_ms,
+                    context_tokens=context_tokens,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
                 if hasattr(span, "finish"):
                     span.finish("ok", answer_status=status)
                 return Answer(status=status, used_chunks=(), correlation_id=cid)
@@ -248,6 +343,18 @@ class AnswerService:
                 AnswerStatus.OK.value,
                 document_ids=tuple(c.document_id for c in citations),
                 chunk_ids=tuple(used),
+            )
+            self._record_hot_path(
+                principal,
+                cid,
+                profile,
+                AnswerStatus.OK.value,
+                total_started=total_started,
+                llm_call_count=1,
+                generation_ms=generation_ms,
+                context_tokens=context_tokens,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
             )
             if hasattr(span, "finish"):
                 span.finish("ok", answer_status=AnswerStatus.OK.value, used_chunks=len(used))
@@ -313,6 +420,88 @@ class AnswerService:
             if value not in modalities:
                 modalities.append(value)
         return tuple(modalities) or ("text",)
+
+    def _cap_evidence(
+        self, evidence: Sequence[ScoredChunk], profile: QueryProfile
+    ) -> list[ScoredChunk]:
+        chunk_limit = max(0, int(profile.max_context_chunks))
+        token_limit = max(0, int(profile.max_context_tokens))
+        if chunk_limit == 0 or token_limit == 0:
+            return []
+        capped: list[ScoredChunk] = []
+        used_tokens = 0
+        for item in evidence:
+            if len(capped) >= chunk_limit:
+                break
+            chunk_tokens = _token_count(item.chunk.text)
+            if chunk_tokens <= 0:
+                chunk_tokens = item.chunk.token_count if item.chunk.token_count > 0 else 0
+            if used_tokens + chunk_tokens > token_limit:
+                continue
+            capped.append(item)
+            used_tokens += chunk_tokens
+        return capped
+
+    def _evidence_token_count(self, evidence: Sequence[ScoredChunk]) -> int:
+        return sum(_token_count(item.chunk.text) for item in evidence)
+
+    def _record_hot_path(
+        self,
+        principal: IdentityClaims,
+        correlation_id: str,
+        profile: QueryProfile,
+        status: str,
+        *,
+        total_started: float,
+        llm_call_count: int = 0,
+        generation_ms: float = 0.0,
+        context_tokens: int = 0,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        cache_hit: bool = False,
+    ) -> None:
+        if not self._metrics:
+            return
+        attrs = self._retrieval_span_attrs(correlation_id)
+        total_ms = (time.perf_counter() - total_started) * 1000
+        self._metrics.record_rag_hot_path(
+            request_id=correlation_id,
+            tenant_id=principal.tenant_id,
+            user_id=principal.user_id,
+            profile_id=profile.profile_id,
+            status=status,
+            llm_call_count=llm_call_count,
+            retrieval_ms=self._float_attr(attrs, "retrieval_ms"),
+            rerank_ms=self._float_attr(attrs, "rerank_ms"),
+            generation_ms=generation_ms,
+            total_ms=total_ms,
+            retrieved_chunks=self._int_attr(attrs, "retrieved_chunks"),
+            rerank_input_count=self._int_attr(attrs, "rerank_input_count"),
+            context_tokens=context_tokens,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cache_hit=cache_hit,
+        )
+
+    def _retrieval_span_attrs(self, correlation_id: str) -> dict:
+        if not self._tracer:
+            return {}
+        for span in self._tracer.spans(correlation_id=correlation_id):
+            if span.name == "retrieval.retrieve":
+                return dict(span.attributes)
+        return {}
+
+    def _float_attr(self, attrs: dict, key: str) -> float:
+        try:
+            return float(attrs.get(key) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _int_attr(self, attrs: dict, key: str) -> int:
+        try:
+            return int(attrs.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _record_metric(
         self, tenant_id: str, profile_id: str, status: str, used_chunks: int

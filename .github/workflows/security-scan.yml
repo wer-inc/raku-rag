@@ -1,0 +1,48 @@
+name: security-scan
+
+# P1-13 (production-readiness PR-014): secret scanning in CI. Closes the gap that the only secret
+# check was a local, bypassable pre-commit hook. detect-secrets runs on every push/PR against a
+# committed, audited allowlist (.secrets.baseline); a self-test proves the scanner fails on a real key.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    name: Secret scan (detect-secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install detect-secrets
+        run: python -m pip install --quiet "detect-secrets==1.5.0"
+
+      # Fail if any TRACKED file contains a secret that is not already audited in .secrets.baseline.
+      # package-lock.json (generated) and .secrets.baseline itself are excluded to avoid noise.
+      - name: Scan tracked files against committed baseline
+        run: |
+          set -euo pipefail
+          git ls-files -z -- ':!package-lock.json' ':!.secrets.baseline' \
+            | xargs -0 detect-secrets-hook --baseline .secrets.baseline
+
+      # Seeded regression: prove the scanner FAILS when it should. A throwaway key is generated at
+      # runtime (no secret literal lives in this file, so the scan above stays clean) and the hook
+      # MUST flag it; if it does not, the scanner is broken and the job fails.
+      - name: Scanner self-test (seeded secret must be detected)
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          openssl genrsa -out "$tmp/leak.pem" 2048 2>/dev/null
+          if detect-secrets-hook --baseline .secrets.baseline "$tmp/leak.pem"; then
+            echo "::error::detect-secrets did NOT flag the seeded throwaway key — scanner is not working"
+            rm -rf "$tmp"
+            exit 1
+          fi
+          rm -rf "$tmp"
+          echo "self-test OK: seeded secret was detected"

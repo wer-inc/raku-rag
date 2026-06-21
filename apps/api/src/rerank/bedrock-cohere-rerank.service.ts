@@ -5,7 +5,8 @@ export const BEDROCK_COHERE_RERANK_PROVIDER = "bedrock";
 export const BEDROCK_COHERE_RERANK_API_VERSION = 2;
 export const BEDROCK_RUNTIME_INVOKER = "BEDROCK_RUNTIME_INVOKER";
 export const RERANK_COST_RECORDER = "RERANK_COST_RECORDER";
-export const MIN_RERANK_CANDIDATE_LIMIT = 50;
+export const MIN_RERANK_CANDIDATE_LIMIT = 1;
+export const DEFAULT_RERANK_CANDIDATE_LIMIT = 20;
 export const MAX_RERANK_CANDIDATE_LIMIT = 80;
 export const MIN_FINAL_CONTEXT_LIMIT = 5;
 export const MAX_FINAL_CONTEXT_LIMIT = 12;
@@ -144,9 +145,9 @@ export class BedrockCohereRerankService {
   }
 
   private resolveCandidateLimit(limit: number | undefined): number {
-    const value = limit ?? MIN_RERANK_CANDIDATE_LIMIT;
+    const value = limit ?? DEFAULT_RERANK_CANDIDATE_LIMIT;
     if (!Number.isInteger(value) || value < MIN_RERANK_CANDIDATE_LIMIT || value > MAX_RERANK_CANDIDATE_LIMIT) {
-      throw new Error("rerank_candidate_limit must be between 50 and 80");
+      throw new Error("rerank_candidate_limit must be between 1 and 80");
     }
     return value;
   }

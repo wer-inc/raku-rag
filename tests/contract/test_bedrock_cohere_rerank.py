@@ -34,11 +34,12 @@ class BedrockCohereRerankContractTest(unittest.TestCase):
 
     def test_candidate_and_final_context_limits_are_guarded(self) -> None:
         for token in (
-            "MIN_RERANK_CANDIDATE_LIMIT = 50",
+            "MIN_RERANK_CANDIDATE_LIMIT = 1",
             "MAX_RERANK_CANDIDATE_LIMIT = 80",
+            "DEFAULT_RERANK_CANDIDATE_LIMIT = 20",
             "MIN_FINAL_CONTEXT_LIMIT = 5",
             "MAX_FINAL_CONTEXT_LIMIT = 12",
-            "rerank_candidate_limit must be between 50 and 80",
+            "rerank_candidate_limit must be between 1 and 80",
             "final_context_limit must be between 5 and 12",
         ):
             with self.subTest(token=token):

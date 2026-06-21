@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { HealthController } from "./health/health.controller";
 import { WhoamiController } from "./auth/whoami.controller";
 import { AnswerController } from "./answer/answer.controller";
+import { ManufacturingController } from "./manufacturing/manufacturing.controller";
 import { SearchController } from "./search/search.controller";
 import { IngestController } from "./ingest/ingest.controller";
 import { AdminJobsController } from "./admin/jobs.controller";
@@ -29,6 +30,7 @@ import { BedrockCohereRerankService } from "./rerank/bedrock-cohere-rerank.servi
     HealthController,
     WhoamiController,
     AnswerController,
+    ManufacturingController,
     SearchController,
     IngestController,
     AdminJobsController,
@@ -61,6 +63,7 @@ export class AppModule implements NestModule {
       .forRoutes(
         WhoamiController,
         AnswerController,
+        ManufacturingController,
         SearchController,
         IngestController,
         AdminJobsController,

@@ -40,8 +40,12 @@ class TestEvaluationRunner(unittest.TestCase):
         self.assertEqual(run.status, "succeeded")
         self.assertEqual(run.gate_result, "passed")
         self.assertEqual(run.metrics["recall_at_k"], 1.0)
+        self.assertEqual(run.metrics["precision_at_k"], 1.0)
+        self.assertEqual(run.metrics["mrr"], 1.0)
         self.assertEqual(run.metrics["citation_accuracy"], 1.0)
         self.assertEqual(run.metrics["groundedness"], 1.0)
+        # extractive answers are faithful by construction → fully supported by cited evidence
+        self.assertEqual(run.metrics["faithfulness"], 1.0)
         self.assertGreaterEqual(run.metrics["p95_latency_ms"], 0.0)
         self.assertGreater(run.metrics["query_cost"], 0.0)
         self.assertEqual(run.security_checks["acl_leakage"]["passed"], True)

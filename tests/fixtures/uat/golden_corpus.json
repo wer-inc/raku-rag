@@ -1,0 +1,64 @@
+{
+  "_doc": "012/P1-5 golden eval corpus. Synthetic, deterministic, text-only (runs on MvpSystem). No real PII/tenant/fund data. Each question carries a unique identifier token present only in its target document so deterministic retrieval is stable. Used by tests/integration/test_golden_corpus.py against the committed baseline tests/fixtures/eval/golden_baseline.json.",
+  "tenant_id": "tenant_golden",
+  "principal_user": "evaluator",
+  "industries": {
+    "manufacturing": {
+      "collection_id": "mfg",
+      "documents": [
+        {"document_id": "m_alarm_e142", "text": "Press machine EQ-PRESS-100 alarm E-142 indicates a temperature sensor overheat; reset the controller after the unit has cooled."},
+        {"document_id": "m_alarm_e200", "text": "Press machine EQ-PRESS-100 alarm E-200 indicates a hydraulic pressure drop; inspect the accumulator and recharge it."},
+        {"document_id": "m_trouble_tr017", "text": "Trouble report TR-2024-017 found that the temperature sensor failed because of a loose connector; reseat the connector and retest."},
+        {"document_id": "m_inspection_temp", "text": "The monthly inspection checklist for the temperature system requires measuring thermocouple resistance on every production cycle."},
+        {"document_id": "m_quality_pn10024", "text": "Quality defect history for part PN-10024 shows dimensional defects caused by jig wear; the permanent countermeasure is jig replacement."},
+        {"document_id": "m_gearbox_maint", "text": "The gearbox maintenance procedure requires draining the lubricating oil before removing the inspection cover."}
+      ],
+      "items": [
+        {"question": "What does alarm E-142 on press EQ-PRESS-100 indicate?", "expected_evidence": [{"document_id": "m_alarm_e142"}]},
+        {"question": "What does alarm E-200 on press EQ-PRESS-100 indicate?", "expected_evidence": [{"document_id": "m_alarm_e200"}]},
+        {"question": "What caused the temperature sensor failure in trouble report TR-2024-017?", "expected_evidence": [{"document_id": "m_trouble_tr017"}]},
+        {"question": "What does the monthly temperature inspection checklist require?", "expected_evidence": [{"document_id": "m_inspection_temp"}]},
+        {"question": "What is the permanent countermeasure for dimensional defects on part PN-10024?", "expected_evidence": [{"document_id": "m_quality_pn10024"}]},
+        {"question": "What does the gearbox maintenance procedure require before removing the inspection cover?", "expected_evidence": [{"document_id": "m_gearbox_maint"}]}
+      ]
+    },
+    "real_estate": {
+      "collection_id": "re",
+      "documents": [
+        {"document_id": "re_lease_u305", "text": "The lease contract for room U305 prohibits keeping pets and subletting the unit without prior written consent."},
+        {"document_id": "re_rule_p001", "text": "Building management rule P001 sets quiet hours from ten at night until seven in the morning for all residents."},
+        {"document_id": "re_repair_u305", "text": "The repair history for room U305 records a sink water leak that was fixed by packing replacement performed by vendor B."},
+        {"document_id": "re_estimate_may", "text": "The estimate for the plumbing job in May 2024 totals eighteen thousand yen for parts and labor."},
+        {"document_id": "re_invoice_2405", "text": "Invoice number INV-2024-05 was settled on June first for the completed plumbing work."},
+        {"document_id": "re_inquiry_noise", "text": "The tenant inquiry log records a third-floor noise complaint that was resolved through mediation between residents."}
+      ],
+      "items": [
+        {"question": "What does the lease contract for room U305 prohibit?", "expected_evidence": [{"document_id": "re_lease_u305"}]},
+        {"question": "What quiet hours does building management rule P001 set?", "expected_evidence": [{"document_id": "re_rule_p001"}]},
+        {"question": "How was the sink water leak in room U305 repaired?", "expected_evidence": [{"document_id": "re_repair_u305"}]},
+        {"question": "What is the total of the estimate for the May 2024 plumbing job?", "expected_evidence": [{"document_id": "re_estimate_may"}]},
+        {"question": "When was invoice INV-2024-05 settled?", "expected_evidence": [{"document_id": "re_invoice_2405"}]},
+        {"question": "How was the third-floor noise complaint resolved?", "expected_evidence": [{"document_id": "re_inquiry_noise"}]}
+      ]
+    },
+    "investment": {
+      "collection_id": "inv",
+      "documents": [
+        {"document_id": "inv_prospectus_f001", "text": "The delivered prospectus for fund FUND-001 lists a trust fee of one percent and a currency hedge policy that is fully hedged."},
+        {"document_id": "inv_report_may", "text": "The monthly report for May 2025 shows the fund returned two percent, driven mainly by its technology holdings."},
+        {"document_id": "inv_esg_policy", "text": "The ESG policy report describes the exclusion of controversial weapons and active engagement on climate risk."},
+        {"document_id": "inv_risk_mgmt", "text": "The risk management report explains position limits and daily value-at-risk monitoring across the portfolio."},
+        {"document_id": "inv_product_summary", "text": "The product summary describes an operating structure with one lead manager and two supporting analysts."},
+        {"document_id": "inv_ddq_answer", "text": "The DDQ approved answer states that the firm follows a disciplined value investment process with bottom-up research."}
+      ],
+      "items": [
+        {"question": "What trust fee does the delivered prospectus for fund FUND-001 list?", "expected_evidence": [{"document_id": "inv_prospectus_f001"}]},
+        {"question": "What return did the May 2025 monthly report show for the fund?", "expected_evidence": [{"document_id": "inv_report_may"}]},
+        {"question": "What exclusions does the ESG policy report describe?", "expected_evidence": [{"document_id": "inv_esg_policy"}]},
+        {"question": "What does the risk management report explain about position limits?", "expected_evidence": [{"document_id": "inv_risk_mgmt"}]},
+        {"question": "What operating structure does the product summary describe?", "expected_evidence": [{"document_id": "inv_product_summary"}]},
+        {"question": "What investment process does the DDQ approved answer state?", "expected_evidence": [{"document_id": "inv_ddq_answer"}]}
+      ]
+    }
+  }
+}

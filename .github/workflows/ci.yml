@@ -30,8 +30,21 @@ jobs:
         run: python -m unittest discover -s tests/contract -v
       - name: Integration tests
         run: python -m unittest discover -s tests/integration -v
-      - name: Migration runner smoke
-        run: python -m raku_rag.migrations.runner --dir infra/db/migrations --db /tmp/ci.sqlite
+      - name: Migration runner smoke (sqlite framework — asserts apply + idempotency)
+        run: |
+          set -euo pipefail
+          # FIX (P1-12): the old step pointed at infra/db/migrations (only .gitkeep there; the real
+          # SQL is in postgres/, which is non-recursive-discovered AND Postgres-only) so it applied 0
+          # migrations and silently passed. Run the runner against the sqlite framework smoke set and
+          # ASSERT it applied a migration and is idempotent, so a no-op can never pass again.
+          rm -f /tmp/ci.sqlite
+          out="$(python -m raku_rag.migrations.runner --dir infra/db/migrations/sqlite --db /tmp/ci.sqlite)"
+          echo "$out"
+          echo "$out" | grep -q "applied 1 migration" || { echo "::error::migration runner applied 0 migrations — false-positive smoke"; exit 1; }
+          out2="$(python -m raku_rag.migrations.runner --dir infra/db/migrations/sqlite --db /tmp/ci.sqlite)"
+          echo "$out2"
+          echo "$out2" | grep -q "no pending migrations" || { echo "::error::migration runner is not idempotent"; exit 1; }
+          echo "Real Postgres+pgvector migrations are validated in gate.yml (tier-b) + scripts/postgres-migration-smoke.sh."
 
   security-hard-gate:
     # BLOCKING: ACL leak / tenant isolation / deletion reappearance must pass regardless of baseline.
@@ -64,6 +77,10 @@ jobs:
           tests.security.test_eval_hard_gate
           tests.security.test_visual_eval_hard_gate
           tests.unit.test_eval_baseline_gate
+          tests.security.test_eval_security_probes
+          tests.security.test_prompt_injection_flow
+          tests.manufacturing.test_source_poisoning
+          tests.integration.test_golden_corpus
           -v
 
   node:
