@@ -77,6 +77,10 @@ jobs:
           tests.security.test_eval_hard_gate
           tests.security.test_visual_eval_hard_gate
           tests.unit.test_eval_baseline_gate
+          tests.security.test_eval_security_probes
+          tests.security.test_prompt_injection_flow
+          tests.manufacturing.test_source_poisoning
+          tests.integration.test_golden_corpus
           -v
 
   node:

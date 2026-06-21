@@ -17,6 +17,11 @@ class TestCiEvalGate(unittest.TestCase):
         self.assertIn("tests.security.test_eval_hard_gate", workflow)
         self.assertIn("tests.security.test_visual_eval_hard_gate", workflow)
         self.assertIn("tests.unit.test_eval_baseline_gate", workflow)
+        # New release-blocking safety/quality gates must stay wired into the CI eval-gate.
+        self.assertIn("tests.security.test_eval_security_probes", workflow)  # P0-1
+        self.assertIn("tests.security.test_prompt_injection_flow", workflow)  # P1-2
+        self.assertIn("tests.manufacturing.test_source_poisoning", workflow)  # GAP-S3
+        self.assertIn("tests.integration.test_golden_corpus", workflow)  # P1-5
 
     def test_gate_workflow_has_blocking_rt1_compose_smoke(self) -> None:
         with open(os.path.join(ROOT, ".github", "workflows", "gate.yml"), encoding="utf-8") as fh:
