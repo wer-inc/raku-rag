@@ -376,6 +376,26 @@ class PostgresVectorStore(VectorStore):
                     ),
                 )
 
+    def iter_items(self) -> tuple[tuple[Chunk, Vector], ...]:
+        """Bulk (chunk, vector) scan for the connection's current RLS tenant context.
+
+        Mirrors the in-memory ``iter_items`` seam used by the manufacturing metadata propagation
+        (``propagate_to_chunks``) and the ACL-denial survey. RLS scopes the rows to the connection's
+        current ``app.current_tenant_id`` (set with ``is_local=false`` by the preceding tenant-scoped
+        operation in these flows, so it persists for the session); each caller re-filters by
+        tenant/document. The embedding is NOT re-materialized — both callers ignore the vector — so an
+        empty placeholder vector is returned to honor the ``(Chunk, Vector)`` shape.
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "
+                "token_count, position, heading_path, offset_mapping, metadata, "
+                "embedding_model_version, tombstone FROM chunks ORDER BY chunk_id"
+            )
+            rows = cur.fetchall()
+        empty: Vector = []
+        return tuple((_row_to_chunk(r), empty) for r in rows)
+
     def search(
         self, tenant_id: str, query_vec: Vector, *, visible: VisibilityPredicate, top_k: int
     ) -> list[ScoredChunk]:
