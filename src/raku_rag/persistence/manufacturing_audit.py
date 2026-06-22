@@ -56,7 +56,10 @@ class PostgresManufacturingAuditLogWriter:
                     safe.factory_id or "",
                     safe.department_id or "",
                     safe.decision or "",
-                    _enum_value(safe.safety_block_reason),
+                    # NULL (not "") when there is no block: the check constraint allows only NULL or
+                    # a SafetyBlockReason value, and "" satisfies neither (real-PG-only failure the
+                    # in-memory audit writer never enforces).
+                    _enum_value(safe.safety_block_reason) or None,
                     list(safe.citation_ids),
                     list(safe.document_ids_used),
                     safe.prev_hash or "",
