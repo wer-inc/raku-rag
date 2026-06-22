@@ -521,6 +521,81 @@ button:disabled {
   color: var(--danger);
 }
 
+/* --- Sources view (specs/014 slice 2) --- */
+.src-field-label,
+.src-bucket {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.src-h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.src-cause {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.src-warning {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-left: 4px solid var(--warning);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.src-bucket {
+  margin-top: 8px;
+  text-transform: uppercase;
+}
+
+.measure-list {
+  display: grid;
+  gap: 8px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.measure-row {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.measure-desc {
+  margin: 0 0 6px;
+  line-height: 1.5;
+}
+
+.measure-label {
+  color: var(--warning);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.src-inline-form {
+  display: flex;
+  gap: 10px;
+}
+
+.src-inline-form input {
+  flex: 1 1 auto;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
 @media (max-width: 780px) {
   .app-shell {
     grid-template-columns: 1fr;

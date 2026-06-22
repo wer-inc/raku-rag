@@ -2,11 +2,15 @@ import type {
   AnswerRequest,
   AnswerResponse,
   GovernanceStatus,
+  IngestionRunStatusResponse,
   KnowledgeOpsDashboard,
   ManufacturingAnswerRequest,
   ManufacturingAnswerResponse,
   ManufacturingKpi,
   SafetyTelemetryView,
+  SourceSyncStatusResponse,
+  TroubleCaseSearchRequest,
+  TroubleCaseSearchResponse,
 } from "@raku-rag/shared";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:3000/v1";
@@ -34,6 +38,16 @@ async function mfgGet<T>(path: string, userToken: string): Promise<T> {
     method: "GET",
     headers: authHeaders(userToken),
     cache: "no-store",
+  });
+  return jsonOrThrow<T>(res);
+}
+
+/** Authenticated POST against a `/v1/manufacturing/*` endpoint. */
+async function mfgPost<T>(path: string, body: unknown, userToken: string): Promise<T> {
+  const res = await fetch(`${API_BASE}/manufacturing/${path}`, {
+    method: "POST",
+    headers: authHeaders(userToken),
+    body: JSON.stringify(body ?? {}),
   });
   return jsonOrThrow<T>(res);
 }
@@ -84,4 +98,33 @@ export async function manufacturingGovernanceStatus(
   userToken: string,
 ): Promise<GovernanceStatus> {
   return mfgGet<GovernanceStatus>("governance/status", userToken);
+}
+
+// --- Sources view (specs/014 slice 2) ----------------------------------------------------------
+
+export async function manufacturingTroubleCaseSearch(
+  req: TroubleCaseSearchRequest,
+  userToken: string,
+): Promise<TroubleCaseSearchResponse> {
+  return mfgPost<TroubleCaseSearchResponse>("trouble-cases/search", req, userToken);
+}
+
+export async function manufacturingSourceSyncStatus(
+  sourceId: string,
+  userToken: string,
+): Promise<SourceSyncStatusResponse> {
+  return mfgGet<SourceSyncStatusResponse>(
+    `sources/${encodeURIComponent(sourceId)}/sync-status`,
+    userToken,
+  );
+}
+
+export async function manufacturingIngestionRun(
+  runId: string,
+  userToken: string,
+): Promise<IngestionRunStatusResponse> {
+  return mfgGet<IngestionRunStatusResponse>(
+    `ingestion-runs/${encodeURIComponent(runId)}`,
+    userToken,
+  );
 }

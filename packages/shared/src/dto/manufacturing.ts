@@ -1,6 +1,10 @@
-// Manufacturing read-view contracts (specs/014) — consumed by the workspace Operations view.
-// Shapes mirror the backend audit-derived views (src/raku_rag/manufacturing/api/dashboard.py,
-// kpi/poc_metrics.py, api/policy.py). All values are reference IDs / aggregates — never raw content.
+// Manufacturing read-view contracts (specs/014) — consumed by the workspace Operations + Sources
+// views. Shapes mirror the backend audit-derived views (src/raku_rag/manufacturing/api/dashboard.py,
+// kpi/poc_metrics.py, api/policy.py) and knowledge views (knowledge/trouble_cases.py, the
+// answer-service source-sync / ingestion-run serializers). All values are reference IDs / aggregates
+// or candidate/reference knowledge — never raw confidential content.
+
+import type { Citation } from "./answer.js";
 
 /** GET /v1/manufacturing/dashboard — KnowledgeOpsDashboard (FR-MFG-012). */
 export interface KnowledgeOpsDashboard {
@@ -65,3 +69,62 @@ export interface GovernanceStatus {
   ismap_readiness_memo?: string;
   [key: string]: unknown;
 }
+
+// --- Sources view (specs/014 slice 2) ----------------------------------------------------------
+
+/** POST /v1/manufacturing/trouble-cases/search request. */
+export interface TroubleCaseSearchRequest {
+  symptom_query: string;
+  collection_id?: string;
+  manufacturing_filters?: Record<string, unknown>;
+  top_k?: number;
+}
+
+export interface FailureModeView {
+  tenant_id: string;
+  failure_mode_id: string;
+  name: string;
+  description: string;
+}
+
+/**
+ * A past-case countermeasure as displayed. Hard Rule 4: `type` is always `candidate` and `label`
+ * marks it as a past-example candidate/reference — it is NEVER a definitive/official work order.
+ */
+export interface DisplayCountermeasure {
+  measure_id: string;
+  description: string;
+  /** display/evidence axis — `candidate` for any past-case measure. */
+  type: "candidate" | "reference" | string;
+  /** nature axis, preserved: provisional | permanent | unknown. */
+  measure_class: "provisional" | "permanent" | "unknown" | string;
+  /** past-example candidate label (never a definitive instruction). */
+  label: string;
+}
+
+export interface CountermeasureSplit {
+  provisional: DisplayCountermeasure[];
+  permanent: DisplayCountermeasure[];
+}
+
+export interface TroubleCaseMatch {
+  trouble_case_id: string;
+  symptom: string;
+  equipment_id: string | null;
+  process_id: string | null;
+  failure_mode: FailureModeView | null;
+  countermeasures: CountermeasureSplit;
+  recurrence_prevention: string | null;
+  citations: Citation[];
+  relevance_score: number;
+}
+
+/** Past trouble-cases are shown as candidates/reference (FR-MFG-008/009, Hard Rule 4). */
+export interface TroubleCaseSearchResponse {
+  status: "ok" | "insufficient_evidence" | string;
+  results: TroubleCaseMatch[];
+  correlation_id: string;
+}
+
+// Source sync-status and ingestion-run status reuse the canonical ingestion contracts
+// (`SourceSyncStatusResponse`, `IngestionRunStatusResponse` in ./ingest.ts) — no duplicate shapes.
