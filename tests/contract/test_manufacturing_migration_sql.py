@@ -60,6 +60,63 @@ class ManufacturingMigrationSqlTest(unittest.TestCase):
             "materialized_at timestamptz NOT NULL DEFAULT now()",
         )
 
+    def test_domain_enum_checks_are_declared(self) -> None:
+        self.assertTableHas(
+            "manufacturing_document_metadata",
+            "document_kind text NOT NULL CHECK",
+            "'work_instruction'",
+            "'inspection'",
+            "'quality_report'",
+            "'trouble_report'",
+            "'minutes'",
+            "'ledger'",
+            "'drawing'",
+            "'training'",
+            "approval_status text NOT NULL DEFAULT 'draft' CHECK",
+            "approval_status IN ('draft', 'pending_review', 'approved', 'obsolete')",
+            "approval_source text NOT NULL DEFAULT 'workflow' CHECK",
+            "approval_source IN ('imported', 'workflow')",
+        )
+        self.assertTableHas(
+            "manufacturing_work_instructions",
+            "approval_status text NOT NULL DEFAULT 'approved' CHECK",
+            "approval_status IN ('draft', 'pending_review', 'approved', 'obsolete')",
+        )
+        self.assertTableHas(
+            "manufacturing_countermeasures",
+            "type text NOT NULL DEFAULT 'candidate' CHECK",
+            "type IN ('reference', 'candidate')",
+            "measure_class text NOT NULL DEFAULT 'unknown' CHECK",
+            "measure_class IN ('provisional', 'permanent', 'unknown')",
+        )
+        self.assertTableHas(
+            "manufacturing_draft_artifacts",
+            "artifact_type text NOT NULL CHECK",
+            "artifact_type IN ('checklist', 'trouble_report', 'quality_report', 'training', 'faq')",
+            "status text NOT NULL DEFAULT 'draft' CHECK",
+            "status IN ('draft', 'in_review', 'approved', 'rejected', 'archived')",
+            "created_by text NOT NULL DEFAULT 'ai' CHECK",
+            "created_by IN ('ai', 'user')",
+        )
+        self.assertTableHas(
+            "manufacturing_safety_decisions",
+            "classification_source text NOT NULL DEFAULT '' CHECK",
+            "classification_source IN ('', 'metadata', 'rule', 'keyword', 'llm')",
+            "safety_block_reason text CHECK",
+            "safety_block_reason IN ('approved_citation_missing', 'insufficient_evidence', 'other_block')",
+        )
+        self.assertTableHas(
+            "manufacturing_audit_events",
+            "safety_block_reason text CHECK",
+            "safety_block_reason IN ('approved_citation_missing', 'insufficient_evidence', 'other_block')",
+        )
+
+    def test_ai_generated_drafts_cannot_be_approved_by_database_constraint(self) -> None:
+        self.assertTableHas(
+            "manufacturing_draft_artifacts",
+            "CHECK (NOT (created_by = 'ai' AND status = 'approved'))",
+        )
+
     def test_indexes_rls_and_grants_are_declared(self) -> None:
         for token in (
             "idx_mfg_metadata_filter",
