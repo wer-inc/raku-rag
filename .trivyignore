@@ -1,5 +1,5 @@
 # Trivy ignore file — accepted HIGH advisories (0 CRITICAL) in the runtime images.
-# Reviewed 2026-06-21 (see docs/production-readiness/risk-register.md PR-014). The Trivy gate is
+# Reviewed 2026-06-22 (see docs/production-readiness/risk-register.md PR-014). The Trivy gate is
 # BLOCKING (deploy-checks.yml exit-code 1); every entry is an explicit, justified acceptance and the
 # gate still FAILS on any NEW package/advisory not listed here (allowlist model, like .secrets.baseline).
 #
@@ -9,23 +9,19 @@
 #   - glob / tmp (dev-only build tooling via jest / @nestjs/cli): the runtime images now do a CLEAN
 #     prod-only install (`rm -rf node_modules && npm ci --omit=dev` in apps/{api,web}/Dockerfile), so
 #     these are ABSENT from the image — verified gone, NOT listed.
+#   - picomatch: after the NestJS 11 CLI update, the API dev-tooling path uses picomatch 4.0.4; with
+#     `--omit=dev`, `npm ls picomatch` is empty across workspaces. Removed from this allowlist so the
+#     gate fails if a vulnerable prod picomatch reappears.
 #
-# Two transitive advisories genuinely persist in the prod image and are accepted:
+# One transitive advisory family genuinely persists in the prod image and is accepted:
 #
-# ── picomatch 4.0.1 (transitive) — Regular-expression Denial of Service (ReDoS) ──────────────────────
-# HIGH, 0 CRITICAL. picomatch is a PROD transitive (pulled by next 15's dependency tree, also by
-# build tooling), so it survives the prod-only install; it is glob-matching used at build/route-scan
-# time, NOT on the request path with user input. An npm `overrides` to 4.0.4 is NOT honored in this
-# npm-workspaces environment (it leaves picomatch "invalid", breaking strict `npm ci` — verified).
-# FOLLOW-UP: pin picomatch -> 4.0.4 once the override is honored (or when next ships a patched picomatch).
-CVE-2026-33671
-#
-# ── multer 2.0.2 (transitive PROD dep) — Denial of Service (malformed/deeply-nested/dropped uploads) ──
-# HIGH, 0 CRITICAL, no RCE. multer is HARD-PINNED to exactly 2.0.2 by @nestjs/platform-express@10.4.22
-# (an exact "2.0.2", not a range); an npm override is not honored here either. A clean fix requires the
-# NestJS 10 -> 11 upgrade (its platform-express depends on a patched multer). Mitigated meanwhile: the
-# NestJS API is the internal facade behind edge rate-limiting (PR-011); availability-only.
-# FOLLOW-UP: upgrade @nestjs/* 10 -> 11 (pulls a fixed multer), then remove these.
+# ── multer 2.1.1 (transitive PROD dep) — Denial of Service (malformed/deeply-nested/dropped uploads) ──
+# HIGH, 0 CRITICAL, no RCE. @nestjs/platform-express@11.1.27 still depends on multer 2.1.1; npm audit
+# marks multer vulnerable below 2.2.0. Root/workspace npm overrides to 2.2.0 were tested and did not
+# affect the workspace lockfile/reified tree (`npm ls` still shows 2.1.1), while `npm ci` stays strict.
+# Mitigated meanwhile: this app exposes no file-upload controller, and the public API sits behind the
+# PR-011 WAF/rate-limits. Availability-only. FOLLOW-UP: upgrade @nestjs/platform-express once it depends
+# on multer >=2.2.0, or switch to a package-manager override that reifies 2.2.0 and is proven by CI.
 CVE-2026-2359
 CVE-2026-3304
 CVE-2026-3520

@@ -11,8 +11,12 @@ This TypeScript CDK app defines the AWS production scaffold for raku-rag:
 - Cognito User Pool and web client.
 - Secrets Manager secrets for the NestJS API, Aurora credentials, and Langfuse.
 - ECS Fargate services for NestJS API, Python ingestion worker, and Langfuse.
+- AWS WAF WebACL on the public NestJS API load balancer with managed common protections,
+  IP-based rate limiting, and `x-user-token`-based rate limiting.
 - Optional AWS-hosted Next.js fallback service for strict residency tenants.
-- CloudWatch dashboard for ECS, Aurora, SQS, and API target 5xx metrics.
+- CloudWatch dashboard for ECS, Aurora, SQS, WAF, and API target 5xx metrics.
+- CloudWatch alarms for API target 5xx, ingestion DLQ visibility, stale ingestion queue age,
+  Aurora CPU pressure, and API WAF rate-limit blocks.
 
 ```bash
 cd infra/cdk

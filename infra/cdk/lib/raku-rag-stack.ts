@@ -12,6 +12,7 @@ import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as sqs from "aws-cdk-lib/aws-sqs";
+import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import { Construct } from "constructs";
 
 export type FrontendHostingMode = "external-vercel" | "aws-nextjs";
@@ -267,6 +268,72 @@ export class RakuRagStack extends cdk.Stack {
       healthyHttpCodes: "200-399"
     });
 
+    const apiWebAcl = new wafv2.CfnWebACL(this, "ApiWebAcl", {
+      name: `${servicePrefix}-api-web-acl`,
+      scope: "REGIONAL",
+      defaultAction: { allow: {} },
+      description: "Edge protection for the public NestJS API ALB",
+      visibilityConfig: this.wafVisibilityConfig(`${servicePrefix}-api-web-acl`),
+      rules: [
+        {
+          name: "AWSManagedCommonRuleSet",
+          priority: 0,
+          overrideAction: { none: {} },
+          statement: {
+            managedRuleGroupStatement: {
+              vendorName: "AWS",
+              name: "AWSManagedRulesCommonRuleSet"
+            }
+          },
+          visibilityConfig: this.wafVisibilityConfig(`${servicePrefix}-aws-common-rules`)
+        },
+        {
+          name: "IpRateLimit",
+          priority: 10,
+          action: { block: {} },
+          statement: {
+            rateBasedStatement: {
+              aggregateKeyType: "IP",
+              limit: isProd ? 2000 : 1000
+            }
+          },
+          visibilityConfig: this.wafVisibilityConfig(`${servicePrefix}-ip-rate-limit`)
+        },
+        {
+          name: "UserTokenRateLimit",
+          priority: 20,
+          action: { block: {} },
+          statement: {
+            rateBasedStatement: {
+              aggregateKeyType: "CUSTOM_KEYS",
+              customKeys: [
+                {
+                  header: {
+                    name: "x-user-token",
+                    textTransformations: [{ priority: 0, type: "NONE" }]
+                  }
+                }
+              ],
+              limit: isProd ? 600 : 300,
+              scopeDownStatement: {
+                sizeConstraintStatement: {
+                  comparisonOperator: "GT",
+                  fieldToMatch: { singleHeader: { name: "x-user-token" } },
+                  size: 0,
+                  textTransformations: [{ priority: 0, type: "NONE" }]
+                }
+              }
+            }
+          },
+          visibilityConfig: this.wafVisibilityConfig(`${servicePrefix}-user-token-rate-limit`)
+        }
+      ]
+    });
+    new wafv2.CfnWebACLAssociation(this, "ApiWebAclAssociation", {
+      resourceArn: apiService.loadBalancer.loadBalancerArn,
+      webAclArn: apiWebAcl.attrArn
+    });
+
     const workerTask = new ecs.FargateTaskDefinition(this, "PythonWorkerTaskDefinition", {
       family: `${servicePrefix}-worker`,
       cpu: 512,
@@ -395,6 +462,98 @@ export class RakuRagStack extends cdk.Stack {
       );
     }
 
+    const apiTarget5xxMetric = apiService.targetGroup.metrics.httpCodeTarget(
+      elbv2.HttpCodeTarget.TARGET_5XX_COUNT,
+      { period: cdk.Duration.minutes(5), statistic: "Sum" }
+    );
+    const dlqVisibleMetric = deadLetterQueue.metricApproximateNumberOfMessagesVisible({
+      period: cdk.Duration.minutes(5),
+      statistic: "Maximum"
+    });
+    const ingestionQueueAgeMetric = ingestionQueue.metricApproximateAgeOfOldestMessage({
+      period: cdk.Duration.minutes(5),
+      statistic: "Maximum"
+    });
+    const auroraCpuMetric = database.metricCPUUtilization({
+      period: cdk.Duration.minutes(5),
+      statistic: "Average"
+    });
+    const wafAllowedMetric = this.wafMetric(`${servicePrefix}-api-web-acl`, "AllowedRequests", "ALL");
+    const wafBlockedMetric = this.wafMetric(`${servicePrefix}-api-web-acl`, "BlockedRequests", "ALL");
+    const wafIpRateLimitBlocks = this.wafMetric(
+      `${servicePrefix}-api-web-acl`,
+      "BlockedRequests",
+      "IpRateLimit"
+    );
+    const wafUserTokenRateLimitBlocks = this.wafMetric(
+      `${servicePrefix}-api-web-acl`,
+      "BlockedRequests",
+      "UserTokenRateLimit"
+    );
+
+    const apiTarget5xxAlarm = new cloudwatch.Alarm(this, "ApiTarget5xxAlarm", {
+      alarmName: `${servicePrefix}-api-target-5xx`,
+      alarmDescription:
+        "SEV-2: NestJS API target 5xx responses exceeded the release runbook threshold.",
+      metric: apiTarget5xxMetric,
+      threshold: isProd ? 5 : 1,
+      evaluationPeriods: 1,
+      datapointsToAlarm: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING
+    });
+    const dlqVisibleAlarm = new cloudwatch.Alarm(this, "IngestionDlqVisibleAlarm", {
+      alarmName: `${servicePrefix}-ingestion-dlq-visible`,
+      alarmDescription:
+        "SEV-2: ingestion messages reached the DLQ; inspect failed document processing before release.",
+      metric: dlqVisibleMetric,
+      threshold: 1,
+      evaluationPeriods: 1,
+      datapointsToAlarm: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING
+    });
+    const ingestionQueueAgeAlarm = new cloudwatch.Alarm(this, "IngestionQueueAgeAlarm", {
+      alarmName: `${servicePrefix}-ingestion-queue-age`,
+      alarmDescription:
+        "SEV-3: ingestion queue age exceeded the freshness budget; scale workers or pause intake.",
+      metric: ingestionQueueAgeMetric,
+      threshold: isProd ? 900 : 1800,
+      evaluationPeriods: 2,
+      datapointsToAlarm: 2,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING
+    });
+    const auroraCpuAlarm = new cloudwatch.Alarm(this, "AuroraCpuAlarm", {
+      alarmName: `${servicePrefix}-aurora-cpu-high`,
+      alarmDescription:
+        "SEV-3: Aurora pgvector CPU is high; inspect vector query plans and ingestion load.",
+      metric: auroraCpuMetric,
+      threshold: 80,
+      evaluationPeriods: 3,
+      datapointsToAlarm: 2,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING
+    });
+    const wafRateLimitAlarm = new cloudwatch.Alarm(this, "ApiWafRateLimitBlockedAlarm", {
+      alarmName: `${servicePrefix}-api-waf-rate-limit-blocks`,
+      alarmDescription:
+        "SEV-3: API WAF rate-limit blocks exceeded the abuse threshold; inspect token/IP sources.",
+      metric: new cloudwatch.MathExpression({
+        expression: "ip + token",
+        usingMetrics: {
+          ip: wafIpRateLimitBlocks,
+          token: wafUserTokenRateLimitBlocks
+        },
+        period: cdk.Duration.minutes(5)
+      }),
+      threshold: isProd ? 100 : 10,
+      evaluationPeriods: 1,
+      datapointsToAlarm: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING
+    });
+
     const dashboard = new cloudwatch.Dashboard(this, "OperationsDashboard", {
       dashboardName: `${servicePrefix}-operations`
     });
@@ -409,20 +568,27 @@ export class RakuRagStack extends cdk.Stack {
       }),
       new cloudwatch.GraphWidget({
         title: "Aurora Serverless v2 pgvector",
-        left: [database.metricCPUUtilization(), database.metricDatabaseConnections()]
+        left: [auroraCpuMetric, database.metricDatabaseConnections()]
       }),
       new cloudwatch.GraphWidget({
         title: "SQS ingestion queues",
         left: [
           ingestionQueue.metricApproximateNumberOfMessagesVisible(),
-          deadLetterQueue.metricApproximateNumberOfMessagesVisible()
+          dlqVisibleMetric,
+          ingestionQueueAgeMetric
         ]
       }),
       new cloudwatch.GraphWidget({
         title: "API load balancer target errors",
-        left: [
-          apiService.targetGroup.metrics.httpCodeTarget(elbv2.HttpCodeTarget.TARGET_5XX_COUNT)
-        ]
+        left: [apiTarget5xxMetric]
+      }),
+      new cloudwatch.GraphWidget({
+        title: "API WAF allowed vs blocked requests",
+        left: [wafAllowedMetric, wafBlockedMetric]
+      }),
+      new cloudwatch.GraphWidget({
+        title: "API WAF rate-limit blocks",
+        left: [wafIpRateLimitBlocks, wafUserTokenRateLimitBlocks]
       })
     );
 
@@ -450,8 +616,41 @@ export class RakuRagStack extends cdk.Stack {
     new cdk.CfnOutput(this, "CloudWatchDashboardName", {
       value: dashboard.dashboardName
     });
+    new cdk.CfnOutput(this, "CloudWatchAlarmNames", {
+      value: [
+        apiTarget5xxAlarm.alarmName,
+        dlqVisibleAlarm.alarmName,
+        ingestionQueueAgeAlarm.alarmName,
+        auroraCpuAlarm.alarmName,
+        wafRateLimitAlarm.alarmName
+      ].join(",")
+    });
+    new cdk.CfnOutput(this, "ApiWebAclArn", {
+      value: apiWebAcl.attrArn
+    });
     new cdk.CfnOutput(this, "FrontendHostingMode", {
       value: frontendHosting
+    });
+  }
+
+  private wafVisibilityConfig(metricName: string): wafv2.CfnWebACL.VisibilityConfigProperty {
+    return {
+      cloudWatchMetricsEnabled: true,
+      metricName,
+      sampledRequestsEnabled: true
+    };
+  }
+
+  private wafMetric(webAclName: string, metricName: string, rule: string): cloudwatch.Metric {
+    return new cloudwatch.Metric({
+      namespace: "AWS/WAFV2",
+      metricName,
+      dimensionsMap: {
+        WebACL: webAclName,
+        Rule: rule,
+        Region: cdk.Aws.REGION
+      },
+      statistic: "Sum"
     });
   }
 
