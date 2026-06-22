@@ -1,6 +1,7 @@
 // @raku-rag/shared — canonical TS contracts consumed by apps/api and apps/web (ADR-016).
 export * from "./dto/search.js";
 export * from "./dto/answer.js";
+export * from "./dto/manufacturing.js";
 export * from "./dto/ingest.js";
 export * from "./dto/eval.js";
 export * from "./dto/feedback.js";

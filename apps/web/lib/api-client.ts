@@ -1,8 +1,12 @@
 import type {
   AnswerRequest,
   AnswerResponse,
+  GovernanceStatus,
+  KnowledgeOpsDashboard,
   ManufacturingAnswerRequest,
   ManufacturingAnswerResponse,
+  ManufacturingKpi,
+  SafetyTelemetryView,
 } from "@raku-rag/shared";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:3000/v1";
@@ -16,20 +20,33 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+function authHeaders(userToken: string): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    authorization: "Bearer local-dev-key",
+    "x-user-token": userToken,
+  };
+}
+
+/** Authenticated GET against a `/v1/manufacturing/*` read view. */
+async function mfgGet<T>(path: string, userToken: string): Promise<T> {
+  const res = await fetch(`${API_BASE}/manufacturing/${path}`, {
+    method: "GET",
+    headers: authHeaders(userToken),
+    cache: "no-store",
+  });
+  return jsonOrThrow<T>(res);
+}
+
 export async function apiHealth(): Promise<{ status: string }> {
   const res = await fetch(`${API_BASE}/health`, { cache: "no-store" });
   return jsonOrThrow<{ status: string }>(res);
 }
 
-// Phase 0 skeleton: typed client surface. Real wiring (auth headers, streaming) lands in Phase 1.
 export async function answer(req: AnswerRequest, userToken: string): Promise<AnswerResponse> {
   const res = await fetch(`${API_BASE}/answer`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: "Bearer local-dev-key",
-      "x-user-token": userToken,
-    },
+    headers: authHeaders(userToken),
     body: JSON.stringify(req),
   });
   return jsonOrThrow<AnswerResponse>(res);
@@ -41,12 +58,30 @@ export async function manufacturingAnswer(
 ): Promise<ManufacturingAnswerResponse> {
   const res = await fetch(`${API_BASE}/manufacturing/answer`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: "Bearer local-dev-key",
-      "x-user-token": userToken,
-    },
+    headers: authHeaders(userToken),
     body: JSON.stringify(req),
   });
   return jsonOrThrow<ManufacturingAnswerResponse>(res);
+}
+
+// --- Operations read views (specs/014; all GET, audit-derived, read-only) ----------------------
+
+export async function manufacturingDashboard(userToken: string): Promise<KnowledgeOpsDashboard> {
+  return mfgGet<KnowledgeOpsDashboard>("dashboard", userToken);
+}
+
+export async function manufacturingSafetyTelemetry(
+  userToken: string,
+): Promise<SafetyTelemetryView> {
+  return mfgGet<SafetyTelemetryView>("safety-telemetry", userToken);
+}
+
+export async function manufacturingKpi(userToken: string): Promise<ManufacturingKpi> {
+  return mfgGet<ManufacturingKpi>("kpi", userToken);
+}
+
+export async function manufacturingGovernanceStatus(
+  userToken: string,
+): Promise<GovernanceStatus> {
+  return mfgGet<GovernanceStatus>("governance/status", userToken);
 }

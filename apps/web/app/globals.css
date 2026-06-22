@@ -81,6 +81,11 @@ textarea {
   padding: 10px 12px;
   border-radius: 6px;
   color: #dce6df;
+  text-decoration: none;
+}
+
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .nav-item.active {
@@ -396,6 +401,124 @@ button:disabled {
   color: var(--accent-strong);
   font-variant-numeric: tabular-nums;
   font-weight: 800;
+}
+
+/* --- Operations view (specs/014) --- */
+.ops-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.ops-panel h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.ops-panel h4 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ops-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ops-stat {
+  display: grid;
+  gap: 2px;
+  min-width: 130px;
+  flex: 1 1 130px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfa;
+}
+
+.ops-stat-value {
+  font-size: 22px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-strong);
+}
+
+.ops-stat-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ops-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.ops-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.ops-list li {
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.ops-list li .ops-kv-key {
+  margin-right: 8px;
+}
+
+.ops-list li .ops-kv-val {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-empty,
+.ops-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.ops-note {
+  font-size: 12px;
+}
+
+.ops-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.ops-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ops-flag.on {
+  background: #e7f4ea;
+  color: #23643a;
+}
+
+.ops-flag.off {
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 @media (max-width: 780px) {
