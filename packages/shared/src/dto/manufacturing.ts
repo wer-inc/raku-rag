@@ -247,7 +247,8 @@ export interface AssignReviewerRequest {
 }
 
 export interface ReviewDraftRequest {
-  decision: "approve" | "reject" | string;
+  /** Backend `_VALID_DECISIONS`: a draft transitions to this terminal status. */
+  decision: "approved" | "rejected" | "archived" | string;
   comment?: string;
 }
 

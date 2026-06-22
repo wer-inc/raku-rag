@@ -96,7 +96,7 @@ export default function ReviewsPage() {
     void run((t) => manufacturingAssignReviewer(draft.artifact_id, { reviewer_id }, t), setDraft);
   }
 
-  function onReview(decision: "approve" | "reject") {
+  function onReview(decision: "approved" | "rejected") {
     if (!draft || busy) return;
     void run(
       (t) =>
@@ -241,7 +241,7 @@ export default function ReviewsPage() {
               <button
                 type="button"
                 className="btn-approve"
-                onClick={() => onReview("approve")}
+                onClick={() => onReview("approved")}
                 disabled={busy}
               >
                 Approve
@@ -249,7 +249,7 @@ export default function ReviewsPage() {
               <button
                 type="button"
                 className="btn-reject"
-                onClick={() => onReview("reject")}
+                onClick={() => onReview("rejected")}
                 disabled={busy}
               >
                 Reject
