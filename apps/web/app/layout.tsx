@@ -1,6 +1,8 @@
+import "./globals.css";
+
 export const metadata = {
-  title: "raku-rag (local)",
-  description: "Phase 0 web skeleton",
+  title: "Raku RAG",
+  description: "Industry knowledge assistant",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
