@@ -156,12 +156,24 @@ class InvestmentApiService:
     def fund_question(self, tenant_id: str, roles: tuple[str, ...], body: dict) -> dict:
         question = str(body.get("question") or "")
         user = self._user(tenant_id, roles)
+        ai_action = str(body.get("ai_action") or body.get("requested_ai_action") or "")
+        regulated_block = self._regulated_activity_block(user, ai_action)
+        if regulated_block is not None:
+            return regulated_block
         # FR-IM-025 — advice gating now ALSO consults AdviceBoundaryPolicy (via the framework risk rule
         # that tags advice-like intent as 'advice_boundary'), OR-merged with the keyword net so the
         # declared policy governs at runtime WITHOUT narrowing the existing coverage.
         if _looks_like_advice(question) or self._is_advice_intent(question):
             return _answer_json(self.system.advice_boundary(user, question))
-        return _answer_json(self.system.fund_information(user, question))
+        answer = _answer_json(self.system.fund_information(user, question))
+        if self._regulated_activity_requires_review(ai_action):
+            answer["review_required"] = True
+            answer["risk_decision"]["regulated_activity_triggered"] = True
+            answer["warnings"] = [
+                *answer.get("warnings", []),
+                "regulated_activity_policy: human_review_required",
+            ]
+        return answer
 
     def _is_advice_intent(self, question: str) -> bool:
         """True iff AdviceBoundaryPolicy applies, i.e. the framework risk rule tags advice intent."""
@@ -291,15 +303,7 @@ class InvestmentApiService:
         if stored is None:
             return None
         action = str(body.get("action") or "request_changes")
-        status = {
-            "assign": "pending",
-            "request_changes": "changes_required",
-            "approve": "pending",
-            "compliance_approve": "approved",
-            "reject": "rejected",
-        }.get(action, "pending")
-        if action in {"approve", "compliance_approve"} and stored.status != "approved":
-            status = "pending"
+        status = self._compliance_review_status(action, stored.status)
         updated = StoredInvestmentDraft(
             artifact_id=stored.artifact_id,
             draft=stored.draft,
@@ -393,6 +397,67 @@ class InvestmentApiService:
             "poc_readiness": "ready",
         }
 
+    def _regulated_activity_block(self, user: IndustryUser, ai_action: str) -> dict | None:
+        policy = self.system.profile.regulated_activity_policy
+        if policy is None or not ai_action:
+            return None
+        if ai_action not in policy.prohibited_ai_actions:
+            return None
+        self.system.audit.record(
+            "investment.regulated_activity",
+            "blocked",
+            user=user.user_id,
+            ai_action=ai_action,
+            policy_id=policy.policy_id,
+        )
+        return _answer_json(
+            IndustryAnswer(
+                status="blocked",
+                text="この regulated AI action は自動実行できません。人間の確認が必要です。",
+                citations=(),
+                risk_gate="regulated_activity",
+                review_required=policy.human_review_required,
+                blocked=True,
+                warnings=(f"prohibited_ai_action:{ai_action}",),
+                audit_events=self.system.audit.all(),
+            )
+        )
+
+    def _regulated_activity_requires_review(self, ai_action: str) -> bool:
+        policy = self.system.profile.regulated_activity_policy
+        return bool(policy is not None and ai_action in policy.restricted_ai_actions)
+
+    def _compliance_review_status(self, action: str, draft_status: str) -> str:
+        policy = self.system.profile.compliance_review_policy
+        if policy is None:
+            target = {
+                "assign": "pending",
+                "request_changes": "changes_required",
+                "approve": "pending",
+                "compliance_approve": "approved",
+                "reject": "rejected",
+            }.get(action, "pending")
+            return (
+                "pending"
+                if action in {"approve", "compliance_approve"} and draft_status != "approved"
+                else target
+            )
+        policy_target = {
+            "assign": "in_review",
+            "request_changes": "changes_requested",
+            "approve": "compliance_approved",
+            "compliance_approve": "compliance_approved",
+            "reject": "rejected",
+        }.get(action, "in_review")
+        if action in {"approve", "compliance_approve"} and draft_status != "approved":
+            return "pending"
+        if policy_target not in policy.review_states:
+            return "pending"
+        return {
+            "changes_requested": "changes_required",
+            "compliance_approved": "approved",
+        }.get(policy_target, policy_target)
+
     def _store_draft(self, draft: IndustryDraft, body: dict) -> StoredInvestmentDraft:
         artifact_id = f"im_draft_{uuid4().hex}"
         stored = StoredInvestmentDraft(
@@ -416,9 +481,32 @@ class InvestmentApiService:
                 }
                 for evidence_id in draft.disclosure_evidence_ids
             ],
+            "policy_validation": self._disclosure_policy_validation(draft),
             "audit_log_ref": f"audit:{artifact_id}:disclosure",
         }
         return stored
+
+    def _disclosure_policy_validation(self, draft: IndustryDraft) -> dict:
+        policy = self.system.profile.disclosure_evidence_policy
+        if policy is None:
+            return {"policy_id": "", "passed": True, "required_source_document_types": []}
+        source_types = {
+            _canonical_doc_type(self.system.documents[document_id].document_type)
+            for document_id in draft.source_document_ids
+            if document_id in self.system.documents
+        }
+        missing = [
+            doc_type
+            for doc_type in policy.required_source_document_types
+            if doc_type not in source_types
+        ]
+        return {
+            "policy_id": policy.policy_id,
+            "passed": not missing,
+            "required_source_document_types": list(policy.required_source_document_types),
+            "source_document_types": sorted(source_types),
+            "missing_source_document_types": missing,
+        }
 
     def _user(self, tenant_id: str, roles: tuple[str, ...]) -> IndustryUser:
         if "admin" in roles or "tenant_admin" in roles:
@@ -530,6 +618,14 @@ def _normalize_aliases(metadata: dict) -> dict:
 def _normalize_document_type(value: object) -> str:
     document_type = str(value or "prospectus")
     return _DOCUMENT_TYPE_ALIASES.get(document_type, document_type)
+
+
+def _canonical_doc_type(document_type: str) -> str:
+    if "prospectus" in document_type:
+        return "prospectus"
+    if document_type == "compliance_manual":
+        return "compliance_rule"
+    return document_type
 
 
 def _looks_like_advice(question: str) -> bool:

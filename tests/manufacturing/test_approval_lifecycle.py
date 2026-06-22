@@ -32,6 +32,7 @@ import unittest
 
 from raku_rag.domain.models import ScopeType, SubjectType
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus
+from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY
 from tests.manufacturing.helpers import T, claims, fresh, mfg_meta
 
 _TORQUE = "The torque specification for the flange bolt is forty newton meters."
@@ -78,6 +79,26 @@ class TestApprovalStateIdentifiable(unittest.TestCase):
         ]
         self.assertTrue(results, "approved spec must be searchable")
         self.assertEqual(results[0].approval_status, "approved")
+
+    def test_workflow_transition_survives_fast_resolver_rebuild(self) -> None:
+        self.sys.transition_approval(
+            tenant_id=T, document_id="spec1", to_status="pending_review", actor=self.actor
+        )
+        self.sys.transition_approval(
+            tenant_id=T, document_id="spec1", to_status="approved", actor=self.actor
+        )
+
+        doc = self.sys._mvp.registry.get(T, "spec1")
+        self.assertIsInstance(doc.metadata[MFG_META_KEY], dict)
+        self.assertEqual(doc.metadata[MFG_META_KEY]["approval_status"], "approved")
+
+        # Simulate a process-local resolver rebuild: the authoritative metadata lives on the reused
+        # 001 Document record, so a production Postgres registry can round-trip it after restart.
+        self.sys._mfg_meta.clear()
+        restored = self.sys.get_mfg_meta(T, "spec1")
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored.approval_status, ApprovalStatus.APPROVED)
 
     def test_workflow_to_obsolete_identifiable(self) -> None:
         self.sys.transition_approval(

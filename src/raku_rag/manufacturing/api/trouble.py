@@ -17,7 +17,8 @@ from datetime import datetime, timezone
 
 from raku_rag.core.errors import AnswerStatus
 from raku_rag.domain.models import IdentityClaims, QueryProfile
-from raku_rag.manufacturing.domain.audit import AuditLogEntry, InMemoryAuditLogWriter
+from raku_rag.manufacturing.domain.audit import AuditLogEntry
+from raku_rag.manufacturing.interfaces import AuditLogWriter
 from raku_rag.manufacturing.knowledge.trouble_cases import (
     TroubleCaseRetriever,
     TroubleCaseSearchResponse,
@@ -36,7 +37,7 @@ class TroubleCaseSearchService:
         self,
         *,
         retriever: TroubleCaseRetriever,
-        audit: InMemoryAuditLogWriter,
+        audit: AuditLogWriter,
     ) -> None:
         self._retriever = retriever
         self._audit = audit

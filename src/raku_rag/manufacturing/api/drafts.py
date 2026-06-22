@@ -24,11 +24,12 @@ from dataclasses import replace
 from datetime import date, datetime, timezone
 
 from raku_rag.domain.models import IdentityClaims
-from raku_rag.manufacturing.domain.audit import AuditLogEntry, InMemoryAuditLogWriter
+from raku_rag.manufacturing.domain.audit import AuditLogEntry
 from raku_rag.manufacturing.domain.draft import DraftArtifact, DraftType
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
 from raku_rag.manufacturing.drafts.generator import DraftGenerator, coerce_kind
 from raku_rag.manufacturing.drafts.review import ReviewWorkflow
+from raku_rag.manufacturing.interfaces import AuditLogWriter
 
 from typing import Callable
 
@@ -49,7 +50,7 @@ class DraftService:
     def __init__(
         self,
         *,
-        audit: InMemoryAuditLogWriter,
+        audit: AuditLogWriter,
         get_mfg_meta: GetMfgMeta | None = None,
         can_use_source: CanUseSource | None = None,
         today: date | None = None,

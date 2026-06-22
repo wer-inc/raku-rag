@@ -8,8 +8,8 @@ and surfaced on ``ManufacturingSystem``. Mirrors contracts/mfg-openapi.md §F:
   - GET  /v1/manufacturing/governance/status       -> governance_status(tenant_id)          (T063)
   - GET  /v1/manufacturing/audit/export (admin)    -> export_audit(...)                     (T064)
 
-Reuses Phase-2: the ``InMemoryDataUsePolicyStore`` (per-tenant, opt-in invariant, version bump) and
-the shared ``InMemoryAuditLogWriter`` (reference-IDs-only, redacted, hash-chained, tenant-scoped).
+Reuses the configured ``DataUsePolicyStore`` (per-tenant, opt-in invariant, version bump) and
+the shared ``AuditLogWriter`` (reference-IDs-only, redacted, hash-chained, tenant-scoped).
 A DataUsePolicy change is recorded to the audit log (FR-MFG-019). Audit export is tenant-scoped and
 reference-only (the 001 Redactor already ran at write time; export re-applies it as defence-in-depth).
 
@@ -26,9 +26,9 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from raku_rag.domain.models import IdentityClaims
-from raku_rag.manufacturing.domain.audit import AuditLogEntry, InMemoryAuditLogWriter
+from raku_rag.manufacturing.domain.audit import AuditLogEntry
 from raku_rag.manufacturing.domain.policy import DataUsePolicy
-from raku_rag.manufacturing.governance.no_train import InMemoryDataUsePolicyStore
+from raku_rag.manufacturing.interfaces import AuditLogWriter, DataUsePolicyStore
 from raku_rag.observability.redaction import Redactor
 
 # FR-MFG-025/026: the readiness memo is "designed-with-ISMAP-in-view", NOT a registration/compliance
@@ -106,8 +106,8 @@ class GovernanceService:
     def __init__(
         self,
         *,
-        policy_store: InMemoryDataUsePolicyStore,
-        audit: InMemoryAuditLogWriter,
+        policy_store: DataUsePolicyStore,
+        audit: AuditLogWriter,
         redactor: Redactor | None = None,
     ) -> None:
         self._store = policy_store

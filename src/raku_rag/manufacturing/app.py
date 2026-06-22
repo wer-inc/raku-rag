@@ -50,7 +50,7 @@ from raku_rag.manufacturing.governance.no_train import (
 from raku_rag.manufacturing.governance.retention import InMemoryRetentionManager
 from raku_rag.manufacturing.ingestion.approval import ApprovalWorkflow
 from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY, MetadataEnricher
-from raku_rag.manufacturing.interfaces import ApprovalState
+from raku_rag.manufacturing.interfaces import ApprovalState, AuditLogWriter, DataUsePolicyStore
 from raku_rag.manufacturing.knowledge.trouble_cases import (
     InMemoryTroubleCaseStore,
     TroubleCaseRetriever,
@@ -113,19 +113,22 @@ class ManufacturingSystem:
         today: date | None = None,
         provider_capabilities: dict | None = None,
         no_train_providers=None,
+        base_system: MvpSystem | None = None,
+        audit: AuditLogWriter | None = None,
+        policy_store: DataUsePolicyStore | None = None,
     ) -> None:
-        self._mvp = MvpSystem(settings)
+        self._mvp = base_system or MvpSystem(settings)
         self.control_plane = InMemoryControlPlaneStateRepository()
         # tenant-scoped manufacturing metadata store (mirrors DocumentRegistry; in-memory).
         self._mfg_meta: dict[tuple[str, str], ManufacturingDocumentMetadata] = {}
-        self.audit = InMemoryAuditLogWriter()
+        self.audit = audit or InMemoryAuditLogWriter()
 
         # --- Phase 9 governance overlay (no-train / retention / policy / export) ------------------
         # Reuse the Phase-2 DataUsePolicyStore (per-tenant GQ1/GQ2 defaults + opt-in invariant +
         # version bump). The NoTrainGuard enforces the policy against the INJECTED provider-capability
         # map (Base CR-001-B verified set is injected here; 002 enforces opt-in/GQ1 locally). When the
         # caller injects no map a safe local default applies (every BUILT capability stays available).
-        self._policy_store = InMemoryDataUsePolicyStore()
+        self._policy_store = policy_store or InMemoryDataUsePolicyStore()
         caps = (
             _DEFAULT_PROVIDER_CAPABILITIES
             if provider_capabilities is None
@@ -265,13 +268,27 @@ class ManufacturingSystem:
         doc = self._mvp.registry.get(tenant_id, document_id)
         if doc is not None and doc.tombstone:
             return None
-        return self._mfg_meta.get((tenant_id, document_id))
+        cached = self._mfg_meta.get((tenant_id, document_id))
+        if cached is not None:
+            return cached
+        if doc is None:
+            return None
+        raw = doc.metadata.get(_MFG_META_KEY)
+        if raw is None:
+            return None
+        meta = ManufacturingDocumentMetadata.from_mapping(raw)
+        self._mfg_meta[(tenant_id, document_id)] = meta
+        return meta
 
     def _set_mfg_meta(
         self, tenant_id: str, document_id: str, metadata: ManufacturingDocumentMetadata
     ) -> None:
         """Update the fast resolver map (read by search/answer/classifier/gate)."""
         self._mfg_meta[(tenant_id, document_id)] = metadata
+        doc = self._mvp.registry.get(tenant_id, document_id)
+        if doc is not None:
+            doc.metadata[_MFG_META_KEY] = metadata.to_mapping()
+            self._mvp.registry.put(doc)
 
     # --- ingestion (001 body path + manufacturing metadata attach) --------------------------------
     def ingest_manufacturing(
@@ -290,11 +307,9 @@ class ManufacturingSystem:
             document_id=document_id,
             text=text,
             source_id=source_id,
+            chunking_metadata=metadata.to_mapping(),
         )
         # Stash on the 001 Document.metadata (JSON-carryable) AND in the fast resolver map.
-        doc = self._mvp.registry.get(tenant_id, document_id)
-        if doc is not None:
-            doc.metadata[_MFG_META_KEY] = metadata
         self._set_mfg_meta(tenant_id, document_id, metadata)
         # Propagate to indexed chunks (FR-MFG-003) so the metadata travels with the evidence.
         self._enricher.propagate_to_chunks(tenant_id, document_id, metadata)
@@ -335,10 +350,11 @@ class ManufacturingSystem:
             document_id=document_id,
             raw=raw,
             content_type=ct,
+            chunking_metadata=metadata.to_mapping(),
         )
         # Attach manufacturing metadata to Document.metadata + propagate to chunks (FR-MFG-003).
-        self._set_mfg_meta(tenant_id, document_id, metadata)
         self._enricher.attach(tenant_id, document_id, metadata)
+        self._set_mfg_meta(tenant_id, document_id, metadata)
         # Audit the ingest/parse (reference IDs only; no body text) — FR-MFG-021.
         self._audit_ingest(tenant_id=tenant_id, document_id=document_id, content_type=ct, job=job)
         return job
@@ -383,8 +399,8 @@ class ManufacturingSystem:
         The metadata UPDATE is itself an audited governance event (FR-MFG-021: ManufacturingDocument
         Metadata の作成・更新・削除) — reference IDs only, never the customer name / body.
         """
-        self._set_mfg_meta(tenant_id, document_id, metadata)
         result = self._enricher.attach(tenant_id, document_id, metadata)
+        self._set_mfg_meta(tenant_id, document_id, metadata)
         ts = datetime_now_iso()
         self.audit.record(
             AuditLogEntry(
