@@ -4,7 +4,7 @@
 
 **Created**: 2026-06-21
 
-**Status**: Draft (US1 precision/MRR done; US2 faithfulness in progress; US3 golden corpus pending)
+**Status**: Implemented locally (US1 precision/MRR, US2 faithfulness, US3 golden corpus + committed baseline)
 
 **Input**: Production-readiness audit 2026-06-21 **P1-5** + critique (PR-008). The blocking eval-gate measures retrieval with only `recall_at_k` (a binary set-overlap hit-rate), scores generation with a shallow structural `groundedness` proxy (status==ok AND has-citations AND has-used-chunks — it cannot catch a plausibly-worded unsupported answer), runs over a 1–2 item fixture, and compares each run to a baseline derived from *itself* (`baseline_from_run`). So the gate proves the mechanism, not answer quality, and cannot detect ranking or faithfulness regressions.
 
@@ -25,7 +25,7 @@ Retrieval quality is reported with **precision@k** and **MRR** (rank-sensitive),
 **Acceptance Scenarios**:
 1. **Given** an eval set with expected evidence, **When** the runner runs, **Then** `metrics` includes `precision_at_k` and `mrr` graded over items that carry expected evidence.
 
-### User Story 2 - Deterministic faithfulness metric (Priority: P1)
+### User Story 2 - Deterministic faithfulness metric (Priority: P1) — DONE
 
 Generation is scored by **how much of the asserted answer is actually supported by the cited evidence**, not merely whether a citation exists — a deterministic claim-support metric (answer terms covered by used-evidence terms), with an optional LLM-judge overlay later.
 
@@ -38,7 +38,7 @@ Generation is scored by **how much of the asserted answer is actually supported 
 2. **Given** an answer that asserts content not present in its cited evidence, **When** scored, **Then** `faithfulness < 1.0` (the metric catches the unsupported assertion).
 3. **Given** the existing `groundedness` metric, **When** faithfulness is added, **Then** `groundedness` is unchanged (faithfulness is additive; existing gates not weakened).
 
-### User Story 3 - Representative golden corpus + committed baseline (Priority: P1) — PENDING
+### User Story 3 - Representative golden corpus + committed baseline (Priority: P1) — DONE
 
 A per-industry golden eval corpus (materialize `tests/fixtures/uat/`) and a **committed** `baseline.json` replace the self-derived `baseline_from_run`, so cross-commit quality drift is detectable.
 
@@ -60,7 +60,7 @@ A per-industry golden eval corpus (materialize `tests/fixtures/uat/`) and a **co
 - **FR-002**: The runner MUST report a deterministic `faithfulness` metric = mean over `ok` answers with `used_chunks` of (answer content-terms supported by used-evidence content-terms).
 - **FR-003**: `faithfulness` MUST be additive — `groundedness` and all existing metrics/gates keep their current semantics and thresholds.
 - **FR-004**: The faithfulness computation MUST be deterministic and stdlib-only (Track A); any LLM-as-judge overlay is optional and out of the gate path.
-- **FR-005**: A representative per-industry golden corpus and a committed baseline MUST replace the self-derived baseline for the gate, and a seeded quality drop MUST fail the gate. *(US3, pending)*
+- **FR-005**: A representative per-industry golden corpus and a committed baseline MUST replace the self-derived baseline for the gate, and a seeded quality drop MUST fail the gate. *(done)*
 - **FR-006**: New metrics become release-blocking thresholds only against the committed golden baseline (not the 1–2 item smoke fixture), to avoid over-fitting the gate to a smoke set.
 
 ### Key Entities
@@ -73,10 +73,10 @@ A per-industry golden eval corpus (materialize `tests/fixtures/uat/`) and a **co
 - **SC-001**: Retrieval is reported with precision@k and MRR in addition to recall@k. *(met)*
 - **SC-002**: An unsupported assertion scores `faithfulness < 1.0` while a fully-supported answer scores 1.0 (the metric discriminates).
 - **SC-003**: Adding faithfulness leaves every existing eval test green (additive, no weakening).
-- **SC-004**: A seeded quality regression against the committed golden baseline fails the CI eval-gate. *(US3)*
+- **SC-004**: A seeded quality regression against the committed golden baseline fails the CI eval-gate. *(met)*
 - **SC-005**: Tier A stays GREEN and sub-second.
 
 ## Assumptions
 - Term-extraction reuses `raku_rag.core.text.content_terms` (the same basis the groundedness post-check uses), so faithfulness is consistent with the existing grounding notion but graded (fractional) rather than boolean.
 - The deployed generator is currently the deterministic `ExtractiveLLMProvider` (faithful by construction ⇒ faithfulness ≈ 1.0); the metric's value is regression detection when a real LLM ships (and it is unit-tested on partial/zero-support cases via the pure helper).
-- Golden corpus (US3) is synthetic (no real PII/secrets); materialization is a separate slice.
+- Golden corpus is synthetic (no real PII/secrets); production closure still requires refreshing the baseline after the final embedding-provider/backfill decision.
