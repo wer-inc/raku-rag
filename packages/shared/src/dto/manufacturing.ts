@@ -128,3 +128,72 @@ export interface TroubleCaseSearchResponse {
 
 // Source sync-status and ingestion-run status reuse the canonical ingestion contracts
 // (`SourceSyncStatusResponse`, `IngestionRunStatusResponse` in ./ingest.ts) — no duplicate shapes.
+
+// --- Reviews view (specs/014 slice 3) — the human review loop -----------------------------------
+
+export type DraftStatus = "draft" | "in_review" | "approved" | "rejected" | "archived" | string;
+export type DraftType =
+  | "checklist"
+  | "trouble_report"
+  | "quality_report"
+  | "training"
+  | "faq"
+  | string;
+
+/**
+ * An AI- or user-authored draft (data-model §F). Default `status="draft"` is the central safety
+ * invariant: AI output is ALWAYS draft and cannot transition past draft automatically — only a human
+ * reviewer approves (Hard Rule 1 / SC-MFG-007).
+ */
+export interface DraftArtifact {
+  tenant_id: string;
+  artifact_id: string;
+  type: DraftType;
+  collection_id: string | null;
+  status: DraftStatus;
+  source_citations: string[];
+  source_document_ids: string[];
+  template_id: string | null;
+  created_by: "ai" | "user" | null;
+  created_at: string | null;
+  audit_log_ref: string | null;
+  reviewer_id: string | null;
+  reviewer_role: string | null;
+  reviewer_group: string | null;
+  assigned_at: string | null;
+  reviewed_at: string | null;
+  review_comment: string | null;
+  approval_decision: "approve" | "reject" | string | null;
+  review_status: string | null;
+  content: Record<string, unknown>;
+}
+
+export interface CreateDraftRequest {
+  kind: DraftType;
+  source_document_ids?: string[];
+  template_id?: string;
+  collection_id?: string;
+  manufacturing_filters?: Record<string, unknown>;
+}
+
+export interface AssignReviewerRequest {
+  reviewer_id?: string;
+  reviewer_group?: string;
+  reviewer_role?: string;
+}
+
+export interface ReviewDraftRequest {
+  decision: "approve" | "reject" | string;
+  comment?: string;
+}
+
+/** POST /v1/manufacturing/documents/{id}/approval — reviewer-driven approval state transition. */
+export interface DocumentApprovalRequest {
+  to_status?: "draft" | "pending_review" | "approved" | "obsolete" | string;
+  import_external?: Record<string, unknown>;
+}
+
+export interface DocumentApprovalResult {
+  document_id: string;
+  approval_state: unknown;
+}

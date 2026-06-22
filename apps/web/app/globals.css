@@ -596,6 +596,49 @@ button:disabled {
   color: var(--text);
 }
 
+/* --- Reviews view (specs/014 slice 3) --- */
+.src-inline-form select,
+.review-actions textarea {
+  height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.review-actions {
+  display: grid;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.review-actions textarea {
+  height: auto;
+  min-height: 56px;
+  padding: 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.review-decide {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-approve {
+  background: var(--accent);
+}
+
+.btn-reject {
+  background: var(--danger);
+}
+
+.btn-reject:hover {
+  background: #7e2626;
+}
+
 @media (max-width: 780px) {
   .app-shell {
     grid-template-columns: 1fr;

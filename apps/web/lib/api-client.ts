@@ -1,12 +1,18 @@
 import type {
   AnswerRequest,
   AnswerResponse,
+  AssignReviewerRequest,
+  CreateDraftRequest,
+  DocumentApprovalRequest,
+  DocumentApprovalResult,
+  DraftArtifact,
   GovernanceStatus,
   IngestionRunStatusResponse,
   KnowledgeOpsDashboard,
   ManufacturingAnswerRequest,
   ManufacturingAnswerResponse,
   ManufacturingKpi,
+  ReviewDraftRequest,
   SafetyTelemetryView,
   SourceSyncStatusResponse,
   TroubleCaseSearchRequest,
@@ -125,6 +131,58 @@ export async function manufacturingIngestionRun(
 ): Promise<IngestionRunStatusResponse> {
   return mfgGet<IngestionRunStatusResponse>(
     `ingestion-runs/${encodeURIComponent(runId)}`,
+    userToken,
+  );
+}
+
+// --- Reviews view (specs/014 slice 3) — human review loop; mutations are explicit human actions --
+
+export async function manufacturingGetDraft(
+  artifactId: string,
+  userToken: string,
+): Promise<DraftArtifact> {
+  return mfgGet<DraftArtifact>(`drafts/${encodeURIComponent(artifactId)}`, userToken);
+}
+
+export async function manufacturingCreateDraft(
+  req: CreateDraftRequest,
+  userToken: string,
+): Promise<DraftArtifact> {
+  return mfgPost<DraftArtifact>("drafts", req, userToken);
+}
+
+export async function manufacturingAssignReviewer(
+  artifactId: string,
+  req: AssignReviewerRequest,
+  userToken: string,
+): Promise<DraftArtifact> {
+  return mfgPost<DraftArtifact>(
+    `drafts/${encodeURIComponent(artifactId)}/assign`,
+    req,
+    userToken,
+  );
+}
+
+export async function manufacturingReviewDraft(
+  artifactId: string,
+  req: ReviewDraftRequest,
+  userToken: string,
+): Promise<DraftArtifact> {
+  return mfgPost<DraftArtifact>(
+    `drafts/${encodeURIComponent(artifactId)}/review`,
+    req,
+    userToken,
+  );
+}
+
+export async function manufacturingDocumentApproval(
+  documentId: string,
+  req: DocumentApprovalRequest,
+  userToken: string,
+): Promise<DocumentApprovalResult> {
+  return mfgPost<DocumentApprovalResult>(
+    `documents/${encodeURIComponent(documentId)}/approval`,
+    req,
     userToken,
   );
 }
