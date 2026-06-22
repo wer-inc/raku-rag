@@ -119,8 +119,17 @@ export default function Home() {
             <span className="correlation-id">{response.correlation_id}</span>
           </div>
 
+          {safety?.obsolete_warning && (
+            <p className="src-warning">
+              This answer relies on an obsolete or superseded source. Treat it as reference only —
+              confirm against the current approved document before acting.
+            </p>
+          )}
+
           {response.text ? (
-            <p className="answer-text">{response.text}</p>
+            <p className={`answer-text${safety?.obsolete_warning ? " answer-text-muted" : ""}`}>
+              {response.text}
+            </p>
           ) : (
             <p className="empty-answer">No supported answer was returned.</p>
           )}

@@ -5,11 +5,13 @@ import type { FormEvent } from "react";
 import type {
   Citation,
   DisplayCountermeasure,
-  IngestionRunStatusResponse,
-  SourceSyncStatusResponse,
+  ManufacturingIngestionRun,
+  ManufacturingSourceSyncStatus,
   TroubleCaseMatch,
   TroubleCaseSearchResponse,
 } from "@raku-rag/shared";
+
+const DOC_CAP = 20;
 import {
   manufacturingIngestionRun,
   manufacturingSourceSyncStatus,
@@ -34,12 +36,15 @@ function CitationChips({ citation }: { citation: Citation }) {
 }
 
 function Measure({ measure }: { measure: DisplayCountermeasure }) {
+  // Reflect the backend display axis; treat anything other than an explicit "reference" as a
+  // candidate (the safe default for a past-case measure — Hard Rule 4).
+  const display = measure.type === "reference" ? "reference" : "candidate";
   return (
     <li className="measure-row">
       <div>
         <p className="measure-desc">{measure.description}</p>
         <div className="citation-meta">
-          <span className="citation-chip approval-draft">candidate</span>
+          <span className="citation-chip approval-draft">{display}</span>
           <span className="citation-chip">{measure.measure_class}</span>
           {measure.label && <span className="measure-label">{measure.label}</span>}
         </div>
@@ -159,11 +164,11 @@ export default function SourcesPage() {
   const [tcError, setTcError] = useState<string | null>(null);
 
   const [sourceId, setSourceId] = useState("");
-  const [sync, setSync] = useState<SourceSyncStatusResponse | null>(null);
+  const [sync, setSync] = useState<ManufacturingSourceSyncStatus | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
 
   const [runId, setRunId] = useState("");
-  const [run, setRun] = useState<IngestionRunStatusResponse | null>(null);
+  const [run, setRun] = useState<ManufacturingIngestionRun | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
 
   async function onSearch(event: FormEvent) {
@@ -268,7 +273,7 @@ export default function SourcesPage() {
         </section>
       )}
 
-      {tcResult?.results.map((m) => (
+      {(tcResult?.results ?? []).map((m) => (
         <MatchCard key={m.trouble_case_id} match={m} />
       ))}
 
@@ -287,17 +292,18 @@ export default function SourcesPage() {
           </button>
         </form>
         {syncError && <p className="ops-empty">{syncError}</p>}
-        {sync && (
+        {sync && sync.status === "not_found" && (
+          <p className="ops-empty">No source found for “{sourceId.trim()}”.</p>
+        )}
+        {sync && sync.status !== "not_found" && (
           <KvGrid
             rows={[
               ["status", sync.status],
-              ["last successful sync", sync.freshness?.last_successful_sync_at ?? null],
-              ["last ingestion run", sync.last_ingestion_run_id],
-              ["observed", sync.observed_count],
-              ["changed", sync.changed_count],
-              ["deleted", sync.deleted_count],
-              ["failed", sync.failed_count],
-              ["last error", sync.last_error],
+              ["last ingestion run", sync.correlation_id],
+              ["observed", sync.summary?.observed_count],
+              ["changed", sync.summary?.changed_count],
+              ["deleted", sync.summary?.deleted_count],
+              ["failed", sync.summary?.failed_count],
             ]}
           />
         )}
@@ -318,16 +324,20 @@ export default function SourcesPage() {
           </button>
         </form>
         {runError && <p className="ops-empty">{runError}</p>}
-        {run && (
+        {run && run.status === "not_found" && (
+          <p className="ops-empty">No ingestion run found for “{runId.trim()}”.</p>
+        )}
+        {run && run.status !== "not_found" && (
           <>
             <KvGrid
               rows={[
                 ["status", run.status],
                 ["type", run.type],
                 ["trigger", run.trigger],
-                ["observed", run.summary?.observed_count],
-                ["changed", run.summary?.changed_count],
+                ["documents", run.summary?.document_count],
+                ["succeeded", run.summary?.succeeded_count],
                 ["failed", run.summary?.failed_count],
+                ["chunk count", run.chunk_count],
                 ["started", run.started_at],
                 ["finished", run.finished_at],
                 ["failure", run.failure_reason],
@@ -337,13 +347,18 @@ export default function SourcesPage() {
               <>
                 <h4 className="src-h4">Documents</h4>
                 <ul className="ops-list">
-                  {run.documents.map((d) => (
+                  {run.documents.slice(0, DOC_CAP).map((d) => (
                     <li key={d.document_id}>
                       <span className="ops-kv-key">{d.document_id}</span>
-                      <span className="ops-kv-val">{d.index_status}</span>
+                      <span className="ops-kv-val">{d.status}</span>
                     </li>
                   ))}
                 </ul>
+                {run.documents.length > DOC_CAP && (
+                  <p className="ops-note">
+                    showing {DOC_CAP} of {run.documents.length}
+                  </p>
+                )}
               </>
             )}
           </>

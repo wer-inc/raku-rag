@@ -7,14 +7,14 @@ import type {
   DocumentApprovalResult,
   DraftArtifact,
   GovernanceStatus,
-  IngestionRunStatusResponse,
   KnowledgeOpsDashboard,
   ManufacturingAnswerRequest,
   ManufacturingAnswerResponse,
+  ManufacturingIngestionRun,
   ManufacturingKpi,
+  ManufacturingSourceSyncStatus,
   ReviewDraftRequest,
   SafetyTelemetryView,
-  SourceSyncStatusResponse,
   TroubleCaseSearchRequest,
   TroubleCaseSearchResponse,
 } from "@raku-rag/shared";
@@ -118,8 +118,8 @@ export async function manufacturingTroubleCaseSearch(
 export async function manufacturingSourceSyncStatus(
   sourceId: string,
   userToken: string,
-): Promise<SourceSyncStatusResponse> {
-  return mfgGet<SourceSyncStatusResponse>(
+): Promise<ManufacturingSourceSyncStatus> {
+  return mfgGet<ManufacturingSourceSyncStatus>(
     `sources/${encodeURIComponent(sourceId)}/sync-status`,
     userToken,
   );
@@ -128,8 +128,8 @@ export async function manufacturingSourceSyncStatus(
 export async function manufacturingIngestionRun(
   runId: string,
   userToken: string,
-): Promise<IngestionRunStatusResponse> {
-  return mfgGet<IngestionRunStatusResponse>(
+): Promise<ManufacturingIngestionRun> {
+  return mfgGet<ManufacturingIngestionRun>(
     `ingestion-runs/${encodeURIComponent(runId)}`,
     userToken,
   );

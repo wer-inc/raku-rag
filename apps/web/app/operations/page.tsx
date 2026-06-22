@@ -120,6 +120,10 @@ export default function OperationsPage() {
 
       {data && (
         <>
+          <p className="ops-note">
+            Dashboard, KPI and telemetry are derived from the audit log — ask questions on the
+            Answers tab to populate them.
+          </p>
           <section className="ops-panel" aria-label="Knowledge gaps">
             <h3>Knowledge base health</h3>
             <div className="ops-stats">

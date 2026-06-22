@@ -126,8 +126,72 @@ export interface TroubleCaseSearchResponse {
   correlation_id: string;
 }
 
-// Source sync-status and ingestion-run status reuse the canonical ingestion contracts
-// (`SourceSyncStatusResponse`, `IngestionRunStatusResponse` in ./ingest.ts) — no duplicate shapes.
+// Source sync-status / ingestion-run for the MANUFACTURING routes use a distinct serializer
+// (src/raku_rag/manufacturing/api/ingest_metadata.py -> control_plane SourceSyncStatusProjection)
+// whose shape differs from the generic ingest endpoints: counts are nested under `summary`, the last
+// ingestion-run id is carried as `correlation_id`, and per-document state uses `status` (not
+// index_status). These manufacturing-specific DTOs match that real shape — do NOT reuse the generic
+// SourceSyncStatusResponse / IngestionRunStatusResponse, which describe the other serializer.
+
+export interface ManufacturingProcessingStateDoc {
+  document_id: string;
+  status: string;
+  chunk_count?: number;
+  failure_reason?: string;
+  source_id?: string;
+  collection_id?: string;
+  updated_at?: string;
+  [key: string]: unknown;
+}
+
+/** Source-sync count rollup (nested under `summary`). */
+export interface ManufacturingSyncSummary {
+  observed_count?: number;
+  changed_count?: number;
+  deleted_count?: number;
+  skipped_count?: number;
+  failed_count?: number;
+}
+
+/** GET /v1/manufacturing/sources/{id}/sync-status — `status` is "not_found" for an unknown id. */
+export interface ManufacturingSourceSyncStatus {
+  tenant_id: string;
+  source_id: string;
+  collection_id?: string;
+  status: string;
+  last_manifest_checksum?: string;
+  summary: ManufacturingSyncSummary;
+  documents: ManufacturingProcessingStateDoc[];
+  /** carries the last ingestion-run id. */
+  correlation_id?: string;
+  [key: string]: unknown;
+}
+
+/** Ingestion-run count rollup (nested under `summary`). */
+export interface ManufacturingRunSummary {
+  document_count?: number;
+  succeeded_count?: number;
+  failed_count?: number;
+}
+
+/** GET /v1/manufacturing/ingestion-runs/{id} — `status` is "not_found" for an unknown id. */
+export interface ManufacturingIngestionRun {
+  ingestion_run_id: string;
+  tenant_id: string;
+  collection_id?: string;
+  source_id?: string;
+  document_id?: string;
+  type?: string;
+  trigger?: string;
+  status: string;
+  failure_reason?: string;
+  chunk_count?: number;
+  started_at?: string;
+  finished_at?: string;
+  summary?: ManufacturingRunSummary;
+  documents: ManufacturingProcessingStateDoc[];
+  [key: string]: unknown;
+}
 
 // --- Reviews view (specs/014 slice 3) — the human review loop -----------------------------------
 

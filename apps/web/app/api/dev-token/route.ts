@@ -21,6 +21,16 @@ function enabled(): boolean {
   return true;
 }
 
+// Dev-only AUTHORITATIVE role assignment: roles/groups come from this server-side table keyed by
+// user_id, NEVER echoed from the request body. The browser therefore cannot self-assert privileged
+// roles or escalate — the only privilege it can obtain is what the issuer decides for a known
+// identity. (Production swaps this issuer for Cognito/JWKS, where roles come from the IdP.) The demo
+// reviewer is granted tenant_admin so the human review loop (assign/approve, document approval) is
+// usable locally; every other identity gets no roles (reads work; admin mutations are server-rejected).
+const DEV_ROLES_BY_USER: Record<string, string[]> = {
+  alice: ["tenant_admin"],
+};
+
 function normalize(body: Record<string, unknown>): DevClaims | null {
   if (typeof body.tenant_id !== "string" || typeof body.user_id !== "string") {
     return null;
@@ -31,8 +41,8 @@ function normalize(body: Record<string, unknown>): DevClaims | null {
     return null;
   }
   return {
-    groups: Array.isArray(body.groups) ? body.groups.filter((v): v is string => typeof v === "string") : [],
-    roles: Array.isArray(body.roles) ? body.roles.filter((v): v is string => typeof v === "string") : [],
+    groups: [],
+    roles: DEV_ROLES_BY_USER[user] ?? [],
     tenant_id: tenant,
     user_id: user,
   };

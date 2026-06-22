@@ -253,6 +253,11 @@ button:disabled {
   color: var(--muted);
 }
 
+.answer-text-muted {
+  color: var(--muted);
+  font-size: 16px;
+}
+
 .safety-panel {
   display: grid;
   gap: 12px;
