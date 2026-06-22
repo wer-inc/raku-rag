@@ -10,6 +10,10 @@
   --accent-strong: #0d5144;
   --danger: #9b2f2f;
   --warning: #8a5b13;
+  --warning-bg: #fff6df;
+  --danger-bg: #fff1f1;
+  --info: #2d5f8b;
+  --info-bg: #eef6ff;
 }
 
 * {
@@ -244,6 +248,81 @@ button:disabled {
   color: var(--muted);
 }
 
+.safety-panel {
+  display: grid;
+  gap: 12px;
+  padding: 2px 0 2px 14px;
+  border-left: 4px solid var(--accent);
+  background: linear-gradient(90deg, rgba(23, 111, 93, 0.08), rgba(255, 255, 255, 0));
+}
+
+.safety-panel.safety-blocked {
+  border-left-color: var(--danger);
+  background: linear-gradient(90deg, rgba(155, 47, 47, 0.1), rgba(255, 255, 255, 0));
+}
+
+.safety-head,
+.citation-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.safety-title {
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.safety-pill,
+.citation-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--info-bg);
+  color: var(--info);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.safety-pill.warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.safety-fields {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.safety-fields div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.28fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.safety-fields dt,
+.safety-fields dd {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.safety-fields dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.safety-fields dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .citation-list {
   display: grid;
   gap: 10px;
@@ -286,6 +365,31 @@ button:disabled {
 .citation-row span {
   color: var(--muted);
   font-size: 13px;
+}
+
+.citation-row .citation-meta {
+  margin-top: 4px;
+}
+
+.citation-row .citation-chip {
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.citation-row .approval-approved {
+  background: #e7f4ea;
+  color: #23643a;
+}
+
+.citation-row .approval-draft,
+.citation-row .approval-pending_review {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.citation-row .approval-obsolete {
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 .citation-row output {
@@ -333,5 +437,10 @@ button:disabled {
 
   button {
     width: 100%;
+  }
+
+  .safety-fields div {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 }

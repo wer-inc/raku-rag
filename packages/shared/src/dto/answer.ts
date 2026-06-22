@@ -15,6 +15,9 @@ export interface Citation {
   /** [start, end) code-point offsets in the source for text citations */
   text_range?: [number, number];
   retrieval_score: number;
+  approval_status?: "draft" | "pending_review" | "approved" | "obsolete" | string;
+  effective_date?: string | null;
+  approval_source?: string | null;
 }
 
 export interface UsedChunk {
@@ -36,6 +39,20 @@ export interface AnswerRequest {
   collection_id?: string;
 }
 
+export interface ManufacturingAnswerRequest extends AnswerRequest {
+  intent_hint?: string;
+  manufacturing_filters?: Record<string, unknown>;
+}
+
+export interface ManufacturingSafetyExtension {
+  high_risk: boolean;
+  high_risk_reason_codes: string[];
+  safety_block_reason?: string | null;
+  obsolete_warning?: boolean;
+  requires_onsite_confirmation?: boolean;
+  notice?: string | null;
+}
+
 export interface AnswerResponse {
   status: AnswerStatus;
   text: string | null;
@@ -46,4 +63,8 @@ export interface AnswerResponse {
   correlation_id: string;
   answer_template_version?: string;
   display_sections?: AnswerDisplaySection[];
+}
+
+export interface ManufacturingAnswerResponse extends AnswerResponse {
+  manufacturing: ManufacturingSafetyExtension;
 }

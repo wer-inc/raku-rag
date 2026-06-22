@@ -11,6 +11,7 @@ import {
   Req,
 } from "@nestjs/common";
 import type { Request } from "express";
+import type { ManufacturingAnswerRequest, ManufacturingAnswerResponse } from "@raku-rag/shared";
 import { assertAdminMutationAllowed } from "../auth/roles";
 
 /**
@@ -22,13 +23,6 @@ import { assertAdminMutationAllowed } from "../auth/roles";
  *
  * Security invariant: tenant + identity come from the SIGNED principal, never the request body.
  */
-interface ManufacturingAnswerRequest {
-  query?: string;
-  collection_id?: string;
-  intent_hint?: string;
-  manufacturing_filters?: Record<string, unknown>;
-}
-
 type JsonObject = Record<string, unknown>;
 
 function queryPath(path: string, query: Record<string, string | undefined>): string {
@@ -106,7 +100,7 @@ export class ManufacturingController {
   async answer(
     @Req() req: Request,
     @Body() body: ManufacturingAnswerRequest,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<ManufacturingAnswerResponse> {
     const p = req.principal!; // AuthMiddleware guarantees a principal on this route
     const payload = {
       tenant_id: p.tenant_id,
@@ -118,7 +112,13 @@ export class ManufacturingController {
       intent_hint: body?.intent_hint,
       manufacturing_filters: body?.manufacturing_filters,
     };
-    return this.requestCore(req, "POST", "/internal/manufacturing/answer", payload, false);
+    return this.requestCore<ManufacturingAnswerResponse>(
+      req,
+      "POST",
+      "/internal/manufacturing/answer",
+      payload,
+      false,
+    );
   }
 
   @Get("policy/data-use")

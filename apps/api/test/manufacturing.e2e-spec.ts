@@ -20,7 +20,19 @@ describe("manufacturing answer facade (e2e)", () => {
   const CANNED = {
     status: "insufficient_evidence",
     text: null,
-    citations: [],
+    citations: [
+      {
+        kind: "text",
+        document_id: "press_manual",
+        chunk_id: "chunk_7",
+        source_id: "manuals",
+        version: 3,
+        retrieval_score: 0.91,
+        approval_status: "approved",
+        effective_date: "2026-01-10",
+        approval_source: "qa-system",
+      },
+    ],
     used_chunks: [],
     correlation_id: "trace_mfg_stub",
     manufacturing: {
@@ -172,6 +184,8 @@ describe("manufacturing answer facade (e2e)", () => {
     expect(res.body.status).toBe("insufficient_evidence");
     expect(res.body.manufacturing.high_risk).toBe(true);
     expect(res.body.manufacturing.safety_block_reason).toBe("approved_citation_missing");
+    expect(res.body.citations[0].approval_status).toBe("approved");
+    expect(res.body.citations[0].effective_date).toBe("2026-01-10");
   });
 
   it("GET /v1/manufacturing/policy/data-use forwards the signed principal", async () => {

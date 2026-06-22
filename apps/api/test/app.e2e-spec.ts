@@ -80,6 +80,15 @@ describe("api skeleton (e2e)", () => {
     expect(res.body.components.schemas.AnswerResponse.properties.display_sections.items.required).toContain(
       "id",
     );
+    expect(res.body.components.schemas.Citation.properties.approval_status.enum).toContain("approved");
+    expect(res.body.components.schemas.Citation.properties.effective_date.nullable).toBe(true);
+    expect(res.body.components.schemas.Citation.properties.approval_source.nullable).toBe(true);
+    expect(
+      res.body.components.schemas.ManufacturingAnswerResponse.properties.manufacturing.$ref,
+    ).toBe("#/components/schemas/ManufacturingSafetyExtension");
+    expect(
+      res.body.components.schemas.ManufacturingSafetyExtension.properties.safety_block_reason.nullable,
+    ).toBe(true);
     expect(
       res.body.paths["/evaluations/sets"].post.requestBody.content["application/json"].schema.$ref,
     ).toBe("#/components/schemas/EvaluationSetCreateRequest");

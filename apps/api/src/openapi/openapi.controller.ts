@@ -662,6 +662,12 @@ const OPENAPI_DOC = {
           version: { type: "number" },
           retrieval_score: { type: "number" },
           chunk_id: { type: "string" },
+          approval_status: {
+            type: "string",
+            enum: ["draft", "pending_review", "approved", "obsolete"],
+          },
+          effective_date: { type: "string", nullable: true },
+          approval_source: { type: "string", nullable: true },
         },
       },
       UsedChunk: {

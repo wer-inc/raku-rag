@@ -1,4 +1,9 @@
-import type { AnswerRequest, AnswerResponse } from "@raku-rag/shared";
+import type {
+  AnswerRequest,
+  AnswerResponse,
+  ManufacturingAnswerRequest,
+  ManufacturingAnswerResponse,
+} from "@raku-rag/shared";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:3000/v1";
 
@@ -28,4 +33,20 @@ export async function answer(req: AnswerRequest, userToken: string): Promise<Ans
     body: JSON.stringify(req),
   });
   return jsonOrThrow<AnswerResponse>(res);
+}
+
+export async function manufacturingAnswer(
+  req: ManufacturingAnswerRequest,
+  userToken: string,
+): Promise<ManufacturingAnswerResponse> {
+  const res = await fetch(`${API_BASE}/manufacturing/answer`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: "Bearer local-dev-key",
+      "x-user-token": userToken,
+    },
+    body: JSON.stringify(req),
+  });
+  return jsonOrThrow<ManufacturingAnswerResponse>(res);
 }
