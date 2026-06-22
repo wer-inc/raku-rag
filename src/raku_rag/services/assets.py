@@ -7,6 +7,7 @@ from typing import Sequence
 
 from raku_rag.core.security.acl import AclPolicy
 from raku_rag.domain.models import BoundingBox, Chunk, CropArtifact, Document, IdentityClaims
+from raku_rag.services.crop import REDACTED_CROP_URI_PREFIX
 
 
 class AssetService:
@@ -54,24 +55,39 @@ class AssetService:
 
 
 def _region_json(chunk: Chunk) -> dict:
+    redaction_required = _metadata_bool(chunk.metadata, "visual_region_redaction_required")
     return {
         "region_id": str(chunk.metadata.get("region_id") or chunk.chunk_id),
         "chunk_id": chunk.chunk_id,
         "region_type": str(chunk.metadata.get("region_type") or "text"),
         "page_number": int(chunk.metadata.get("page_number") or 0),
         "bbox": _bbox_json(_bbox_from_metadata(chunk)),
-        "crop_uri": str(chunk.metadata.get("crop_uri") or ""),
+        "crop_uri": _public_region_crop_uri(chunk, redaction_required=redaction_required),
+        "sensitive_detected": _metadata_bool(chunk.metadata, "sensitive_detected"),
+        "sensitive_detection_labels": _metadata_labels(chunk.metadata),
+        "visual_region_redaction_required": redaction_required,
+        "visual_region_redaction_status": str(
+            chunk.metadata.get("visual_region_redaction_status") or "not_required"
+        ),
+        "visual_redaction_policy_ref": str(chunk.metadata.get("visual_redaction_policy_ref") or ""),
     }
 
 
 def _crop_json(crop: CropArtifact) -> dict:
+    redaction_required = _metadata_bool(crop.metadata, "visual_region_redaction_required")
     return {
         "crop_id": crop.crop_id,
         "asset_id": crop.asset_id,
         "region_id": crop.region_id,
-        "crop_uri": crop.crop_uri,
+        "crop_uri": _public_crop_uri(crop, redaction_required=redaction_required),
         "bbox": asdict(crop.bbox),
         "redaction_policy_ref": crop.redaction_policy_ref,
+        "sensitive_detected": _metadata_bool(crop.metadata, "sensitive_detected"),
+        "sensitive_detection_labels": _metadata_labels(crop.metadata),
+        "visual_region_redaction_required": redaction_required,
+        "visual_region_redaction_status": str(
+            crop.metadata.get("visual_region_redaction_status") or "not_required"
+        ),
     }
 
 
@@ -99,6 +115,42 @@ def _first_metadata(chunks: Sequence[Chunk], key: str) -> object:
         if value not in (None, ""):
             return value
     return None
+
+
+def _public_region_crop_uri(chunk: Chunk, *, redaction_required: bool) -> str:
+    raw = str(chunk.metadata.get("crop_uri") or "")
+    if not redaction_required:
+        return raw
+    redacted = str(chunk.metadata.get("redacted_crop_uri") or "")
+    if redacted:
+        return redacted
+    asset_id = str(chunk.metadata.get("asset_id") or "")
+    region_id = str(chunk.metadata.get("region_id") or chunk.chunk_id)
+    if asset_id and region_id:
+        return f"{REDACTED_CROP_URI_PREFIX}/{chunk.tenant_id}/crop:{asset_id}:{region_id}"
+    return ""
+
+
+def _public_crop_uri(crop: CropArtifact, *, redaction_required: bool) -> str:
+    if not redaction_required:
+        return crop.crop_uri
+    return str(crop.metadata.get("redacted_crop_uri") or "")
+
+
+def _metadata_bool(metadata: dict, key: str) -> bool:
+    value = metadata.get(key)
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes", "required"}
+    return bool(value)
+
+
+def _metadata_labels(metadata: dict) -> list[str]:
+    labels = metadata.get("sensitive_detection_labels") or []
+    if isinstance(labels, tuple):
+        labels = list(labels)
+    if not isinstance(labels, list):
+        return []
+    return sorted(str(label) for label in labels)
 
 
 __all__ = ["AssetService"]

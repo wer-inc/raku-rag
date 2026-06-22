@@ -77,6 +77,7 @@ class EvaluationSet:
     eval_set_id: str
     tenant_id: str
     items: tuple[EvaluationItem, ...]
+    dataset_version: str = ""
     created_at: str = field(default_factory=_now)
 
     @classmethod
@@ -94,7 +95,13 @@ class EvaluationSet:
             "eval_set",
             [tenant_id, [item.item_id for item in scrubbed]],
         )
-        return cls(eval_set_id=set_id, tenant_id=tenant_id, items=scrubbed)
+        dataset_version = _dataset_version(tenant_id, scrubbed)
+        return cls(
+            eval_set_id=set_id,
+            tenant_id=tenant_id,
+            items=scrubbed,
+            dataset_version=dataset_version,
+        )
 
 
 @dataclass(frozen=True)
@@ -125,6 +132,7 @@ class EvaluationRun:
     examples: tuple[EvaluationExampleResult, ...] = ()
     probe_results: tuple[dict, ...] = ()
     probes_executed: bool = False
+    version_registry: dict = field(default_factory=dict)
     created_at: str = field(default_factory=_now)
 
     def to_dict(self) -> dict:
@@ -141,6 +149,7 @@ class EvaluationRun:
             "examples": [example.__dict__ for example in self.examples],
             "probe_results": [dict(result) for result in self.probe_results],
             "probes_executed": self.probes_executed,
+            "version_registry": dict(self.version_registry),
             "created_at": self.created_at,
         }
 
@@ -156,3 +165,29 @@ def _bbox_from_mapping(raw: object) -> BoundingBox | None:
         width=float(raw.get("width", 0.0) or 0.0),
         height=float(raw.get("height", 0.0) or 0.0),
     )
+
+
+def _dataset_version(tenant_id: str, items: tuple[EvaluationItem, ...]) -> str:
+    payload = {
+        "tenant_id": tenant_id,
+        "items": [
+            {
+                "item_id": item.item_id,
+                "question": item.question,
+                "expected_answer": item.expected_answer,
+                "expected_evidence": [
+                    {
+                        "document_id": evidence.document_id,
+                        "chunk_id": evidence.chunk_id,
+                        "kind": evidence.kind,
+                        "asset_id": evidence.asset_id,
+                        "region_id": evidence.region_id,
+                        "bbox": evidence.bbox.__dict__ if evidence.bbox else None,
+                    }
+                    for evidence in item.expected_evidence
+                ],
+            }
+            for item in items
+        ],
+    }
+    return _stable_id("dataset", payload)

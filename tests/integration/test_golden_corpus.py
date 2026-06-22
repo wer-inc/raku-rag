@@ -46,6 +46,7 @@ def _committed_baseline() -> EvaluationBaseline:
         min_metrics={k: float(v) for k, v in data["min_metrics"].items()},
         max_metrics={k: float(v) for k, v in data["max_metrics"].items()},
         security_checks=tuple(data.get("security_checks", ())),
+        version_registry=dict(data.get("version_registry") or {}),
     )
 
 
@@ -98,6 +99,23 @@ class TestGoldenCorpusBaseline(unittest.TestCase):
         # The baseline is COMMITTED (loaded from fixture), not derived from this run.
         for key in _QUALITY_FLOORS:
             self.assertIn(key, self.baseline.min_metrics)
+        self.assertEqual(run.version_registry, self.baseline.version_registry)
+
+    def test_version_registry_mismatch_fails_gate(self) -> None:
+        run = EvaluationRunner(self.sys).run(self.eval_set, principal=self.principal)
+        mismatched = EvaluationBaseline(
+            metrics=self.baseline.metrics,
+            min_metrics=self.baseline.min_metrics,
+            max_metrics=self.baseline.max_metrics,
+            security_checks=self.baseline.security_checks,
+            version_registry={**self.baseline.version_registry, "dataset_version": "dataset_old"},
+        )
+        result = evaluate_baseline_gate(run, mismatched)
+        self.assertFalse(result.passed)
+        self.assertTrue(
+            any("version_registry.dataset_version" in failure for failure in result.failures),
+            msg=str(result.failures),
+        )
 
     def test_seeded_doc_removal_regresses_and_fails_gate(self) -> None:
         # Authentic end-to-end regression: tombstone one expected doc → its item can no longer be

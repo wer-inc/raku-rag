@@ -7,8 +7,8 @@ nothing; and the runner must block on a probe-found leak even with NO caller-sup
 still honoring a caller count as a force-block override (merge-by-max — keeps test_eval_hard_gate
 valid unmodified).
 
-source_poisoning_probe is tested here via deterministic stubs (it is held out of the default suite
-because it reproduced a real vulnerability on the live ManufacturingSystem — see risk-register PR-016).
+source_poisoning_probe is release-blocking in the default suite after the GAP-S3/PR-016 fix; this file
+also tests it directly via deterministic stubs.
 """
 
 from __future__ import annotations

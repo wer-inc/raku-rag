@@ -8,8 +8,8 @@ the provider create one lazily when boto3 is installed.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Callable, Sequence
 
 from workers.ingest.provider_policy import ProviderCapability
 
@@ -115,8 +115,14 @@ class CohereEmbedMultilingualV3Provider:
     def _parse_embeddings(self, payload: dict) -> list[Vector]:
         raw = payload.get("embeddings") or []
         vectors: list[Vector] = []
-        for item in raw:
+        for index, item in enumerate(raw):
             vector = item.get("float") if isinstance(item, dict) else item
+            if (
+                vector is None
+                or isinstance(vector, (str, bytes, bytearray))
+                or not isinstance(vector, Sequence)
+            ):
+                raise ValueError(f"embedding response item {index} is not a vector")
             if len(vector) != self.dimensions:
                 raise ValueError(
                     f"embedding dimension mismatch: expected {self.dimensions}, got {len(vector)}"

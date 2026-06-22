@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 
 from raku_rag.core.security.acl import AclPolicy
-from raku_rag.domain.models import IdentityClaims, QueryProfile, ScoredChunk
+from raku_rag.domain.models import Chunk, IdentityClaims, QueryProfile, ScoredChunk
 from raku_rag.interfaces.base import EmbeddingProvider, Reranker, VectorStore
 from raku_rag.observability.logging import log
 from raku_rag.observability.metrics import MetricsRecorder
@@ -25,6 +25,22 @@ def _token_count(text: str) -> int:
 
 def _rerank_candidate_limit(profile: QueryProfile) -> int:
     return max(0, min(int(profile.rerank_top_n), MAX_RERANK_CANDIDATES))
+
+
+def _merge_hybrid_results(*result_sets: list[ScoredChunk]) -> list[ScoredChunk]:
+    """Union hybrid retrieval legs without duplicating chunks."""
+    merged_by_id: dict[str, ScoredChunk] = {}
+    order: list[str] = []
+    for results in result_sets:
+        for scored in results:
+            chunk_id = scored.chunk.chunk_id
+            if chunk_id not in merged_by_id:
+                order.append(chunk_id)
+                merged_by_id[chunk_id] = scored
+                continue
+            if scored.retrieval_score > merged_by_id[chunk_id].retrieval_score:
+                merged_by_id[chunk_id] = scored
+    return [merged_by_id[chunk_id] for chunk_id in order]
 
 
 class RetrievalService:
@@ -86,6 +102,26 @@ class RetrievalService:
                 visible=visible,
                 top_k=search_top_k,
             )
+            metadata_exact_matches: list[ScoredChunk] = []
+            exact_matcher = getattr(self._store, "metadata_exact_matches", None)
+            if callable(exact_matcher):
+                metadata_exact_matches = exact_matcher(
+                    principal.tenant_id,
+                    query,
+                    visible=visible,
+                    top_k=search_top_k,
+                )
+            lexical_matches: list[ScoredChunk] = []
+            lexical_matcher = getattr(self._store, "lexical_matches", None)
+            if callable(lexical_matcher):
+                lexical_matches = lexical_matcher(
+                    principal.tenant_id,
+                    query,
+                    visible=visible,
+                    top_k=search_top_k,
+                )
+            if metadata_exact_matches or lexical_matches:
+                scored = _merge_hybrid_results(metadata_exact_matches, lexical_matches, scored)
             # Double defense: re-assert ACL on every result (fail-closed if anything slipped through).
             for s in scored:
                 self._acl.assert_visible(principal, s.chunk)
@@ -145,6 +181,16 @@ class RetrievalService:
                 self._metrics.observe(
                     "retrieval_rerank_input_count", rerank_input_count, labels=metric_labels
                 )
+                self._metrics.observe(
+                    "retrieval_metadata_exact_match_count",
+                    len(metadata_exact_matches),
+                    labels=metric_labels,
+                )
+                self._metrics.observe(
+                    "retrieval_lexical_match_count",
+                    len(lexical_matches),
+                    labels=metric_labels,
+                )
                 self._metrics.observe("retrieval_rerank_ms", rerank_ms, labels=metric_labels)
                 if prefiltered_count is not None:
                     self._metrics.observe(
@@ -166,6 +212,8 @@ class RetrievalService:
                     rerank_ms=rerank_ms,
                     rerank_status=rerank_status,
                     rerank_error=rerank_error,
+                    metadata_exact_match_count=len(metadata_exact_matches),
+                    lexical_match_count=len(lexical_matches),
                     retrieval_outcome=outcome,
                     prefiltered_count=(prefiltered_count if prefiltered_count is not None else -1),
                 )
@@ -177,6 +225,23 @@ class RetrievalService:
                     latency_ms=(time.perf_counter() - started) * 1000,
                 )
             return result
+
+    def is_visible(self, principal: IdentityClaims, chunk: Chunk) -> bool:
+        """Re-check current ACL/tenant/tombstone visibility for already-retrieved evidence.
+
+        Retrieval applies this before scoring, but citation rendering is a second channel. This
+        method lets answer/draft surfaces fail closed if a document is tombstoned or ACL-revoked
+        after retrieval but before the response is served.
+        """
+        if chunk.tenant_id != principal.tenant_id:
+            return False
+        if getattr(chunk, "tombstone", False):
+            return False
+        try:
+            self._acl.assert_visible(principal, chunk)
+        except Exception:
+            return False
+        return True
 
 
 class _NullSpan:

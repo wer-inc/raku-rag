@@ -21,7 +21,9 @@ from raku_rag.providers.ocr import DeterministicOcrEngine
 from raku_rag.providers.task_queue import QueueEnvelope
 from raku_rag.providers.visual_embeddings import HashingVisualEmbeddingProvider
 from raku_rag.services.cost import CostService
-from raku_rag.services.ingestion import IngestionService
+from raku_rag.services.ingestion import IngestionService, PII_REDACTION_POLICY_REF
+
+VISUAL_REGION_REDACTION_REQUIRED_REF = "visual-region-redaction-required"
 
 
 def _now() -> str:
@@ -491,9 +493,13 @@ class VisualIngestionExecutor:
             unit="bytes",
         )
 
+        raw_ocr_regions = self.ocr.extract(image)
+        ocr_sensitive_labels = tuple(
+            _sensitive_labels(self.redactor, region.text) for region in raw_ocr_regions
+        )
         ocr_regions = tuple(
             replace(region, text=self.redactor.redact_visual_text(region.text))
-            for region in self.ocr.extract(image)
+            for region in raw_ocr_regions
         )
         self._record_visual_cost(
             tenant_id,
@@ -539,6 +545,17 @@ class VisualIngestionExecutor:
                     replace(region, generated_caption_text=caption_result.generated_caption_text)
                     for region in regions
                 )
+        regions = tuple(
+            replace(
+                region,
+                metadata=_visual_region_redaction_metadata(
+                    region,
+                    ocr_labels=ocr_sensitive_labels[idx] if idx < len(ocr_sensitive_labels) else (),
+                    caption_labels=caption_result.sensitive_detection_labels,
+                ),
+            )
+            for idx, region in enumerate(regions)
+        )
 
         embedding_inputs = [
             f"{region.ocr_text}\n{region.generated_caption_text}".encode("utf-8")
@@ -587,6 +604,36 @@ class VisualIngestionExecutor:
             unit=unit,
             billable=False,
         )
+
+
+def _sensitive_labels(redactor: Redactor, text: str) -> tuple[str, ...]:
+    return tuple(sorted({label for label, _start, _end in redactor.classify(text)}))
+
+
+def _visual_region_redaction_metadata(
+    region: LayoutRegion,
+    *,
+    ocr_labels: tuple[str, ...],
+    caption_labels: tuple[str, ...],
+) -> dict:
+    labels = tuple(sorted(set(ocr_labels) | set(caption_labels)))
+    sensitive_detected = bool(labels)
+    metadata = dict(region.metadata)
+    metadata.update(
+        {
+            "sensitive_detected": sensitive_detected,
+            "sensitive_detection_labels": list(labels),
+            "pii_redaction_applied": sensitive_detected,
+            "secret_redaction_applied": "api_key" in labels,
+            "pii_redaction_policy_ref": PII_REDACTION_POLICY_REF,
+            "visual_region_redaction_required": sensitive_detected,
+            "visual_region_redaction_status": "required" if sensitive_detected else "not_required",
+            "visual_redaction_policy_ref": (
+                VISUAL_REGION_REDACTION_REQUIRED_REF if sensitive_detected else "none"
+            ),
+        }
+    )
+    return metadata
 
 
 class IngestionExecutor:

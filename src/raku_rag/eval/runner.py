@@ -15,6 +15,7 @@ from raku_rag.eval.models import (
     _stable_id,
 )
 from raku_rag.eval.probes import SecurityProbeSuite
+from raku_rag.eval.version_registry import build_version_registry
 
 SECURITY_CHECKS = (
     "acl_leakage",
@@ -23,6 +24,7 @@ SECURITY_CHECKS = (
     "unauthorized_context",
     "prompt_injection",
     "source_poisoning",  # release-blocking since GAP-S3/PR-016 fix (manufacturing/api/answer_ext.py)
+    "high_risk_recall",
     "visual_acl_leakage",
     "visual_deleted_reappearance",
     "visual_unauthorized_context",
@@ -227,8 +229,10 @@ class EvaluationRunner:
         baseline_comparison = _compare_to_baseline(
             metrics, baseline_run.metrics if baseline_run else {}
         )
+        version_registry = build_version_registry(self.system, eval_set)
         run_id = _stable_id(
-            "eval_run", [eval_set.eval_set_id, principal.tenant_id, metrics, security_checks]
+            "eval_run",
+            [eval_set.eval_set_id, principal.tenant_id, metrics, security_checks, version_registry],
         )
         run_record = EvaluationRun(
             run_id=run_id,
@@ -243,6 +247,7 @@ class EvaluationRunner:
             examples=tuple(examples),
             probe_results=tuple(result.to_dict() for result in probe_outcome.results),
             probes_executed=probe_outcome.probes_executed,
+            version_registry=version_registry,
         )
         if self.run_repository is not None:
             self.run_repository.save(run_record)

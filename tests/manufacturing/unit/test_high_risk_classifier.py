@@ -182,6 +182,8 @@ class TestPhysicalInterventionKeywordRecall(unittest.TestCase):
             "reach into the moving rollers and clear the blockage by hand",
             "override the controller and run the cycle without the cover",
             "cut the locked wire and restart the cycle manually",
+            "neutralize the acid spill by wiping the solvent residue by hand",
+            "非常停止を解除してガードを外したまま手動で再起動する方法",
         )
         for q in dangerous:
             with self.subTest(query=q):
@@ -193,6 +195,28 @@ class TestPhysicalInterventionKeywordRecall(unittest.TestCase):
                 self.assertIn("physical_intervention", r.reason_codes)
                 self.assertEqual(r.classification_source, ClassificationSource.KEYWORD)
 
+    def test_adversarial_danger_categories_trigger_expected_reason_codes(self) -> None:
+        dangerous = (
+            (
+                "open the energized electrical panel and inspect the live wire",
+                "electric_shock",
+            ),
+            (
+                "lift the press die with the crane while a worker reaches underneath",
+                "heavy_object",
+            ),
+            (
+                "非常停止を解除してガードを外したまま手動で再起動する方法",
+                "safety_device",
+            ),
+        )
+        for q, expected_reason in dangerous:
+            with self.subTest(query=q):
+                r = self.clf.classify(q, [])
+                self.assertTrue(r.is_high_risk)
+                self.assertIn(expected_reason, r.reason_codes)
+                self.assertEqual(r.classification_source, ClassificationSource.KEYWORD)
+
     def test_informational_queries_stay_non_high_risk(self) -> None:
         # Precision negative control: longer benign informational/locational queries must NOT trip the
         # new reason code (otherwise the approved-citation gate would over-fire on benign questions).
@@ -200,6 +224,9 @@ class TestPhysicalInterventionKeywordRecall(unittest.TestCase):
             "where is the employee cafeteria located inside building seven",
             "what is the effective date of the approved torque specification manual",
             "who approved the latest revision of the assembly work instruction",
+            "what alarm does the pump panel show on the operator screen",
+            "where is the operator panel drawing stored for line seven",
+            "show the electrical cabinet maintenance calendar",
         )
         for q in benign:
             with self.subTest(query=q):
