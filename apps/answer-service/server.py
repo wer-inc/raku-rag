@@ -27,7 +27,9 @@ import hashlib
 import json
 import os
 import sys
+from dataclasses import fields, is_dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -51,7 +53,12 @@ from raku_rag.industry import (  # noqa: E402
     RealEstateApiService,
 )
 from raku_rag.persistence.provider_config_audit import ProviderConfigAuditRepository  # noqa: E402
-from raku_rag.production import DEFAULT_DSN, ProductionSystem  # noqa: E402
+from raku_rag.production import (  # noqa: E402
+    DEFAULT_DSN,
+    ProductionSystem,
+    build_manufacturing_system_for_base,
+)
+from raku_rag.services.answer_format import answer_format_metadata  # noqa: E402
 from raku_rag.providers.connectors import default_connector_from_env  # noqa: E402
 from workers.ingest.provider_policy import (  # noqa: E402
     ProviderPolicy,
@@ -526,6 +533,7 @@ class _EvalFeedbackStore:
         self._sets[(tenant_id, eval_set.eval_set_id)] = eval_set
         return {
             "eval_set_id": eval_set.eval_set_id,
+            "dataset_version": eval_set.dataset_version,
             "item_count": len(eval_set.items),
             "status": "created",
         }
@@ -620,10 +628,29 @@ def _claims_from_headers(headers) -> IdentityClaims:
     )
 
 
+def _jsonable(value):
+    if isinstance(value, Enum):
+        return value.value
+    if is_dataclass(value):
+        return {field.name: _jsonable(getattr(value, field.name)) for field in fields(value)}
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    return value
+
+
+def _query_time_range(qs: dict[str, list[str]]) -> tuple[str, str] | None:
+    start = (qs.get("from") or [""])[0]
+    end = (qs.get("to") or [""])[0]
+    return (start, end) if start and end else None
+
+
 def _answer_json(ans) -> dict:
     return {
         "status": ans.status,
         "text": ans.text,
+        **answer_format_metadata(ans),
         "citations": [
             {
                 "kind": c.kind,
@@ -661,6 +688,7 @@ def _manufacturing_answer_json(ans) -> dict:
     return {
         "status": ans.status,
         "text": ans.text,
+        **answer_format_metadata(ans),
         "confidence": ans.confidence,
         "citations": [
             {
@@ -686,6 +714,23 @@ def _manufacturing_answer_json(ans) -> dict:
             "requires_onsite_confirmation": ans.requires_onsite_confirmation,
             "notice": ans.notice,
         },
+    }
+
+
+def _data_use_policy_json(policy) -> dict:
+    return {
+        "tenant_id": policy.tenant_id,
+        "no_train_default": policy.no_train_default,
+        "training_opt_in": policy.training_opt_in,
+        "opt_in_contract_ref": policy.opt_in_contract_ref,
+        "provider_no_train_required": policy.provider_no_train_required,
+        "no_train_fallback": policy.no_train_fallback.value,
+        "retention_customer": policy.retention_customer,
+        "retention_audit": policy.retention_audit,
+        "export_enabled": policy.export_enabled,
+        "policy_version": policy.policy_version,
+        "updated_by": policy.updated_by,
+        "updated_at": policy.updated_at,
     }
 
 
@@ -891,6 +936,7 @@ def make_handler(system: ProductionSystem):
     connector = default_connector_from_env()
     admin_settings = _AdminSettingsStore(system)
     eval_feedback = _EvalFeedbackStore(system)
+    manufacturing_system = build_manufacturing_system_for_base(system)
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()
     investment_api = InvestmentApiService()
@@ -1025,6 +1071,102 @@ def make_handler(system: ProductionSystem):
                     self._send(200, investment_api.audit())
                 elif parts == ["internal", "investment", "governance", "status"]:
                     self._send(200, investment_api.governance_status())
+                elif parts == ["internal", "manufacturing", "policy", "data-use"]:
+                    self._send(
+                        200,
+                        _data_use_policy_json(
+                            manufacturing_system.get_data_use_policy(self._tenant_header())
+                        ),
+                    )
+                elif parts == ["internal", "manufacturing", "governance", "status"]:
+                    self._send(200, manufacturing_system.governance_status(self._tenant_header()))
+                elif parts == ["internal", "manufacturing", "audit", "export"]:
+                    qs = parse_qs(parsed.query)
+                    fmt = (qs.get("fmt") or ["dict"])[0]
+                    exported = manufacturing_system.export_audit(
+                        principal=_claims_from_headers(self.headers), fmt=fmt
+                    )
+                    payload = (
+                        {"format": fmt, "records": exported}
+                        if fmt == "dict"
+                        else {"format": fmt, "content": exported}
+                    )
+                    self._send(200, payload)
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "manufacturing", "sources"]
+                    and parts[4] == "sync-status"
+                ):
+                    self._send(
+                        200,
+                        _jsonable(
+                            manufacturing_system.source_sync_status(
+                                _claims_from_headers(self.headers), parts[3]
+                            )
+                        ),
+                    )
+                elif len(parts) == 4 and parts[:3] == [
+                    "internal",
+                    "manufacturing",
+                    "ingestion-runs",
+                ]:
+                    self._send(
+                        200,
+                        _jsonable(
+                            manufacturing_system.ingestion_run_status(
+                                _claims_from_headers(self.headers), parts[3]
+                            )
+                        ),
+                    )
+                elif len(parts) == 4 and parts[:3] == ["internal", "manufacturing", "drafts"]:
+                    draft = manufacturing_system.get_draft(self._tenant_header(), parts[3])
+                    (
+                        self._send(200, _jsonable(draft))
+                        if draft
+                        else self._send(404, {"error": "not found"})
+                    )
+                elif parts == ["internal", "manufacturing", "dashboard"]:
+                    qs = parse_qs(parsed.query)
+                    self._send(
+                        200,
+                        _jsonable(
+                            manufacturing_system.knowledge_ops_dashboard(
+                                _claims_from_headers(self.headers),
+                                collection_id=(qs.get("collection_id") or [None])[0],
+                                factory_id=(qs.get("factory_id") or [None])[0],
+                                department_id=(qs.get("department_id") or [None])[0],
+                                time_range=_query_time_range(qs),
+                            )
+                        ),
+                    )
+                elif parts == ["internal", "manufacturing", "safety-telemetry"]:
+                    qs = parse_qs(parsed.query)
+                    self._send(
+                        200,
+                        _jsonable(
+                            manufacturing_system.safety_telemetry(
+                                _claims_from_headers(self.headers),
+                                collection_id=(qs.get("collection_id") or [None])[0],
+                                factory_id=(qs.get("factory_id") or [None])[0],
+                                department_id=(qs.get("department_id") or [None])[0],
+                                time_range=_query_time_range(qs),
+                                granularity=(qs.get("granularity") or ["daily"])[0],
+                            )
+                        ),
+                    )
+                elif parts == ["internal", "manufacturing", "kpi"]:
+                    qs = parse_qs(parsed.query)
+                    fmt = (qs.get("format") or ["json"])[0]
+                    result = manufacturing_system.kpi(
+                        _claims_from_headers(self.headers),
+                        collection_id=(qs.get("collection_id") or [None])[0],
+                        time_range=_query_time_range(qs),
+                        format=fmt,
+                    )
+                    payload = (
+                        result if isinstance(result, dict) else {"format": fmt, "content": result}
+                    )
+                    self._send(200, _jsonable(payload))
                 elif parts == ["internal", "jobs"]:
                     qs = parse_qs(parsed.query)
                     runs = system.ingestion_runs.list_runs(
@@ -1149,6 +1291,94 @@ def make_handler(system: ProductionSystem):
                         manufacturing_filters=body.get("manufacturing_filters"),
                     )
                     self._send(200, _manufacturing_answer_json(mfg_ans))
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "manufacturing", "sources"]
+                    and parts[4] == "sync"
+                ):
+                    principal = _claims_from_headers(self.headers)
+                    self._send(
+                        202,
+                        _jsonable(
+                            manufacturing_system.request_source_sync(
+                                principal,
+                                parts[3],
+                                collection_id=str(body.get("collection_id") or "manufacturing"),
+                                document_id=str(body.get("document_id") or ""),
+                                document_ref=str(body.get("document_ref") or ""),
+                                content_type=str(body.get("content_type") or "text/plain"),
+                                idempotency_key=str(body.get("idempotency_key") or ""),
+                            )
+                        ),
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "manufacturing", "documents"]
+                    and parts[4] == "approval"
+                ):
+                    principal = _claims_from_headers(self.headers)
+                    if "import_external" in body:
+                        result = manufacturing_system.import_external_approval(
+                            tenant_id=principal.tenant_id,
+                            document_id=parts[3],
+                            external=dict(body.get("import_external") or {}),
+                            actor=principal,
+                        )
+                    else:
+                        result = manufacturing_system.transition_approval(
+                            tenant_id=principal.tenant_id,
+                            document_id=parts[3],
+                            to_status=str(body.get("to_status") or ""),
+                            actor=principal,
+                        )
+                    self._send(200, _jsonable({"document_id": parts[3], "approval_state": result}))
+                elif parts == ["internal", "manufacturing", "trouble-cases", "search"]:
+                    principal = _claims_from_headers(self.headers)
+                    response = manufacturing_system.search_trouble_cases(
+                        principal,
+                        str(body.get("symptom_query") or body.get("query") or ""),
+                        collection_id=body.get("collection_id"),
+                        manufacturing_filters=body.get("manufacturing_filters"),
+                        top_k=body.get("top_k"),
+                    )
+                    self._send(200, _jsonable(response))
+                elif parts == ["internal", "manufacturing", "drafts"]:
+                    principal = _claims_from_headers(self.headers)
+                    draft = manufacturing_system.generate_draft(
+                        principal=principal,
+                        kind=str(body.get("kind") or body.get("type") or ""),
+                        source_document_ids=tuple(body.get("source_document_ids") or ()),
+                        template_id=body.get("template_id"),
+                        collection_id=body.get("collection_id"),
+                        manufacturing_filters=body.get("manufacturing_filters"),
+                    )
+                    self._send(200, _jsonable(draft))
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "manufacturing", "drafts"]
+                    and parts[4] == "assign"
+                ):
+                    draft = manufacturing_system.assign_reviewer(
+                        tenant_id=self._tenant_header(),
+                        artifact_id=parts[3],
+                        reviewer_id=body.get("reviewer_id"),
+                        reviewer_group=body.get("reviewer_group"),
+                        reviewer_role=body.get("reviewer_role"),
+                    )
+                    self._send(200, _jsonable(draft))
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "manufacturing", "drafts"]
+                    and parts[4] == "review"
+                ):
+                    draft = manufacturing_system.review_draft(
+                        tenant_id=self._tenant_header(),
+                        artifact_id=parts[3],
+                        reviewer=_claims_from_headers(self.headers),
+                        decision=str(body.get("decision") or ""),
+                        comment=body.get("comment"),
+                    )
+                    self._send(200, _jsonable(draft))
                 elif path == "/internal/search":
                     principal = _claims(body)
                     query = str(body.get("query") or "")
@@ -1552,6 +1782,46 @@ def make_handler(system: ProductionSystem):
                             self._tenant_header(),
                             body,
                             actor=self.headers.get("x-raku-user-id") or "unknown",
+                        ),
+                    )
+                elif parts == ["internal", "manufacturing", "policy", "data-use"]:
+                    principal = _claims_from_headers(self.headers)
+                    self._send(
+                        200,
+                        _data_use_policy_json(
+                            manufacturing_system.update_data_use_policy(
+                                tenant_id=principal.tenant_id,
+                                patch=body,
+                                actor=principal,
+                            )
+                        ),
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "manufacturing", "documents"]
+                    and parts[4] == "metadata"
+                ):
+                    principal = _claims_from_headers(self.headers)
+                    metadata = _mfg_metadata_from_body(body, principal.tenant_id, parts[3])
+                    if metadata is None:
+                        raise KeyError("manufacturing")
+                    updated = manufacturing_system.update_metadata(
+                        tenant_id=principal.tenant_id,
+                        document_id=parts[3],
+                        metadata=metadata,
+                    )
+                    self._send(
+                        200,
+                        _jsonable(
+                            {
+                                "document_id": parts[3],
+                                "manufacturing_metadata": updated,
+                                "approval": {
+                                    "approval_status": updated.approval_status,
+                                    "effective_date": updated.effective_date,
+                                    "approval_source": updated.approval_source,
+                                },
+                            }
                         ),
                     )
                 else:

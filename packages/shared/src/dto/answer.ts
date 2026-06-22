@@ -23,6 +23,14 @@ export interface UsedChunk {
   retrieval_score: number;
 }
 
+export interface AnswerDisplaySection {
+  id: string;
+  title: string;
+  text?: string;
+  fields?: Record<string, unknown>;
+  items?: Array<Record<string, unknown>>;
+}
+
 export interface AnswerRequest {
   query: string;
   collection_id?: string;
@@ -36,4 +44,6 @@ export interface AnswerResponse {
   confidence: number | null;
   freshness: Freshness | null;
   correlation_id: string;
+  answer_template_version?: string;
+  display_sections?: AnswerDisplaySection[];
 }

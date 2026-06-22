@@ -27,6 +27,7 @@ import type {
   QueryProfileSettings,
   QueryProfileUpsertRequest,
 } from "@raku-rag/shared";
+import { assertAdminMutationAllowed } from "../auth/roles";
 
 @Controller({ path: "admin", version: "1" })
 export class AdminSettingsController {
@@ -50,6 +51,9 @@ export class AdminSettingsController {
     path: string,
     body?: unknown,
   ): Promise<T> {
+    if (method !== "GET") {
+      assertAdminMutationAllowed(req);
+    }
     const headers: Record<string, string> = {
       ...this.principalHeaders(req),
     };

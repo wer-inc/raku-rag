@@ -74,6 +74,12 @@ describe("api skeleton (e2e)", () => {
     expect(res.body.components.schemas.AnswerResponse.properties.status.enum).toContain(
       "insufficient_evidence",
     );
+    expect(res.body.components.schemas.AnswerResponse.properties.answer_template_version.type).toBe(
+      "string",
+    );
+    expect(res.body.components.schemas.AnswerResponse.properties.display_sections.items.required).toContain(
+      "id",
+    );
     expect(
       res.body.paths["/evaluations/sets"].post.requestBody.content["application/json"].schema.$ref,
     ).toBe("#/components/schemas/EvaluationSetCreateRequest");
@@ -92,6 +98,20 @@ describe("api skeleton (e2e)", () => {
     );
     expect(res.body.paths["/industries/{industry_id}/governance/status"].get.responses["200"].content["application/json"].schema.$ref).toBe(
       "#/components/schemas/IndustryGovernanceStatus",
+    );
+    for (const path of [
+      "/manufacturing/answer",
+      "/manufacturing/policy/data-use",
+      "/manufacturing/governance/status",
+      "/manufacturing/audit/export",
+    ]) {
+      expect(res.body.paths[path]).toBeDefined();
+    }
+    expect(res.body.paths["/manufacturing/policy/data-use"].put.requestBody.content["application/json"].schema.$ref).toBe(
+      "#/components/schemas/ManufacturingDataUsePolicyPatch",
+    );
+    expect(res.body.paths["/manufacturing/governance/status"].get.responses["200"].content["application/json"].schema.$ref).toBe(
+      "#/components/schemas/ManufacturingGovernanceStatus",
     );
     for (const path of [
       "/real-estate/metadata/import",

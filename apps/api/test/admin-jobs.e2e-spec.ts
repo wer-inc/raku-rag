@@ -17,6 +17,12 @@ describe("admin ingestion status facade (e2e)", () => {
     groups: ["platform"],
     roles: ["admin"],
   });
+  const readerToken = makeUserToken({
+    tenant_id: "tenant_admin",
+    user_id: "reader",
+    groups: ["platform"],
+    roles: ["reader"],
+  });
 
   beforeAll(async () => {
     process.env.NODE_ENV = "test";
@@ -193,6 +199,31 @@ describe("admin ingestion status facade (e2e)", () => {
     expect(res.status).toBe(200);
     expect(res.body.document_id).toBe("doc1");
     expect(res.body.index_status).toBe("succeeded");
+  });
+
+  it("rejects non-admin roles before forwarding job mutations", async () => {
+    const before = seen.length;
+
+    const retry = await request(app.getHttpServer())
+      .post("/v1/admin/ingestion-runs/ing_1/retry")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", readerToken);
+    expect(retry.status).toBe(403);
+
+    const reindex = await request(app.getHttpServer())
+      .post("/v1/admin/collections/manuals/reindex")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", readerToken)
+      .send({ source_id: "upload", reason: "reader must not reindex" });
+    expect(reindex.status).toBe(403);
+
+    const deletion = await request(app.getHttpServer())
+      .delete("/v1/admin/documents/doc1")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", readerToken);
+    expect(deletion.status).toBe(403);
+
+    expect(seen.length).toBe(before);
   });
 
   it("POST /v1/admin/ingestion-runs/:id/retry forwards retry requests", async () => {
