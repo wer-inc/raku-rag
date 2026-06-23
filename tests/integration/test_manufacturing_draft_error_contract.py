@@ -77,7 +77,9 @@ class TestManufacturingDraftErrorContract(unittest.TestCase):
         code, body = self._post(
             f"/internal/manufacturing/drafts/{artifact_id}/review", {"decision": "approved"}
         )
-        self.assertEqual(code, 409, f"out-of-order review should be 409 Conflict, got {code}: {body}")
+        self.assertEqual(
+            code, 409, f"out-of-order review should be 409 Conflict, got {code}: {body}"
+        )
 
     def test_invalid_draft_type_is_422_not_500(self) -> None:
         code, body = self._post("/internal/manufacturing/drafts", {"kind": "sop"})
@@ -86,9 +88,7 @@ class TestManufacturingDraftErrorContract(unittest.TestCase):
     def test_invalid_review_decision_is_422(self) -> None:
         _, draft = self._post("/internal/manufacturing/drafts", {"kind": "checklist"})
         artifact_id = draft["artifact_id"]
-        self._post(
-            f"/internal/manufacturing/drafts/{artifact_id}/assign", {"reviewer_id": "carol"}
-        )
+        self._post(f"/internal/manufacturing/drafts/{artifact_id}/assign", {"reviewer_id": "carol"})
         code, _ = self._post(
             f"/internal/manufacturing/drafts/{artifact_id}/review", {"decision": "bogus"}
         )
