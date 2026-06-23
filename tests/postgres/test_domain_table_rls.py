@@ -124,6 +124,7 @@ class TestDomainTableRls(unittest.TestCase):
     def _assert_visible_only_to_tenant_a(
         self, cur, table: str, key_column: str, key_a: str, key_b: str
     ) -> None:
+        self._set_tenant(cur, self.tenant_a)
         cur.execute(f"SELECT count(*) FROM {table} WHERE {key_column} = %s", (key_a,))
         self.assertEqual(cur.fetchone()[0], 1)
         cur.execute(f"SELECT count(*) FROM {table} WHERE {key_column} = %s", (key_b,))

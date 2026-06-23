@@ -119,7 +119,8 @@ SQL
     infra/db/migrations/postgres/0003_industry_framework.sql \
     infra/db/migrations/postgres/0004_real_estate_domain.sql \
     infra/db/migrations/postgres/0005_investment_domain.sql \
-    infra/db/migrations/postgres/0006_manufacturing_domain.sql
+    infra/db/migrations/postgres/0006_manufacturing_domain.sql \
+    infra/db/migrations/postgres/0009_mfg_audit_payload.sql
   do
     "${compose[@]}" exec -T postgres psql -U "$user" -d "$gate_db" -v ON_ERROR_STOP=1 < "$migration"
   done
