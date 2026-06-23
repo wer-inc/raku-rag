@@ -57,6 +57,15 @@ def _run(
             },
         ),
         probes_executed=True,
+        version_registry={
+            "dataset_version": "dataset_test",
+            "embedding_provider": "local",
+            "embedding_model_version": "hashing-bow-v1",
+            "embedding_dimension": 256,
+            "llm_model_version": "extractive-mvp",
+            "prompt_template_version": "answer-grounded-contract-v1",
+            "registry_version": "eval_registry_test",
+        },
         created_at=created_at,
     )
 
@@ -74,6 +83,7 @@ class TestRowCodec(unittest.TestCase):
         self.assertEqual(back.gate_result, run.gate_result)
         self.assertEqual(back.probes_executed, run.probes_executed)
         self.assertEqual(back.probe_results, run.probe_results)
+        self.assertEqual(back.version_registry, run.version_registry)
 
 
 class TestInMemoryRepository(unittest.TestCase):
@@ -87,6 +97,7 @@ class TestInMemoryRepository(unittest.TestCase):
         self.assertEqual(got.security_checks, run.security_checks)
         self.assertEqual(got.gate_result, "passed")
         self.assertTrue(got.probes_executed)
+        self.assertEqual(got.version_registry["dataset_version"], "dataset_test")
 
     def test_persistence_is_a_copy_not_a_reference(self) -> None:
         # No-op/echo loophole guard: mutating the original after save must NOT change the stored row,
@@ -150,6 +161,9 @@ class TestRunnerPersistenceWiring(unittest.TestCase):
         self.assertEqual(stored.gate_result, run.gate_result)
         self.assertEqual(stored.metrics["recall_at_k"], run.metrics["recall_at_k"])
         self.assertTrue(stored.probes_executed)
+        self.assertEqual(stored.version_registry["dataset_version"], self.eval_set.dataset_version)
+        self.assertEqual(stored.version_registry["embedding_model_version"], "hashing-bow-v1")
+        self.assertEqual(stored.version_registry["llm_model_version"], "extractive-mvp")
 
     def test_runner_without_repository_is_unchanged(self) -> None:
         # Existing behavior: no repository → no persistence, run still produced normally.

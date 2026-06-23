@@ -299,6 +299,12 @@ class InvestmentSystem:
         self._marketing_material_review_count += 1
         policy = self.profile.marketing_material_policy
         assert policy is not None  # the investment profile is regulated
+        disclosure_policy = self.profile.disclosure_evidence_policy
+        required_source_types = (
+            tuple(disclosure_policy.required_source_document_types)
+            if disclosure_policy is not None
+            else ("prospectus", "monthly_report", "compliance_rule")
+        )
         risk = self.risk_policy.evaluate(self.profile.risk_policy, " ".join(statements))
         source_docs = tuple(
             doc
@@ -306,13 +312,7 @@ class InvestmentSystem:
             if doc.fund_id in user.fund_scope
             and self._accessible(user, doc)
             and doc.approved
-            and doc.document_type
-            in {
-                "delivered_prospectus",
-                "requested_prospectus",
-                "monthly_report",
-                "compliance_manual",
-            }
+            and _canonical_doc_type(doc.document_type) in required_source_types
         )
         citations = tuple(doc.citation for doc in source_docs if doc.citation is not None)
         contradictions = _check_marketing_statements(policy, statements, source_docs)

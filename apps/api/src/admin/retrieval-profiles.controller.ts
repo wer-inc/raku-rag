@@ -7,6 +7,7 @@ import type {
   RetrievalProfileSettings,
   RetrievalProfileUpsertRequest,
 } from "@raku-rag/shared";
+import { assertAdminMutationAllowed } from "../auth/roles";
 import { RetrievalProfileService } from "../retrieval/retrieval-profile.service";
 
 @Controller({ path: "admin/retrieval-profiles", version: "1" })
@@ -35,6 +36,7 @@ export class RetrievalProfilesController {
     @Param("retrieval_profile_id") retrievalProfileId: string,
     @Body() body: RetrievalProfileUpsertRequest,
   ): Promise<AdminSettingsMutationResponse<RetrievalProfileSettings>> {
+    assertAdminMutationAllowed(req);
     return this.profiles.upsert(req, retrievalProfileId, body);
   }
 
@@ -45,6 +47,7 @@ export class RetrievalProfilesController {
     @Param("retrieval_profile_id") retrievalProfileId: string,
     @Body() body: RetrievalProfileBenchmarkRequest,
   ): Promise<RetrievalProfileBenchmarkResponse> {
+    assertAdminMutationAllowed(req);
     return this.profiles.benchmark(req, retrievalProfileId, body);
   }
 }

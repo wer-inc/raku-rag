@@ -13,6 +13,7 @@ class EvaluationBaseline:
     min_metrics: dict[str, float] = field(default_factory=dict)
     max_metrics: dict[str, float] = field(default_factory=dict)
     security_checks: tuple[str, ...] = ()
+    version_registry: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ def baseline_from_run(run: EvaluationRun) -> EvaluationBaseline:
         min_metrics=dict(DEFAULT_MIN_METRICS),
         max_metrics=dict(DEFAULT_MAX_METRICS),
         security_checks=tuple(run.security_checks.keys()),
+        version_registry=dict(run.version_registry),
     )
 
 
@@ -73,6 +75,10 @@ def evaluate_baseline_gate(
         check = run.security_checks.get(key, {})
         if check and not check.get("passed", False):
             failures.append(f"security check failed: {key}")
+    for key, expected in baseline.version_registry.items():
+        actual = run.version_registry.get(key)
+        if actual != expected:
+            failures.append(f"version_registry.{key}={actual!r} expected {expected!r}")
     if run.gate_result != "passed":
         failures.append(f"gate_result={run.gate_result}")
     return EvaluationGateResult(passed=not failures, failures=tuple(failures))

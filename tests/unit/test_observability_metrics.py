@@ -4,7 +4,14 @@ import json
 import unittest
 from pathlib import Path
 
+from raku_rag.core.config import settings_from_env
+from raku_rag.observability.exporters import (
+    InMemoryTelemetryExporter,
+    StructuredLogTelemetryExporter,
+    exporter_from_settings,
+)
 from raku_rag.observability.metrics import MetricsRecorder, OBSERVABILITY_STAGES
+from raku_rag.observability.tracing import InMemoryTracer
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -76,6 +83,56 @@ class TestObservabilityMetrics(unittest.TestCase):
         self.assertEqual(metrics.counter("rag_requests_total", labels=labels), 1.0)
         self.assertEqual(metrics.observations("rag_rerank_input_count", labels=labels), (20,))
         self.assertEqual(metrics.observations("rag_prompt_tokens", labels=labels), (1300,))
+
+    def test_metrics_exporter_receives_sanitized_metric_points(self) -> None:
+        exporter = InMemoryTelemetryExporter()
+        metrics = MetricsRecorder(exporter=exporter)
+
+        metrics.increment("retrieval_requests_total", labels={"tenant_id": "tenant_secret"})
+
+        event = exporter.events(kind="metric", name="retrieval_requests_total")[0]
+        payload = event.payload
+        self.assertEqual(payload["metric_type"], "counter")
+        self.assertEqual(payload["value"], 1.0)
+        self.assertNotEqual(payload["labels"]["tenant_id"], "tenant_secret")
+        self.assertNotIn("tenant_secret", repr(payload))
+
+    def test_trace_exporter_receives_sanitized_finished_spans(self) -> None:
+        exporter = InMemoryTelemetryExporter()
+        tracer = InMemoryTracer(exporter=exporter)
+
+        with tracer.span(
+            "answer.answer",
+            correlation_id="cid",
+            tenant_id="tenant_secret",
+            note="email alice@example.com with sk-ABCDEFGH123456",
+        ):
+            pass
+
+        event = exporter.events(kind="span", name="answer.answer")[0]
+        payload = event.payload
+        self.assertEqual(payload["correlation_id"], "cid")
+        self.assertNotEqual(payload["tenant_id"], "tenant_secret")
+        self.assertNotIn("tenant_secret", repr(payload))
+        self.assertNotIn("alice@example.com", repr(payload))
+        self.assertNotIn("sk-ABCDEFGH123456", repr(payload))
+        self.assertIn("[REDACTED:email]", repr(payload))
+
+    def test_exporter_failure_does_not_break_metrics_or_spans(self) -> None:
+        class _FailingExporter:
+            def export(self, event):
+                raise RuntimeError("sink down")
+
+        metrics = MetricsRecorder(exporter=_FailingExporter())
+        tracer = InMemoryTracer(exporter=_FailingExporter())
+
+        metrics.increment("x", labels={"tenant_id": "tenant_a"})
+        with tracer.span("x", correlation_id="cid"):
+            pass
+
+    def test_settings_enable_structured_log_exporter(self) -> None:
+        settings = settings_from_env({"RAKU_TELEMETRY_EXPORT_ENABLED": "true"})
+        self.assertIsInstance(exporter_from_settings(settings), StructuredLogTelemetryExporter)
 
 
 if __name__ == "__main__":

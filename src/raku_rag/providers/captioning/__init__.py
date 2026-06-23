@@ -12,6 +12,7 @@ class CaptioningResult:
     status: str
     generated_caption_text: str = ""
     failure_reason: str = ""
+    sensitive_detection_labels: tuple[str, ...] = ()
 
 
 class DeterministicCaptioningProvider:
@@ -43,8 +44,11 @@ class DeterministicCaptioningProvider:
                 break
         if not caption:
             caption = text.splitlines()[0].strip() if text.splitlines() else ""
+        labels = tuple(sorted({label for label, _start, _end in self._redactor.classify(caption)}))
         return CaptioningResult(
-            status="succeeded", generated_caption_text=self._redactor.redact_visual_text(caption)
+            status="succeeded",
+            generated_caption_text=self._redactor.redact_visual_text(caption),
+            sensitive_detection_labels=labels,
         )
 
 

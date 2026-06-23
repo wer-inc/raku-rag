@@ -18,18 +18,19 @@ from raku_rag.core.config import Settings
 from raku_rag.core.security.token import TokenVerifier
 from raku_rag.domain.models import JobStatus
 from raku_rag.domain.models import QueryProfile
-from raku_rag.observability.audit import InMemoryAuditSink
+from raku_rag.observability.exporters import exporter_from_settings
 from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.persistence.postgres import (
     PostgresAclPolicy,
+    PostgresAuditSink,
     PostgresDocumentRegistry,
     PostgresIngestionRunStore,
     PostgresVectorStore,
     connect,
 )
 from raku_rag.providers.chunkers import SentenceChunker
-from raku_rag.providers.embeddings import HashingEmbeddingProvider
+from raku_rag.providers.embeddings import embedding_provider_from_settings
 from raku_rag.providers.llms import ExtractiveLLMProvider
 from raku_rag.providers.parsers import TextParser
 from raku_rag.providers.rerankers import ScoreOrderReranker
@@ -48,6 +49,7 @@ from raku_rag.services.retrieval import RetrievalService
 from raku_rag.workers.ingestion import IngestionJobMessage, IngestionRun
 
 if TYPE_CHECKING:
+    from raku_rag.manufacturing.app import ManufacturingSystem
     from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
 
 DEFAULT_DSN = "postgresql://raku:raku@127.0.0.1:5432/raku_parity"
@@ -68,21 +70,22 @@ class ProductionSystem(MvpSystem):
 
         # Postgres-backed persistence seams.
         self.registry = PostgresDocumentRegistry(self._conn)
-        self.store = PostgresVectorStore(self._conn)
+        self.store = PostgresVectorStore(self._conn, embedding_dim=self.settings.embedding_dim)
         self.acl = PostgresAclPolicy(self._conn)
         self.ingestion_runs = PostgresIngestionRunStore(self._conn)
 
         # Reused, unchanged from MvpSystem.
-        self.embedder = HashingEmbeddingProvider(dim=self.settings.embedding_dim)
+        self.embedder = embedding_provider_from_settings(self.settings)
         self.parser = TextParser()
         self.chunker = SentenceChunker()
         self.reranker = ScoreOrderReranker()
         self.llm = ExtractiveLLMProvider()
         self.vlm = ExtractiveVLMProvider()
         self.cost = CostService()
-        self.metrics = MetricsRecorder()
-        self.tracer = InMemoryTracer()
-        self.audit = InMemoryAuditSink()
+        self.telemetry_exporter = exporter_from_settings(self.settings)
+        self.metrics = MetricsRecorder(exporter=self.telemetry_exporter)
+        self.tracer = InMemoryTracer(exporter=self.telemetry_exporter)
+        self.audit = PostgresAuditSink(self._conn)
         self.cache = CacheService()
         self.crops = CropService()
         self.profiles = ProfileRegistry(
@@ -117,6 +120,7 @@ class ProductionSystem(MvpSystem):
             self.registry,
             self.metrics,
             self.tracer,
+            pii_redaction_mode=self.settings.pii_redaction_mode,
         )
         self.answer_service = AnswerService(
             self.retrieval,
@@ -178,6 +182,9 @@ class ProductionSystem(MvpSystem):
             document_id=document_id,
             raw=raw,
             content_type=content_type,
+            chunking_metadata=(
+                manufacturing_metadata.to_mapping() if manufacturing_metadata is not None else None
+            ),
         )
         if job.status == JobStatus.SUCCEEDED.value:
             self.ingestion_runs.mark_succeeded(run, chunk_count=job.chunk_count)
@@ -234,6 +241,7 @@ class ProductionSystem(MvpSystem):
             document_id=document_id,
             text=text,
             source_id=source_id,
+            chunking_metadata=metadata.to_mapping(),
         )
         self.attach_manufacturing_metadata(tenant_id, document_id, metadata)
         return job
@@ -262,3 +270,31 @@ class ProductionSystem(MvpSystem):
 
     def __del__(self) -> None:  # pragma: no cover - GC-time best-effort
         self.close()
+
+
+def build_manufacturing_system_for_base(base: ProductionSystem) -> "ManufacturingSystem":
+    """Compose the manufacturing product surface over an existing production base system.
+
+    The base 001 RAG store, manufacturing audit hash-chain writer, and DataUsePolicy store all share
+    the same tenant-scoped Postgres connection. This is the production counterpart to the default
+    in-memory ``ManufacturingSystem()`` composition.
+    """
+    from raku_rag.manufacturing.app import ManufacturingSystem
+    from raku_rag.persistence.manufacturing_audit import PostgresManufacturingAuditLogWriter
+    from raku_rag.persistence.manufacturing_governance import PostgresDataUsePolicyStore
+
+    return ManufacturingSystem(
+        settings=base.settings,
+        base_system=base,
+        audit=PostgresManufacturingAuditLogWriter(base._conn),
+        policy_store=PostgresDataUsePolicyStore(base._conn),
+    )
+
+
+def build_production_manufacturing_system(
+    dsn: str = DEFAULT_DSN, settings: Settings | None = None, *, reset: bool = False
+) -> "ManufacturingSystem":
+    """Create a Postgres ``ProductionSystem`` and wire the manufacturing product surface over it."""
+    return build_manufacturing_system_for_base(
+        ProductionSystem(dsn, settings=settings, reset=reset)
+    )

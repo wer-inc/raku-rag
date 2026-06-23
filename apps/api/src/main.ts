@@ -20,7 +20,7 @@ export async function createApp() {
     .map((s) => s.trim())
     .filter(Boolean);
   app.enableCors({
-    origin(origin, callback) {
+    origin(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
       if (!origin || corsOrigins.includes(origin)) {
         callback(null, true);
         return;

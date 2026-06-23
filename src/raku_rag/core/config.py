@@ -27,11 +27,15 @@ class Settings:
     min_throughput_qps: float = 5.0
     # cost defaults (None = unlimited)
     default_query_budget: float | None = None
+    embedding_provider: str = "hashing"
     embedding_dim: int = 256
+    aws_region: str = "us-east-1"
     # Observability defaults (OD-008 / ADR-010 / ADR-015): raw retrieved context and raw user
     # query are NOT stored by default. Allowed: "disabled" | "redacted" | "full_opt_in".
     logging_raw_retrieved_context_storage: str = "disabled"
     logging_raw_user_query_storage: str = "disabled"
+    telemetry_export_enabled: bool = False
+    pii_redaction_mode: str = "pre_index_redact"
     extra: dict = field(default_factory=dict)
 
     def should_store_raw(self, kind: str) -> bool:
@@ -62,6 +66,12 @@ def settings_from_env(env: dict | None = None) -> Settings:
         if raw in (None, ""):
             return default
         return cast(str(raw))
+
+    def _bool(name: str, default: bool) -> bool:
+        raw = src.get(name)
+        if raw in (None, ""):
+            return default
+        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
     return Settings(
         token_signing_secret=_get("RAKU_TOKEN_SIGNING_SECRET", Settings.token_signing_secret),
@@ -103,6 +113,13 @@ def settings_from_env(env: dict | None = None) -> Settings:
         min_throughput_qps=float(
             _parse("RAKU_MIN_THROUGHPUT_QPS", Settings.min_throughput_qps, float)
         ),
+        embedding_provider=_get("RAKU_EMBEDDING_PROVIDER", Settings.embedding_provider),
+        embedding_dim=int(_parse("RAKU_EMBEDDING_DIM", Settings.embedding_dim, int)),
+        aws_region=_get("AWS_DEFAULT_REGION", Settings.aws_region),
         logging_raw_retrieved_context_storage=_get("RAKU_LOG_RAW_RETRIEVED_CONTEXT", "disabled"),
         logging_raw_user_query_storage=_get("RAKU_LOG_RAW_USER_QUERY", "disabled"),
+        telemetry_export_enabled=_bool(
+            "RAKU_TELEMETRY_EXPORT_ENABLED", Settings.telemetry_export_enabled
+        ),
+        pii_redaction_mode=_get("RAKU_PII_REDACTION_MODE", Settings.pii_redaction_mode),
     )

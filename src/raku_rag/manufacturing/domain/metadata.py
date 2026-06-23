@@ -73,6 +73,7 @@ class ManufacturingDocumentMetadata:
     quality_category: str | None = None
     equipment_operation_category: str | None = None
     hazard_tags: tuple[str, ...] = ()  # e.g. 設備停止/分解/感電/高温/高圧/薬品/重量物/安全装置
+    regulation_refs: tuple[str, ...] = ()  # e.g. ISO_12100_2010 / JIS_B_9700_2013
 
     # --- approval metadata (FR-MFG-004/004a) ---
     approval_status: ApprovalStatus = ApprovalStatus.DRAFT
@@ -109,6 +110,7 @@ class ManufacturingDocumentMetadata:
             "quality_category": self.quality_category,
             "equipment_operation_category": self.equipment_operation_category,
             "hazard_tags": list(self.hazard_tags),
+            "regulation_refs": list(self.regulation_refs),
             "approval_status": self.approval_status.value,
             "effective_date": self.effective_date,
             "approved_by": self.approved_by,
@@ -153,6 +155,7 @@ class ManufacturingDocumentMetadata:
             quality_category=m.get("quality_category"),
             equipment_operation_category=m.get("equipment_operation_category"),
             hazard_tags=tuple(m.get("hazard_tags") or ()),
+            regulation_refs=tuple(m.get("regulation_refs") or ()),
             approval_status=_enum(ApprovalStatus, m.get("approval_status"), ApprovalStatus.DRAFT),
             effective_date=m.get("effective_date"),
             approved_by=m.get("approved_by"),

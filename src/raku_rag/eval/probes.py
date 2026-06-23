@@ -8,7 +8,8 @@ plus a leak check, and reports an observed leakage count. Any leak (>0) blocks t
 cannot run is ``unavailable`` and also blocks (fail-closed).
 
 See specs/011-eval-security-probes/contracts/probe-interface.md (the gate contract — human-reviewed).
-Phase A ships the three named top-risk probes (ACL leakage, deletion reappearance, tenant isolation).
+The default suite covers ACL leakage, deletion reappearance, tenant isolation, unauthorized context,
+prompt injection, source poisoning, high-risk recall, and visual leakage variants.
 """
 
 from __future__ import annotations
@@ -325,6 +326,29 @@ def source_poisoning_probe(make_system=_new_mfg_system) -> ProbeResult:
         return _unavailable(name, f"probe error: {type(exc).__name__}")
 
 
+def high_risk_recall_probe(classifier=None) -> ProbeResult:
+    """Known-dangerous manufacturing red-team queries must classify high-risk, and benign controls
+    must not all over-fire. This is the GAP-S1 recall gate for the deterministic classifier layer.
+    """
+    name = "high_risk_recall"
+    try:
+        from raku_rag.eval.high_risk_recall import evaluate_high_risk_recall
+
+        report = evaluate_high_risk_recall(classifier)
+        if report.dangerous_total <= 0 or report.benign_total <= 0:
+            return _unavailable(name, "positive control failed: empty high-risk recall corpus")
+        misses = len(report.missed_dangerous)
+        wrong_reasons = len(report.wrong_reason)
+        false_positives = len(report.benign_false_positive)
+        reason = (
+            "high-risk recall corpus failures: "
+            f"missed={misses}, wrong_reason={wrong_reasons}, false_positive={false_positives}"
+        )
+        return _result(name, report.leakage_count, reason)
+    except Exception as exc:  # pragma: no cover - defensive fail-closed
+        return _unavailable(name, f"probe error: {type(exc).__name__}")
+
+
 def unauthorized_context_probe(make_system=_new_system) -> ProbeResult:
     """An unauthorized principal's ANSWER must never draw on a document they cannot read — the
     unauthorized chunk must not enter the answer CONTEXT (cited/used/quoted). Distinct from
@@ -505,6 +529,8 @@ def visual_thumbnail_crop_leakage_probe(make_system=_new_system) -> ProbeResult:
 # unauthorized_context + the 4 visual probes were added (P0-1 root-cause) so EVERY release-blocking
 # SECURITY_CHECK is computed by a real probe — none are caller-count-only. Coverage is pinned by
 # tests/unit/test_security_check_probe_coverage.py.
+# high_risk_recall_probe adds the P1-6/GAP-S1 red-team recall corpus as a release-blocking security
+# check. The corpus is measurement; the eventual generative danger-classifier decision stays human-owned.
 DEFAULT_PROBES = (
     acl_leakage_probe,
     deleted_reappearance_probe,
@@ -512,6 +538,7 @@ DEFAULT_PROBES = (
     unauthorized_context_probe,
     prompt_injection_probe,
     source_poisoning_probe,
+    high_risk_recall_probe,
     visual_acl_leakage_probe,
     visual_deleted_reappearance_probe,
     visual_unauthorized_context_probe,
@@ -539,6 +566,7 @@ __all__ = [
     "SuiteOutcome",
     "acl_leakage_probe",
     "deleted_reappearance_probe",
+    "high_risk_recall_probe",
     "tenant_isolation_probe",
     "prompt_injection_probe",
     "source_poisoning_probe",

@@ -1,6 +1,6 @@
 """T048 — SafetyTelemetry aggregator (FR-MFG-030, SC-MFG-013, US5-2; data-model §I, contracts §E).
 
-Aggregates the SHARED ``InMemoryAuditLogWriter`` — the SINGLE SOURCE OF TRUTH (FR-MFG-030) — into the
+Aggregates the SHARED ``AuditLogWriter`` — the SINGLE SOURCE OF TRUTH (FR-MFG-030) — into the
 safety telemetry an operator/admin uses to see the safety control working. There is NO parallel
 counter: every number here is DERIVED by scanning the immutable, tenant-scoped audit log that the
 answer path already wrote via ``record_answer_decision`` (high-risk classification + safety block
@@ -32,11 +32,11 @@ from __future__ import annotations
 from raku_rag.domain.models import IdentityClaims
 from raku_rag.manufacturing.domain.audit import (
     AuditLogEntry,
-    InMemoryAuditLogWriter,
     SafetyTelemetryResult,
     TelemetryAxis,
 )
 from raku_rag.manufacturing.domain.safety import SafetyBlockReason
+from raku_rag.manufacturing.interfaces import AuditLogWriter
 
 # The three (and only three) mutually-exclusive block reason codes (FR-MFG-030).
 _BLOCK_CODES: tuple[str, ...] = (
@@ -60,7 +60,7 @@ def _reason_value(entry: AuditLogEntry) -> str | None:
 class SafetyTelemetry:
     """Audit-derived safety telemetry aggregator (single source of truth; no shadow counter)."""
 
-    def __init__(self, audit: InMemoryAuditLogWriter) -> None:
+    def __init__(self, audit: AuditLogWriter) -> None:
         self._audit = audit
 
     # --- §8 interface parity (axis-typed) ----------------------------------------------------------

@@ -151,6 +151,50 @@ class InvestmentApiServiceTest(unittest.TestCase):
         )
         self.assertEqual(len(two["contradiction_results"]), 2)
 
+    def test_regulated_activity_policy_blocks_prohibited_ai_action(self) -> None:
+        blocked = self.service.fund_question(
+            "tenant_alpha",
+            ("product_staff",),
+            {"question": "信託報酬を教えて", "ai_action": "advice_finalization"},
+        )
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertTrue(blocked["gate_decision"]["blocked"])
+        self.assertEqual(blocked["risk_decision"]["risk_gate"], "regulated_activity")
+        self.assertIn("prohibited_ai_action:advice_finalization", blocked["warnings"])
+
+    def test_compliance_review_policy_state_vocab_governs_runtime_statuses(self) -> None:
+        rfp = self.service.rfp_response_draft(
+            "tenant_alpha", ("product_staff",), {"question": "運用体制を説明して"}
+        )
+        self.service.review_draft(rfp["artifact_id"], {"action": "submit", "reviewer_id": "r1"})
+        self.service.review_draft(rfp["artifact_id"], {"action": "approve", "reviewer_id": "r1"})
+
+        changes = self.service.compliance_review(
+            rfp["artifact_id"], {"action": "request_changes", "reviewer_id": "c1"}
+        )
+        self.assertEqual(changes["compliance_review_status"], "changes_required")
+        approved = self.service.compliance_review(
+            rfp["artifact_id"], {"action": "compliance_approve", "reviewer_id": "c1"}
+        )
+        self.assertEqual(approved["compliance_review_status"], "approved")
+
+    def test_disclosure_evidence_policy_validation_is_persisted(self) -> None:
+        marketing = self.service.marketing_material_check(
+            "tenant_alpha",
+            ("product_staff",),
+            {"statements": ["信託報酬は目論見書記載の通りです"]},
+        )
+
+        evidence = self.service.disclosure_evidence(marketing["artifact_id"])
+        validation = evidence["policy_validation"]
+        self.assertTrue(validation["passed"])
+        self.assertEqual(
+            validation["required_source_document_types"],
+            ["prospectus", "monthly_report", "compliance_rule"],
+        )
+        self.assertIn("prospectus", validation["source_document_types"])
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

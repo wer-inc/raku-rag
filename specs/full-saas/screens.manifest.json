@@ -1,0 +1,537 @@
+{
+  "manifest_version": 1,
+  "scope": "full-saas-screen-contract-p0",
+  "status_values": ["spec", "done"],
+  "api_status_values": ["existing", "missing"],
+  "screen_count": 30,
+  "current_frontend_routes": ["/", "/sources", "/reviews", "/operations"],
+  "screens": [
+    {
+      "id": "home-dashboard",
+      "category": "workspace",
+      "route": "/home",
+      "title": "Home Dashboard",
+      "absorbs": [],
+      "data": ["work_queue_summary", "sync_health", "review_backlog", "safety_alerts", "usage_snapshot"],
+      "apis": [
+        { "method": "GET", "path": "/v1/whoami", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/dashboard", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/safety-telemetry", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/kpi", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/jobs", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/drafts", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "partial"],
+      "rbac": ["field_user", "reviewer", "ops_owner", "tenant_admin"],
+      "deps": [],
+      "status": "spec"
+    },
+    {
+      "id": "answers",
+      "category": "workspace",
+      "route": "/",
+      "title": "Answers",
+      "absorbs": ["current:/"],
+      "data": ["question", "grounded_answer", "citations", "safety_state", "approval_labels", "feedback"],
+      "apis": [
+        { "method": "POST", "path": "/v1/manufacturing/answer", "status": "existing" },
+        { "method": "POST", "path": "/v1/feedback", "status": "existing" },
+        { "method": "GET", "path": "/v1/assets/:asset_id", "status": "existing" }
+      ],
+      "states": ["idle", "loading", "empty", "error", "ready", "blocked", "insufficient_evidence"],
+      "rbac": ["field_user", "reviewer", "ops_owner", "tenant_admin"],
+      "deps": [],
+      "status": "spec"
+    },
+    {
+      "id": "answer-history",
+      "category": "workspace",
+      "route": "/answers/history",
+      "title": "Answer History",
+      "absorbs": ["current:/"],
+      "data": ["answer_events", "question_history", "citations", "feedback", "audit_references"],
+      "apis": [
+        { "method": "GET", "path": "/v1/manufacturing/audit/export", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/answers/history", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "filtered"],
+      "rbac": ["field_user", "reviewer", "ops_owner", "tenant_admin"],
+      "deps": ["answers"],
+      "status": "spec"
+    },
+    {
+      "id": "source-search",
+      "category": "knowledge-sources",
+      "route": "/sources",
+      "title": "Sources Search",
+      "absorbs": ["current:/sources"],
+      "data": ["trouble_case_candidates", "source_sync_status", "ingestion_run_status", "approval_labels", "freshness_labels"],
+      "apis": [
+        { "method": "POST", "path": "/v1/manufacturing/trouble-cases/search", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/sources/:sourceId/sync-status", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/ingestion-runs/:runId", "status": "existing" }
+      ],
+      "states": ["idle", "loading", "empty", "error", "ready", "not_found"],
+      "rbac": ["field_user", "reviewer", "ops_owner", "tenant_admin"],
+      "deps": [],
+      "status": "spec"
+    },
+    {
+      "id": "source-list",
+      "category": "knowledge-sources",
+      "route": "/sources/list",
+      "title": "Sources List",
+      "absorbs": [],
+      "data": ["datasources", "connector_type", "sync_state", "document_count", "last_sync_at", "owner"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/datasources", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/jobs", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "filtered"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": ["source-search"],
+      "status": "spec"
+    },
+    {
+      "id": "source-detail",
+      "category": "knowledge-sources",
+      "route": "/sources/:sourceId",
+      "title": "Source Detail",
+      "absorbs": [],
+      "data": ["datasource", "sync_status", "ingestion_runs", "connector_settings", "acl_summary", "freshness_policy"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/datasources/:source_id", "status": "existing" },
+        { "method": "PUT", "path": "/v1/admin/datasources/:source_id", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/sources/:source_id/sync-status", "status": "existing" },
+        { "method": "POST", "path": "/v1/manufacturing/sources/:sourceId/sync", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "syncing", "not_found"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": ["source-list"],
+      "status": "spec"
+    },
+    {
+      "id": "add-source",
+      "category": "knowledge-sources",
+      "route": "/sources/new",
+      "title": "Add Source",
+      "absorbs": [],
+      "data": ["connector_selection", "source_metadata", "ingest_request", "validation_result"],
+      "apis": [
+        { "method": "POST", "path": "/v1/ingest", "status": "existing" },
+        { "method": "POST", "path": "/v1/admin/datasources", "status": "missing" },
+        { "method": "POST", "path": "/v1/admin/datasources/:source_id/test-connection", "status": "missing" }
+      ],
+      "states": ["idle", "loading", "empty", "error", "ready", "validating", "submitted"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": ["source-list"],
+      "status": "spec"
+    },
+    {
+      "id": "ingestion-runs",
+      "category": "knowledge-sources",
+      "route": "/ingestion-runs",
+      "title": "Ingestion Runs",
+      "absorbs": ["current:/sources"],
+      "data": ["jobs", "ingestion_runs", "retry_state", "error_summary", "processing_status"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/jobs", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/ingestion-runs/:ingestion_run_id", "status": "existing" },
+        { "method": "POST", "path": "/v1/admin/ingestion-runs/:ingestion_run_id/retry", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/ingestion-runs/:runId", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "running", "failed", "retrying"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": ["source-list"],
+      "status": "spec"
+    },
+    {
+      "id": "document-list",
+      "category": "knowledge-sources",
+      "route": "/documents",
+      "title": "Document List",
+      "absorbs": [],
+      "data": ["documents", "approval_status", "freshness_state", "source", "processing_status", "acl_summary"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/documents", "status": "missing" },
+        { "method": "GET", "path": "/v1/admin/jobs", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "filtered"],
+      "rbac": ["reviewer", "ops_owner", "tenant_admin"],
+      "deps": ["source-list"],
+      "status": "spec"
+    },
+    {
+      "id": "document-detail",
+      "category": "knowledge-sources",
+      "route": "/documents/:documentId",
+      "title": "Document Detail",
+      "absorbs": [],
+      "data": ["document_body", "metadata", "chunks", "approval_status", "citation_usage", "processing_status", "audit_refs"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/documents/:document_id", "status": "missing" },
+        { "method": "GET", "path": "/v1/admin/documents/:document_id/processing-status", "status": "existing" },
+        { "method": "PUT", "path": "/v1/manufacturing/documents/:documentId/metadata", "status": "existing" },
+        { "method": "POST", "path": "/v1/manufacturing/documents/:documentId/approval", "status": "existing" },
+        { "method": "DELETE", "path": "/v1/admin/documents/:document_id", "status": "existing" },
+        { "method": "GET", "path": "/v1/assets/:asset_id", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "not_found", "saving"],
+      "rbac": ["reviewer", "ops_owner", "tenant_admin"],
+      "deps": ["document-list"],
+      "status": "spec"
+    },
+    {
+      "id": "review-queue",
+      "category": "review",
+      "route": "/reviews",
+      "title": "Review Queue",
+      "absorbs": ["current:/reviews"],
+      "data": ["draft_queue", "document_approval_queue", "assignee", "priority", "sla", "review_status"],
+      "apis": [
+        { "method": "GET", "path": "/v1/manufacturing/drafts", "status": "missing" },
+        { "method": "GET", "path": "/v1/admin/documents?approval_status=pending_review", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "filtered"],
+      "rbac": ["reviewer", "tenant_admin"],
+      "deps": [],
+      "status": "spec"
+    },
+    {
+      "id": "review-detail",
+      "category": "review",
+      "route": "/reviews/:artifactId",
+      "title": "Review Detail",
+      "absorbs": ["current:/reviews"],
+      "data": ["draft_artifact", "review_state", "provenance", "citations", "assignment", "decision", "document_approval"],
+      "apis": [
+        { "method": "GET", "path": "/v1/manufacturing/drafts/:artifactId", "status": "existing" },
+        { "method": "POST", "path": "/v1/manufacturing/drafts", "status": "existing" },
+        { "method": "POST", "path": "/v1/manufacturing/drafts/:artifactId/assign", "status": "existing" },
+        { "method": "POST", "path": "/v1/manufacturing/drafts/:artifactId/review", "status": "existing" },
+        { "method": "POST", "path": "/v1/manufacturing/documents/:documentId/approval", "status": "existing" }
+      ],
+      "states": ["idle", "loading", "empty", "error", "ready", "saving", "unauthorized"],
+      "rbac": ["reviewer", "tenant_admin"],
+      "deps": ["review-queue"],
+      "status": "spec"
+    },
+    {
+      "id": "document-approval-queue",
+      "category": "review",
+      "route": "/reviews/documents",
+      "title": "Document Approval Queue",
+      "absorbs": [],
+      "data": ["pending_documents", "approval_status", "effective_date", "access_scope", "source"],
+      "apis": [
+        { "method": "POST", "path": "/v1/manufacturing/documents/:documentId/approval", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/documents?approval_status=pending_review", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "saving"],
+      "rbac": ["reviewer", "tenant_admin"],
+      "deps": ["document-list"],
+      "status": "spec"
+    },
+    {
+      "id": "approval-workflow-settings",
+      "category": "review",
+      "route": "/reviews/settings",
+      "title": "Approval Workflow Settings",
+      "absorbs": [],
+      "data": ["approval_rules", "required_reviewers", "state_transitions", "delegation_policy", "audit_requirements"],
+      "apis": [
+        { "method": "GET", "path": "/v1/manufacturing/governance/status", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/approval-workflow", "status": "missing" },
+        { "method": "PUT", "path": "/v1/manufacturing/approval-workflow", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "saving", "validation_error"],
+      "rbac": ["tenant_admin"],
+      "deps": ["review-queue", "roles-groups-acl"],
+      "status": "spec"
+    },
+    {
+      "id": "operations-dashboard",
+      "category": "operations-compliance",
+      "route": "/operations",
+      "title": "Operations Dashboard",
+      "absorbs": ["current:/operations"],
+      "data": ["knowledge_ops_dashboard", "governance_status", "knowledge_gaps", "obsolete_candidates", "frequent_questions"],
+      "apis": [
+        { "method": "GET", "path": "/v1/manufacturing/dashboard", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/governance/status", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "partial"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": [],
+      "status": "spec"
+    },
+    {
+      "id": "safety-telemetry",
+      "category": "operations-compliance",
+      "route": "/operations/safety",
+      "title": "Safety Telemetry",
+      "absorbs": ["current:/operations"],
+      "data": ["high_risk_query_count", "safety_gate_blocks", "block_breakdown", "axis", "time_range", "correlation_id"],
+      "apis": [
+        { "method": "GET", "path": "/v1/manufacturing/safety-telemetry", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "filtered"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": ["operations-dashboard"],
+      "status": "spec"
+    },
+    {
+      "id": "quality-kpi",
+      "category": "operations-compliance",
+      "route": "/operations/quality",
+      "title": "Quality and KPI",
+      "absorbs": ["current:/operations"],
+      "data": ["kpi_report", "evaluation_runs", "groundedness", "resolution_rate", "low_rating_answers"],
+      "apis": [
+        { "method": "GET", "path": "/v1/manufacturing/kpi", "status": "existing" },
+        { "method": "POST", "path": "/v1/evaluations/runs", "status": "existing" },
+        { "method": "GET", "path": "/v1/evaluations/runs/:run_id", "status": "existing" },
+        { "method": "GET", "path": "/v1/evaluations/runs", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "running", "filtered"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": ["operations-dashboard"],
+      "status": "spec"
+    },
+    {
+      "id": "knowledge-improvement-queue",
+      "category": "operations-compliance",
+      "route": "/operations/improvements",
+      "title": "Knowledge Improvement Queue",
+      "absorbs": [],
+      "data": ["low_rating_feedback", "reason", "question", "answer_id", "status"],
+      "apis": [
+        { "method": "POST", "path": "/v1/feedback", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/feedback", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "filtered"],
+      "rbac": ["reviewer", "ops_owner", "tenant_admin"],
+      "deps": ["quality-kpi"],
+      "status": "spec"
+    },
+    {
+      "id": "audit-log",
+      "category": "operations-compliance",
+      "route": "/audit",
+      "title": "Audit Log",
+      "absorbs": ["current:/operations"],
+      "data": ["audit_events", "actor", "action", "resource", "tenant_scope", "hash_chain", "export_refs"],
+      "apis": [
+        { "method": "GET", "path": "/v1/manufacturing/audit/export", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/audit/events", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "filtered", "exporting"],
+      "rbac": ["ops_owner", "tenant_admin", "auditor"],
+      "deps": ["operations-dashboard"],
+      "status": "spec"
+    },
+    {
+      "id": "compliance-export",
+      "category": "operations-compliance",
+      "route": "/compliance/export",
+      "title": "Compliance Export",
+      "absorbs": ["current:/operations"],
+      "data": ["audit_export", "governance_status", "data_use_policy", "safety_summary", "approval_summary"],
+      "apis": [
+        { "method": "GET", "path": "/v1/manufacturing/audit/export", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/governance/status", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/policy/data-use", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "exporting"],
+      "rbac": ["tenant_admin", "auditor"],
+      "deps": ["audit-log", "safety-telemetry"],
+      "status": "spec"
+    },
+    {
+      "id": "users",
+      "category": "admin-saas",
+      "route": "/admin/users",
+      "title": "Users",
+      "absorbs": [],
+      "data": ["users", "invites", "membership", "status", "last_active_at"],
+      "apis": [
+        { "method": "GET", "path": "/v1/whoami", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/users", "status": "missing" },
+        { "method": "POST", "path": "/v1/admin/users/invites", "status": "missing" },
+        { "method": "PATCH", "path": "/v1/admin/users/:user_id", "status": "missing" },
+        { "method": "DELETE", "path": "/v1/admin/users/:user_id", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "saving", "inviting"],
+      "rbac": ["tenant_admin"],
+      "deps": [],
+      "status": "spec"
+    },
+    {
+      "id": "roles-groups-acl",
+      "category": "admin-saas",
+      "route": "/admin/access",
+      "title": "Roles, Groups, and ACL",
+      "absorbs": [],
+      "data": ["acl_grants", "roles", "groups", "collection_permissions", "document_permissions"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/acl", "status": "existing" },
+        { "method": "PUT", "path": "/v1/admin/acl", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/roles", "status": "missing" },
+        { "method": "GET", "path": "/v1/admin/groups", "status": "missing" },
+        { "method": "PUT", "path": "/v1/admin/groups/:group_id", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "saving", "validation_error"],
+      "rbac": ["tenant_admin"],
+      "deps": ["users"],
+      "status": "spec"
+    },
+    {
+      "id": "provider-policy",
+      "category": "admin-saas",
+      "route": "/admin/provider-policy",
+      "title": "Provider Policy",
+      "absorbs": [],
+      "data": ["provider_policies", "region_constraints", "data_use_constraints", "validation_result", "audit_events"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/provider-policies", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/provider-policies/:provider_policy_id", "status": "existing" },
+        { "method": "PUT", "path": "/v1/admin/provider-policies/:provider_policy_id", "status": "existing" },
+        { "method": "POST", "path": "/v1/admin/provider-policies/:provider_policy_id/validate", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "saving", "validating"],
+      "rbac": ["tenant_admin"],
+      "deps": [],
+      "status": "spec"
+    },
+    {
+      "id": "retrieval-debug",
+      "category": "admin-saas",
+      "route": "/admin/retrieval/debug",
+      "title": "Retrieval Debug",
+      "absorbs": [],
+      "data": ["query", "retrieved_candidates", "scores", "acl_allowed_set", "used_chunks", "exclusion_reasons"],
+      "apis": [
+        { "method": "POST", "path": "/v1/search", "status": "existing" },
+        { "method": "POST", "path": "/v1/manufacturing/answer", "status": "existing" }
+      ],
+      "states": ["idle", "loading", "empty", "error", "ready"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": ["retrieval-settings"],
+      "status": "spec"
+    },
+    {
+      "id": "retrieval-settings",
+      "category": "admin-saas",
+      "route": "/admin/retrieval",
+      "title": "Retrieval Settings",
+      "absorbs": [],
+      "data": ["retrieval_profiles", "query_profiles", "ranking_settings", "chunk_settings", "citation_rules", "benchmark_result"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/retrieval-profiles", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/retrieval-profiles/:retrieval_profile_id", "status": "existing" },
+        { "method": "PUT", "path": "/v1/admin/retrieval-profiles/:retrieval_profile_id", "status": "existing" },
+        { "method": "POST", "path": "/v1/admin/retrieval-profiles/:retrieval_profile_id/benchmark", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/query-profiles", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/query-profiles/:profile_id", "status": "existing" },
+        { "method": "PUT", "path": "/v1/admin/query-profiles/:profile_id", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "saving", "benchmarking"],
+      "rbac": ["tenant_admin"],
+      "deps": ["provider-policy"],
+      "status": "spec"
+    },
+    {
+      "id": "logging-privacy",
+      "category": "admin-saas",
+      "route": "/admin/logging-privacy",
+      "title": "Logging and Privacy",
+      "absorbs": [],
+      "data": ["logging_policies", "retention_rules", "pii_controls", "data_use_policy", "provider_config_audit_events"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/logging-policies", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/logging-policies/:logging_policy_id", "status": "existing" },
+        { "method": "PUT", "path": "/v1/admin/logging-policies/:logging_policy_id", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/provider-config-audit-events", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/policy/data-use", "status": "existing" },
+        { "method": "PUT", "path": "/v1/manufacturing/policy/data-use", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "saving"],
+      "rbac": ["tenant_admin", "auditor"],
+      "deps": ["provider-policy"],
+      "status": "spec"
+    },
+    {
+      "id": "integrations",
+      "category": "admin-saas",
+      "route": "/admin/integrations",
+      "title": "Integrations",
+      "absorbs": [],
+      "data": ["integrations", "connector_status", "oauth_state", "sync_capabilities", "error_summary"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/datasources", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/integrations", "status": "missing" },
+        { "method": "POST", "path": "/v1/admin/integrations", "status": "missing" },
+        { "method": "PUT", "path": "/v1/admin/integrations/:integration_id", "status": "missing" },
+        { "method": "DELETE", "path": "/v1/admin/integrations/:integration_id", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "connecting", "saving"],
+      "rbac": ["tenant_admin"],
+      "deps": ["source-list"],
+      "status": "spec"
+    },
+    {
+      "id": "api-keys-webhooks",
+      "category": "admin-saas",
+      "route": "/admin/api",
+      "title": "API Keys and Webhooks",
+      "absorbs": [],
+      "data": ["api_keys", "webhooks", "secret_last_four", "delivery_attempts", "scopes"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/api-keys", "status": "missing" },
+        { "method": "POST", "path": "/v1/admin/api-keys", "status": "missing" },
+        { "method": "DELETE", "path": "/v1/admin/api-keys/:key_id", "status": "missing" },
+        { "method": "GET", "path": "/v1/admin/webhooks", "status": "missing" },
+        { "method": "PUT", "path": "/v1/admin/webhooks/:webhook_id", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "saving", "secret_revealed_once"],
+      "rbac": ["tenant_admin"],
+      "deps": ["users", "roles-groups-acl"],
+      "status": "spec"
+    },
+    {
+      "id": "usage-billing",
+      "category": "admin-saas",
+      "route": "/admin/billing",
+      "title": "Usage and Billing",
+      "absorbs": [],
+      "data": ["budgets", "usage_summary", "plan", "invoices", "quota_alerts"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/budgets", "status": "existing" },
+        { "method": "PUT", "path": "/v1/admin/budgets", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/usage", "status": "missing" },
+        { "method": "GET", "path": "/v1/admin/billing/plan", "status": "missing" },
+        { "method": "GET", "path": "/v1/admin/billing/invoices", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "saving", "over_quota"],
+      "rbac": ["tenant_admin", "billing_admin"],
+      "deps": [],
+      "status": "spec"
+    },
+    {
+      "id": "support",
+      "category": "admin-saas",
+      "route": "/admin/support",
+      "title": "Support",
+      "absorbs": [],
+      "data": ["incidents", "status_page", "support_tickets", "contact_channels"],
+      "apis": [
+        { "method": "GET", "path": "/v1/admin/support/incidents", "status": "missing" },
+        { "method": "GET", "path": "/v1/admin/support/status", "status": "missing" }
+      ],
+      "states": ["loading", "empty", "error", "ready"],
+      "rbac": ["tenant_admin", "ops_owner"],
+      "deps": [],
+      "status": "spec"
+    }
+  ]
+}

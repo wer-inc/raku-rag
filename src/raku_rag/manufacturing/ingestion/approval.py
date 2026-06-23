@@ -27,14 +27,14 @@ from datetime import date, datetime, timezone
 from typing import Callable
 
 from raku_rag.domain.models import IdentityClaims
-from raku_rag.manufacturing.domain.audit import AuditLogEntry, InMemoryAuditLogWriter
+from raku_rag.manufacturing.domain.audit import AuditLogEntry
 from raku_rag.manufacturing.domain.metadata import (
     ApprovalSource,
     ApprovalStatus,
     ManufacturingDocumentMetadata,
 )
 from raku_rag.manufacturing.ingestion.metadata_enrichment import MetadataEnricher
-from raku_rag.manufacturing.interfaces import ApprovalState
+from raku_rag.manufacturing.interfaces import ApprovalState, AuditLogWriter
 
 GetMeta = Callable[[str, str], ManufacturingDocumentMetadata | None]
 SetMeta = Callable[[str, str, ManufacturingDocumentMetadata], None]
@@ -73,7 +73,7 @@ class ApprovalWorkflow:
         *,
         get_meta: GetMeta,
         set_meta: SetMeta,
-        audit: InMemoryAuditLogWriter,
+        audit: AuditLogWriter,
         enricher: MetadataEnricher,
     ) -> None:
         self._get_meta = get_meta
@@ -220,9 +220,11 @@ class ApprovalWorkflow:
     def _persist(
         self, tenant_id: str, document_id: str, meta: ManufacturingDocumentMetadata
     ) -> None:
-        self._set_meta(tenant_id, document_id, meta)
         # Re-decorate the Document + indexed Chunks so search/answer read the new approval state.
         self._enricher.attach(tenant_id, document_id, meta)
+        # Then persist the authoritative metadata record. In production this writes a jsonb-safe
+        # mapping back through the reused DocumentRegistry so approval state survives restart.
+        self._set_meta(tenant_id, document_id, meta)
 
     def _to_state(self, meta: ManufacturingDocumentMetadata) -> ApprovalState:
         return ApprovalState(

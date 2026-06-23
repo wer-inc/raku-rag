@@ -662,6 +662,12 @@ const OPENAPI_DOC = {
           version: { type: "number" },
           retrieval_score: { type: "number" },
           chunk_id: { type: "string" },
+          approval_status: {
+            type: "string",
+            enum: ["draft", "pending_review", "approved", "obsolete"],
+          },
+          effective_date: { type: "string", nullable: true },
+          approval_source: { type: "string", nullable: true },
         },
       },
       UsedChunk: {
@@ -725,9 +731,142 @@ const OPENAPI_DOC = {
           },
           text: { type: "string", nullable: true },
           confidence: { type: "number", nullable: true },
+          answer_template_version: { type: "string" },
+          display_sections: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["id", "title"],
+              properties: {
+                id: { type: "string" },
+                title: { type: "string" },
+                text: { type: "string" },
+                fields: { type: "object" },
+                items: { type: "array", items: { type: "object" } },
+              },
+            },
+          },
           citations: { type: "array", items: { $ref: "#/components/schemas/Citation" } },
           used_chunks: { type: "array", items: { $ref: "#/components/schemas/UsedChunk" } },
           correlation_id: { type: "string" },
+        },
+      },
+      ManufacturingAnswerRequest: {
+        type: "object",
+        required: ["query"],
+        properties: {
+          query: { type: "string" },
+          collection_id: { type: "string" },
+          intent_hint: { type: "string" },
+          manufacturing_filters: { type: "object" },
+        },
+      },
+      ManufacturingSafetyExtension: {
+        type: "object",
+        required: ["high_risk", "high_risk_reason_codes"],
+        properties: {
+          high_risk: { type: "boolean" },
+          high_risk_reason_codes: { type: "array", items: { type: "string" } },
+          safety_block_reason: { type: "string", nullable: true },
+          obsolete_warning: { type: "boolean" },
+          requires_onsite_confirmation: { type: "boolean" },
+          notice: { type: "string", nullable: true },
+        },
+      },
+      ManufacturingAnswerResponse: {
+        type: "object",
+        required: ["status", "citations", "used_chunks", "manufacturing"],
+        properties: {
+          status: {
+            type: "string",
+            enum: ["ok", "insufficient_evidence", "budget_exceeded", "temporarily_unavailable"],
+          },
+          text: { type: "string", nullable: true },
+          confidence: { type: "number", nullable: true },
+          answer_template_version: { type: "string" },
+          display_sections: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["id", "title"],
+              properties: {
+                id: { type: "string" },
+                title: { type: "string" },
+                text: { type: "string" },
+                fields: { type: "object" },
+                items: { type: "array", items: { type: "object" } },
+              },
+            },
+          },
+          citations: { type: "array", items: { $ref: "#/components/schemas/Citation" } },
+          used_chunks: { type: "array", items: { $ref: "#/components/schemas/UsedChunk" } },
+          correlation_id: { type: "string" },
+          manufacturing: { $ref: "#/components/schemas/ManufacturingSafetyExtension" },
+        },
+      },
+      ManufacturingDataUsePolicy: {
+        type: "object",
+        required: [
+          "tenant_id",
+          "no_train_default",
+          "training_opt_in",
+          "provider_no_train_required",
+          "no_train_fallback",
+          "retention_customer",
+          "retention_audit",
+          "export_enabled",
+          "policy_version",
+        ],
+        properties: {
+          tenant_id: { type: "string" },
+          no_train_default: { type: "boolean" },
+          training_opt_in: { type: "boolean" },
+          opt_in_contract_ref: { type: "string", nullable: true },
+          provider_no_train_required: { type: "boolean" },
+          no_train_fallback: { type: "string", enum: ["block"] },
+          retention_customer: { type: "number" },
+          retention_audit: { type: "number" },
+          export_enabled: { type: "boolean" },
+          policy_version: { type: "string" },
+          updated_by: { type: "string", nullable: true },
+          updated_at: { type: "string", nullable: true },
+        },
+      },
+      ManufacturingDataUsePolicyPatch: {
+        type: "object",
+        properties: {
+          no_train_default: { type: "boolean" },
+          training_opt_in: { type: "boolean" },
+          opt_in_contract_ref: { type: "string" },
+          provider_no_train_required: { type: "boolean" },
+          no_train_fallback: { type: "string", enum: ["block"] },
+          retention_customer: { type: "number" },
+          retention_audit: { type: "number" },
+          export_enabled: { type: "boolean" },
+        },
+      },
+      ManufacturingGovernanceStatus: {
+        type: "object",
+        required: ["tenant_id", "policy_version", "no_train", "audit_coverage", "safety_gate"],
+        properties: {
+          tenant_id: { type: "string" },
+          policy_version: { type: "string" },
+          no_train: { type: "object" },
+          audit_coverage: { type: "object" },
+          safety_gate: { type: "object" },
+          draft_review: { type: "object" },
+          groundedness: { type: "object" },
+          retention: { type: "object" },
+          ismap_readiness_memo: { type: "string" },
+        },
+      },
+      ManufacturingAuditExportResponse: {
+        type: "object",
+        required: ["format"],
+        properties: {
+          format: { type: "string", enum: ["dict", "jsonl", "csv"] },
+          records: { type: "array", items: { type: "object" } },
+          content: { type: "string" },
         },
       },
       BoundingBox: {
@@ -750,6 +889,11 @@ const OPENAPI_DOC = {
           page_number: { type: "number" },
           bbox: { $ref: "#/components/schemas/BoundingBox" },
           crop_uri: { type: "string" },
+          sensitive_detected: { type: "boolean" },
+          sensitive_detection_labels: { type: "array", items: { type: "string" } },
+          visual_region_redaction_required: { type: "boolean" },
+          visual_region_redaction_status: { type: "string" },
+          visual_redaction_policy_ref: { type: "string" },
         },
       },
       AssetCrop: {
@@ -762,6 +906,10 @@ const OPENAPI_DOC = {
           crop_uri: { type: "string" },
           bbox: { $ref: "#/components/schemas/BoundingBox" },
           redaction_policy_ref: { type: "string" },
+          sensitive_detected: { type: "boolean" },
+          sensitive_detection_labels: { type: "array", items: { type: "string" } },
+          visual_region_redaction_required: { type: "boolean" },
+          visual_region_redaction_status: { type: "string" },
         },
       },
       VisualAssetResponse: {
@@ -826,6 +974,7 @@ const OPENAPI_DOC = {
         required: ["eval_set_id", "item_count", "status"],
         properties: {
           eval_set_id: { type: "string" },
+          dataset_version: { type: "string" },
           item_count: { type: "number" },
           status: { type: "string", enum: ["created"] },
         },
@@ -860,6 +1009,7 @@ const OPENAPI_DOC = {
           baseline_comparison: { type: "object" },
           security_checks: { type: "object" },
           gate_result: { type: "string", enum: ["passed", "blocked"] },
+          version_registry: { type: "object" },
         },
       },
       FeedbackRequest: {
@@ -1255,6 +1405,122 @@ const OPENAPI_DOC = {
               "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
             },
           },
+        },
+      },
+    },
+    "/manufacturing/answer": {
+      post: {
+        operationId: "postManufacturingAnswer",
+        security: [{ bearerAuth: [], userToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ManufacturingAnswerRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Manufacturing safety-gated grounded answer",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ManufacturingAnswerResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "502": { description: "Answer service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/manufacturing/policy/data-use": {
+      get: {
+        operationId: "getManufacturingDataUsePolicy",
+        security: [{ bearerAuth: [], userToken: [] }],
+        responses: {
+          "200": {
+            description: "Tenant manufacturing DataUsePolicy",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ManufacturingDataUsePolicy" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "502": { description: "Answer service unavailable", content: { "application/json": {} } },
+        },
+      },
+      put: {
+        operationId: "putManufacturingDataUsePolicy",
+        security: [{ bearerAuth: [], userToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ManufacturingDataUsePolicyPatch" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Updated tenant manufacturing DataUsePolicy",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ManufacturingDataUsePolicy" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "502": { description: "Answer service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/manufacturing/governance/status": {
+      get: {
+        operationId: "getManufacturingGovernanceStatus",
+        security: [{ bearerAuth: [], userToken: [] }],
+        responses: {
+          "200": {
+            description: "Manufacturing governance readiness status",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ManufacturingGovernanceStatus" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "502": { description: "Answer service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/manufacturing/audit/export": {
+      get: {
+        operationId: "getManufacturingAuditExport",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [{ name: "fmt", in: "query", required: false, schema: { type: "string", enum: ["dict", "jsonl", "csv"] } }],
+        responses: {
+          "200": {
+            description: "Tenant-scoped manufacturing audit export",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ManufacturingAuditExportResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "502": { description: "Answer service unavailable", content: { "application/json": {} } },
         },
       },
     },

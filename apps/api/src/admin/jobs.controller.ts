@@ -22,6 +22,7 @@ import type {
   ReindexResponse,
   SourceSyncStatusResponse,
 } from "@raku-rag/shared";
+import { assertAdminMutationAllowed } from "../auth/roles";
 
 @Controller({ path: "admin", version: "1" })
 export class AdminJobsController {
@@ -55,6 +56,7 @@ export class AdminJobsController {
   }
 
   private async postToCore<T>(req: Request, path: string, body?: unknown): Promise<T> {
+    assertAdminMutationAllowed(req);
     const headers: Record<string, string> = this.principalHeaders(req);
     if (body !== undefined) {
       headers["content-type"] = "application/json";
@@ -76,6 +78,7 @@ export class AdminJobsController {
   }
 
   private async deleteFromCore<T>(req: Request, path: string): Promise<T> {
+    assertAdminMutationAllowed(req);
     const upstream = await fetch(`${this.baseUrl()}${path}`, {
       method: "DELETE",
       headers: this.principalHeaders(req),

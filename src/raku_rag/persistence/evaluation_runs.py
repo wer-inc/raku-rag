@@ -29,6 +29,7 @@ PERSISTED_FIELDS = (
     "gate_result",
     "probe_results",
     "probes_executed",
+    "version_registry",
     "created_at",
 )
 
@@ -48,6 +49,7 @@ def evaluation_run_to_row(run: EvaluationRun) -> dict:
         "gate_result": run.gate_result,
         "probe_results": [dict(result) for result in run.probe_results],
         "probes_executed": bool(run.probes_executed),
+        "version_registry": dict(run.version_registry),
         "created_at": run.created_at,
     }
 
@@ -67,6 +69,7 @@ def row_to_evaluation_run(row: dict) -> EvaluationRun:
         examples=(),
         probe_results=tuple(dict(result) for result in (row.get("probe_results") or ())),
         probes_executed=bool(row.get("probes_executed", False)),
+        version_registry=dict(row.get("version_registry") or {}),
         created_at=row.get("created_at") or "",
     )
 
@@ -121,12 +124,13 @@ class PostgresEvaluationRunRepository:
             cur.execute(
                 "INSERT INTO evaluation_runs (evaluation_run_id, tenant_id, collection_id, "
                 "eval_set_id, status, baseline, metrics, security_checks, baseline_comparison, "
-                "gate_result, probe_results, probes_executed) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "gate_result, probe_results, probes_executed, version_registry) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                 "ON CONFLICT (evaluation_run_id) DO UPDATE SET "
                 "metrics=EXCLUDED.metrics, security_checks=EXCLUDED.security_checks, "
                 "baseline_comparison=EXCLUDED.baseline_comparison, gate_result=EXCLUDED.gate_result, "
                 "probe_results=EXCLUDED.probe_results, probes_executed=EXCLUDED.probes_executed, "
+                "version_registry=EXCLUDED.version_registry, "
                 "status=EXCLUDED.status, baseline=EXCLUDED.baseline, eval_set_id=EXCLUDED.eval_set_id, "
                 "updated_at=now()",
                 (
@@ -142,6 +146,7 @@ class PostgresEvaluationRunRepository:
                     row["gate_result"],
                     Json(row["probe_results"]),
                     row["probes_executed"],
+                    Json(row["version_registry"]),
                 ),
             )
         return run.run_id
@@ -151,14 +156,14 @@ class PostgresEvaluationRunRepository:
             cur.execute(
                 "SELECT evaluation_run_id, tenant_id, collection_id, eval_set_id, status, baseline, "
                 "metrics, security_checks, baseline_comparison, gate_result, probe_results, "
-                "probes_executed, created_at FROM evaluation_runs " + where_sql,
+                "probes_executed, version_registry, created_at FROM evaluation_runs " + where_sql,
                 params,
             )
             return cur.fetchall()
 
     @staticmethod
     def _row(record) -> dict:
-        created = record[12]
+        created = record[13]
         return {
             "evaluation_run_id": record[0],
             "tenant_id": record[1],
@@ -172,6 +177,7 @@ class PostgresEvaluationRunRepository:
             "gate_result": record[9],
             "probe_results": record[10] or [],
             "probes_executed": record[11],
+            "version_registry": record[12] or {},
             "created_at": created.isoformat() if hasattr(created, "isoformat") else str(created),
         }
 

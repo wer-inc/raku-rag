@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import uuid
 from typing import Sequence
 
 try:
@@ -31,6 +32,14 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by the stdlib-only T
     Json = None  # type: ignore[assignment]
 
 from raku_rag.core.security.acl import AclPolicy
+from raku_rag.core.hybrid_retrieval import (
+    HOT_IDENTIFIER_FIELDS,
+    lexical_match_score,
+    lexical_query_terms,
+    METADATA_EXACT_MATCH_SCORE,
+    NESTED_METADATA_KEYS,
+    query_identifiers,
+)
 from raku_rag.domain.models import (
     ACLGrant,
     Chunk,
@@ -42,6 +51,7 @@ from raku_rag.domain.models import (
     SubjectType,
 )
 from raku_rag.interfaces.base import Vector, VectorStore, VisibilityPredicate
+from raku_rag.observability.audit import AuditEvent, sanitize_audit_event
 from raku_rag.workers.ingestion import (
     DocumentProcessingState,
     IngestionJobMessage,
@@ -152,7 +162,9 @@ def _load_offset_mapping(value):
 
 
 def _iso(ts) -> str:
-    return ts.isoformat() if ts is not None else ""
+    if ts is None:
+        return ""
+    return ts if isinstance(ts, str) else ts.isoformat()
 
 
 def _row_to_chunk(r) -> Chunk:
@@ -176,6 +188,22 @@ def _row_to_chunk(r) -> Chunk:
 def _stable_id(prefix: str, *parts: str) -> str:
     digest = hashlib.sha256(":".join(parts).encode("utf-8")).hexdigest()[:20]
     return f"{prefix}_{digest}"
+
+
+def _metadata_identifier_conditions() -> tuple[str, int]:
+    conditions: list[str] = []
+    for alias in ("c", "d"):
+        for field in HOT_IDENTIFIER_FIELDS:
+            expressions = [f"{alias}.metadata->>'{field}'"]
+            expressions.extend(
+                f"{alias}.metadata->'{nested}'->>'{field}'" for nested in NESTED_METADATA_KEYS
+            )
+            for expr in expressions:
+                conditions.append(f"lower({expr}) = ANY(%s::text[])")
+                conditions.append(
+                    f"regexp_replace(lower({expr}), '[^a-z0-9]+', '', 'g') = ANY(%s::text[])"
+                )
+    return " OR ".join(conditions), len(conditions)
 
 
 def _row_to_ingestion_run(row) -> IngestionRun:
@@ -221,6 +249,65 @@ def _row_to_processing_state(row) -> DocumentProcessingState:
     )
 
 
+def _audit_metadata_str(metadata: dict, key: str) -> str:
+    value = metadata.get(key, "")
+    return value if isinstance(value, str) else ""
+
+
+def _audit_metadata_bool(metadata: dict, key: str) -> bool:
+    value = metadata.get(key, False)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in {"1", "true", "yes"}
+    return False
+
+
+def _audit_metadata_tuple(metadata: dict, key: str) -> tuple[str, ...]:
+    value = metadata.get(key, ())
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item) for item in value)
+    return ()
+
+
+def _row_to_audit_event(row) -> AuditEvent:
+    metadata = {
+        "log_id": row[0],
+        "request_id": row[3] or "",
+        "trace_id": row[4] or "",
+        "actor_role": row[7] or "",
+        "actor_group": row[8] or "",
+        "app_id": row[9] or "",
+        "api_client_id": row[10] or "",
+        "actor_type": row[11] or "",
+        "policy_version": row[17] or "",
+        "approval_status_at_use": row[18] or "",
+        "citation_ids": tuple(row[19] or ()),
+        "retrieval_profile_id": row[22] or "",
+        "provider_policy_id": row[23] or "",
+        "pii_redaction_applied": bool(row[24]),
+        "secret_redaction_applied": bool(row[25]),
+        "logging_policy_id": row[26] or "",
+        "raw_content_stored": bool(row[27]),
+    }
+    return AuditEvent(
+        tenant_id=row[1],
+        created_at=_iso(row[2]),
+        correlation_id=row[5] or "",
+        actor_id=row[6] or "",
+        action=row[12],
+        resource_type=row[13] or "",
+        resource_id=row[14] or "",
+        decision=row[15],
+        reason=row[16] or "",
+        document_ids=tuple(row[20] or ()),
+        chunk_ids=tuple(row[21] or ()),
+        metadata=metadata,
+    )
+
+
 def _row_to_source_sync_state(row) -> SourceSyncState:
     return SourceSyncState(
         source_id=row[0],
@@ -243,14 +330,21 @@ def _row_to_source_sync_state(row) -> SourceSyncState:
 class PostgresVectorStore(VectorStore):
     """pgvector-backed ``VectorStore``. Pre-filter order identical to the in-memory store."""
 
-    def __init__(self, conn: psycopg.Connection) -> None:
+    def __init__(self, conn: psycopg.Connection, *, embedding_dim: int = 256) -> None:
         self._conn = conn
+        self._embedding_dim = embedding_dim
         self.last_prefiltered_count: int = 0
 
     def upsert(self, chunks: Sequence[tuple[Chunk, Vector]]) -> None:
         items = list(chunks)
         if not items:
             return
+        for _chunk, vec in items:
+            if len(vec) != self._embedding_dim:
+                raise ValueError(
+                    "embedding dimension mismatch for chunks table: "
+                    f"expected {self._embedding_dim}, got {len(vec)}"
+                )
         first = items[0][0]  # ingestion upserts one document's chunks at a time
         _use_tenant(self._conn, first.tenant_id)
         _ensure_doc_parents(self._conn, first.tenant_id, first.collection_id, first.document_id)
@@ -281,6 +375,26 @@ class PostgresVectorStore(VectorStore):
                         chunk.tombstone,
                     ),
                 )
+
+    def iter_items(self) -> tuple[tuple[Chunk, Vector], ...]:
+        """Bulk (chunk, vector) scan for the connection's current RLS tenant context.
+
+        Mirrors the in-memory ``iter_items`` seam used by the manufacturing metadata propagation
+        (``propagate_to_chunks``) and the ACL-denial survey. RLS scopes the rows to the connection's
+        current ``app.current_tenant_id`` (set with ``is_local=false`` by the preceding tenant-scoped
+        operation in these flows, so it persists for the session); each caller re-filters by
+        tenant/document. The embedding is NOT re-materialized — both callers ignore the vector — so an
+        empty placeholder vector is returned to honor the ``(Chunk, Vector)`` shape.
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "
+                "token_count, position, heading_path, offset_mapping, metadata, "
+                "embedding_model_version, tombstone FROM chunks ORDER BY chunk_id"
+            )
+            rows = cur.fetchall()
+        empty: Vector = []
+        return tuple((_row_to_chunk(r), empty) for r in rows)
 
     def search(
         self, tenant_id: str, query_vec: Vector, *, visible: VisibilityPredicate, top_k: int
@@ -313,6 +427,91 @@ class PostgresVectorStore(VectorStore):
                 continue
             candidates.append(ScoredChunk(chunk=chunk, retrieval_score=1.0 - float(r[13])))
         self.last_prefiltered_count = len(candidates)
+        return candidates[:top_k]
+
+    def metadata_exact_matches(
+        self,
+        tenant_id: str,
+        query: str,
+        *,
+        visible: VisibilityPredicate,
+        top_k: int,
+    ) -> list[ScoredChunk]:
+        """Metadata identifier leg for the deployed hybrid retrieval path.
+
+        ACL remains the same Python ``visible`` predicate used by vector search. The SQL leg only
+        narrows to tenant/RLS-live chunks whose chunk or document metadata names an exact business
+        identifier from the query.
+        """
+        identifiers = query_identifiers(query)
+        if not identifiers or top_k <= 0:
+            return []
+        conditions, parameter_count = _metadata_identifier_conditions()
+        _use_tenant(self._conn, tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT c.chunk_id, c.tenant_id, c.document_id, c.collection_id, c.modality, "
+                "c.text, c.token_count, c.position, c.heading_path, c.offset_mapping, "
+                "c.metadata, c.embedding_model_version, c.tombstone "
+                "FROM chunks c JOIN documents d "
+                "ON d.document_id = c.document_id AND d.tenant_id = c.tenant_id "
+                "WHERE c.tenant_id = %s AND c.tombstone = false AND d.tombstone = false "
+                f"AND ({conditions}) ORDER BY c.position, c.chunk_id",
+                (tenant_id, *[list(identifiers) for _ in range(parameter_count)]),
+            )
+            rows = cur.fetchall()
+        candidates: list[ScoredChunk] = []
+        for row in rows:
+            chunk = _row_to_chunk(row)
+            if not visible(chunk):
+                continue
+            candidates.append(ScoredChunk(chunk=chunk, retrieval_score=METADATA_EXACT_MATCH_SCORE))
+        return candidates[:top_k]
+
+    def lexical_matches(
+        self,
+        tenant_id: str,
+        query: str,
+        *,
+        visible: VisibilityPredicate,
+        top_k: int,
+    ) -> list[ScoredChunk]:
+        """Lexical keyword leg for deployed hybrid retrieval.
+
+        The SQL predicate narrows to tenant/RLS-live chunks containing at least one query content
+        term. The shared Python scorer then applies coverage/density/recency scoring so Tier A and
+        Postgres stay behaviorally aligned.
+        """
+        terms = lexical_query_terms(query)
+        if not terms or top_k <= 0:
+            return []
+        tsquery = " | ".join(f"{term}:*" for term in terms)
+        _use_tenant(self._conn, tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT c.chunk_id, c.tenant_id, c.document_id, c.collection_id, c.modality, "
+                "c.text, c.token_count, c.position, c.heading_path, c.offset_mapping, "
+                "c.metadata, c.embedding_model_version, c.tombstone, d.metadata "
+                "FROM chunks c JOIN documents d "
+                "ON d.document_id = c.document_id AND d.tenant_id = c.tenant_id "
+                "WHERE c.tenant_id = %s AND c.tombstone = false AND d.tombstone = false "
+                "AND to_tsvector('simple', c.text) @@ to_tsquery('simple', %s) "
+                "ORDER BY c.position, c.chunk_id",
+                (tenant_id, tsquery),
+            )
+            rows = cur.fetchall()
+        candidates: list[ScoredChunk] = []
+        for row in rows:
+            chunk = _row_to_chunk(row[:13])
+            if not visible(chunk):
+                continue
+            document_metadata = _load_jsonish(row[13]) or {}
+            combined_metadata = {**document_metadata, **chunk.metadata}
+            score = lexical_match_score(query, chunk.text, combined_metadata)
+            if score <= 0:
+                continue
+            candidates.append(ScoredChunk(chunk=chunk, retrieval_score=score))
+        candidates.sort(key=lambda s: (-s.retrieval_score, s.chunk.position, s.chunk.chunk_id))
         return candidates[:top_k]
 
     def set_tombstone(self, tenant_id: str, document_id: str, value: bool) -> int:
@@ -354,6 +553,94 @@ class PostgresVectorStore(VectorStore):
             )
             rows = cur.fetchall()
         return tuple(_row_to_chunk(row) for row in rows)
+
+
+class PostgresAuditSink:
+    """Postgres-backed base RAG audit sink.
+
+    The answer path records reference-only events. This adapter persists those events to the
+    RLS-protected ``audit_logs`` table so production audits survive process restarts while keeping
+    raw prompts, answers, and retrieved context out of the durable audit store.
+    """
+
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    def record(self, event: AuditEvent) -> AuditEvent:
+        redacted = sanitize_audit_event(event)
+        metadata = redacted.metadata
+        _use_tenant(self._conn, redacted.tenant_id)
+        log_id = _audit_metadata_str(metadata, "log_id") or f"aud_{uuid.uuid4().hex}"
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tenants (tenant_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                (redacted.tenant_id,),
+            )
+            cur.execute(
+                "INSERT INTO audit_logs (log_id, tenant_id, timestamp, request_id, trace_id, "
+                "correlation_id, actor_id, actor_role, actor_group, app_id, api_client_id, "
+                "actor_type, action, resource_type, resource_id, decision, reason, "
+                "policy_version, approval_status_at_use, citation_ids, document_ids_used, "
+                "chunk_ids_used, retrieval_profile_id, provider_policy_id, pii_redaction_applied, "
+                "secret_redaction_applied, logging_policy_id, raw_content_stored) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    log_id,
+                    redacted.tenant_id,
+                    redacted.created_at,
+                    _audit_metadata_str(metadata, "request_id"),
+                    _audit_metadata_str(metadata, "trace_id"),
+                    redacted.correlation_id,
+                    redacted.actor_id,
+                    _audit_metadata_str(metadata, "actor_role"),
+                    _audit_metadata_str(metadata, "actor_group"),
+                    _audit_metadata_str(metadata, "app_id"),
+                    _audit_metadata_str(metadata, "api_client_id"),
+                    _audit_metadata_str(metadata, "actor_type") or "user",
+                    redacted.action,
+                    redacted.resource_type or "unknown",
+                    redacted.resource_id,
+                    redacted.decision,
+                    redacted.reason,
+                    _audit_metadata_str(metadata, "policy_version"),
+                    _audit_metadata_str(metadata, "approval_status_at_use"),
+                    list(_audit_metadata_tuple(metadata, "citation_ids")),
+                    list(redacted.document_ids),
+                    list(redacted.chunk_ids),
+                    _audit_metadata_str(metadata, "retrieval_profile_id"),
+                    _audit_metadata_str(metadata, "provider_policy_id"),
+                    _audit_metadata_bool(metadata, "pii_redaction_applied"),
+                    _audit_metadata_bool(metadata, "secret_redaction_applied"),
+                    _audit_metadata_str(metadata, "logging_policy_id"),
+                    _audit_metadata_bool(metadata, "raw_content_stored"),
+                ),
+            )
+        return redacted
+
+    def events(
+        self, tenant_id: str | None = None, *, correlation_id: str = ""
+    ) -> tuple[AuditEvent, ...]:
+        if tenant_id is None:
+            raise ValueError("tenant_id is required for Postgres audit reads")
+        _use_tenant(self._conn, tenant_id)
+        where = ""
+        params: tuple[str, ...] = ()
+        if correlation_id:
+            where = "WHERE correlation_id = %s"
+            params = (correlation_id,)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT log_id, tenant_id, timestamp, request_id, trace_id, correlation_id, "
+                "actor_id, actor_role, actor_group, app_id, api_client_id, actor_type, action, "
+                "resource_type, resource_id, decision, reason, policy_version, "
+                "approval_status_at_use, citation_ids, document_ids_used, chunk_ids_used, "
+                "retrieval_profile_id, provider_policy_id, pii_redaction_applied, "
+                "secret_redaction_applied, logging_policy_id, raw_content_stored "
+                f"FROM audit_logs {where} ORDER BY timestamp ASC, log_id ASC",
+                params,
+            )
+            rows = cur.fetchall()
+        return tuple(_row_to_audit_event(row) for row in rows)
 
 
 class PostgresDocumentRegistry:
@@ -487,9 +774,6 @@ class PostgresIngestionRunStore:
     ) -> tuple[IngestionRun, bool]:
         _use_tenant(self._conn, message.tenant_id)
         _ensure_collection_parent(self._conn, message.tenant_id, message.collection_id)
-        existing = self.get_by_idempotency_key(message.tenant_id, message.idempotency_key)
-        if existing is not None:
-            return existing, False
 
         run_id = _stable_id("ing", message.tenant_id, message.idempotency_key)
         state_id = _stable_id("dps", message.tenant_id, message.document_id)
@@ -497,7 +781,9 @@ class PostgresIngestionRunStore:
             cur.execute(
                 "INSERT INTO ingestion_runs (ingestion_run_id, tenant_id, collection_id, source_id, "
                 "document_id, idempotency_key, document_ref, content_type, type, trigger, status) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued')",
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued') "
+                "ON CONFLICT (tenant_id, idempotency_key) DO NOTHING "
+                "RETURNING ingestion_run_id",
                 (
                     run_id,
                     message.tenant_id,
@@ -511,6 +797,11 @@ class PostgresIngestionRunStore:
                     trigger,
                 ),
             )
+            inserted = cur.fetchone()
+            if inserted is None:
+                existing = self.get_by_idempotency_key(message.tenant_id, message.idempotency_key)
+                assert existing is not None
+                return existing, False
             cur.execute(
                 "INSERT INTO document_processing_states (processing_state_id, tenant_id, "
                 "collection_id, document_id, source_id, ingestion_run_id, status) "

@@ -1,6 +1,6 @@
 """T049 — PoC KPI report: compute + export the FR-MFG-028 KPI set (SC-MFG-012; data-model §I, §E).
 
-Computes the full FR-MFG-028 KPI set from the SHARED ``InMemoryAuditLogWriter`` (single source of
+Computes the full FR-MFG-028 KPI set from the SHARED ``AuditLogWriter`` (single source of
 truth) + the in-memory approval metadata, reusing the 001 evaluation/metrics primitives (rates over
 the audited answer outcomes; percentiles via stdlib ``statistics``). The safety counters reuse the
 T048 ``SafetyTelemetry`` aggregator so ``high_risk_query_count`` / ``safety_gate_block_count`` are the
@@ -29,8 +29,8 @@ from raku_rag.eval.models import EvaluationRun
 # Shared audit-derivation primitives (action labels + entry filters) — single source of truth with
 # the writers (api/audit.py) and the dashboard (api/dashboard.py).
 from raku_rag.manufacturing.api import audit as audit_derive
-from raku_rag.manufacturing.domain.audit import InMemoryAuditLogWriter
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus
+from raku_rag.manufacturing.interfaces import AuditLogWriter
 from raku_rag.manufacturing.telemetry.safety_metrics import SafetyTelemetry
 
 # The FR-MFG-028 KPI key set (data-model §I). Every key MUST be computable + exportable.
@@ -96,7 +96,7 @@ class PocKpiReport:
     def compute(
         cls,
         *,
-        audit: InMemoryAuditLogWriter,
+        audit: AuditLogWriter,
         telemetry: SafetyTelemetry | None,
         principal: IdentityClaims,
         iter_meta,

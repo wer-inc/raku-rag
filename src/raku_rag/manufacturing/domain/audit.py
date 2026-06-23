@@ -247,17 +247,7 @@ class InMemoryAuditLogWriter:
         chain.append(safe)
 
     def _redact_entry(self, entry: AuditLogEntry) -> AuditLogEntry:
-        red = self._redactor.redact
-        text_patch = {
-            name: red(value)
-            for name in _REDACT_TEXT_FIELDS
-            if isinstance((value := getattr(entry, name)), str)
-        }
-        safe_metadata = {
-            k: (red(v) if isinstance(v, str) else v) for k, v in entry.client_metadata.items()
-        }
-        # ``replace`` yields a copy so the caller's object is never mutated in place.
-        return replace(entry, client_metadata=safe_metadata, **text_patch)
+        return sanitize_audit_log_entry(entry, self._redactor)
 
     # --- read (tenant-scoped; single source of truth for telemetry/KPI) ----------------------
     def read_all(self, principal: IdentityClaims) -> tuple[AuditLogEntry, ...]:
@@ -294,3 +284,20 @@ class InMemoryAuditLogWriter:
                 return False
             prev = entry.entry_hash
         return True
+
+
+def sanitize_audit_log_entry(
+    entry: AuditLogEntry, redactor: Redactor | None = None
+) -> AuditLogEntry:
+    """Return a redacted copy suitable for durable audit storage."""
+    redactor = redactor or Redactor()
+    red = redactor.redact
+    text_patch = {
+        name: red(value)
+        for name in _REDACT_TEXT_FIELDS
+        if isinstance((value := getattr(entry, name)), str)
+    }
+    safe_metadata = {
+        k: (red(v) if isinstance(v, str) else v) for k, v in entry.client_metadata.items()
+    }
+    return replace(entry, client_metadata=safe_metadata, **text_patch)

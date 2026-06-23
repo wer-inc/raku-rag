@@ -1,7 +1,7 @@
 """T020 — record the SafetyGate / high-risk decision into the Phase-2 audit log (FR-MFG-021).
 
 Builds a reference-IDs-only ``AuditLogEntry`` from an answer-path decision and hands it to the reused
-``InMemoryAuditLogWriter`` (which redacts free text and enforces 001 tenancy). Captured per
+``AuditLogWriter`` (which redacts free text and enforces 001 tenancy). Captured per
 spec §safety/audit + data-model §H:
   - ``high_risk_classification_result`` (the high-risk decision),
   - ``safety_block_reason`` (approved_citation_missing / insufficient_evidence / other_block),
@@ -19,7 +19,6 @@ from datetime import datetime, timezone
 from raku_rag.domain.models import IdentityClaims
 from raku_rag.manufacturing.domain.audit import (
     AuditLogEntry,
-    InMemoryAuditLogWriter,
     stamp_org_context,
 )
 from raku_rag.manufacturing.domain.safety import (
@@ -27,6 +26,7 @@ from raku_rag.manufacturing.domain.safety import (
     SafetyBlockReason,
     SafetyDecision,
 )
+from raku_rag.manufacturing.interfaces import AuditLogWriter
 
 
 def _now() -> str:
@@ -34,7 +34,7 @@ def _now() -> str:
 
 
 def record_answer_decision(
-    writer: InMemoryAuditLogWriter,
+    writer: AuditLogWriter,
     *,
     tenant_id: str,
     actor_id: str,
@@ -137,7 +137,7 @@ def low_rating_feedback_entries(entries):
 
 
 def record_answer_feedback(
-    writer: InMemoryAuditLogWriter,
+    writer: AuditLogWriter,
     *,
     tenant_id: str,
     actor_id: str,

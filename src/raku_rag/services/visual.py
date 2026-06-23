@@ -18,6 +18,7 @@ def visual_chunks_from_ingestion(result: VisualIngestionResult) -> tuple[Chunk, 
     chunks: list[Chunk] = []
     for idx, region in enumerate(result.regions):
         text = visual_chunk_text(region)
+        redaction_metadata = _visual_redaction_metadata(region)
         chunks.append(
             Chunk(
                 tenant_id=region.tenant_id,
@@ -47,7 +48,31 @@ def visual_chunks_from_ingestion(result: VisualIngestionResult) -> tuple[Chunk, 
                     "ocr_text": region.ocr_text,
                     "generated_caption_text": region.generated_caption_text,
                     "primary_evidence_text": region.ocr_text,
+                    **redaction_metadata,
                 },
             )
         )
     return tuple(chunks)
+
+
+def _visual_redaction_metadata(region: LayoutRegion) -> dict:
+    labels = region.metadata.get("sensitive_detection_labels") or []
+    if not isinstance(labels, list):
+        labels = list(labels) if isinstance(labels, tuple) else []
+    sensitive_detected = bool(region.metadata.get("sensitive_detected") or labels)
+    return {
+        "sensitive_detected": sensitive_detected,
+        "sensitive_detection_labels": sorted(str(label) for label in labels),
+        "pii_redaction_applied": bool(region.metadata.get("pii_redaction_applied")),
+        "secret_redaction_applied": bool(region.metadata.get("secret_redaction_applied")),
+        "pii_redaction_policy_ref": str(region.metadata.get("pii_redaction_policy_ref") or ""),
+        "visual_region_redaction_required": bool(
+            region.metadata.get("visual_region_redaction_required") or sensitive_detected
+        ),
+        "visual_region_redaction_status": str(
+            region.metadata.get("visual_region_redaction_status") or "not_required"
+        ),
+        "visual_redaction_policy_ref": str(
+            region.metadata.get("visual_redaction_policy_ref") or ""
+        ),
+    }

@@ -3,11 +3,23 @@
 from __future__ import annotations
 
 import unittest
+from typing import Sequence
 
-from raku_rag.domain.models import QueryProfile, ScopeType, SubjectType
+from raku_rag.domain.models import Chunk, QueryProfile, ScopeType, SubjectType
 from tests.helpers import claims, fresh
 
 T = "tenant_a"
+
+
+class _CountingLLM:
+    model = "counting-test"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, _query: str, _context: Sequence[Chunk]) -> str:
+        self.calls += 1
+        return "Backups run nightly at 02:00 UTC."
 
 
 class TestRagPerformanceCaps(unittest.TestCase):
@@ -108,6 +120,36 @@ class TestRagPerformanceCaps(unittest.TestCase):
         self.assertEqual(hot.context_tokens, 0)
         events = self.sys.audit.events(T, correlation_id=ans.correlation_id)
         self.assertEqual(events[0].reason, "context_budget")
+
+    def test_extra_llm_features_do_not_add_synchronous_hot_path_calls(self) -> None:
+        self._ingest_many(3)
+        counting_llm = _CountingLLM()
+        self.sys.answer_service._llm = counting_llm  # type: ignore[attr-defined]
+        self.sys.profiles.set(
+            "c",
+            QueryProfile(
+                top_k=3,
+                rerank_top_n=3,
+                minimum_evidence_count=1,
+                query_rewrite_enabled=True,
+                self_eval_enabled=True,
+                max_synchronous_llm_calls=1,
+            ),
+        )
+
+        ans = self.sys.answer(self.alice, "when do backups run?", "c")
+
+        self.assertEqual(ans.status, "ok")
+        self.assertEqual(counting_llm.calls, 1)
+        hot = self.sys.metrics.rag_hot_path_metrics(ans.correlation_id)[0]
+        self.assertEqual(hot.llm_call_count, 1)
+        self.assertLessEqual(hot.llm_call_count, 1)
+        generation_spans = [
+            span
+            for span in self.sys.tracer.spans(correlation_id=ans.correlation_id)
+            if span.name == "generation.generate"
+        ]
+        self.assertEqual(len(generation_spans), 1)
 
 
 if __name__ == "__main__":

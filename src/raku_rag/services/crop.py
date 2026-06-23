@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from raku_rag.domain.models import CropArtifact, LayoutRegion
+from raku_rag.workers.ingestion import VISUAL_REGION_REDACTION_REQUIRED_REF
+
+REDACTED_CROP_URI_PREFIX = "memory://redacted-crops"
 
 
 @dataclass
@@ -48,6 +51,17 @@ class CropService:
         redaction_policy_ref: str = "inherit",
     ) -> CropArtifact:
         crop_id = f"crop:{region.asset_id}:{region.region_id}"
+        labels = _sensitive_labels(region)
+        redaction_required = bool(
+            region.metadata.get("visual_region_redaction_required")
+            or region.metadata.get("sensitive_detected")
+            or labels
+        )
+        effective_redaction_ref = (
+            VISUAL_REGION_REDACTION_REQUIRED_REF
+            if redaction_policy_ref == "inherit" and redaction_required
+            else redaction_policy_ref
+        )
         crop = CropArtifact(
             tenant_id=region.tenant_id,
             collection_id=region.collection_id,
@@ -57,11 +71,24 @@ class CropService:
             crop_id=crop_id,
             bbox=region.bbox,
             crop_uri=f"memory://crops/{region.tenant_id}/{crop_id}",
-            redaction_policy_ref=redaction_policy_ref,
+            redaction_policy_ref=effective_redaction_ref,
             metadata={
                 "inherits_acl_from_document_id": region.document_id,
                 "inherits_redaction_from_region_id": region.region_id,
                 "source_page_number": region.page_number,
+                "raw_crop_uri": f"memory://crops/{region.tenant_id}/{crop_id}",
+                "redacted_crop_uri": (
+                    _redacted_crop_uri(region.tenant_id, crop_id) if redaction_required else ""
+                ),
+                "sensitive_detected": bool(region.metadata.get("sensitive_detected") or labels),
+                "sensitive_detection_labels": labels,
+                "pii_redaction_policy_ref": str(
+                    region.metadata.get("pii_redaction_policy_ref") or ""
+                ),
+                "visual_region_redaction_required": redaction_required,
+                "visual_region_redaction_status": (
+                    "required" if redaction_required else "not_required"
+                ),
             },
             tombstone=region.tombstone,
         )
@@ -73,6 +100,19 @@ class CropService:
         if not document_visible:
             return None
         return self.store.get(tenant_id, crop_id)
+
+
+def _sensitive_labels(region: LayoutRegion) -> list[str]:
+    labels = region.metadata.get("sensitive_detection_labels") or []
+    if isinstance(labels, tuple):
+        labels = list(labels)
+    if not isinstance(labels, list):
+        return []
+    return sorted(str(label) for label in labels)
+
+
+def _redacted_crop_uri(tenant_id: str, crop_id: str) -> str:
+    return f"{REDACTED_CROP_URI_PREFIX}/{tenant_id}/{crop_id}"
 
 
 __all__ = ["CropService", "InMemoryCropStore"]

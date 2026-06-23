@@ -35,6 +35,15 @@ class TestAssetService(unittest.TestCase):
         self.assertEqual(asset["regions"][0]["region_id"], self.result.regions[0].region_id)
         self.assertEqual(asset["regions"][0]["bbox"]["width"], self.result.regions[0].bbox.width)
         self.assertEqual(asset["crops"][0]["crop_id"], crop.crop_id)
+        self.assertTrue(asset["regions"][0]["visual_region_redaction_required"])
+        self.assertIn("email", asset["regions"][0]["sensitive_detection_labels"])
+        self.assertEqual(
+            asset["crops"][0]["redaction_policy_ref"], "visual-region-redaction-required"
+        )
+        self.assertTrue(asset["crops"][0]["visual_region_redaction_required"])
+        self.assertTrue(asset["regions"][0]["crop_uri"].startswith("memory://redacted-crops/"))
+        self.assertTrue(asset["crops"][0]["crop_uri"].startswith("memory://redacted-crops/"))
+        self.assertNotEqual(asset["crops"][0]["crop_uri"], crop.crop_uri)
         self.assertNotIn("ocr_text", asset["regions"][0])
         self.assertNotIn("generated_caption_text", asset["regions"][0])
 

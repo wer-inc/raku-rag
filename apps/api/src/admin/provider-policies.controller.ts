@@ -7,6 +7,7 @@ import type {
   ProviderPolicyValidationRequest,
   ProviderPolicyValidationResponse,
 } from "@raku-rag/shared";
+import { assertAdminMutationAllowed } from "../auth/roles";
 import { ProviderPolicyService } from "../provider-policy/provider-policy.service";
 
 @Controller({ path: "admin/provider-policies", version: "1" })
@@ -35,6 +36,7 @@ export class ProviderPoliciesController {
     @Param("provider_policy_id") providerPolicyId: string,
     @Body() body: ProviderPolicyUpsertRequest,
   ): Promise<AdminSettingsMutationResponse<ProviderPolicySettings>> {
+    assertAdminMutationAllowed(req);
     return this.policies.upsert(req, providerPolicyId, body);
   }
 

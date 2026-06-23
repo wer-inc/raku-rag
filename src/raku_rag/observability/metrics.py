@@ -5,6 +5,13 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
+from raku_rag.observability.exporters import (
+    TelemetryEvent,
+    TelemetryExporter,
+    safe_export,
+    sanitize_labels,
+)
+
 OBSERVABILITY_STAGES: tuple[str, ...] = ("ingestion", "retrieval", "generation", "evaluation")
 _OK_STATUSES = {"ok", "succeeded", "skipped"}
 
@@ -94,15 +101,18 @@ class MetricsRecorder:
         default_factory=dict
     )
     _rag_hot_paths: list[RagHotPathMetric] = field(default_factory=list)
+    exporter: TelemetryExporter | None = field(default=None, repr=False)
 
     def increment(
         self, name: str, value: float = 1.0, *, labels: dict[str, str] | None = None
     ) -> None:
         key = (name, _label_key(labels))
         self._counters[key] = self._counters.get(key, 0.0) + value
+        self._export_metric("counter", name, value, labels)
 
     def observe(self, name: str, value: float, *, labels: dict[str, str] | None = None) -> None:
         self._observations.setdefault((name, _label_key(labels)), []).append(value)
+        self._export_metric("observation", name, value, labels)
 
     def counter(self, name: str, *, labels: dict[str, str] | None = None) -> float:
         return self._counters.get((name, _label_key(labels)), 0.0)
@@ -224,3 +234,19 @@ class MetricsRecorder:
             if all(labels.get(k) == v for k, v in required_labels.items()):
                 total += value
         return total
+
+    def _export_metric(
+        self, metric_type: str, name: str, value: float, labels: dict[str, str] | None
+    ) -> None:
+        safe_export(
+            self.exporter,
+            TelemetryEvent(
+                kind="metric",
+                name=name,
+                payload={
+                    "metric_type": metric_type,
+                    "value": float(value),
+                    "labels": sanitize_labels(labels),
+                },
+            ),
+        )

@@ -551,6 +551,24 @@ class InvestmentRegulatedPolicyTest(unittest.TestCase):
         _draft2, without_req = relaxed.marketing_material_check(user, statements)
         self.assertEqual(without_req, ())
 
+    def test_disclosure_policy_governs_marketing_source_selection(self) -> None:
+        from dataclasses import replace
+
+        system = InvestmentSystem()
+        policy = system.profile.disclosure_evidence_policy
+        system.profile = replace(
+            system.profile,
+            disclosure_evidence_policy=replace(
+                policy, required_source_document_types=("monthly_report",)
+            ),
+        )
+
+        draft, _results = system.marketing_material_check(
+            InvestmentSystem.operator(), ("過去実績はリスク開示付きで確認します",)
+        )
+
+        self.assertEqual(draft.source_document_ids, ("FUND-001_月報_2025-05",))
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

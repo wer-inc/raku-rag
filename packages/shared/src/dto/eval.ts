@@ -16,6 +16,7 @@ export interface EvaluationSetCreateRequest {
 
 export interface EvaluationSetCreateResponse {
   eval_set_id: string;
+  dataset_version?: string;
   item_count: number;
   status: "created";
 }
@@ -41,5 +42,6 @@ export interface EvaluationRunStatusResponse {
   baseline_comparison: Record<string, number>;
   security_checks: Record<string, { passed: boolean; count: number }>;
   gate_result: "passed" | "blocked";
+  version_registry?: Record<string, unknown>;
   created_at?: string;
 }

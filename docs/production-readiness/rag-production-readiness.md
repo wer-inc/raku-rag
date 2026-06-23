@@ -10,17 +10,19 @@
 
 ## TL;DR — the one finding that frames everything
 
-**There are two systems in this repo and only one of them is deployed.**
+**Original audit finding: there were two systems in this repo and only one of them was deployed.**
 
 - **Python core (`ManufacturingSystem`, in-memory):** rich, mechanism-tested safety/governance/audit logic — high-risk approved-citation gate, draft-only, no-train, hash-chain audit, obsolete/on-site warnings, ACL mapping. This is what the 313 green tests exercise.
-- **Deployed path (`apps/answer-service` → `ProductionSystem.answer`):** **001 base controls only** (`apps/answer-service/server.py:1049-1053`). The 002 safety overlay has **no HTTP route** (GAP-F05) and is never invoked for real traffic.
+- **Original deployed path (`apps/answer-service` → `ProductionSystem.answer`):** was **001 base controls only**. Current local state now exposes the manufacturing answer overlay and the broader `/v1/manufacturing/*` contract through NestJS plus answer-service internal routing; real release still needs deployed-environment smoke over AWS/RDS/SQS.
 
-Consequences the audit verified:
-1. The high-risk approved-citation block, no-train guard, and mfg hash-chain audit **do not fire in production**.
-2. The eval "security hard gates" (ACL/deletion/tenant) are a **no-op that always passes** outside two unit tests → **false assurance** against the project's named top risks. **(the only P0)**
-3. The only prompt-injection/jailbreak filter (Bedrock Guardrails adapter) is **dead-wired DI with zero callers** (`apps/api/src/app.module.ts:49`); retrieved chunk text is concatenated into the prompt **undelimited** (`services/answer.py:137`). Safe today *only* because the deployed generator is the deterministic `ExtractiveLLMProvider`, not a real LLM.
+Current local state after the hardening loops:
+1. The manufacturing answer overlay, safety fields, data-use/governance/audit endpoints, and the remaining `/v1/manufacturing/*` contract route families now have a NestJS facade and answer-service `/internal/manufacturing/*` routing. → **GAP-F05/GAP-M02 closed locally**
+2. Eval security hard gates now compute real default-on probes, including source poisoning and high-risk recall; eval run persistence/trending is wired locally.
+3. Prompt-injection defense is invoked in the live answer flow as deterministic defense-in-depth. A future real generative LLM still needs grounding/instruction-hierarchy prompt and Guardrails integration.
 
-The platform is **strong at the core/security-invariant layer and immature at the production boundary** (deployment, durability, telemetry export, eval depth).
+The platform is **strong at the core/security-invariant and local release-gate layer**. The remaining
+release risk is now concentrated in real-environment deployment/operations: AWS wiring, real
+Postgres/pgvector scale evidence, load numbers, rollback/backup drills, and human safety review.
 
 ---
 
@@ -34,7 +36,7 @@ The platform is **strong at the core/security-invariant layer and immature at th
 | Insufficient-evidence refusal (gate exists) | `services/groundedness.py:24-37`, `tests/integration/test_insufficient_evidence.py:25-31` |
 | Human-in-the-loop: AI cannot self-approve (SC-MFG-007) | `manufacturing/drafts/review.py:88-119` (PermissionError) |
 | No-train opt-in + block-not-degrade (SC-MFG-009) | `manufacturing/governance/no_train.py:130-194` |
-| Redaction across logs/audit/eval/EXIF | `observability/redaction.py:13-79`, `tests/security/test_redaction.py:17-95` |
+| Redaction across logs/audit/eval/EXIF/indexed text/visual metadata | `observability/redaction.py:13-79`, `services/ingestion.py`, `workers/ingestion.py`, `tests/security/test_redaction.py` |
 | Idempotent ingestion + diff-sync + reindex | `services/ingestion.py:103-110`, `services/sync.py:143-203`, `services/reindex.py:156-192` |
 | CI as authority (gate + separation invariant) | `.github/workflows/gate.yml`, `scripts/gate.sh` (Tier A/B + §5 separation) |
 | Migrations have paired down files + Tier B parity | `infra/db/migrations/postgres/0001..0006` + `.down.sql`, `scripts/postgres-migration-smoke.sh` |
@@ -47,61 +49,72 @@ Legend: ✅ OK · 🟡 PARTIAL · 🔴 MISSING · ❓ UNKNOWN. "Deployed?" = doe
 
 ### A. Product / Domain Fit — mostly OK, deployment-gated
 - ✅ Target industry/users/usecases (`spec.md:9,87-193`); ✅ allowed-vs-disallowed scope **(critic: PARTIAL in deployment — enforcement is in `ManufacturingSystem`, not the deployed path)**.
-- 🟡 Domain taxonomy strong (`manufacturing/domain/entities.py:67-303`) but **no concrete regulation grounding** (no JIS/ISO/労働安全衛生法 mapping). → **P2-5**
-- 🟡 Role/permission search scoping real + hard-gated (`acl_mapping.py:99-183`) but **in-memory only, no API** (GAP-F05). → **P1-1**
-- 🟡 Freshness/citation-granularity well-defined; **accuracy residual = GAP-S1** (novel-phrasing danger recall needs a production LLM). → **P1-6**
+- ✅ Domain taxonomy now includes concrete regulation / standard anchors (`manufacturing/domain/regulations.py`) for ISO 9001/45001/12100/13849-1, JIS B 9700 / B 9960-1, and Japanese Industrial Safety and Health references; `ManufacturingDocumentMetadata.regulation_refs` round-trips through metadata. → **P2-5 closed locally**
+- ✅ Manufacturing contract route families now have HTTP facade coverage through NestJS and answer-service internal routing; route-level tenant identity comes from the signed principal. → **GAP-F05 closed locally**
+- 🟡 Freshness/citation-granularity well-defined; **accuracy residual = GAP-S1** is now release-measured for an expanded synthetic dangerous-query corpus with benign false-positive controls, but truly novel danger phrasing still needs SME review plus a production danger-classification LLM / guardrail. → **P1-6**
 
 ### B. Knowledge Base / Ingestion — robust core, broken prod edges
-- ✅ Idempotent **(critic: concurrent-redelivery race — `persistence/postgres.py:485-532` plain INSERT, raises instead of degrading)** → **P2-3**; ✅ incremental/deletion/reindex; ✅ exclude old/dup/unapproved.
-- 🟡 Metadata: mfg taxonomy/approval/owner **in-memory only**; `manufacturing_models.py` declares tables, zero writers. → **P1-3**
-- 🟡 PII: redactor **not applied to indexed text bodies** (`services/ingestion.py` no redact call); DataUsePolicy in-memory (GAP-F08). → **P2-8 / P1-3**
-- 🟡 DLQ: `workers/queue/sqs.py:68-75` `fail()` **always returns False** → DEAD_LETTER projection never fires in prod; CDK runs worker `--drain` (crash-loop). → **P1-9**
+- ✅ Idempotent; Postgres ingestion run creation now uses `ON CONFLICT (tenant_id, idempotency_key) DO NOTHING RETURNING`, and duplicate redelivery returns the existing run without re-projecting queued state → **P2-3 closed locally**; ✅ incremental/deletion/reindex; ✅ exclude old/dup/unapproved.
+- 🟡 Metadata/governance durability is repo-side mitigating: approval state, DataUsePolicy, and audit payload writers exist and route through durable paths locally; remaining closure is real Postgres survive-restart/deployed-env verification. → **P1-3**
+- 🟡 PII: shared `Redactor` is now applied before chunking/embedding/index upsert by default, with explicit `pre_index_redact` / `detect_only` / `block` ingestion policy modes, policy-change reindexing, and expanded regex coverage for explicit names, employee IDs, street addresses, postal codes, and SSNs. Visual OCR/caption sensitivity now propagates into region/chunk/crop/asset metadata; sensitive crops default to `visual-region-redaction-required`; and the authorized asset view substitutes public sensitive crop URIs to `memory://redacted-crops/...` instead of returning raw crop URIs. Remaining gap is NER/dictionaries for unstructured names/addresses/industry identifiers and redacted-bitmap materialization in the production image store/OCR pipeline. → **P2-8 / P1-3**
+- ✅ SQS worker/DLQ projection and long-lived worker service are wired repo-side. Remaining validation is AWS redelivery/concurrency in the deployed environment. → **P1-9 closed locally**
 
 ### C. Chunking / Embedding / Indexing — interface-clean, wiring-inconsistent
 - ✅ Embedding model selection rationale (`research.md:248-266`, `bedrock_cohere.py:52-98`).
-- 🟡 Chunking: prod uses char-based `SentenceChunker(max_chars=400)`, **not** the token-budget chunker; `table_chunks` summarizer has **no prod caller**; **zero overlap** in either. → **P2-2**
-- 🟡 **Index supports metadata filtering but retrieval doesn't use it** (`persistence/postgres.py:301-316` vector-only; hot-path indexes unused). → **P1-7**
-- 🟡 **Dimension inconsistency:** live app = `HashingEmbeddingProvider` 256-dim, `chunks.embedding`=vector(256), but Cohere=1024-dim & `embeddings` table=vector(1024). A real swap has no path; **all CI/eval quality is measured on the hash embedder** — a different space than prod. → **P1-15**
+- ✅ Chunking is now document-type aware: manufacturing ingest passes `ManufacturingDocumentMetadata.document_kind` into `SentenceChunker.chunk_document(...)`, records the selected profile/config on Document/Chunk metadata, and applies overlap for work instructions, inspections, reports, minutes, ledgers, and training docs while preserving the old no-overlap `chunk(text)` behavior for existing callers. → **P2-2 closed locally**
+- 🟡 Core retrieval now unions ACL-visible metadata identifier exact matches and lexical keyword matches with vector results before rerank/top-k, including the Postgres adapter over chunk + document JSONB metadata, bounded recency boost, and a live-chunk tsvector GIN index. Remaining gap: prod-scale EXPLAIN/load and real reranker/model routing. → **P1-7**
+- 🟡 **Embedding wiring:** live/eval/prod now build embeddings through the same settings-backed provider/dim path and re-index on model/dim change; Cohere/1024 selection fails fast unless schema/reindex is handled. Remaining: real Cohere/1024 migration or explicit hashing/256 production decision, backfill, and refreshed eval baselines. → **P1-15**
 
-### D. Retrieval — strong refusal, shallow ranking + blind ops
+### D. Retrieval — strong refusal, hybrid candidate union, prod-scale validation pending
 - ✅ "no relevant doc → refuse" **(critic: PARTIAL — only proven for the no-op extractive generator)**.
-- 🟡 No true keyword/lexical (tsvector/BM25) leg, no recency-boost; real Cohere reranker + candidate-union "hybrid" live **only in the un-deployed NestJS facade**; core reranker is a no-op re-sort. → **P1-7**
-- 🟡 Quality measured by `recall_at_k` only (binary hit-rate) over 1–2 item fixtures; no precision@k/MRR/NDCG. → **P1-5**
-- 🔴 **No retrieval-failure root-cause logging:** only `status='ok'` recorded; rerank failures swallowed (`retrieval.py:86-87`); `last_prefiltered_count` never exported → can't tell "ACL emptied" from "zero matches". → **P1-8**
+- 🟡 Metadata/identifier exact-match, lexical keyword overlap, and recency-boost candidate union now live in the core + Postgres path and are metered; Postgres lexical has a tsvector GIN index. Remaining gaps are production-scale EXPLAIN/load and real reranker/model routing. → **P1-7**
+- ✅ Quality regression gate now includes precision@k, MRR, deterministic faithfulness, a committed
+  golden baseline, and seeded regression tests. Real production embedding-space baseline refresh remains
+  after the final embedding provider/backfill decision. → **P1-5 closed locally / P1-15 prod follow-up**
+- ✅ Retrieval failure/root-cause logging exports prefilter counts, empty-retrieval outcomes, and rerank failure metrics/spans. → **P1-8 closed locally**
 
-### E. Generation / Grounding — verified at core, undelivered at edge
+### E. Generation / Grounding — verified at core, real generative model still a release decision
 - ✅ Citation tied to chunk/document/source (`services/answer.py:204-234`).
-- 🟡 Deployed generator = `ExtractiveLLMProvider` (not a real LLM); real `BedrockClaudeService` has **no grounding/anti-fabrication prompt and no caller**. → **P1-2**
-- 🟡 Unsupported-claim suppression = bag-of-words overlap, not faithfulness; no entailment check. → **P1-5**
-- 🟡 Uncertainty signals (`safety_block_reason`, `obsolete_warning`, on-site `notice`) **not serialized over HTTP** (GAP-M02/F05). → **P1-1**
-- 🔴 (missed gap) **Citation→live-chunk integrity** not re-validated at serve time. → **P1-14**
+- ✅ Answer display contract now ships on the answer-service HTTP boundary: responses include a versioned `answer_template_version` and stable `display_sections` for status, answer text, safety signals, and evidence/citations. → **P3-2 closed locally**
+- 🟡 Deployed generator remains `ExtractiveLLMProvider` in local/default composition. Prompt-injection
+  defense is live, and the answer hot path is capped to one generation call; a real generative LLM still
+  needs a grounding/instruction-hierarchy prompt, Guardrails integration, and release-bound eval before
+  promotion. → **P1-2 closed locally; real-LLM release validation remains**
+- ✅ Unsupported-claim regression coverage is now measured by deterministic eval faithfulness over the
+  committed golden baseline. LLM-as-judge remains an optional eval/sampling overlay, not a default
+  synchronous hot-path call. → **P1-5 / T119 closed locally**
+- ✅ Manufacturing uncertainty/safety signals are serialized under the nested `manufacturing` response block over HTTP. → **GAP-M02 closed locally**
+- ✅ (closed after audit) **Citation→live-chunk integrity** is re-validated before generation and again before returning citations; tombstoned/ACL-revoked chunks are dropped and can demote the answer to `insufficient_evidence`. → **P1-14**
 
-### F. Evaluation — real gate mechanism, hollow content
-- ✅ retrieval-vs-generation metrics separated; ✅ blocking CI eval-gate exists; ✅ release-gate criteria defined **(critic: PARTIAL — self-derived baseline over a 2-item fixture)**.
-- 🔴 **Eval security hard-gates do not run real probes** — `runner._security_checks` (`runner.py:293-298`) reflects caller-supplied counts; prod callers (`server.py:524`, `dagster/jobs/evaluation.py:54`) never populate them → **always passes**. **No prompt-injection/poisoning checks anywhere.** → **P0-1**
-- 🔴 No adversarial/red-team suite (incl. GAP-S1). → **P1-6**
-- 🔴 No synthetic QA gen; 🔴 no SME review workflow. → **P2-7**
-- 🟡 Eval runs in-memory only; `evaluation_runs` table exists with RLS, **no writer**. → **P2-9**
+### F. Evaluation — real gate mechanism, representative local baseline, prod embedding refresh pending
+- ✅ retrieval-vs-generation metrics separated; ✅ blocking CI eval-gate exists; ✅ committed golden
+  baseline detects precision/MRR/faithfulness regressions.
+- ✅ Eval security hard-gates compute real probes in-runner and fail closed when probe execution is missing. → **P0-1 closed locally**
+- 🟡 GAP-S1 adversarial recall corpus + default eval probe now gate known dangerous phrasings; broader jailbreak/red-team expansion and SME-reviewed danger corpus remain. → **P1-6**
+- ✅ Synthetic QA candidates + SME review workflow are local-ready: generated candidates stay outside release gates until approved, and only approved items can materialize into an `EvaluationSet`. → **P2-7 closed locally**
+- ✅ Eval runs persist and trend locally: `EvaluationRunner` accepts an optional repository, answer-service eval wiring writes through it, `evaluation_runs` has additive persistence/version-registry migrations, and in-memory/Postgres repositories share a deterministic row codec. → **P2-9 closed locally**
 
 ### G. Security / Governance — strong invariants, dead-wired defenses
-- ✅ RBAC/tenant isolation **(critic: PARTIAL — admin/governance mutations have no role gate, `app.py:815`)** → **P2-1**; ✅ PII output suppression (regex); ✅ human-in-the-loop (deployment-gated).
-- 🟡 **Prompt-injection defense dead-wired** (Guardrails adapter, no caller); retrieved context undelimited. → **P1-2**
-- 🟡 Audit hash-chain **in-memory** + on the non-deployed path (SC-MFG-010 not written for real traffic). → **P1-10**
-- 🔴 **No rate-limiting / abuse / WAF** — only a coarse per-tenant cost budget. → **P1-11**
-- 🟡 No enforced model/prompt/dataset version registry. → **P2-10**
+- ✅ RBAC/tenant isolation; ✅ admin/governance mutation role gate at the NestJS facade (`admin` / `tenant_admin` / `platform_admin` / `owner`, denied before upstream forwarding) → **P2-1 closed locally**; ✅ PII output suppression (regex); ✅ human-in-the-loop (deployment-gated).
+- ✅ Prompt-injection defense is default-on in the live answer flow with query refusal and context neutralization telemetry. Remaining future work is a real generative-LLM grounding prompt/Guardrails integration. → **P1-2 closed locally**
+- 🟡 Audit/governance durability is now mostly repo-side mitigated: deployed `ProductionSystem.answer()` writes reference-only audit events to Postgres/RLS; durable manufacturing hash-chain writer and durable DataUsePolicy/no-train store now exist and are wired through the manufacturing product API for policy/status/audit export; approval state writes back through jsonb-safe `Document.metadata`. Remaining gap: real Postgres survive-restart Tier-B coverage and deployed-env verification. → **P1-10 / P1-3**
+- 🟡 **Rate-limiting / abuse / WAF:** CDK now defines a WAFv2 WebACL on the public API ALB with AWS managed common protections plus IP and `x-user-token` rate-based rules, and exposes WAF metrics on the operations dashboard. Remaining: deploy to AWS, tune thresholds from real traffic, and add alert/runbook thresholds. → **P1-11**
+- ✅ Model/prompt/dataset version registry is now enforced in eval: runs persist `version_registry`, committed baselines can pin it, and the gate fails on mismatch. Remaining prod task: refresh the committed baseline after the real embedding-space migration/backfill decision. → **P2-10 closed locally**
 
-### H. Observability / Operations — scaffolding present, nothing shipped
-- 🟡 Trace covers query/retrieval/generation; **no rerank/citation/eval spans**; tracer is in-memory.
-- 🟡 **No production telemetry path:** OTel collector → `debug` only; NestJS `LangfuseExporter` has no prod caller; CloudWatch dashboard shows infra only. → **P1-4**
-- 🟡 **Alerts are a static catalog** — no `cloudwatch.Alarm`; tests never fire an expression. → **P1-4**
-- 🔴 **No SLO/SLA draft**; 🟡 no standalone incident runbook; 🟡 no model/prompt rollback (reindex is solid). → **P1-4 / P2-4**
+### H. Observability / Operations — repo-side telemetry and runbooks, AWS action wiring pending
+- 🟡 Trace/metrics cover query, retrieval, rerank, generation, hot-path tokens/latency, citation
+  revalidation drops, and retrieval failure causes locally. Remaining closure is exporting/tuning these
+  in the deployed AWS environment.
+- 🟡 **Production telemetry path is repo-side mitigating:** RAG metrics/traces can now export sanitized metric/span JSON logs when `RAKU_TELEMETRY_EXPORT_ENABLED=true` (ECS → CloudWatch Logs / OTel sidecar), but real AWS deployment/action wiring and alarm-state smoke remain. NestJS `LangfuseExporter` still has no prod caller. → **P1-4**
+- 🟡 **Repo-side CloudWatch alarms now exist:** CDK defines alarms for API 5xx, DLQ visibility, queue age, Aurora CPU, and WAF rate-limit blocks; remaining: deploy to AWS, enable app telemetry export, wire actions/escalation, and run an alarm-state smoke. → **P1-4**
+- ✅ SLO/SLA draft, standalone incident runbook, and prompt/model rollback procedure now live in `incident-slo-runbook.md`; remaining prod work is real AWS alarm-action wiring and threshold tuning. → **P1-4 / P2-4 closed locally**
 
 ### I. CI/CD / Deployment — strong CI, no deploy story
 - ✅ unit/integration/security tests in CI; ✅ Docker/secrets-management (CDK KMS + Secrets Manager).
-- 🟡 eval-gate is a mechanism check (self-derived baseline). → **P1-5**
-- 🟡 **`ci.yml` "Migration runner smoke" applies 0 migrations** (points at `infra/db/migrations`; all `.sql` are in `postgres/` subdir; `runner.discover()` non-recursive) — silent false-positive. → **P1-12**
-- 🔴 **No release checklist, no CD pipeline, no Dockerfiles** (CDK images are placeholders); CDK never `synth`/tested in CI. → **P1-12**
-- 🟡 **No secret-scanning in CI** (only a bypassable local pre-commit hook). → **P1-13**
+- ✅ eval-gate has a committed baseline plus default-on security probes; real prod embedding-space
+  baseline refresh remains after the embedding/backfill decision. → **P1-5 closed locally / P1-15 prod follow-up**
+- ✅ Migration smoke now targets real sqlite migration content and asserts an applied migration; Dockerfiles, CDK synth CI, image scan/SBOM, release/rollback runbook, and CD skeleton exist repo-side. Remaining deployment work is real AWS wiring/dry-runs. → **P1-12 closed locally**
+- ✅ Secret-scanning runs in CI with a committed baseline and seeded self-test. → **P1-13 closed locally**
 
 ---
 
@@ -114,29 +127,31 @@ Safety-boundary items (always human per `docs/loop-engineering.md §6`) are flag
 |---|---|---|---|
 | **P0-1** | Eval security hard-gates compute **real probes** (ACL/deletion/tenant) inside the runner + add **prompt-injection & source-poisoning** eval checks; wire answer-service + dagster callers; CI asserts counts are non-empty | Eval Harness + Prompt-Injection Defense | Spec `011-eval-security-probes` (spec+plan+impl) |
 
-> **P0-1 status (2026-06-21): largely delivered** (`specs/011-eval-security-probes/`; Loops 2–3 in `loop-state.md`). The runner now COMPUTES the gate signal from real default-on probes — `acl_leakage`, `deleted_reappearance`, `tenant_isolation`, `prompt_injection` (all verified). Caller counts merge by `max` so the protected `test_eval_hard_gate.py` is unchanged; `probes_executed` provenance closes the no-op hole; production callers get real counts automatically. **The 5th probe `source_poisoning` reproduced a real high-risk safety vulnerability (→ PR-016) and is held out of the release-blocking suite pending the human-owned safety fix.** Full suite GREEN (621), Tier A GREEN, separation OK.
+> **P0-1 status:** closed locally. The runner computes the gate signal from real default-on probes,
+> including source poisoning and high-risk recall; caller counts can only force-block, never downgrade a
+> probe-found leak; missing probe execution fails closed.
 
 ### P1 — production readiness (ordered)
 | ID | Title | Feature | Notes |
 |---|---|---|---|
-| P1-1 **[!safety]** | Wire mfg safety/governance overlay onto the deployed answer path (GAP-F05/M02) — NestJS `ManufacturingController` + `/internal/manufacturing`; serialize high-risk block + obsolete warning | Citation Contract + Secure Retrieval | "single biggest production gap" (critic) |
-| P1-2 **[!safety-adjacent]** | Invoke prompt-injection defense in the live generate path + delimit untrusted retrieved context + grounding/anti-fabrication system prompt | Prompt-Injection Defense | New spec `009-prompt-injection-defense` |
-| P1-3 **[!safety]** | Persist mfg metadata/approval/audit/no-train + DataUsePolicy to Postgres+RLS (GAP-F08); Tier-B survive-restart test | Secure Retrieval + Observability | new migration 0007 |
-| P1-4 | Production telemetry: export app spans/metrics + safety-boundary counters; deploy alerts as real `cloudwatch.Alarm` + a test that fires | Observability Runbook | |
-| P1-5 | Representative per-industry **golden corpus** + committed baseline; add **precision@k/MRR + faithfulness** metric | Eval Harness | |
-| P1-6 **[!safety]** | Adversarial/red-team suite incl. **novel-phrasing dangerous queries for GAP-S1**; gate on is_high_risk recall | Eval Harness + Prompt-Injection Defense | corpus is measurement; danger-LLM + gate decision stay human |
-| P1-7 | Implement R13 **hybrid retrieval** (metadata exact + identifier/code match + vector + rerank) + a pgvector query adapter | Secure Retrieval | |
-| P1-8 | Retrieval-stage failure/root-cause logging (export `last_prefiltered_count`; reasons: acl_emptied/zero_candidates/rerank_failed) | Observability Runbook | |
-| P1-9 | Fix prod DLQ status/audit (`SqsTaskQueue.fail()`) + long-running consumer + scheduled retry sensor | Observability Runbook | |
-| P1-10 **[!safety]** | Persist audit hash-chain to Postgres+RLS and write it from the deployed path (SC-MFG-010) | Observability + Secure Retrieval | depends on P1-1/P1-3 |
-| P1-11 | Request rate-limiting / abuse protection (per-token/IP) + WAF at the edge | Secure Retrieval | |
-| P1-12 | Deployment story: Dockerfiles + `cdk synth/diff` CI job + release checklist/rollback runbook + fix migration smoke | Observability Runbook | |
-| P1-13 | Secret-scanning in CI (gitleaks/detect-secrets) | Secure Retrieval | |
-| P1-14 | Citation→live-chunk integrity: invalidate citations to tombstoned/ACL-revoked chunks at serve time | Citation Contract | same failure-class as deletion-reappearance |
-| P1-15 | Resolve embedding dimension/wiring inconsistency + validate model-version-change quality end-to-end | Eval Harness | |
+| P1-1 **[!safety]** | Wire mfg safety/governance overlay onto the deployed answer path (GAP-F05/M02) — NestJS `ManufacturingController` + `/internal/manufacturing`; serialize high-risk block + obsolete warning | Citation Contract + Secure Retrieval | **Closed locally**; AWS/RDS deployed smoke remains |
+| P1-2 **[!safety-adjacent]** | Invoke prompt-injection defense in the live generate path + delimit untrusted retrieved context + grounding/anti-fabrication system prompt | Prompt-Injection Defense | **Closed locally for deterministic guard**; real generative LLM prompt/Guardrails validation remains |
+| P1-3 **[!safety]** | Persist mfg metadata/approval/audit/no-train + DataUsePolicy to Postgres+RLS (GAP-F08); Tier-B survive-restart test | Secure Retrieval + Observability | **Mitigating:** durable DataUsePolicy store exists and product API writes/reads it; approval state writes through `Document.metadata`; real Tier-B survive-restart remains |
+| P1-4 | Production telemetry: export app spans/metrics + safety-boundary counters; deploy alerts as real `cloudwatch.Alarm` + a test that fires | Observability Runbook | **Repo-side mitigating**; AWS alarm actions/tuning/firing smoke remain |
+| P1-5 | Representative per-industry **golden corpus** + committed baseline; add **precision@k/MRR + faithfulness** metric | Eval Harness | **Closed locally**; production embedding-space baseline refresh remains |
+| P1-6 **[!safety]** | Adversarial/red-team suite incl. **novel-phrasing dangerous queries for GAP-S1**; gate on is_high_risk recall | Eval Harness + Prompt-Injection Defense | **Mitigating:** synthetic high-risk recall corpus + release-blocking `high_risk_recall` probe landed; SME expansion + danger-LLM remain human-owned |
+| P1-7 | Implement R13 **hybrid retrieval** (metadata exact + identifier/code match + vector + rerank) + a pgvector query adapter | Secure Retrieval | **Repo-side mitigating:** metadata/identifier exact-match + lexical + recency union is in core + Postgres; tsvector index exists; prod-scale validation and real reranker/model routing remain |
+| P1-8 | Retrieval-stage failure/root-cause logging (export `last_prefiltered_count`; reasons: acl_emptied/zero_candidates/rerank_failed) | Observability Runbook | **Closed locally** |
+| P1-9 | Fix prod DLQ status/audit (`SqsTaskQueue.fail()`) + long-running consumer + scheduled retry sensor | Observability Runbook | **Closed locally**; AWS redelivery/concurrency validation remains |
+| P1-10 **[!safety]** | Persist audit hash-chain to Postgres+RLS and write it from the deployed path (SC-MFG-010) | Observability + Secure Retrieval | **Mitigating:** base answer audit persists to `audit_logs`; durable manufacturing hash-chain writer exists; policy changes and approval transitions use the durable/audited path locally; real Tier-B survive-restart coverage remains |
+| P1-11 | Request rate-limiting / abuse protection (per-token/IP) + WAF at the edge | Secure Retrieval | **Repo-side mitigating**; AWS deploy/tuning/alerts remain |
+| P1-12 | Deployment story: Dockerfiles + `cdk synth/diff` CI job + release checklist/rollback runbook + fix migration smoke | Observability Runbook | **Closed repo-side**; real AWS/OIDC deploy remains |
+| P1-13 | Secret-scanning in CI (gitleaks/detect-secrets) | Secure Retrieval | **Closed locally/CI-side** |
+| P1-14 | Citation→live-chunk integrity: invalidate tombstoned/ACL-revoked chunks before generation and citation return | Citation Contract | **Closed locally**; pinned by `tests/security/test_citation_revalidation.py` |
+| P1-15 | Resolve embedding dimension/wiring inconsistency + validate model-version-change quality end-to-end | Eval Harness | **Mitigating:** settings-backed provider/dim wiring + reindex-on-change + dimension fail-fast landed; real 1024 migration/backfill/baseline remains |
 
 ### P2 / P3
-P2-1 role-gate admin mutations **[!safety]** · P2-2 per-doc-type chunking + overlap · P2-3 concurrent-idempotency hardening · P2-4 incident runbook + SLO/SLA + prompt/model rollback · P2-5 regulation taxonomy · P2-6 vector DR runbook + recency-boost · P2-7 synthetic QA + SME review · P2-8 PII NER + pre-index redaction · P2-9 persist+trend eval runs · P2-10 model/prompt/dataset version registry · **P3-1** 0006 enum CHECKs (GAP-M04) **[!safety backstop]** · **P3-2** answer-style/format template.
+~~P2-1 role-gate admin mutations~~ **closed locally; safety role policy remains human-owned** · ~~P2-2 per-doc-type chunking + overlap~~ **closed locally; real-corpus tuning remains prod-owned** · ~~P2-3 concurrent-idempotency hardening~~ **closed locally; real SQS concurrency validation remains AWS-owned** · ~~P2-4 incident runbook + SLO/SLA + prompt/model rollback~~ **closed locally; AWS alarm actions/tuning remain prod-owned** · ~~P2-5 regulation taxonomy~~ **closed locally; SME/legal applicability review remains human-owned** · ~~P2-6 vector DR runbook + recency-boost~~ **closed locally; restore drill remains AWS-owned** · ~~P2-7 synthetic QA + SME review~~ **closed locally; actual SME review remains human-owned** · P2-8 PII NER + production redacted-bitmap materialization (expanded pre-index regex redaction, policy modes, visual redaction-required contract, and redacted crop URI substitution are mitigating) · ~~P2-9 persist+trend eval runs~~ **closed locally; real Postgres retention/trend ops remain prod-owned** · ~~P2-10 model/prompt/dataset version registry~~ **closed locally; prod baseline refresh remains after embedding decision** · ~~P3-1 0006 enum CHECKs (GAP-M04)~~ **closed locally; safety-boundary policy remains human-owned** · ~~P3-2 answer-style/format template~~ **closed locally; UX/content tuning remains product-owned**.
 
 ---
 

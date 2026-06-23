@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 POSTGRES = (ROOT / "src/raku_rag/persistence/postgres.py").read_text(encoding="utf-8")
+HYBRID = (ROOT / "src/raku_rag/core/hybrid_retrieval.py").read_text(encoding="utf-8")
 MIGRATIONS = ROOT / "infra/db/migrations/postgres"
 
 
@@ -42,9 +43,25 @@ class ExplainGateContractTest(unittest.TestCase):
         self.assertIn("idx_chunks_embedding_hnsw", sql)
         self.assertIn("USING hnsw (embedding vector_cosine_ops)", sql)
         self.assertIn("WHERE embedding IS NOT NULL AND tombstone = false", sql)  # partial index
+        self.assertIn("idx_chunks_text_lexical_live", sql)
+        self.assertIn("USING gin (to_tsvector('simple', text))", sql)
         # metadata / identifier hot fields for exact-match filter pushdown
         self.assertIn("idx_documents_metadata_hot", sql)
         self.assertIn("idx_documents_identifier_hot_fields", sql)
+
+    def test_core_identifier_exact_match_leg_is_deployed(self) -> None:
+        self.assertIn("metadata_exact_matches", POSTGRES)
+        self.assertIn("JOIN documents", POSTGRES)
+        self.assertIn("HOT_IDENTIFIER_FIELDS", POSTGRES)
+        self.assertIn("equipment_id", HYBRID)
+        self.assertIn("alarm_code", HYBRID)
+
+    def test_core_lexical_recency_leg_is_deployed(self) -> None:
+        self.assertIn("lexical_matches", POSTGRES)
+        self.assertIn("lexical_match_score", POSTGRES)
+        self.assertIn("to_tsvector('simple', c.text) @@ to_tsquery('simple'", POSTGRES)
+        self.assertIn("LEXICAL_RECENCY_BOOST_MAX", HYBRID)
+        self.assertIn("effective_date", HYBRID)
 
     def test_explain_gate_script_present_for_runtime_plan_check(self) -> None:
         script = ROOT / "scripts/postgres-explain-gate.sh"

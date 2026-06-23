@@ -2,8 +2,9 @@
 
 **Date:** 2026-06-21 · Owner: platform on-call · Scope: P1-12 tail (deployment operability).
 Companion to `rag-production-readiness.md` (audit), `risk-register.md` (PR-012/PR-014), and the CI
-workflows under `.github/workflows/`. **No production secrets live in this repo** — auth to AWS is via
-GitHub OIDC role assumption (see §3); data-plane secrets live in AWS Secrets Manager (CDK-managed).
+workflows under `.github/workflows/`. See `incident-slo-runbook.md` for SLO/SLA thresholds, incident
+classification, and prompt/model rollback. **No production secrets live in this repo** — auth to AWS is
+via GitHub OIDC role assumption (see §3); data-plane secrets live in AWS Secrets Manager (CDK-managed).
 
 > Safety boundary reminder (`docs/loop-engineering.md §6`): a release that changes the high-risk
 > answer gate, draft approval, no-train, or audit behavior is **always human-reviewed**. Rolling
@@ -32,10 +33,11 @@ A build is **GO** only if every row is GREEN. Any RED = **NO-GO** (do not promot
 
 ### 1.2 Human go/no-go (release captain)
 - [ ] Diff reviewed; any change touching the **safety boundary** has explicit human approval (SC-MFG-006/007/009/010, GAP-S items).
-- [ ] **Open Critical/High PR risks** reviewed (`risk-register.md`): no Critical PR is regressed by this release. (Known still-open: **PR-003** safety-overlay-not-deployed, **PR-016/GAP-S3** source-poisoning — releasing does not *worsen* them.)
+- [ ] **Open Critical/High PR risks** reviewed (`risk-register.md`): no Critical PR is regressed by this release. PR-003/PR-016 are fixed repo-side; confirm the deployed environment is running the merged safety-overlay/source-poisoning gates before GO.
 - [ ] DB migrations in this release are **expand-only / backward-compatible** (see §3.2); destructive changes are staged separately.
 - [ ] Rollback target identified: previous prod image digest + previous migration version recorded (see §2).
 - [ ] Staging smoke passed (deploy to staging → `/v1/health` 200, a grounded answer with citations, a cross-tenant query returns nothing).
+- [ ] SLO/SLA and incident thresholds reviewed for this release (`incident-slo-runbook.md`).
 - [ ] On-call + comms owner assigned for the release window.
 
 **GO** = all automated GREEN + all human boxes checked. Otherwise **NO-GO**.
@@ -75,6 +77,7 @@ previous-good **image digest** and **migration version** at deploy time (§1.2) 
 | **SEV-3** | Degraded latency/cost, non-blocking scan findings | Track + fix in next release | Async note |
 - The named **top risks** (ACL leakage, tenant isolation, deletion reappearance) and any **safety-boundary** breach are **SEV-1 by definition**.
 - Every SEV-1/2 gets a written post-incident review; if a gate *should* have caught it, file a new hard-gate test (loop-engineering §3) — green ≠ correct (cf. GAP-S3).
+- Detailed SLOs, alert thresholds, and prompt/model rollback steps live in `incident-slo-runbook.md`.
 
 ---
 
@@ -111,9 +114,11 @@ release commit (all §1.1 gates GREEN)
 **DONE 2026-06-21 — Trivy is now BLOCKING** (`deploy-checks.yml` `exit-code: "1"`, `ignore-unfixed: true`,
 `severity: HIGH,CRITICAL`, `trivyignores: .trivyignore`). The procedure below is the record of how the
 flip was done and the cadence to maintain. First-report triage: OS base layers were 0 HIGH/CRITICAL;
-dev-tooling CVEs (glob/picomatch/tmp via jest) were removed from the runtime images by
-`npm prune --omit=dev`; the 6 remaining prod-dep CVEs (next ×2, multer ×4 — all 0 CRITICAL) are accepted
-in the committed `.trivyignore` with justification + follow-ups (multer→2.2.0 override; Next.js 15 migration).
+dev-tooling CVEs (glob/picomatch/tmp via jest) were removed from the runtime images by prod-only installs;
+Next.js advisories were fixed; the NestJS 11 update removes prod picomatch exposure. The only accepted
+runtime HIGH family left is `multer@2.1.1` via `@nestjs/platform-express@11.1.27` (0 CRITICAL;
+availability DoS; no upload route; WAF/rate-limits in front), documented in `.trivyignore` with the
+follow-up to move to multer >=2.2.0 once Nest upstream or a proven override path supports it.
 
 The original "flip deliberately" procedure (kept for the cadence + future reports):
 
@@ -129,5 +134,5 @@ The original "flip deliberately" procedure (kept for the cadence + future report
 
 ## 5. Still open (tracked, not in this doc's scope)
 - CD pipeline is a **skeleton** (`deploy.yml`) — wiring it to a real AWS account (OIDC role, ECR repos, environments) is an ops task, not a code change.
-- **PR-003** (safety overlay not on the deployed path) and **PR-016/GAP-S3** (source-poisoning) remain open safety items — see `risk-register.md`. A release must not regress them.
-- Standalone **incident runbook** + **SLO/SLA** (PR-005/P2-4) extend §2.4 with detection thresholds and error budgets.
+- **PR-003** (safety overlay on the deployed path) and **PR-016/GAP-S3** (source-poisoning) are fixed repo-side — see `risk-register.md`. A release must run the current safety probes in the deployed environment and must not regress them.
+- Standalone **incident runbook** + **SLO/SLA** is repo-side closed in `incident-slo-runbook.md`; remaining work is real AWS alarm-action wiring and production threshold tuning.

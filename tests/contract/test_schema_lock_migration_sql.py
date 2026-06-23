@@ -67,6 +67,7 @@ class SchemaLockMigrationSqlTest(unittest.TestCase):
             "baseline_comparison jsonb NOT NULL DEFAULT '{}'::jsonb",
             "probe_results jsonb NOT NULL DEFAULT '[]'::jsonb",
             "probes_executed boolean NOT NULL DEFAULT false",
+            "version_registry jsonb NOT NULL DEFAULT '{}'::jsonb",
         ):
             with self.subTest(column=column):
                 self.assertIn(column, self.sql)
@@ -87,6 +88,10 @@ class SchemaLockMigrationSqlTest(unittest.TestCase):
         ):
             with self.subTest(column=column):
                 self.assertIn(f"DROP COLUMN IF EXISTS {column}", down)
+
+    def test_evaluation_run_version_registry_has_down_migration(self) -> None:
+        down = (MIGRATIONS / "0011_eval_version_registry.down.sql").read_text(encoding="utf-8")
+        self.assertIn("DROP COLUMN IF EXISTS version_registry", down)
 
     def test_visual_and_metadata_schema_versions_are_present(self) -> None:
         for table in ("documents", "chunks", "visual_assets", "layout_regions"):
@@ -117,6 +122,8 @@ class SchemaLockMigrationSqlTest(unittest.TestCase):
         self.assertIn("embedding vector(1024)", self.sql)
         self.assertIn("idx_embeddings_hnsw", self.sql)
         self.assertIn("WHERE embedding IS NOT NULL AND tombstone = false", self.sql)
+        self.assertIn("idx_chunks_text_lexical_live", self.sql)
+        self.assertIn("to_tsvector('simple', text)", self.sql)
         self.assertIn("idx_documents_identifier_hot_fields", self.sql)
         for field in (
             "equipment_id",
@@ -134,6 +141,12 @@ class SchemaLockMigrationSqlTest(unittest.TestCase):
         self.assertTableHas(
             "provider_config_audit_events", "redacted_before jsonb", "redacted_after jsonb"
         )
+        self.assertIn("ALTER TABLE manufacturing_audit_events", self.sql)
+        self.assertIn("entry_payload jsonb NOT NULL DEFAULT '{}'::jsonb", self.sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS manufacturing_data_use_policies", self.sql)
+        self.assertIn("training_opt_in boolean NOT NULL DEFAULT false", self.sql)
+        self.assertIn("opt_in_contract_ref text", self.sql)
+        self.assertIn("manufacturing_data_use_policies_tenant_isolation", self.sql)
         self.assertTableHas(
             "embedding_jobs", "provider_policy_id text", "retrieval_profile_id text"
         )

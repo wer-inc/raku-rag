@@ -62,6 +62,9 @@ source observation の結果。002 では承認メタデータの変更検知が
 - `content_checksum`
 - `parser_version`
 - `chunking_config_version`
+- `chunking_profile`, `max_chunk_chars`, `chunk_overlap_chars`: document type / metadata に基づく
+  chunking profile と overlap。製造業 ingest では `ManufacturingDocumentMetadata.document_kind`
+  から profile を選び、Document/Chunk metadata に記録する。
 - `embedding_model_version`
 - `parse_status`
 - `chunk_status`
@@ -102,6 +105,10 @@ source observation の結果。002 では承認メタデータの変更検知が
 **safety / quality 分類タグ**（HighRiskClassifier 入力, FR-MFG-015）:
 - `safety_category`, `quality_category`, `equipment_operation_category`
 - `hazard_tags`(list): 例 設備停止/分解/感電/高温/高圧/薬品/重量物/安全装置 等
+- `regulation_refs`(list): JIS/ISO/労安法などのレビュー用アンカー。例
+  `ISO_12100_2010`, `JIS_B_9700_2013`, `ISO_45001_2018`, `ISO_9001_2015`, `JP_ISHA`。
+  `domain/regulations.py` の catalog / 推論ヘルパーで補完できるが、法令適合の断定ではなく
+  SME レビュー対象の根拠候補として扱う。
 
 **承認メタデータ**（FR-MFG-004/004a）:
 - `approval_status`: `draft | pending_review | approved | obsolete`

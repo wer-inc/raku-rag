@@ -117,8 +117,10 @@ CREATE TABLE IF NOT EXISTS manufacturing_countermeasures (
   countermeasure_id text PRIMARY KEY,
   tenant_id text NOT NULL,
   title text NOT NULL,
-  type text NOT NULL DEFAULT 'candidate',
-  measure_class text NOT NULL DEFAULT 'unknown',
+  type text NOT NULL DEFAULT 'candidate' CHECK (type IN ('reference', 'candidate')),
+  measure_class text NOT NULL DEFAULT 'unknown' CHECK (
+    measure_class IN ('provisional', 'permanent', 'unknown')
+  ),
   source_document_ids text[] NOT NULL DEFAULT ARRAY[]::text[],
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -129,7 +131,7 @@ CREATE TABLE IF NOT EXISTS manufacturing_trouble_case_countermeasures (
   tenant_id text NOT NULL,
   trouble_case_id text NOT NULL,
   countermeasure_id text NOT NULL,
-  relation_type text NOT NULL DEFAULT 'candidate',
+  relation_type text NOT NULL DEFAULT 'candidate' CHECK (relation_type IN ('reference', 'candidate')),
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -140,7 +142,9 @@ CREATE TABLE IF NOT EXISTS manufacturing_work_instructions (
   factory_id text NOT NULL DEFAULT '',
   process_id text NOT NULL DEFAULT '',
   equipment_id text NOT NULL DEFAULT '',
-  approval_status text NOT NULL DEFAULT 'approved',
+  approval_status text NOT NULL DEFAULT 'approved' CHECK (
+    approval_status IN ('draft', 'pending_review', 'approved', 'obsolete')
+  ),
   effective_date date,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -153,7 +157,9 @@ CREATE TABLE IF NOT EXISTS manufacturing_inspection_checklists (
   factory_id text NOT NULL DEFAULT '',
   process_id text NOT NULL DEFAULT '',
   equipment_id text NOT NULL DEFAULT '',
-  status text NOT NULL DEFAULT 'draft',
+  status text NOT NULL DEFAULT 'draft' CHECK (
+    status IN ('draft', 'in_review', 'approved', 'rejected', 'archived')
+  ),
   source_artifact_id text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -178,7 +184,9 @@ CREATE TABLE IF NOT EXISTS manufacturing_training_materials (
   document_id text NOT NULL,
   factory_id text NOT NULL DEFAULT '',
   department_id text NOT NULL DEFAULT '',
-  status text NOT NULL DEFAULT 'draft',
+  status text NOT NULL DEFAULT 'draft' CHECK (
+    status IN ('draft', 'in_review', 'approved', 'rejected', 'archived')
+  ),
   source_artifact_id text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -198,9 +206,24 @@ CREATE TABLE IF NOT EXISTS manufacturing_document_metadata (
   customer_id text,
   alarm_code text NOT NULL DEFAULT '',
   defect_type text NOT NULL DEFAULT '',
-  document_kind text NOT NULL,
-  approval_status text NOT NULL DEFAULT 'draft',
-  approval_source text NOT NULL DEFAULT 'workflow',
+  document_kind text NOT NULL CHECK (
+    document_kind IN (
+      'work_instruction',
+      'inspection',
+      'quality_report',
+      'trouble_report',
+      'minutes',
+      'ledger',
+      'drawing',
+      'training'
+    )
+  ),
+  approval_status text NOT NULL DEFAULT 'draft' CHECK (
+    approval_status IN ('draft', 'pending_review', 'approved', 'obsolete')
+  ),
+  approval_source text NOT NULL DEFAULT 'workflow' CHECK (
+    approval_source IN ('imported', 'workflow')
+  ),
   effective_date date,
   approved_by text,
   approved_at timestamptz,
@@ -222,9 +245,13 @@ CREATE TABLE IF NOT EXISTS manufacturing_document_metadata (
 CREATE TABLE IF NOT EXISTS manufacturing_draft_artifacts (
   artifact_id text PRIMARY KEY,
   tenant_id text NOT NULL,
-  artifact_type text NOT NULL,
-  status text NOT NULL DEFAULT 'draft',
-  created_by text NOT NULL DEFAULT 'ai',
+  artifact_type text NOT NULL CHECK (
+    artifact_type IN ('checklist', 'trouble_report', 'quality_report', 'training', 'faq')
+  ),
+  status text NOT NULL DEFAULT 'draft' CHECK (
+    status IN ('draft', 'in_review', 'approved', 'rejected', 'archived')
+  ),
+  created_by text NOT NULL DEFAULT 'ai' CHECK (created_by IN ('ai', 'user')),
   reviewer_id text,
   reviewer_group text,
   source_document_ids text[] NOT NULL DEFAULT ARRAY[]::text[],
@@ -246,7 +273,10 @@ CREATE TABLE IF NOT EXISTS manufacturing_audit_events (
   factory_id text NOT NULL DEFAULT '',
   department_id text NOT NULL DEFAULT '',
   decision text NOT NULL DEFAULT '',
-  safety_block_reason text,
+  safety_block_reason text CHECK (
+    safety_block_reason IS NULL
+    OR safety_block_reason IN ('approved_citation_missing', 'insufficient_evidence', 'other_block')
+  ),
   citation_ids text[] NOT NULL DEFAULT ARRAY[]::text[],
   document_ids_used text[] NOT NULL DEFAULT ARRAY[]::text[],
   prev_hash text NOT NULL DEFAULT '',
@@ -260,8 +290,13 @@ CREATE TABLE IF NOT EXISTS manufacturing_safety_decisions (
   query_id text NOT NULL DEFAULT '',
   high_risk boolean NOT NULL DEFAULT false,
   reason_codes text[] NOT NULL DEFAULT ARRAY[]::text[],
-  classification_source text NOT NULL DEFAULT '',
-  safety_block_reason text,
+  classification_source text NOT NULL DEFAULT '' CHECK (
+    classification_source IN ('', 'metadata', 'rule', 'keyword', 'llm')
+  ),
+  safety_block_reason text CHECK (
+    safety_block_reason IS NULL
+    OR safety_block_reason IN ('approved_citation_missing', 'insufficient_evidence', 'other_block')
+  ),
   approved_effective_citation_present boolean NOT NULL DEFAULT false,
   obsolete_warning boolean NOT NULL DEFAULT false,
   draft_warning boolean NOT NULL DEFAULT false,

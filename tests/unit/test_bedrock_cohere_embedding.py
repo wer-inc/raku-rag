@@ -66,6 +66,15 @@ class BedrockCohereEmbeddingTest(unittest.TestCase):
         self.assertEqual(ctx.exception.plan.target_tokens, 350)
         self.assertEqual(ctx.exception.plan.max_tokens, 450)
 
+    def test_malformed_embedding_payload_fails_closed(self) -> None:
+        provider = CohereEmbedMultilingualV3Provider(client=_FakeBedrockRuntime())
+
+        with self.assertRaisesRegex(ValueError, "embedding response item 0 is not a vector"):
+            provider._parse_embeddings({"embeddings": [{"not_float": [1.0]}]})
+
+        with self.assertRaisesRegex(ValueError, "embedding dimension mismatch"):
+            provider._parse_embeddings({"embeddings": [{"float": [1.0]}]})
+
 
 if __name__ == "__main__":
     unittest.main()

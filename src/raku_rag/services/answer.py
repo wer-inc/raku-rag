@@ -29,7 +29,7 @@ from raku_rag.domain.models import (
     ScoredChunk,
 )
 from raku_rag.interfaces.base import LLMProvider, VLMProvider
-from raku_rag.observability.audit import AuditEvent, InMemoryAuditSink
+from raku_rag.observability.audit import AuditEvent, AuditSink
 from raku_rag.observability.logging import log, new_correlation_id
 from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.tracing import InMemoryTracer
@@ -57,7 +57,7 @@ class AnswerService:
         get_document: GetDocument,
         metrics: MetricsRecorder | None = None,
         tracer: InMemoryTracer | None = None,
-        audit: InMemoryAuditSink | None = None,
+        audit: AuditSink | None = None,
         vlm: VLMProvider | None = None,
         injection_guard: PromptInjectionGuard | None = None,
     ) -> None:
@@ -147,6 +147,26 @@ class AnswerService:
                 )
                 if hasattr(span, "finish"):
                     span.finish("ok", answer_status=status, reason="context_budget")
+                return Answer(status=status, used_chunks=(), correlation_id=cid)
+
+            evidence = self._revalidate_evidence(principal, evidence, cid, profile)
+            if len(evidence) < profile.minimum_evidence_count:
+                log("answer.insufficient_citation_revalidation", correlation_id=cid)
+                status = AnswerStatus.INSUFFICIENT_EVIDENCE.value
+                self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
+                self._record_audit(principal, cid, "answer", status, reason="citation_revalidation")
+                context_tokens = self._evidence_token_count(evidence)
+                self._record_hot_path(
+                    principal,
+                    cid,
+                    profile,
+                    status,
+                    total_started=total_started,
+                    context_tokens=context_tokens,
+                    prompt_tokens=_token_count(query) + context_tokens,
+                )
+                if hasattr(span, "finish"):
+                    span.finish("ok", answer_status=status, reason="citation_revalidation")
                 return Answer(status=status, used_chunks=(), correlation_id=cid)
 
             # P1-2 prompt-injection defense (defense-in-depth; never widens ACL/groundedness). Both
@@ -322,6 +342,9 @@ class AnswerService:
                 if not (ans_terms & _terms(c.text)):
                     continue  # cite only chunks that actually support the answer (FR-012)
                 doc = self._get_document(c.tenant_id, c.document_id)
+                if not self._citation_still_visible(principal, c, doc):
+                    self._record_citation_revalidation_drop(principal, cid, profile, c)
+                    continue
                 is_visual = c.modality == Modality.VISUAL
                 citations.append(
                     Citation(
@@ -344,6 +367,35 @@ class AnswerService:
                     freshness.append(
                         Freshness(indexed_at=doc.indexed_at, document_version=doc.version)
                     )
+
+            if len(used) < profile.minimum_evidence_count:
+                log("answer.insufficient_citation_revalidation", correlation_id=cid)
+                status = AnswerStatus.INSUFFICIENT_EVIDENCE.value
+                self._record_metric(principal.tenant_id, profile.profile_id, status, len(used))
+                self._record_audit(
+                    principal,
+                    cid,
+                    "answer",
+                    status,
+                    reason="citation_revalidation",
+                    document_ids=tuple(c.document_id for c in citations),
+                    chunk_ids=tuple(used),
+                )
+                self._record_hot_path(
+                    principal,
+                    cid,
+                    profile,
+                    status,
+                    total_started=total_started,
+                    llm_call_count=1,
+                    generation_ms=generation_ms,
+                    context_tokens=context_tokens,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+                if hasattr(span, "finish"):
+                    span.finish("ok", answer_status=status, reason="citation_revalidation")
+                return Answer(status=status, used_chunks=tuple(used), correlation_id=cid)
 
             cost = self._cost.record(
                 principal.tenant_id, _EST_QUERY_COST, kind="answer", trace_id=cid
@@ -385,6 +437,64 @@ class AnswerService:
                 freshness=tuple(freshness),
                 cost=cost,
                 correlation_id=cid,
+            )
+
+    def _revalidate_evidence(
+        self,
+        principal: IdentityClaims,
+        evidence: Sequence[ScoredChunk],
+        correlation_id: str,
+        profile: QueryProfile,
+    ) -> list[ScoredChunk]:
+        visible: list[ScoredChunk] = []
+        for item in evidence:
+            chunk = item.chunk
+            doc = self._get_document(chunk.tenant_id, chunk.document_id)
+            if self._citation_still_visible(principal, chunk, doc):
+                visible.append(item)
+                continue
+            self._record_citation_revalidation_drop(principal, correlation_id, profile, chunk)
+        return visible
+
+    def _citation_still_visible(
+        self, principal: IdentityClaims, chunk: Chunk, doc: Document | None
+    ) -> bool:
+        if doc is None:
+            return False
+        if doc.tenant_id != principal.tenant_id:
+            return False
+        if doc.document_id != chunk.document_id:
+            return False
+        if doc.tombstone:
+            return False
+        if chunk.tombstone:
+            return False
+        is_visible = getattr(self._retrieval, "is_visible", None)
+        if callable(is_visible):
+            return bool(is_visible(principal, chunk))
+        return True
+
+    def _record_citation_revalidation_drop(
+        self,
+        principal: IdentityClaims,
+        correlation_id: str,
+        profile: QueryProfile,
+        chunk: Chunk,
+    ) -> None:
+        log(
+            "answer.citation_revalidation_dropped",
+            correlation_id=correlation_id,
+            tenant=principal.tenant_id,
+            document_id=chunk.document_id,
+            chunk_id=chunk.chunk_id,
+        )
+        if self._metrics:
+            self._metrics.increment(
+                "answer_citation_revalidation_dropped_total",
+                labels={
+                    "tenant_id": principal.tenant_id,
+                    "profile_id": profile.profile_id,
+                },
             )
 
     def _layout_region_from_chunk(self, chunk: Chunk) -> LayoutRegion:

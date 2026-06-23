@@ -34,6 +34,9 @@ class TestCropService(unittest.TestCase):
         self.assertEqual(crop.redaction_policy_ref, "inherit")
         self.assertEqual(crop.metadata["inherits_acl_from_document_id"], "doc_visual")
         self.assertEqual(crop.metadata["inherits_redaction_from_region_id"], "region_1")
+        self.assertFalse(crop.metadata["visual_region_redaction_required"])
+        self.assertEqual(crop.metadata["raw_crop_uri"], crop.crop_uri)
+        self.assertEqual(crop.metadata["redacted_crop_uri"], "")
         self.assertIs(
             service.get_authorized_crop("tenant_a", crop.crop_id, document_visible=True), crop
         )
@@ -51,6 +54,25 @@ class TestCropService(unittest.TestCase):
         self.assertIsNone(service.store.get("tenant_a", tombstoned.crop_id))
         self.assertEqual(service.store.tombstone_document("tenant_a", "doc_visual"), 1)
         self.assertIsNone(service.store.get("tenant_a", live.crop_id))
+
+    def test_sensitive_region_crop_requires_visual_redaction_policy(self) -> None:
+        service = CropService()
+        region = self.region()
+        region.metadata = {
+            "sensitive_detected": True,
+            "sensitive_detection_labels": ["email", "api_key"],
+            "visual_region_redaction_required": True,
+            "pii_redaction_policy_ref": "default-regex-v1",
+        }
+
+        crop = service.create_region_crop(region)
+
+        self.assertEqual(crop.redaction_policy_ref, "visual-region-redaction-required")
+        self.assertTrue(crop.metadata["visual_region_redaction_required"])
+        self.assertEqual(crop.metadata["visual_region_redaction_status"], "required")
+        self.assertEqual(crop.metadata["sensitive_detection_labels"], ["api_key", "email"])
+        self.assertEqual(crop.metadata["raw_crop_uri"], crop.crop_uri)
+        self.assertTrue(crop.metadata["redacted_crop_uri"].startswith("memory://redacted-crops/"))
 
 
 if __name__ == "__main__":

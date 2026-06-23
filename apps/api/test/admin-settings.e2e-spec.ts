@@ -22,6 +22,12 @@ describe("admin settings facade (e2e)", () => {
     groups: ["platform"],
     roles: ["admin"],
   });
+  const readerToken = makeUserToken({
+    tenant_id: "tenant_admin",
+    user_id: "reader",
+    groups: ["platform"],
+    roles: ["reader"],
+  });
 
   function send(res: http.ServerResponse, status: number, payload: unknown) {
     const data = JSON.stringify(payload);
@@ -272,6 +278,40 @@ describe("admin settings facade (e2e)", () => {
     expect(res.body[0].provider_policy_id).toBe("default");
     expect(seen[seen.length - 1].url).toBe("/internal/admin/provider-policies?collection_id=manuals");
     expect(seen[seen.length - 1].tenant).toBe("tenant_admin");
+  });
+
+  it("rejects non-admin roles before forwarding admin mutations", async () => {
+    const before = seen.length;
+
+    const acl = await request(app.getHttpServer())
+      .put("/v1/admin/acl")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", readerToken)
+      .send({ grants: [] });
+    expect(acl.status).toBe(403);
+
+    const provider = await request(app.getHttpServer())
+      .put("/v1/admin/provider-policies/default")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", readerToken)
+      .send({ parser_mode: "aws_only", reason: "reader must not mutate policy" });
+    expect(provider.status).toBe(403);
+
+    const retrieval = await request(app.getHttpServer())
+      .put("/v1/admin/retrieval-profiles/default")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", readerToken)
+      .send({ metadata_filter_required: true });
+    expect(retrieval.status).toBe(403);
+
+    const benchmark = await request(app.getHttpServer())
+      .post("/v1/admin/retrieval-profiles/default/benchmark")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", readerToken)
+      .send({ sample_size: 1 });
+    expect(benchmark.status).toBe(403);
+
+    expect(seen.length).toBe(before);
   });
 
   it("upserts data sources and query profiles without accepting body tenant overrides", async () => {

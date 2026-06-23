@@ -21,7 +21,7 @@ from raku_rag.domain.models import (
     SubjectType,
 )
 from raku_rag.providers.chunkers import SentenceChunker
-from raku_rag.providers.embeddings import HashingEmbeddingProvider
+from raku_rag.providers.embeddings import embedding_provider_from_settings
 from raku_rag.providers.llms import ExtractiveLLMProvider
 from raku_rag.providers.parsers import TextParser
 from raku_rag.providers.rerankers import ScoreOrderReranker
@@ -29,6 +29,7 @@ from raku_rag.providers.vectorstores import InMemoryVectorStore
 from raku_rag.providers.visual_embeddings import HashingVisualEmbeddingProvider
 from raku_rag.providers.vlms import ExtractiveVLMProvider
 from raku_rag.observability.audit import InMemoryAuditSink
+from raku_rag.observability.exporters import exporter_from_settings
 from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.services.answer import AnswerService
@@ -55,7 +56,7 @@ class MvpSystem:
         self.settings = settings or Settings()
         self.registry = DocumentRegistry()
         self.store = InMemoryVectorStore()
-        self.embedder = HashingEmbeddingProvider(dim=self.settings.embedding_dim)
+        self.embedder = embedding_provider_from_settings(self.settings)
         self.parser = TextParser()
         self.chunker = SentenceChunker()
         self.reranker = ScoreOrderReranker()
@@ -63,8 +64,9 @@ class MvpSystem:
         self.vlm = ExtractiveVLMProvider()
         self.acl = AclPolicy([])
         self.cost = CostService()
-        self.metrics = MetricsRecorder()
-        self.tracer = InMemoryTracer()
+        self.telemetry_exporter = exporter_from_settings(self.settings)
+        self.metrics = MetricsRecorder(exporter=self.telemetry_exporter)
+        self.tracer = InMemoryTracer(exporter=self.telemetry_exporter)
         self.audit = InMemoryAuditSink()
         self.cache = CacheService()
         self.crops = CropService()
@@ -99,6 +101,7 @@ class MvpSystem:
             self.registry,
             self.metrics,
             self.tracer,
+            pii_redaction_mode=self.settings.pii_redaction_mode,
         )
         self.answer_service = AnswerService(
             self.retrieval,
@@ -139,6 +142,7 @@ class MvpSystem:
         document_id: str,
         text: str,
         source_id: str = "src",
+        chunking_metadata: dict | None = None,
     ):
         return self.ingestion.ingest(
             tenant_id=tenant_id,
@@ -147,6 +151,7 @@ class MvpSystem:
             document_id=document_id,
             raw=text.encode("utf-8"),
             content_type="text/plain",
+            chunking_metadata=chunking_metadata,
         )
 
     def ingest_visual_fixture(

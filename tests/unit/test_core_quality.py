@@ -70,6 +70,15 @@ class TestCoreQuality(unittest.TestCase):
     def test_text_visual_exif_and_caption_redaction(self) -> None:
         redactor = Redactor()
         self.assertEqual(redactor.redact("contact alice@example.com"), "contact [REDACTED:email]")
+        expanded = redactor.redact(
+            "Name: Alice Smith, Employee ID: OP-12345, address 123 Main Street, "
+            "postal 100-0001, SSN 123-45-6789"
+        )
+        self.assertNotIn("Alice Smith", expanded)
+        self.assertNotIn("OP-12345", expanded)
+        self.assertNotIn("123 Main Street", expanded)
+        self.assertNotIn("100-0001", expanded)
+        self.assertNotIn("123-45-6789", expanded)
         self.assertEqual(
             redactor.redact_visual_text("caption key sk-ABCDEFGHIJKLMNOP and bob@example.com"),
             "caption key [REDACTED:api_key] and [REDACTED:email]",

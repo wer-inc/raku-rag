@@ -1,7 +1,7 @@
 """T050/T051 — Knowledge-ops Dashboard / Safety-Telemetry / KPI facade (FR-MFG-012/028/030; §E, US5).
 
 The three admin read-views that make the knowledge base observable, all DERIVED SYNCHRONOUSLY from
-the SHARED ``InMemoryAuditLogWriter`` (single source of truth, FR-MFG-030) + the in-memory
+the SHARED ``AuditLogWriter`` (single source of truth, FR-MFG-030) + the in-memory
 manufacturing approval metadata + the 001 evaluation/metrics primitives. There is NO parallel counter
 and NO Dagster call on the request path: the Dagster ``manufacturing_dashboard_metrics``
 materialization asset + daily schedule (T047a/T051a) are DEFERRED to the production track (§8 C5); in
@@ -29,8 +29,8 @@ from raku_rag.domain.models import IdentityClaims
 # Audit-derivation primitives (action labels + entry filters) — the SINGLE source of truth shared by
 # the writers (api/audit.py) and the KPI report (kpi/poc_metrics.py), so the labels cannot drift.
 from raku_rag.manufacturing.api import audit as audit_derive
-from raku_rag.manufacturing.domain.audit import InMemoryAuditLogWriter
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus
+from raku_rag.manufacturing.interfaces import AuditLogWriter
 from raku_rag.manufacturing.telemetry.safety_metrics import SafetyTelemetry, SOURCE_AUDIT_LOG
 
 
@@ -83,7 +83,7 @@ class DashboardService:
     def __init__(
         self,
         *,
-        audit: InMemoryAuditLogWriter,
+        audit: AuditLogWriter,
         get_mfg_meta,
         all_mfg_meta,
         retention=None,

@@ -186,6 +186,17 @@ class AuditLogWriter(ABC):
     @abstractmethod
     def record(self, entry: AuditLogEntry) -> None: ...
 
+    @abstractmethod
+    def read_all(self, principal: IdentityClaims) -> tuple[AuditLogEntry, ...]: ...
+
+    @abstractmethod
+    def read_for_tenant(
+        self, principal: IdentityClaims, tenant_id: str
+    ) -> tuple[AuditLogEntry, ...]: ...
+
+    @abstractmethod
+    def verify_chain(self, principal: IdentityClaims) -> bool: ...
+
 
 class SafetyTelemetry(ABC):
     """Aggregate audit log (single source of truth) into safety telemetry (FR-MFG-030)."""

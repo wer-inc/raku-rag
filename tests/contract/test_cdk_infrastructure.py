@@ -29,6 +29,10 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             "kms.Key",
             "secretsmanager.Secret",
             "cloudwatch.Dashboard",
+            "cloudwatch.Alarm",
+            "wafv2.CfnWebACL",
+            "ApiWebAcl",
+            "wafv2.CfnWebACLAssociation",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)
@@ -46,6 +50,23 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             "deadLetterQueue.grantSendMessages",
             "SQS_DLQ_URL",
             "SQS_MAX_RECEIVE_COUNT",
+            "AWSManagedRulesCommonRuleSet",
+            "IpRateLimit",
+            "UserTokenRateLimit",
+            'aggregateKeyType: "IP"',
+            'aggregateKeyType: "CUSTOM_KEYS"',
+            'name: "x-user-token"',
+            "ApiWebAclAssociation",
+            "API WAF allowed vs blocked requests",
+            "API WAF rate-limit blocks",
+            'namespace: "AWS/WAFV2"',
+            "ApiTarget5xxAlarm",
+            "IngestionDlqVisibleAlarm",
+            "IngestionQueueAgeAlarm",
+            "AuroraCpuAlarm",
+            "ApiWafRateLimitBlockedAlarm",
+            "CloudWatchAlarmNames",
+            "treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)
@@ -78,7 +99,9 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             "ECS Fargate services",
             "Aurora PostgreSQL Serverless v2",
             "SQS ingestion queue plus DLQ",
+            "AWS WAF WebACL",
             "CloudWatch dashboard",
+            "CloudWatch alarms",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.readme)

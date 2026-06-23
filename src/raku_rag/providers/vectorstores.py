@@ -9,6 +9,12 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from raku_rag.core.hybrid_retrieval import (
+    lexical_match_score,
+    METADATA_EXACT_MATCH_SCORE,
+    metadata_identifier_matches,
+    query_identifiers,
+)
 from raku_rag.domain.models import Chunk, Modality, ScoredChunk
 from raku_rag.interfaces.base import VectorStore, Vector, VisibilityPredicate
 from raku_rag.providers.embeddings import cosine
@@ -55,6 +61,57 @@ class InMemoryVectorStore(VectorStore):
         scored = [ScoredChunk(chunk=c, retrieval_score=cosine(query_vec, v)) for c, v in candidates]
         scored.sort(key=lambda s: s.retrieval_score, reverse=True)
         return scored[:top_k]
+
+    def metadata_exact_matches(
+        self,
+        tenant_id: str,
+        query: str,
+        *,
+        visible: VisibilityPredicate,
+        top_k: int,
+    ) -> list[ScoredChunk]:
+        """Return ACL-visible chunks whose hot metadata identifiers exactly match the query."""
+        identifiers = query_identifiers(query)
+        if not identifiers or top_k <= 0:
+            return []
+        matches: list[ScoredChunk] = []
+        for chunk, _vec in self._items.values():
+            if chunk.tenant_id != tenant_id:
+                continue
+            if chunk.tombstone:
+                continue
+            if not visible(chunk):
+                continue
+            if metadata_identifier_matches(chunk.metadata, identifiers):
+                matches.append(ScoredChunk(chunk=chunk, retrieval_score=METADATA_EXACT_MATCH_SCORE))
+        matches.sort(key=lambda s: (s.chunk.position, s.chunk.chunk_id))
+        return matches[:top_k]
+
+    def lexical_matches(
+        self,
+        tenant_id: str,
+        query: str,
+        *,
+        visible: VisibilityPredicate,
+        top_k: int,
+    ) -> list[ScoredChunk]:
+        """Return ACL-visible chunks with direct lexical term overlap."""
+        if top_k <= 0:
+            return []
+        matches: list[ScoredChunk] = []
+        for chunk, _vec in self._items.values():
+            if chunk.tenant_id != tenant_id:
+                continue
+            if chunk.tombstone:
+                continue
+            if not visible(chunk):
+                continue
+            score = lexical_match_score(query, chunk.text, chunk.metadata)
+            if score <= 0:
+                continue
+            matches.append(ScoredChunk(chunk=chunk, retrieval_score=score))
+        matches.sort(key=lambda s: (-s.retrieval_score, s.chunk.position, s.chunk.chunk_id))
+        return matches[:top_k]
 
     def set_tombstone(self, tenant_id: str, document_id: str, value: bool) -> int:
         n = 0

@@ -30,7 +30,12 @@ describe("evaluation and feedback facades (e2e)", () => {
         res.setHeader("content-type", "application/json");
         if (req.method === "POST" && req.url === "/internal/evaluations/sets") {
           res.statusCode = 201;
-          res.end(JSON.stringify({ eval_set_id: "eval_set_1", item_count: body.items.length, status: "created" }));
+          res.end(JSON.stringify({
+            eval_set_id: "eval_set_1",
+            dataset_version: "dataset_stub",
+            item_count: body.items.length,
+            status: "created",
+          }));
           return;
         }
         if (req.method === "POST" && req.url === "/internal/evaluations/runs") {
@@ -50,6 +55,11 @@ describe("evaluation and feedback facades (e2e)", () => {
               baseline_comparison: {},
               security_checks: { acl_leakage: { passed: true, count: 0 } },
               gate_result: "passed",
+              version_registry: {
+                dataset_version: "dataset_stub",
+                embedding_model_version: "hashing-bow-v1",
+                prompt_template_version: "answer-grounded-contract-v1",
+              },
             }),
           );
           return;
@@ -93,6 +103,7 @@ describe("evaluation and feedback facades (e2e)", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.eval_set_id).toBe("eval_set_1");
+    expect(res.body.dataset_version).toBe("dataset_stub");
     expect(seen[seen.length - 1].tenant).toBe("tenant_eval");
   });
 
@@ -114,6 +125,7 @@ describe("evaluation and feedback facades (e2e)", () => {
 
     expect(status.status).toBe(200);
     expect(status.body.gate_result).toBe("passed");
+    expect(status.body.version_registry.dataset_version).toBe("dataset_stub");
   });
 
   it("accepts feedback", async () => {

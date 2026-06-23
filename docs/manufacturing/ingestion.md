@@ -37,6 +37,25 @@ anchors. The leading anchor token preserves the exact coordinate through the 001
 chunk/citation/offset path; the manufacturing search overlay parses the anchor back out to expose the
 cell coordinate.
 
+## Chunking profiles (`providers/chunkers.py`)
+
+The reused 001 `SentenceChunker` remains the default, but it is now metadata-aware for manufacturing
+ingest. When `ManufacturingDocumentMetadata.document_kind` is available, ingestion calls
+`chunk_document(...)` and records the selected `chunking_profile`, `max_chunk_chars`, and
+`chunk_overlap_chars` on both `Document.metadata` and `Chunk.metadata`.
+
+Current local profiles:
+
+- `work_instruction`: 520 chars with 80-char overlap.
+- `inspection`: 460 chars with 60-char overlap.
+- `quality_report` / `trouble_report`: 700 chars with 100-char overlap.
+- `minutes`: 560 chars with 60-char overlap.
+- `ledger`: 360 chars with 40-char overlap.
+- `drawing`: 320 chars with no overlap.
+- `training`: 600 chars with 80-char overlap.
+
+The plain `chunk(text)` method keeps its prior no-overlap behavior for existing callers and tests.
+
 ## Metadata model (`domain/metadata.py`)
 
 `ManufacturingDocumentMetadata` is a stdlib `@dataclass` stored in the 001 `Document.metadata` /
@@ -48,6 +67,10 @@ the 001 Document). Field groups:
 - **Entity FKs**: `process_id`, `equipment_id` (used by both ACL mapping and the high-risk classifier).
 - **Safety / quality classification tags** (HighRiskClassifier input): `safety_category`,
   `quality_category`, `equipment_operation_category`, `hazard_tags`.
+- **Regulation / standard anchors**: `regulation_refs` carries explicit review anchors such as
+  `ISO_12100_2010`, `JIS_B_9700_2013`, `ISO_45001_2018`, or `JP_ISHA`. The helper catalog in
+  `domain/regulations.py` can infer likely review anchors from safety/quality/hazard metadata; this is
+  an SME review aid, not a legal-compliance decision.
 - **Approval metadata**: `approval_status` (`ApprovalStatus`), `effective_date` (ISO date),
   `approved_by`, `approved_at`, `obsolete_at`, `superseded_by`, `approval_source` (`ApprovalSource`).
 

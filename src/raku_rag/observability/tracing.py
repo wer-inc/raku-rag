@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterator
 
+from raku_rag.observability.exporters import TelemetryEvent, TelemetryExporter, safe_export
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -43,6 +45,7 @@ class TraceCompletenessReport:
 @dataclass
 class InMemoryTracer:
     _spans: list[TraceSpan] = field(default_factory=list)
+    exporter: TelemetryExporter | None = field(default=None, repr=False)
 
     @contextmanager
     def span(
@@ -59,8 +62,10 @@ class InMemoryTracer:
             yield span
             if span.status == "running":
                 span.finish("ok")
+            self._export_span(span)
         except Exception:
             span.finish("error")
+            self._export_span(span)
             raise
 
     def spans(self, *, correlation_id: str = "") -> tuple[TraceSpan, ...]:
@@ -80,4 +85,21 @@ class InMemoryTracer:
             required_spans=required_spans,
             present_spans=present,
             missing_spans=missing,
+        )
+
+    def _export_span(self, span: TraceSpan) -> None:
+        safe_export(
+            self.exporter,
+            TelemetryEvent(
+                kind="span",
+                name=span.name,
+                payload={
+                    "correlation_id": span.correlation_id,
+                    "tenant_id": span.tenant_id,
+                    "status": span.status,
+                    "started_at": span.started_at,
+                    "ended_at": span.ended_at,
+                    "attributes": dict(span.attributes),
+                },
+            ),
         )

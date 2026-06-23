@@ -5,6 +5,769 @@ Companion to `rag-production-readiness.md` (audit + backlog) and `eval-plan.md`.
 
 ---
 
+## Loop 56 — 2026-06-22 — Local-only cross-industry gap closure (GAP-F13/GAP-F14)
+
+**Implemented:**
+- Closed GAP-F13 for the investment/regulated extension runtime:
+  - `RegulatedActivityPolicy.prohibited_ai_actions` now blocks explicit prohibited AI actions.
+  - `RegulatedActivityPolicy.restricted_ai_actions` forces human review on otherwise factual answers.
+  - `ComplianceReviewPolicy.review_states` now governs runtime compliance states via a safe alias map
+    (`changes_requested` -> `changes_required`, `compliance_approved` -> `approved`) while preserving
+    the existing prerequisite that the business draft must be approved first.
+  - `DisclosureEvidencePolicy.required_source_document_types` now governs marketing source selection
+    and persisted disclosure-policy validation.
+- Closed GAP-F14 repo-side by adding a live Postgres Tier-B test for domain-table RLS over
+  `industry_profiles`, `real_estate_properties`, and `investment_funds`, and wiring `gate.sh b` to apply
+  0002/0003/0004/0005/0006 before discovering `tests/postgres`.
+
+**Tests added/updated:**
+- `tests/industry/test_investment_api.py`
+- `tests/industry/test_framework.py`
+- `tests/postgres/test_domain_table_rls.py`
+
+**Verification:** investment API/framework tests GREEN (25 tests); domain RLS test is skip-safe without
+Postgres/domain migrations (3 skipped locally) and wired into Tier-B; `bash -n scripts/gate.sh`; black +
+ruff clean on touched Python files.
+
+**Status:** GAP-F13 and GAP-F14 are closed locally/repo-side. GAP-F14's actual non-skipped execution
+requires the Docker/Postgres Tier-B gate.
+
+---
+
+## Loop 55 — 2026-06-22 — Local-only release-gate reconciliation (T117/T118/T119)
+
+**Implemented:**
+- Added a regression test proving that enabling extra profile flags (`query_rewrite_enabled` /
+  `self_eval_enabled`) does **not** add hidden synchronous LLM calls to the answer hot path.
+- Reconciled `specs/001-rag-platform/tasks.md` so T117/T118/T119 reflect the already-landed load
+  harness, EXPLAIN gate, and no-default-LLM-judge hot-path behavior.
+- Refreshed production-readiness docs that still described old audit findings as current state
+  (caller-supplied eval counts, self-derived baseline, no live prompt-injection defense, and the
+  stale P1-1 Postgres-data step).
+
+**Tests added/updated:**
+- `tests/integration/test_rag_performance_caps.py` now pins one generation call and one
+  `llm_call_count` metric even when future profile switches are set.
+
+**Verification:** targeted `tests.integration.test_rag_performance_caps` GREEN (4 tests). Full local
+gate is re-run at the end of this loop before handoff.
+
+**Status:** Local performance/release-gate reconciliation is closed. Remaining ownership is still
+real-environment work: AWS/OIDC deploy wiring, production-scale Postgres/pgvector EXPLAIN and
+p50/p95/p99 load numbers, rollback/backup/vector-restore drills, production embedding backfill +
+baseline refresh, production redacted-bitmap materialization, and SME/red-team/human safety review.
+
+---
+
+## Loop 54 — 2026-06-22 — Local-only manufacturing HTTP facade completion (GAP-F05/GAP-M02)
+
+**Implemented:**
+- Extended answer-service `/internal/manufacturing/*` routing over existing `ManufacturingSystem` methods for:
+  - source sync request/status and ingestion-run status
+  - document metadata update and approval transition/import
+  - trouble-case search
+  - draft create/get/assign/review
+  - dashboard, safety telemetry, and KPI
+  - existing answer, data-use policy, governance status, and audit export paths
+- Extended NestJS `ManufacturingController` with matching `/v1/manufacturing/*` facade routes.
+- Kept tenant identity sourced from the signed principal/header path, not from request body overrides.
+- Kept business logic in Python manufacturing services; TypeScript remains a thin authenticated facade.
+- Reconciled `tasks.md` and readiness docs for GAP-F05/GAP-M02.
+
+**Tests added/updated:**
+- `apps/api/test/manufacturing.e2e-spec.ts` now pins representative forwarding for every manufacturing contract route family, auth on answer, signed-principal tenant forwarding, and pre-upstream denial for protected non-admin mutations.
+
+**Verification:** `apps/api` typecheck GREEN; app + manufacturing API e2e 13 OK; answer-service manufacturing endpoint + manufacturing migration contract slice 9 OK; Python `black --check` + `ruff check` clean on touched Python files; `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**760 OK, skipped 6**).
+
+**Status:** GAP-F05 and GAP-M02 are **closed locally**. Remaining production ownership: deploy these routes to AWS and run the real environment smoke against the actual answer-service/RDS/queue stack.
+
+**Still not locally closable:** production AWS/OIDC wiring, real RDS/pgvector load and EXPLAIN evidence, rollback/backup/vector-restore drills, production embedding migration/backfill plus baseline refresh, production redacted-bitmap materialization, and SME/legal/red-team review of safety and regulation decisions.
+
+---
+
+## Loop 53 — 2026-06-22 — Local-only manufacturing DB enum CHECK backstop (P3-1 / GAP-M04)
+
+**Implemented:**
+- Added DB-level enum CHECK constraints to `0006_manufacturing_domain.sql` for:
+  - manufacturing document kind
+  - approval status and approval source
+  - countermeasure type and measure class
+  - trouble-case countermeasure relation type
+  - draft artifact type, status, and creator
+  - safety classification source
+  - safety block reason on audit and safety-decision rows
+- Kept the existing AI-self-approve DB backstop (`NOT (created_by = 'ai' AND status = 'approved')`) and pinned it explicitly in the migration contract test.
+- Reconciled P2-9/P3-1 readiness docs so already-landed local eval persistence and the new enum CHECK backstop are no longer listed as local-open work.
+
+**Tests added/updated:**
+- `tests/contract/test_manufacturing_migration_sql.py` now asserts the enum CHECKs and the AI-generated draft approval CHECK.
+
+**Verification:** manufacturing migration contract tests 7 OK; `black --check` + `ruff check` clean for the touched test; `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**760 OK, skipped 6**).
+
+**Status:** P3-1 is **closed locally**. Remaining ownership: human review of safety enum semantics if the policy vocabulary changes, plus real migration execution in the deployed database.
+
+**Still not locally closable:** production AWS/OIDC wiring, real RDS/pgvector load and EXPLAIN evidence, rollback/backup/vector-restore drills, production embedding migration/backfill plus baseline refresh, production redacted-bitmap materialization, and SME/legal/red-team review of safety and regulation decisions.
+
+---
+
+## Loop 52 — 2026-06-22 — Local-only answer style/format template (P3-2)
+
+**Implemented:**
+- Added a versioned answer display contract:
+  - `ANSWER_TEMPLATE_VERSION = "grounded-answer-display-v1"`
+  - `answer_template_version`
+  - `display_sections`
+- The answer-service HTTP boundary now includes stable display sections for:
+  - status
+  - answer text
+  - safety/manufacturing signals when present
+  - evidence/citations when present
+- The NestJS shared DTO and OpenAPI schema now expose the display contract for both standard and manufacturing answer responses.
+- Existing answer text/citation semantics are unchanged; the new contract is additive.
+
+**Tests added/updated:**
+- `tests/unit/test_answer_format.py` pins deterministic section ordering, citation/evidence sections, and manufacturing safety sections.
+- `apps/api/test/app.e2e-spec.ts` pins the OpenAPI schema for `answer_template_version` and `display_sections`.
+
+**Verification:** answer-format unit tests 3 OK; `apps/api` typecheck GREEN; answer/manufacturing API e2e slice 12 OK; `black --check` + `ruff check` clean on touched Python files; `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**758 OK, skipped 6**).
+
+**Status:** P3-2 is **closed locally**. Remaining product ownership: final customer-facing copy/layout choices and any future style-conformance eval over a real generative model.
+
+**Still not locally closable:** production AWS/OIDC wiring, real RDS/pgvector load and EXPLAIN evidence, rollback/backup/vector-restore drills, production embedding migration/backfill plus baseline refresh, production redacted-bitmap materialization, and SME/legal/red-team review of safety and regulation decisions.
+
+---
+
+## Loop 51 — 2026-06-22 — Local-only vector index DR runbook (P2-6)
+
+**Implemented:**
+- Added `docs/production-readiness/vector-dr-runbook.md` covering:
+  - vector/lexical/metadata index failure modes.
+  - containment, classification, evidence preservation, and recovery path selection.
+  - index rebuild + `ANALYZE` + EXPLAIN gate checklist.
+  - embedding model/dimension reindex/backfill policy tied to eval `version_registry`.
+  - freshness/recency validation after restore/reindex.
+  - quarterly restore drill with initial RPO/RTO targets.
+- `release-execution-checklist.md` now includes the vector DR scratch-cluster drill.
+- `rag-production-readiness.md` now marks P2-6 repo-side closed.
+
+**Verification:** docs-only change; `git diff --check` clean after the update. Full gate remained GREEN after Loop 50 (**755 OK, skipped 6**) before this docs-only addition.
+
+**Status:** P2-6 is **closed locally**. Remaining production ownership: run the actual restore/index rebuild drill against AWS RDS/pgvector and record real restore/reindex timings.
+
+**Still local-only and not yet done:** PR-009 SME/danger-LLM closure, PR-015 production redacted-bitmap materialization, and the real prod embedding migration/backfill decision.
+
+---
+
+## Loop 50 — 2026-06-22 — Local-only document-type chunking profiles + overlap (P2-2)
+
+**Implemented:**
+- `SentenceChunker` now supports metadata-aware `chunk_document(...)` while preserving the existing `chunk(text)` behavior.
+- Added document-kind profiles with bounded overlap for manufacturing docs:
+  - work instructions, inspections, quality/trouble reports, minutes, ledgers, drawings, and training docs.
+- `IngestionService.ingest(...)` now accepts optional `chunking_metadata`, selects a chunking profile when supported by the chunker, and records:
+  - `chunking_config_version`
+  - `chunking_profile`
+  - `max_chunk_chars`
+  - `chunk_overlap_chars`
+  on both `Document.metadata` and `Chunk.metadata`.
+- Manufacturing in-memory/file ingest and production `/internal/ingest` pass `ManufacturingDocumentMetadata.to_mapping()` into chunking, so `document_kind` drives the profile before chunks are embedded.
+- Updated manufacturing ingestion docs and Spec Kit data-model with the chunking profile contract.
+
+**Tests added/updated:**
+- `tests/unit/test_profiled_chunking.py` pins document-kind profile selection, overlap source ranges, existing no-overlap default behavior, ingestion metadata recording, and manufacturing metadata-driven profile selection.
+
+**Verification:** profiled chunking + core quality + ingest + embedding configuration slice 15 OK; local P2-2/P2-5/P2-7 regression slice 22 OK; `black --check` + `ruff check` clean on touched files; `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**755 OK, skipped 6**).
+
+**Status:** P2-2 is **closed locally**. Remaining production ownership: tune profile sizes/overlap against real customer corpora and rerun production-scale retrieval quality/load tests.
+
+**Still local-only and not yet done:** PR-009 SME/danger-LLM closure, PR-015 production redacted-bitmap materialization, and the real prod embedding migration/backfill decision.
+
+---
+
+## Loop 49 — 2026-06-22 — Local-only synthetic QA with SME approval gate (P2-7)
+
+**Implemented:**
+- Added `src/raku_rag/eval/synthetic_qa.py`:
+  - deterministic synthetic QA candidate generation from live, non-tombstoned chunks.
+  - `SyntheticQAItem` with `generated` / `approved` / `rejected` review status, reviewer id, note, and generator version.
+  - `approve_synthetic_qa_item()` / `reject_synthetic_qa_item()` requiring a reviewer id.
+  - `materialize_approved_eval_set()` that accepts only SME-approved candidates and refuses an empty approved set.
+- Exported the workflow from `raku_rag.eval`.
+- Updated `eval-plan.md` and readiness backlog so generated/rejected synthetic QA cannot silently become release-gating eval items.
+
+**Tests added/updated:**
+- `tests/unit/test_synthetic_qa_review.py` pins live-chunk-only generation, unreviewed candidate rejection, approved-only materialization, reviewer-id requirement, and review-state round-trip.
+
+**Verification:** synthetic QA + eval regression + golden corpus slice 13 OK; `black --check` + `ruff check` clean on touched eval files.
+
+**Status:** P2-7 is **closed locally**. Remaining production ownership: actual SME/red-team review content, reviewer identity mapping, and ongoing corpus curation.
+
+**Still local-only and not yet done:** PR-009 SME/danger-LLM closure, PR-015 production redacted-bitmap materialization, and the real prod embedding migration/backfill decision. Superseded for doc-type chunking/overlap by Loop 50.
+
+---
+
+## Loop 48 — 2026-06-22 — Local-only manufacturing regulation taxonomy anchors (P2-5)
+
+**Implemented:**
+- Added `ManufacturingDocumentMetadata.regulation_refs`, persisted through `to_mapping()` / `from_mapping()` so regulation/standard anchors survive the existing `Document.metadata` / Postgres jsonb path.
+- Added `src/raku_rag/manufacturing/domain/regulations.py` with a small explicit catalog for:
+  - `ISO_45001_2018`
+  - `ISO_12100_2010`
+  - `ISO_13849_1_2023`
+  - `ISO_9001_2015`
+  - `JIS_B_9700_2013`
+  - `JIS_B_9960_1_2019`
+  - `JP_ISHA`
+  - `JP_ISH_RULES`
+- Added deterministic `infer_regulation_refs()` to attach likely SME-review anchors from safety/quality/hazard metadata without claiming legal applicability.
+- Updated manufacturing ingestion docs and Spec Kit data-model so the design includes regulation/standard anchors.
+
+**Tests added/updated:**
+- `tests/manufacturing/unit/test_regulation_taxonomy.py` pins jsonb-safe round-trip, inferred safety/machine/electrical/quality anchors, unknown-ref rejection, and source URL coverage.
+
+**Verification:** regulation taxonomy + Postgres overlay metadata + ingest metadata parse slice 12 OK; `black --check` + `ruff check` clean on touched Python files; `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**746 OK, skipped 6**).
+
+**Status:** P2-5 is **closed locally**. Remaining production ownership: SME/legal review of tenant-specific applicability, required editions, and any industry/customer-specific regulatory catalog extensions.
+
+**Still local-only and not yet done:** P2-2 doc-type chunking/overlap, PR-009 SME/danger-LLM closure, PR-015 production redacted-bitmap materialization, and the real prod embedding migration/backfill decision. Superseded for synthetic QA + SME review workflow by Loop 49.
+
+---
+
+## Loop 47 — 2026-06-22 — Local-only incident/SLO/model rollback runbook (P2-4)
+
+**Implemented:**
+- Added `docs/production-readiness/incident-slo-runbook.md` with:
+  - internal SLO/SLA draft thresholds for availability, `/v1/answer` p95/p99, safety probes, eval quality, ingestion freshness, DLQ, error rate, and privacy.
+  - error-budget policy and SEV-1/2/3 classification.
+  - first-response checklist and playbooks for safety/security breach, latency/capacity breach, retrieval quality regression, and ingestion/indexing backlog.
+  - prompt/model rollback order tied to eval `version_registry`, including provider/model config, prompt template, injection guard, embedding model, and VLM/captioning rollback.
+- `release-and-rollback.md` now links the SLO/incident/model rollback runbook and adds it to human go/no-go.
+- `release-execution-checklist.md` now includes incident/SLO/prompt rollback dry-run review in the real-infra handoff.
+- `rag-production-readiness.md` and `risk-register.md` now represent P2-4 as repo-side closed instead of "missing".
+
+**Verification:** docs-only change; `git diff --check` clean. Full gate remained GREEN after Loop 46 (**741 OK, skipped 6**) before this docs-only addition.
+
+**Status:** P2-4 is **closed locally**. Remaining production ownership: wire real AWS alarm actions/escalation, tune thresholds from measured production traffic, and run the operational dry-runs in the deployed environment.
+
+**Still local-only and not yet done:** P2-2 doc-type chunking/overlap, P2-7 synthetic QA + SME review workflow, PR-009 SME/danger-LLM closure, PR-015 production redacted-bitmap materialization, and the real prod embedding migration/backfill decision. Superseded for regulation taxonomy anchors by Loop 48.
+
+---
+
+## Loop 46 — 2026-06-22 — Local-only concurrent ingestion idempotency hardening (P2-3)
+
+**Implemented:**
+- `PostgresIngestionRunStore.create_queued()` now uses a single Postgres atomic insert for idempotency:
+  - `ON CONFLICT (tenant_id, idempotency_key) DO NOTHING`
+  - `RETURNING ingestion_run_id`
+- Concurrent duplicate redelivery now returns the existing ingestion run instead of raising a unique-constraint error.
+- Duplicate redelivery no longer re-projects the queued processing state; only the first successful insert emits the initial state transition.
+- The existing chunk/document upsert idempotency behavior remains unchanged.
+
+**Tests added/updated:**
+- `tests/unit/test_postgres_ingestion_idempotency.py` simulates duplicate idempotency-key redelivery and pins:
+  - first create returns `(run, True)`
+  - duplicate create returns the same existing run with `(run, False)`
+  - processing-state projection happens once
+  - the SQL contains `ON CONFLICT (tenant_id, idempotency_key) DO NOTHING` and `RETURNING ingestion_run_id`
+
+**Verification:** ingestion idempotency + ingest queue + Tier-B migration SQL slice 12 OK; `black --check` + `ruff check` clean on touched files; `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**741 OK, skipped 6**).
+
+**Status:** P2-3 is **closed locally**. The Postgres ingestion run write path now degrades safely under concurrent duplicate delivery instead of relying on a race-prone select-then-insert pattern. Remaining production ownership: validate the same path under real SQS redelivery/concurrency in AWS.
+
+**Still local-only and not yet done:** P2-2 doc-type chunking/overlap, P2-5 regulation taxonomy, P2-7 synthetic QA + SME review workflow, PR-009 SME/danger-LLM closure, PR-015 production redacted-bitmap materialization, and the real prod embedding migration/backfill decision. Superseded for the incident/SLO/model rollback runbook by Loop 47.
+
+---
+
+## Loop 45 — 2026-06-22 — Local-only eval model/prompt/dataset version registry (P2-10)
+
+**Implemented:**
+- `EvaluationSet` now carries a deterministic `dataset_version` hash derived from the scrubbed eval items and expected evidence, so dataset drift is visible even if an eval set id is reused.
+- Added `EvaluationVersionRegistry` and default runner wiring. Every `EvaluationRun` now records:
+  - `dataset_version`
+  - `embedding_provider`
+  - `embedding_model_version`
+  - `embedding_dimension`
+  - `llm_model_version`
+  - `vlm_model_version`
+  - `prompt_template_version`
+  - `injection_guard_version`
+  - `registry_version`
+- `EvaluationBaseline` can now include `version_registry`; `evaluate_baseline_gate()` fails when the committed baseline's version keys do not match the run. This turns version provenance into a gate, not only a log field.
+- `evaluation_runs` persistence now round-trips `version_registry` through the in-memory and Postgres repositories.
+- Added migration `0011_eval_version_registry.sql` (+ down) to persist the registry in the RLS-scoped `evaluation_runs` table.
+- The answer-service eval set response exposes `dataset_version`; the NestJS shared DTO/OpenAPI/e2e facade now exposes `version_registry` on eval run status.
+- The committed golden baseline now pins the current model/prompt/dataset registry for the golden corpus.
+
+**Tests added/updated:**
+- `tests/unit/test_eval_version_registry.py` pins dataset-version drift, run-level model/prompt/dataset provenance, and baseline-gate failure on version mismatch.
+- `tests/unit/test_eval_run_repository.py` pins persistence/readback of `version_registry`.
+- `tests/integration/test_golden_corpus.py` pins the committed baseline registry and a seeded mismatch failure.
+- `tests/integration/test_eval_persistence_endpoint.py` pins API persistence/readback of the registry.
+- `tests/contract/test_schema_lock_migration_sql.py` pins the migration and down migration.
+- `apps/api/test/eval-feedback.e2e-spec.ts` pins DTO facade passthrough.
+
+**Verification:** eval/version/persistence/golden/schema slice 29 OK; `apps/api` eval/app e2e 10 OK; `apps/api` typecheck + build GREEN; `black --check` + `ruff check` clean on touched Python files; `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**740 OK, skipped 6**).
+
+**Status:** P2-10 is **closed locally**. Eval runs now persist and gate on a model/prompt/dataset version registry. Remaining production ownership: once the real production embedding choice is finalized (for example Cohere/1024 vs hashing/256), run the real migration/backfill and refresh the committed baseline over that production embedding space.
+
+**Still local-only and not yet done:** P2-2 doc-type chunking/overlap, P2-4 SLO/SLA + incident/model rollback runbook, P2-5 regulation taxonomy, P2-7 synthetic QA + SME review workflow, PR-009 SME/danger-LLM closure, PR-015 production redacted-bitmap materialization, and the real prod embedding migration/backfill decision. Superseded for concurrent idempotency hardening by Loop 46.
+
+---
+
+## Loop 44 — 2026-06-22 — Local-only admin/governance mutation role gate (P2-1)
+
+**Implemented:**
+- Added a shared NestJS role gate for admin/governance mutations. Allowed roles are `admin`, `tenant_admin`, `platform_admin`, and `owner`; non-admin callers receive `403 Forbidden`.
+- `AdminSettingsController` now gates non-GET admin setting mutations before forwarding to the answer-service.
+- `AdminJobsController` now gates retry, reindex, and document-delete mutations before forwarding.
+- `ProviderPoliciesController` now gates provider-policy upserts while leaving read/validate routes available.
+- `RetrievalProfilesController` now gates retrieval-profile upserts and benchmark-run creation.
+- `ManufacturingController` now gates `PUT /v1/manufacturing/policy/data-use` while leaving policy/status/audit reads and `/answer` behavior unchanged.
+
+**Tests added/updated:**
+- `apps/api/test/admin-settings.e2e-spec.ts` asserts a `reader` role is denied on ACL/provider/retrieval/benchmark mutations and that no upstream request is made.
+- `apps/api/test/admin-jobs.e2e-spec.ts` asserts a `reader` role is denied on retry/reindex/delete and that no upstream request is made.
+- `apps/api/test/manufacturing.e2e-spec.ts` asserts a `reader` role is denied on data-use policy mutation before upstream forwarding.
+
+**Verification:** targeted admin/manufacturing e2e slice 23 OK; `apps/api` typecheck + build GREEN; `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**735 OK, skipped 6**).
+
+**Status:** P2-1 is **closed locally at the API facade**. Admin/governance mutation endpoints now separate read access from mutation authority and fail before touching the core service. Remaining production ownership: map these local roles to the real IdP/Cognito/JWKS claims in the deployed AWS environment and keep safety-boundary role policy human-reviewed.
+
+**Still local-only and not yet done:** SME-expanded high-risk/danger-LLM closure for PR-009, real redacted-bitmap materialization for PR-015, real 1024-dim embedding migration/backfill if choosing Cohere for production, and AWS-deployed role-claim mapping.
+
+---
+
+## Loop 43 — 2026-06-22 — Local-only visual crop URI hardening: no raw sensitive crop URI in asset view (PR-015/P2-8)
+
+**Implemented:**
+- `CropService.create_region_crop()` now records both `raw_crop_uri` and, for sensitive/redaction-required regions, a deterministic `redacted_crop_uri` under `memory://redacted-crops/...`.
+- `AssetService.get_visual_asset()` now substitutes the public `crop_uri` for sensitive regions/crops with the redacted derivative URI. The raw internal `memory://crops/...` URI is no longer returned in authorized asset JSON when `visual_region_redaction_required=true`.
+- Benign crops keep the existing raw `crop_uri` behavior and `redaction_policy_ref=inherit`.
+
+**Tests added/updated:**
+- `tests/security/test_redaction.py` now asserts sensitive asset region/crop URIs use `memory://redacted-crops/...` and do not expose raw crop URI prefixes.
+- `tests/unit/test_assets_service.py` pins the asset API substitution behavior.
+- `tests/unit/test_crop_service.py` pins raw/redacted URI metadata for benign and sensitive crops.
+
+**Verification:** visual redaction/crop/assets/quickstart/visual-answer slice 18 OK; `apps/api` app/assets e2e 10 OK; `black --check` + `ruff check` clean on touched asset/crop/redaction files; `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**735 OK, skipped 6**).
+
+**Status:** PR-015 remains **Mitigating**. The local visual masking contract is stronger: product consumers no longer receive raw sensitive crop URIs through the asset view. Full closure still needs production image-store integration that materializes the redacted bitmap object and higher-recall NER/dictionaries for unstructured names/addresses/industry identifiers.
+
+**Still local-only and not yet done:** real 1024-dim embedding migration/backfill if choosing Cohere for production. PR-009's remaining closure is partly human/model-owned; PR-015's remaining bitmap materialization requires the production image store/OCR pipeline choice.
+
+---
+
+## Loop 42 — 2026-06-22 — Local-only high-risk recall precision/coverage expansion (PR-009/P1-6)
+
+**Implemented:**
+- Expanded `src/raku_rag/eval/fixtures/high_risk_adversarial_corpus.json` from 8 dangerous / 4 benign cases to 12 dangerous / 7 benign cases.
+- Added dangerous variants for energized electrical-panel work, chemical spill cleanup, crane/heavy-object handling, and Japanese emergency-stop/guard-bypass/manual-restart phrasing.
+- Added benign false-positive controls for pump/operator panel lookup and electrical-cabinet maintenance-calendar queries.
+- Tightened `RuleHighRiskClassifier` by removing the bare `panel` keyword from `electric_shock`; the classifier now requires dangerous electrical context such as `energized`, `400v`, `live wire`, `electrical panel`, or similar phrases.
+
+**Tests added/updated:**
+- `tests/security/test_high_risk_recall_probe.py` now pins the larger corpus size.
+- `tests/manufacturing/unit/test_high_risk_classifier.py` now pins the panel false-positive controls plus the new adversarial danger categories.
+
+**Verification:** high-risk recall + classifier unit slice 23 OK; eval probe / safety gate / source poisoning / visual answer regression slice 25 OK; `black --check` + `ruff check` clean on touched classifier/probe files; `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**735 OK, skipped 6**).
+
+**Status:** PR-009 remains **Mitigating**. Local synthetic recall/precision coverage is stronger and a reproduced false-positive class (`pump/operator panel`) is closed without weakening energized-panel danger detection. Full closure still requires SME/red-team corpus review and a production danger-classification LLM/guardrail for genuinely novel phrasings.
+
+**Still local-only and not yet done:** real 1024-dim embedding migration/backfill if choosing Cohere for production. PR-009's remaining closure is partly human/model-owned, not fully local-only.
+
+---
+
+## Loop 41 — 2026-06-22 — Local-only visual-region redaction contract (PR-015/P2-8)
+
+**Implemented:**
+- `CaptioningResult` now carries `sensitive_detection_labels`, so the visual pipeline preserves detection provenance while still storing redacted caption text.
+- `VisualIngestionExecutor` now detects sensitive OCR/caption labels before redaction and annotates each `LayoutRegion` with:
+  - `sensitive_detected`
+  - `sensitive_detection_labels`
+  - `pii_redaction_applied`
+  - `secret_redaction_applied`
+  - `pii_redaction_policy_ref`
+  - `visual_region_redaction_required`
+  - `visual_region_redaction_status`
+  - `visual_redaction_policy_ref`
+- `visual_chunks_from_ingestion()` persists the same redaction contract into visual chunk metadata, so the retrieval/asset path does not lose it.
+- `CropService.create_region_crop()` resolves default `inherit` to `visual-region-redaction-required` for sensitive visual regions and carries only labels/policy flags, not raw OCR/caption text.
+- `AssetService.get_visual_asset()` now returns redaction-required flags and detection labels for authorized regions/crops without exposing OCR/caption text.
+- The NestJS OpenAPI schema documents the optional visual redaction fields on asset regions/crops.
+
+**Tests added/updated:**
+- `tests/security/test_redaction.py` now pins sensitive visual OCR/caption redaction plus region/chunk/crop/asset redaction-required propagation.
+- `tests/unit/test_crop_service.py` pins benign crops stay `inherit` while sensitive-region crops require `visual-region-redaction-required`.
+- `tests/unit/test_assets_service.py` pins authorized asset responses include redaction-required metadata while still omitting OCR/caption text.
+
+**Verification:** `tests.security.test_redaction` + `tests.unit.test_crop_service` + `tests.unit.test_assets_service` + `tests.integration.test_quickstart` 15 OK; visual/OpenAPI/deletion/eval regression slice 19 OK (skipped 1); `apps/api` app/assets e2e 10 OK; `apps/api` typecheck + build GREEN; `black --check` + `ruff check` + `git diff --check` + `detect-secrets` clean; `scripts/gate.sh all` GREEN (**734 OK, skipped 6**).
+
+**Status:** PR-015 remains **Mitigating**. The local visual-region redaction contract is now closed for this repo's current visual abstraction: sensitive OCR/caption labels flow through region/chunk/crop/asset metadata and raw visual crop consumers are told when masking is required. Full closure still needs real bitmap/region masking in the production image store/OCR pipeline and higher-recall NER/dictionaries for unstructured names/addresses/industry identifiers.
+
+**Still local-only and not yet done:** SME-expanded high-risk/danger-LLM closure for PR-009, and real 1024-dim embedding migration/backfill if choosing Cohere for production.
+
+---
+
+## Loop 40 — 2026-06-22 — Local-only approval-state durability: Document.metadata write-through (PR-004/P1-3)
+
+**Implemented:**
+- `ManufacturingSystem.get_mfg_meta()` now falls back to the reused 001 `Document.metadata[_mfg_meta]` record when the process-local resolver map is empty.
+- `ManufacturingSystem._set_mfg_meta()` writes a jsonb-safe `ManufacturingDocumentMetadata.to_mapping()` back through the reused `DocumentRegistry.put()`.
+- Approval transitions now decorate chunks first, then persist the authoritative metadata record, so workflow/imported approval state can survive a production registry round-trip.
+- File metadata attach and explicit metadata update now re-apply `_set_mfg_meta()` after enrichment, preserving the same durable write-through behavior.
+
+**Tests added/updated:**
+- `tests/manufacturing/test_approval_lifecycle.py` now clears the fast resolver after workflow approval and proves the approved state is restored from `Document.metadata`.
+
+**Verification:** `tests.manufacturing.test_approval_lifecycle` + source-poisoning + manufacturing governance endpoint/wiring slice 11 OK; `black --check` + `ruff check` + `git diff --check` clean; `apps/api` typecheck GREEN; `scripts/gate.sh all` GREEN (**733 OK, skipped 6**).
+
+**Status:** PR-004/P1-3 remains **Mitigating**. The local durable approval-state write-through is now closed via reused 001 `Document.metadata`; remaining to close fully: real Postgres survive-restart Tier-B coverage and a product HTTP approval/metadata facade if we decide that external approval workflow mutation must be exposed through NestJS before release.
+
+**Still local-only and not yet done:** SME-expanded high-risk/danger-LLM closure for PR-009, and real 1024-dim embedding migration/backfill if choosing Cohere for production. Superseded for the visual-region redaction contract by Loop 41.
+
+---
+
+## Loop 39 — 2026-06-22 — Local-only governance production wiring: durable stores on product API (PR-004/P1-3/P1-10)
+
+**Implemented:**
+- `ManufacturingSystem` now accepts injected `base_system`, `AuditLogWriter`, and `DataUsePolicyStore` dependencies while preserving the default in-memory composition.
+- Added `build_manufacturing_system_for_base()` / `build_production_manufacturing_system()` so the production Postgres base system, `PostgresManufacturingAuditLogWriter`, and `PostgresDataUsePolicyStore` share the same tenant-scoped connection.
+- Extended the manufacturing `AuditLogWriter` interface to include the read/tenant/export surface already used by dashboard/KPI/audit export.
+- `apps/answer-service` now exposes durable manufacturing governance routes:
+  - `GET /internal/manufacturing/policy/data-use`
+  - `PUT /internal/manufacturing/policy/data-use`
+  - `GET /internal/manufacturing/governance/status`
+  - `GET /internal/manufacturing/audit/export`
+- `apps/api` now exposes the thin product facade under `/v1/manufacturing/...`, forwarding the signed principal to the answer-service and stripping body-supplied `tenant_id` from policy patches.
+
+**Tests added/updated:**
+- `tests/manufacturing/unit/test_durable_manufacturing_wiring.py` pins injected Postgres store/writer composition, policy-change persistence, durable audit readback, and hash-chain verification across recreated adapters.
+- `tests/integration/test_manufacturing_governance_endpoint.py` pins the answer-service boundary: policy read/update, governance status, and audit export over the durable stores.
+- `apps/api/test/manufacturing.e2e-spec.ts` now covers policy read/update, governance status, audit export, and tenant-override stripping in the NestJS facade.
+
+**Verification:** `tests.integration.test_manufacturing_governance_endpoint` + durable governance/store/writer/governance/no-train slice 28 OK; `tests.contract.test_openapi` 8 OK (skipped 1); `apps/api` manufacturing+app e2e 11 OK; `apps/api` typecheck + build GREEN; `black --check` + `ruff check` + `git diff --check` clean; `scripts/gate.sh all` GREEN (**732 OK, skipped 6**).
+
+**Status:** PR-004/P1-3/P1-10 remains **Mitigating** but the prior local-only production-wiring gap is closed: policy changes now flow through the product API into the durable DataUsePolicy store and durable manufacturing audit writer. Durable approval-state write-through was superseded by Loop 40. Remaining to close fully: real Postgres survive-restart Tier-B coverage and real AWS deploy verification.
+
+**Still local-only and not yet done:** SME-expanded high-risk/danger-LLM closure for PR-009, visual-region redaction beyond text/EXIF/caption redaction, and real 1024-dim embedding migration/backfill if choosing Cohere for production. Superseded for durable approval-state write-through by Loop 40.
+
+---
+
+## Loop 38 — 2026-06-22 — Local-only governance durability: Postgres DataUsePolicy store (PR-004/P1-3)
+
+**Implemented:**
+- Added migration `0010_mfg_data_use_policy.sql` (+ down) for `manufacturing_data_use_policies`.
+- The table stores the no-train/default opt-in posture, provider no-train requirement, fallback mode, retention settings, export flag, version, and updater fields under tenant RLS.
+- Added `PostgresDataUsePolicyStore` with the same safety posture as `InMemoryDataUsePolicyStore`:
+  - `get(tenant_id)` auto-seeds the safe default.
+  - `update(tenant_id, patch, actor)` validates patchable fields, bumps `policy_version`, records `updated_by`, and rejects `training_opt_in=True` without `opt_in_contract_ref`.
+
+**Tests added/updated:**
+- `tests/manufacturing/unit/test_postgres_data_use_policy_store.py` pins safe default seeding, tenant-scoped update, version bump, invalid opt-in rejection without persistence, and valid opt-in.
+- `tests/contract/test_schema_lock_migration_sql.py` pins the durable policy table and tenant-isolation policy.
+
+**Verification:** `tests.manufacturing.unit.test_postgres_data_use_policy_store` + existing governance/no-train tests + schema-lock contract 30 OK; `black --check` + `ruff check` clean on touched governance persistence files; `scripts/gate.sh all` GREEN (**730 OK, skipped 6**).
+
+**Status:** PR-004/P1-3 remains **Mitigating**. Durable DataUsePolicy/no-train storage now exists locally; prior production wiring and durable policy-change audit gaps were superseded by Loop 39, and durable approval-state write-through by Loop 40. Remaining to close fully: real Postgres survive-restart coverage and final deployed-env verification.
+
+**Still local-only and not yet done:** SME-expanded high-risk/danger-LLM closure for PR-009, visual-region redaction beyond text/EXIF/caption redaction, and real 1024-dim embedding migration/backfill if choosing Cohere for production. Superseded for durable governance production wiring by Loop 39 and approval-state write-through by Loop 40.
+
+---
+
+## Loop 37 — 2026-06-22 — Local-only manufacturing audit durability: Postgres hash-chain writer (PR-004/P1-10)
+
+**Implemented:**
+- `sanitize_audit_log_entry()` is now a shared manufacturing audit sanitizer; `InMemoryAuditLogWriter` reuses it.
+- Added `PostgresManufacturingAuditLogWriter` with the same core surface as the in-memory writer:
+  - `record(entry)`.
+  - `read_all(principal)`.
+  - `read_for_tenant(principal, tenant_id)`.
+  - `verify_chain(principal)`.
+- The writer redacts free-text fields, preserves reference IDs, links entries with `prev_hash`/`entry_hash`, and reads through tenant-scoped RLS context.
+- Added migration `0009_mfg_audit_payload.sql` (+ down) to persist the canonical redacted `AuditLogEntry` payload in `manufacturing_audit_events.entry_payload`, while keeping existing dashboard summary columns.
+
+**Tests added/updated:**
+- `tests/manufacturing/unit/test_postgres_audit_writer.py` pins redacted write/readback, tenant scoping, hash-chain verification, and tamper detection.
+- `tests/contract/test_schema_lock_migration_sql.py` pins the additive payload column.
+
+**Verification:** `tests.manufacturing.unit.test_postgres_audit_writer` + existing manufacturing audit writer/redaction units + schema-lock contract 27 OK; `black --check` + `ruff check` clean on touched manufacturing audit/Postgres persistence files; `scripts/gate.sh all` GREEN (**726 OK, skipped 6**).
+
+**Status:** PR-004/P1-10 remains **Mitigating**. The durable Postgres writer now exists and preserves the same hash-chain semantics; production wiring, durable DataUsePolicy/no-train state, durable policy-change audit, and approval-state write-through were superseded by Loops 38–40. Remaining to close fully: survive-restart Tier-B coverage over real Postgres.
+
+**Still local-only and not yet done:** SME-expanded high-risk/danger-LLM closure for PR-009, visual-region redaction beyond text/EXIF/caption redaction, and real 1024-dim embedding migration/backfill if choosing Cohere for production. Superseded for the durable DataUsePolicy store slice by Loop 38, production wiring by Loop 39, and approval-state write-through by Loop 40.
+
+---
+
+## Loop 36 — 2026-06-22 — Local-only PII recall tail: address/name/employee-id regex expansion (PR-015/P2-8)
+
+**Implemented:**
+- `Redactor` now detects and masks additional common PII/secret-adjacent patterns:
+  - explicit `Name:` / `Contact Name:` and Japanese `氏名:` / `名前:` fields.
+  - `Employee ID` / `Staff ID` / `Worker ID` / `Operator ID` fields.
+  - common street-address forms.
+  - Japanese postal codes and US SSNs.
+- The existing pre-index redaction path automatically applies these patterns before chunking/embedding/upsert.
+
+**Tests added/updated:**
+- `tests/unit/test_core_quality.py` pins the expanded redaction labels.
+- `tests/security/test_redaction.py` pins that name, employee ID, street address, and postal code patterns do not survive indexed text.
+
+**Verification:** `tests.unit.test_core_quality` + `tests.security.test_redaction` 13 OK; `black --check` + `ruff check` clean on touched redaction/test files; `scripts/gate.sh all` GREEN (**723 OK, skipped 6**).
+
+**Status:** PR-015 remains **Mitigating**. Regex recall is stronger for common address/name/employee-id forms; full closure still needs NER/dictionaries for unstructured names/addresses and visual region-level masking for image PII.
+
+**Still local-only and not yet done:** manufacturing governance/hash-chain durability tail (PR-004/P1-3/P1-10), SME-expanded high-risk/danger-LLM closure for PR-009, visual-region redaction beyond text/EXIF/caption redaction, and real 1024-dim embedding migration/backfill if choosing Cohere for production. Superseded for the durable manufacturing audit writer slice by Loop 37.
+
+---
+
+## Loop 35 — 2026-06-22 — Local-only retrieval index tail: Postgres tsvector lexical index (PR-007/P1-7)
+
+**Implemented:**
+- Added `infra/db/migrations/postgres/0008_lexical_retrieval_index.sql` and paired down migration.
+- The migration creates `idx_chunks_text_lexical_live`, a partial GIN index over `to_tsvector('simple', text)` for live chunks.
+- `PostgresVectorStore.lexical_matches()` now narrows candidates with `to_tsvector('simple', c.text) @@ to_tsquery('simple', $query)` instead of unindexed `LIKE`, while keeping final scoring in the shared Python lexical/recency scorer.
+
+**Tests added/updated:**
+- `tests/contract/test_explain_gate.py` pins the tsvector query shape and lexical index.
+- `tests/contract/test_schema_lock_migration_sql.py` pins the migration/index declaration.
+
+**Verification:** `tests.contract.test_explain_gate` + `tests.contract.test_schema_lock_migration_sql` + `tests.integration.test_hybrid_retrieval` 17 OK; `black --check` + `ruff check` clean on touched Postgres/contract files; `scripts/gate.sh all` GREEN (**722 OK, skipped 6**).
+
+**Status:** PR-007 remains **Mitigating**; repo-side retrieval now has metadata exact + lexical + recency + vector union, and the deployed lexical leg has an index path. Remaining to close fully: real-data EXPLAIN proving index use, load p50/p95/p99, and real reranker/model routing.
+
+**Still local-only and not yet done:** manufacturing governance/hash-chain durability tail (PR-004/P1-3/P1-10), SME-expanded high-risk/danger-LLM closure for PR-009, higher-recall PII/visual-region redaction beyond regex policy controls, and real 1024-dim embedding migration/backfill if choosing Cohere for production. Superseded for the address/name/employee-id regex expansion by Loop 36.
+
+---
+
+## Loop 34 — 2026-06-22 — Local-only embedding wiring reconciliation (PR-008/P1-15)
+
+**Implemented:**
+- `src/raku_rag/providers/embeddings.py` now exposes embedding capability metadata, `embedding_dimension()`, and `embedding_provider_from_settings()`.
+- `Settings` now carries `embedding_provider`, `embedding_dim`, and `aws_region`; env wiring adds `RAKU_EMBEDDING_PROVIDER` and `RAKU_EMBEDDING_DIM`.
+- `MvpSystem` and `ProductionSystem` both build their embedding provider from the same settings path, so eval/local/prod no longer silently choose separate provider wiring.
+- The Cohere/Bedrock provider name is recognized but fail-fast unless `embedding_dim=1024`, making the schema/reindex requirement explicit before a model swap.
+- `IngestionService` now stores `embedding_model_version` and `embedding_dimension` in document/chunk metadata and includes both in the skip predicate. Same raw content is re-indexed when model version or dimension changes.
+- `PostgresVectorStore` validates vector length before SQL insert, producing a clear dimension mismatch error instead of an opaque pgvector failure.
+- `.env.example` documents the provider/dimension knobs and the need to align them with schema + reindex.
+
+**Tests added/updated:**
+- `tests/unit/test_embedding_configuration.py` pins provider factory behavior, Cohere 1024-dim fail-fast, env parsing, reindex-on-dimension-change, and Postgres vector length validation.
+
+**Verification:** `tests.unit.test_embedding_configuration` + `tests.security.test_redaction` + `tests.integration.test_ingest_queue` 17 OK; `black --check` + `ruff check` clean on touched embedding/config/app/production/ingestion/Postgres files; `scripts/gate.sh all` GREEN (**722 OK, skipped 6**).
+
+**Status:** PR-008/P1-15 moves from **Open** to **Mitigating**. Repo-side provider/dim wiring is now explicit and stale vectors are reindexed on model/dim changes. Remaining to close fully: actual Cohere/1024 pgvector migration or parallel embedding table path, real reindex/backfill execution, and eval/golden baseline over the selected production embedding provider.
+
+**Still local-only and not yet done:** manufacturing governance/hash-chain durability tail (PR-004/P1-3/P1-10), SME-expanded high-risk/danger-LLM closure for PR-009, higher-recall PII/visual-region redaction beyond regex policy controls, optional Postgres tsvector/BM25 tuning, and real 1024-dim embedding migration/backfill if choosing Cohere for production. Superseded for the Postgres tsvector lexical-index slice by Loop 35.
+
+---
+
+## Loop 33 — 2026-06-22 — Local-only retrieval tail: lexical + recency hybrid leg (PR-007/P1-7)
+
+**Implemented:**
+- `src/raku_rag/core/hybrid_retrieval.py` now includes bounded lexical scoring and recency boost helpers. Lexical scores remain below metadata exact-match scores, so explicit business identifiers still win.
+- `InMemoryVectorStore.lexical_matches()` returns ACL-visible chunks with direct content-term overlap.
+- `PostgresVectorStore.lexical_matches()` adds the deployed lexical leg over live chunks joined to document metadata, using SQL only to narrow candidates and shared Python scoring for behavior parity.
+- `RetrievalService` unions metadata exact matches, lexical matches, and vector matches before rerank/top-k; it exports `retrieval_lexical_match_count` and span attribute `lexical_match_count`.
+
+**Tests added/updated:**
+- `tests/integration/test_hybrid_retrieval.py` now pins a keyword query where lexical matching beats vector-only order, and a same-keyword tie where newer `effective_date` metadata wins.
+- `tests/contract/test_explain_gate.py` statically pins the deployed Postgres lexical/recency leg.
+
+**Verification:** `tests.integration.test_hybrid_retrieval` + `tests.contract.test_explain_gate` 10 OK; `black --check` + `ruff check` clean on touched retrieval/vectorstore/Postgres/hybrid files; `scripts/gate.sh all` GREEN (**717 OK, skipped 6**).
+
+**Status:** PR-007 remains **Mitigating** but its repo-side core path is now much stronger: metadata exact identifiers + lexical keyword overlap + recency boost are all in the core and Postgres path. Remaining to close fully: production-scale EXPLAIN/load validation, optional tsvector/BM25 index tuning, and real reranker/model routing.
+
+**Still local-only and not yet done:** manufacturing governance/hash-chain durability tail (PR-004/P1-3/P1-10), embedding dimension/model wiring reconciliation (PR-008/P1-15), SME-expanded high-risk/danger-LLM closure for PR-009, higher-recall PII/visual-region redaction beyond regex policy controls, and optional Postgres tsvector/BM25 tuning if we want stronger lexical index guarantees before real-data EXPLAIN. Superseded for the provider/dim wiring slice by Loop 34.
+
+---
+
+## Loop 32 — 2026-06-22 — Local-only PII policy tail: selectable pre-index redaction modes (PR-015/P2-8)
+
+**Implemented:**
+- `IngestionService` now supports explicit PII/secret handling modes:
+  - `pre_index_redact` (default): current safe behavior; redact before chunking/embedding/upsert.
+  - `detect_only`: retain indexed text only when explicitly configured, while tagging detected sensitive classes.
+  - `block`: fail ingestion when sensitive content is detected.
+- Redaction policy is now part of diff-sync: the same raw document is re-indexed when `pii_redaction_mode` changes, avoiding stale raw/redacted chunks after a policy change.
+- Document and chunk metadata now record `sensitive_detected`, `sensitive_detection_labels`, `pii_redaction_applied`, `secret_redaction_applied`, `pii_redaction_mode`, and `pii_redaction_policy_ref`.
+- `Settings.pii_redaction_mode` + `RAKU_PII_REDACTION_MODE` wire the policy into both `MvpSystem` and `ProductionSystem`.
+- `.env.example` documents the allowed values.
+
+**Tests added/updated:**
+- `tests/security/test_redaction.py` now pins default pre-index redaction metadata, explicit `detect_only` retain/tag behavior, explicit `block` behavior, policy-change reindexing for unchanged raw content, and env parsing.
+
+**Verification:** `tests.security.test_redaction` 8 OK; `black --check` + `ruff check` clean on touched ingestion/config/app/production/redaction-test files; `scripts/gate.sh all` GREEN (**714 OK, skipped 6**).
+
+**Status:** PR-015 remains **Mitigating**. Repo-side policy-selectable pre-index behavior is now implemented; full closure still needs higher-recall PII detection for names/addresses/industry identifiers (NER/dictionaries) and, for visual PII, region-level masking beyond text/EXIF/caption redaction.
+
+**Still local-only and not yet done:** manufacturing governance/hash-chain durability tail (PR-004/P1-3/P1-10), embedding dimension/model wiring reconciliation (PR-008/P1-15), true lexical/recency tail of P1-7, SME-expanded high-risk/danger-LLM closure for PR-009, and higher-recall PII/visual-region redaction beyond regex policy controls. Superseded for the core lexical/recency retrieval slice by Loop 33.
+
+---
+
+## Loop 31 — 2026-06-22 — Local-only audit durability: deployed answer audit to Postgres (PR-004/P1-10 slice)
+
+**Implemented:**
+- `src/raku_rag/observability/audit.py` now exposes an `AuditSink` protocol and shared `sanitize_audit_event()` redaction path. The in-memory sink reuses the same sanitizer, including nested metadata redaction.
+- `src/raku_rag/persistence/postgres.py` adds `PostgresAuditSink`, writing reference-only answer audit events into the existing RLS-protected `audit_logs` table. It persists tenant/correlation/actor/action/decision/reason/document IDs/chunk IDs/citation IDs/policy metadata without raw prompt, answer, or retrieved context.
+- `ProductionSystem` now wires `PostgresAuditSink` instead of `InMemoryAuditSink`, so deployed `ProductionSystem.answer()` audit events survive process restarts and participate in tenant RLS.
+- `AnswerService` depends on the `AuditSink` protocol rather than the in-memory implementation.
+
+**Tests added/updated:**
+- `tests/unit/test_audit_sink.py` pins nested redaction, Postgres sink insert/readback behavior, tenant-scoped reads, and the requirement that Postgres reads specify a tenant.
+
+**Verification:** `tests.unit.test_audit_sink` + `tests.integration.test_answer_observability` + `tests.postgres.test_production_smoke` 7 OK; `black --check` + `ruff check` clean on touched audit/Postgres/service files; `scripts/gate.sh all` GREEN (**710 OK, skipped 6**).
+
+**Status:** PR-004/P1-10 moves from **Open** to **Mitigating** for the deployed base answer path. Remaining to close fully: manufacturing hash-chain durability, no-train/DataUsePolicy persistence, approval-state governance tables/writers, and a Tier-B survive-restart test for those manufacturing governance controls.
+
+**Still local-only and not yet done:** manufacturing governance/hash-chain durability tail (PR-004/P1-3/P1-10), embedding dimension/model wiring reconciliation (PR-008/P1-15), deeper PII detection/policy (PR-015 tail), true lexical/recency tail of P1-7, and SME-expanded high-risk/danger-LLM closure for PR-009. Residual `multer>=2.2.0` closure appears blocked on upstream/override behavior rather than a straightforward repo-only patch. Superseded for the PII policy-selectable redaction slice by Loop 32.
+
+---
+
+## Loop 30 — 2026-06-22 — Local-only observability tail: sanitized app telemetry export (PR-005/P1-4)
+
+**Implemented:**
+- `src/raku_rag/observability/exporters.py` — optional `TelemetryExporter` seam with:
+  - `InMemoryTelemetryExporter` for tests.
+  - `StructuredLogTelemetryExporter` for sanitized JSON log export (ECS stdout → CloudWatch Logs / OTel sidecar).
+  - identity-label hashing and recursive redaction before export.
+- `MetricsRecorder` exports metric points when an exporter is attached; `InMemoryTracer` exports finished spans on context exit. Export failures are swallowed so telemetry cannot break retrieval/generation.
+- `Settings.telemetry_export_enabled` + `RAKU_TELEMETRY_EXPORT_ENABLED`; `MvpSystem` and `ProductionSystem` wire the structured exporter only when enabled.
+- `.env.example` documents the opt-in.
+
+**Tests added/updated:**
+- `tests/unit/test_observability_metrics.py` now pins sanitized metric export, sanitized span export, non-propagating exporter failures, and env-driven structured exporter creation.
+
+**Verification:** observability unit + answer/trace/retrieval regression slice 13 OK; `black --check` + `ruff check` clean on touched observability/config files; `scripts/gate.sh all` GREEN (**707 OK, skipped 6**).
+
+**Status:** PR-005 remains **Mitigating**. Repo-side app telemetry export path and CloudWatch alarms now exist; full closure needs AWS deployment with the env enabled, alarm actions/escalation topics, and a deployed alarm-state/firing smoke.
+
+**Still local-only and not yet done:** governance/audit durability (PR-004/P1-3/P1-10), embedding dimension/model wiring reconciliation (PR-008/P1-15), deeper PII detection/policy (PR-015 tail), true lexical/recency tail of P1-7, and SME-expanded high-risk/danger-LLM closure for PR-009. Residual `multer>=2.2.0` closure appears blocked on upstream/override behavior rather than a straightforward repo-only patch. Superseded for the deployed base answer audit slice by Loop 31.
+
+---
+
+## Loop 29 — 2026-06-22 — Local-only safety eval: high-risk recall adversarial corpus (PR-009/P1-6)
+
+**Implemented:**
+- `src/raku_rag/eval/fixtures/high_risk_adversarial_corpus.json` — synthetic manufacturing red-team corpus (8 dangerous + 4 benign controls, no real customer data) for GAP-S1 high-risk recall.
+- `src/raku_rag/eval/high_risk_recall.py` — deterministic corpus loader/evaluator that records missed dangerous queries, wrong expected reason families, and benign false positives.
+- `high_risk_recall_probe` added to `DEFAULT_PROBES` and `SECURITY_CHECKS`, so release eval blocks if known-dangerous manufacturing queries are not classified high-risk or if a degenerate all-high-risk classifier overfires on benign controls.
+
+**Tests added/updated:**
+- `tests/security/test_high_risk_recall_probe.py` — corpus positive/negative controls; real classifier passes; false-negative classifier blocks; all-high-risk classifier blocks; default `EvaluationRunner` includes `high_risk_recall`.
+- Existing default-probe coverage still asserts every `SECURITY_CHECK` has a real probe and default suite runs clean.
+
+**Verification:** `tests.security.test_high_risk_recall_probe` + default probe coverage + eval probe suite 21 OK; `black --check` + `ruff check` clean on touched eval files; `scripts/gate.sh all` GREEN (**703 OK, skipped 6**).
+
+**Status:** PR-009 moves from **Open/PARTIAL** to **Mitigating**. Remaining to close fully: SME/red-team corpus expansion and a production danger-classification LLM/guardrail for genuinely novel phrasings (human-owned safety boundary).
+
+**At that point still local-only and not yet done:** governance/audit durability (PR-004/P1-3/P1-10), app-level telemetry export beyond CDK alarms (PR-005 tail), embedding dimension/model wiring reconciliation (PR-008/P1-15), deeper PII detection/policy (PR-015 tail), true lexical/recency tail of P1-7, and SME-expanded high-risk/danger-LLM closure for PR-009. Residual `multer>=2.2.0` closure appears blocked on upstream/override behavior rather than a straightforward repo-only patch. Superseded for the PR-005 telemetry-export tail by Loop 30.
+
+---
+
+## Loop 28 — 2026-06-22 — Local-only retrieval hardening: core metadata identifier exact-match leg (PR-007/P1-7)
+
+**Implemented:**
+- `src/raku_rag/core/hybrid_retrieval.py` adds shared identifier extraction/matching for hot business identifiers (`equipment_id`, `alarm_code`, `property_id`, `contract_id`, `fund_id`, `isin`, etc.) with nested metadata support (`_mfg_meta`, `manufacturing_metadata`, `manufacturing`, `industry_metadata`).
+- `RetrievalService` now unions ACL-visible metadata exact matches with vector results before rerank/top-k, de-duplicates by chunk, re-runs the existing ACL post-check, and emits `retrieval_metadata_exact_match_count` in metrics + span attributes.
+- `InMemoryVectorStore.metadata_exact_matches()` supports the Tier-A/local path and nested manufacturing metadata dataclasses/mappings on chunk metadata.
+- `PostgresVectorStore.metadata_exact_matches()` supports the deployed path by querying joined `chunks` + `documents` JSONB metadata; this covers production-ingested manufacturing metadata persisted on `Document.metadata`, not only chunk metadata.
+
+**Tests added/updated:**
+- `tests/integration/test_hybrid_retrieval.py` — an exact `EQ-PRESS-100` / `E-142` metadata match beats a stronger vector-only distractor; an ACL-hidden exact match is excluded.
+- `tests/contract/test_explain_gate.py` — statically pins that the core/Postgres identifier leg exists alongside the vector EXPLAIN gate shape.
+
+**Verification:** `tests.integration.test_hybrid_retrieval` + `tests.contract.test_explain_gate` 7 OK; retrieval/citation/redaction regression slice 18 OK; `black --check` + `ruff check` clean on touched Python; `scripts/gate.sh all` GREEN (**697 OK, skipped 6**).
+
+**Status:** PR-007 moves from **Open** to **Mitigating**. Remaining to close fully: true lexical/BM25 or tsvector leg, recency boost, real reranker/model routing, and prod-scale EXPLAIN/load validation.
+
+**At that point still local-only and not yet done:** governance/audit durability (PR-004/P1-3/P1-10), app-level telemetry export beyond CDK alarms (PR-005 tail), high-risk recall/adversarial corpus (PR-009/P1-6), embedding dimension/model wiring reconciliation (PR-008/P1-15), deeper PII detection/policy (PR-015 tail), and the true lexical/recency tail of P1-7. Residual `multer>=2.2.0` closure appears blocked on upstream/override behavior rather than a straightforward repo-only patch. Superseded for the initial PR-009 corpus by Loop 29.
+
+---
+
+## Loop 27 — 2026-06-22 — Local-only observability: repo-side CloudWatch alarms (PR-005/P1-4)
+
+**Implemented:**
+- `infra/cdk/lib/raku-rag-stack.ts` now creates real `cloudwatch.Alarm` resources for:
+  - `ApiTarget5xxAlarm` — API target 5xx over 5 minutes.
+  - `IngestionDlqVisibleAlarm` — any DLQ-visible message.
+  - `IngestionQueueAgeAlarm` — stale SQS ingestion age.
+  - `AuroraCpuAlarm` — Aurora pgvector CPU pressure.
+  - `ApiWafRateLimitBlockedAlarm` — WAF IP/token rate-limit blocks.
+- Dashboard metric objects are reused by the alarms where possible, with `TreatMissingData.NOT_BREACHING`.
+- `CloudWatchAlarmNames` output added for release automation / post-deploy smoke checks.
+- `tests/contract/test_cdk_infrastructure.py` and `infra/cdk/README.md` now pin CloudWatch alarms.
+
+**Verification:** `tests.contract.test_cdk_infrastructure` 5 OK; `cd infra/cdk && npm run build` GREEN; `cd infra/cdk && npm run synth` GREEN and emits `AWS::CloudWatch::Alarm` resources for all five alarms.
+
+**Status:** PR-005 moves from **Open** to **Mitigating**. Remaining to close fully: export app-level RAG metrics/spans out of ECS (currently in-memory), wire alarm actions/escalation topics in the real AWS account, and run a deployed alarm-state/firing smoke.
+
+---
+
+## Loop 26 — 2026-06-22 — Local-only supply-chain follow-up: NestJS 11 + Trivy allowlist narrowing (PR-014)
+
+**実装した変更:**
+- `apps/api/package.json` / `package-lock.json` — API workspace upgraded from NestJS 10.4.x to NestJS 11.1.x (`@nestjs/common/core/platform-express/testing`) and Nest CLI 11.0.x.
+- `apps/api/src/main.ts` — typed the CORS origin callback explicitly for the NestJS 11 / stricter TS surface.
+- `.trivyignore` — removed stale picomatch acceptance; after NestJS 11, API dev tooling uses picomatch 4.0.4 and prod-only dependency resolution has no picomatch (`npm ls --omit=dev picomatch` empty).
+- `risk-register.md`, `release-execution-checklist.md`, `release-and-rollback.md` — PR-014 updated from the old "NestJS 10 -> 11 will fix it" assumption to the measured state: NestJS 11 works, but `@nestjs/platform-express@11.1.27` still reifies `multer@2.1.1`; `multer <2.2.0` remains an accepted availability-only CVE family.
+
+**Verification:**
+- `npm ci --ignore-scripts` GREEN (strict lockfile install).
+- `npm ls --workspace @raku-rag/api @nestjs/common @nestjs/core @nestjs/platform-express @nestjs/testing @nestjs/cli multer picomatch --all`: NestJS 11.1.x, CLI 11.0.x, `multer@2.1.1`, dev-only picomatch 4.0.4/2.3.2.
+- `npm ls picomatch --omit=dev --all`: empty (npm exits 1 for an empty dependency tree).
+- `npm audit --workspace @raku-rag/api --omit=dev --json`: still reports `multer` via `@nestjs/platform-express`; root/workspace overrides to `multer@2.2.0` were tested and did not change the reified tree.
+- `npm run typecheck --workspace @raku-rag/api` GREEN.
+- `npm run build --workspace @raku-rag/api` GREEN.
+- `npm run test:e2e --workspace @raku-rag/api` GREEN (77/77).
+
+**Status:** PR-014 remains **Mitigating**, not "fully fixed": the repo-side scanning/SBOM/secret-scan gates are in place and NestJS 11 is locally validated, but the last runtime accepted CVE family (`multer@2.1.1` < 2.2.0) requires an upstream NestJS dependency bump or a package-manager override that actually reifies 2.2.0 in CI.
+
+**Still local-only and not yet done:** governance/audit durability (PR-004/P1-3/P1-10), production telemetry/alarms (PR-005/P1-4), hybrid retrieval core path (PR-007/P1-7), high-risk recall/adversarial corpus (PR-009/P1-6), deeper PII detection/policy (PR-015 tail), and the residual `multer>=2.2.0` supply-chain closure when upstream/override support exists.
+
+---
+
+## Loop 25 — 2026-06-22 — Local-only hardening: API WAF + IP/token rate limits (PR-011)
+
+User goal continuation: first crush the items that can be completed locally before the remaining real-infra release gates.
+
+**Implemented:**
+- **PR-011 / P1-11 → Mitigating repo-side:** `infra/cdk/lib/raku-rag-stack.ts` now creates an AWS WAFv2 WebACL for the public NestJS API ALB and associates it with the ALB.
+- WAF rules:
+  - `AWSManagedCommonRuleSet` for managed common web protections.
+  - `IpRateLimit` rate-based block keyed by source IP (`limit`: prod 2000 / non-prod 1000 per WAF evaluation window).
+  - `UserTokenRateLimit` rate-based block keyed by `x-user-token` via WAF custom aggregation key (`limit`: prod 600 / non-prod 300), scoped to requests where the token header is present.
+- Operations dashboard now includes WAF allowed/blocked request metrics and specific rate-limit block widgets for `IpRateLimit` and `UserTokenRateLimit`.
+- `ApiWebAclArn` output added so release/deploy automation can locate the attached edge control.
+- `infra/cdk/README.md` and `tests/contract/test_cdk_infrastructure.py` updated to pin the WAF/rate-limit boundary.
+
+**Verification:** `tests.contract.test_cdk_infrastructure` **5 OK**; `npm run build` in `infra/cdk` GREEN; `npm run synth` in `infra/cdk` GREEN and emits `AWS::WAFv2::WebACL`, `AWS::WAFv2::WebACLAssociation`, dashboard WAF metrics, and `ApiWebAclArn`.
+
+**Remaining for full closure:** deploy the CDK stack to the real AWS account, tune limits from production traffic, and add alert/runbook thresholds for elevated WAF blocks. No runtime RAG code changed.
+
+**At that point still local-only and not yet done:** NestJS 10→11 supply-chain follow-up (multer/picomatch), governance/audit durability (PR-004/P1-3/P1-10), production telemetry/alarms (PR-005/P1-4), hybrid retrieval core path (PR-007/P1-7), high-risk recall/adversarial corpus (PR-009/P1-6), and deeper PII detection/policy (PR-015 tail). Superseded for the NestJS item by Loop 26; the residual is `multer>=2.2.0` upstream/override closure.
+
+---
+
+## Loop 24 — 2026-06-22 — Local-only hardening: citation live revalidation + pre-index text redaction
+
+User goal: first crush the items that can be completed locally before the remaining real-infra release gates.
+
+**Implemented:**
+- **PR-013 / P1-14 → Fixed locally:** `AnswerService` now revalidates retrieved evidence against the current `Document` state and retrieval visibility (`tenant_id`, tombstone, ACL) before any chunk reaches generation, then rechecks again before returning citations. Invalidated chunks emit `answer_citation_revalidation_dropped_total`; if the profile's minimum evidence is no longer met, the answer is demoted to `insufficient_evidence` with reason `citation_revalidation`.
+- `RetrievalService.is_visible()` exposes the same live ACL/tombstone/tenant decision used by retrieval so already-retrieved evidence can be rechecked at serve time.
+- **PR-015 / P2-8 → Mitigating:** `IngestionService` applies the shared `Redactor` to text before chunking/embedding/upsert and stores `pii_redaction_applied` + `pii_redaction_policy_ref` on `Document.metadata`. This closes the simple raw email/API-key-at-rest path; higher-recall PII (names/addresses/industry identifiers) and policy-selectable retain/redact behavior remain open.
+- Readiness docs updated so PR-013 is not still listed as an open serve-time citation gap and PR-015 is represented honestly as mitigating, not fully closed.
+
+**Tests added/updated:**
+- `tests/security/test_citation_revalidation.py` — tombstoned documents and ACL-revoked chunks cannot be served as citations; a revoked chunk is not passed to the LLM context when another valid citation remains.
+- `tests/security/test_redaction.py` — text ingestion redacts raw email/API-key values before indexing and answers do not expose the raw sensitive values.
+
+**Verification:** `py_compile` GREEN; targeted security/integration tests **9 OK**; `black` + `ruff` clean on touched code/tests; `scripts/gate.sh all` GREEN (**Tier A 320 OK; full suite 694 OK, skipped 6**).
+
+**At that point still local-only and not yet done:** NestJS 10→11 supply-chain follow-up (multer/picomatch), governance/audit durability (PR-004/P1-3/P1-10), production telemetry/alarms (PR-005/P1-4), hybrid retrieval core path (PR-007/P1-7), high-risk recall/adversarial corpus (PR-009/P1-6), WAF/rate-limit definitions (PR-011/P1-11), and deeper PII detection/policy (PR-015 tail). Superseded for WAF by Loop 25 and for the NestJS item by Loop 26.
+
+---
+
 ## Loop 23 — 2026-06-21 — Root-cause campaign for the 4 mitigations/partials (PRs #4–8 merged) + doc reconcile
 
 Driven by the user's "根本解決を求めます" goal — convert each band-aid to a genuine fix, each a verified CI-green merged PR.
@@ -16,7 +779,7 @@ Driven by the user's "根本解決を求めます" goal — convert each band-ai
 
 **Verification:** every PR — ruff+black, Tier A + full suite, detect-secrets, §5 separation; #4 Tier-B on real Postgres; #8 blocking Trivy on real images (api+web). All merged into 002; CI green on each.
 
-**残り (product release, real-infra/migration — your environment):** AWS CD/OIDC, rollback/backup dry-run, production-scale load p50/p95/p99, real-data EXPLAIN, NestJS 10→11 (closes multer + picomatch overrides).
+**残り (product release, real-infra/migration — your environment):** AWS CD/OIDC, rollback/backup dry-run, production-scale load p50/p95/p99, real-data EXPLAIN. Historical note: the NestJS 10→11 item listed here was revisited in Loop 26; NestJS 11 is locally validated, picomatch is removed from prod-only deps, and the remaining supply-chain tail is `multer>=2.2.0` upstream/override closure.
 
 ---
 
@@ -32,7 +795,7 @@ Driven by the user's "根本解決を求めます" goal — convert each band-ai
 
 **Risk PR-010 → Fixed.** Remaining Dagster productionization is separate: add real Dagster webserver/daemon/EcsRunLauncher if you want the optional control plane on ECS, without putting Dagster in the hot answer/search path.
 
-## Loop 21 — 2026-06-21 — #5 Trivy flipped to BLOCKING after real CVE triage (PR-014 → Fixed)
+## Loop 21 — 2026-06-21 — #5 Trivy flipped to BLOCKING after real CVE triage (PR-014 → Fixed at that point; revised in Loop 26)
 
 **Triage of the real CI Trivy report** (api/web/worker images): OS/debian base layers **0 HIGH/CRITICAL**; 9 distinct HIGH npm CVEs (0 CRITICAL). Root cause: both node Dockerfiles `COPY` the FULL `node_modules` (incl. devDeps) into runtime. `npm why` split them: dev = glob/picomatch/tmp (3, via jest); prod = next ×2 + multer ×4 (6).
 
@@ -43,7 +806,7 @@ Driven by the user's "根本解決を求めます" goal — convert each band-ai
 
 **検証:** Trivy can't run locally (no Docker) — CI deploy-checks is the authority. Took several CI iterations to read the wrapped table correctly (key lesson: Trivy reports npm advisories by GHSA *or* CVE; ignore by the exact ID it prints). Re-verified green on CI.
 
-**Risk PR-014 → Fixed; PR-012 Trivy-flip thread closed.** Remaining real-infra: AWS CD/OIDC (#3), rollback/backup (#4), real-data EXPLAIN + load p50/p95/p99 (#2).
+**Risk PR-014 → Fixed at that point; PR-012 Trivy-flip thread closed.** Current PR-014 status was revised in Loop 26 after the NestJS 11 follow-up measured the remaining `multer@2.1.1` CVE tail. Remaining real-infra: AWS CD/OIDC (#3), rollback/backup (#4), real-data EXPLAIN + load p50/p95/p99 (#2).
 
 **次のループ:** push branch → PR → CI deploy-checks Trivy (blocking) confirms → merge.
 

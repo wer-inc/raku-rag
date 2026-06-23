@@ -111,6 +111,19 @@ SQL
   echo "--- Tier B security parity (Postgres-backed ProductionSystem) ---"
   RAKU_TEST_BACKEND=postgres POSTGRES_URL="postgresql://${user}:${pass}@localhost:5432/${gate_db}" \
     python3 -m unittest discover -s tests/security -t . -q
+  echo "--- Tier B domain migrations (010/003/006/002 overlay) ---"
+  "${compose[@]}" exec -T postgres psql -U "$user" -d "$gate_db" -v ON_ERROR_STOP=1 \
+    < infra/db/init/01-extensions.sql
+  for migration in \
+    infra/db/migrations/postgres/0002_policy_profile_visual_rls.sql \
+    infra/db/migrations/postgres/0003_industry_framework.sql \
+    infra/db/migrations/postgres/0004_real_estate_domain.sql \
+    infra/db/migrations/postgres/0005_investment_domain.sql \
+    infra/db/migrations/postgres/0006_manufacturing_domain.sql \
+    infra/db/migrations/postgres/0009_mfg_audit_payload.sql
+  do
+    "${compose[@]}" exec -T postgres psql -U "$user" -d "$gate_db" -v ON_ERROR_STOP=1 < "$migration"
+  done
   echo "--- Tier B ranking/smoke parity (tests/postgres) ---"
   POSTGRES_URL="postgresql://${user}:${pass}@localhost:5432/${gate_db}" \
     python3 -m unittest discover -s tests/postgres -t . -q
