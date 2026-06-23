@@ -10,10 +10,21 @@
 #     prod-only install (`rm -rf node_modules && npm ci --omit=dev` in apps/{api,web}/Dockerfile), so
 #     these are ABSENT from the image — verified gone, NOT listed.
 #   - picomatch: after the NestJS 11 CLI update, the API dev-tooling path uses picomatch 4.0.4; with
-#     `--omit=dev`, `npm ls picomatch` is empty across workspaces. Removed from this allowlist so the
-#     gate fails if a vulnerable prod picomatch reappears.
+#     `--omit=dev`, `npm ls picomatch` is empty across workspaces — i.e. NO picomatch is an installed
+#     (lockfile) dependency of either runtime image. See the picomatch acceptance below for the
+#     vendored re-appearance.
 #
-# One transitive advisory family genuinely persists in the prod image and is accepted:
+# Transitive/vendored advisory families that genuinely persist in the prod images and are accepted:
+#
+# ── picomatch 4.0.3 — CVE-2026-33671 — Regular-Expression Denial of Service via crafted extglob ──
+# HIGH, 0 CRITICAL, no RCE (availability-only). NOT an installed dependency: `npm ls picomatch
+# --omit=dev` is empty in both workspaces. Trivy detects it from a VENDORED copy bundled inside
+# build tooling — `next/dist/compiled/picomatch` (web, Next 15.5.19) and @angular-devkit/core (api) —
+# used only at build time for glob matching, never to match untrusted runtime input. There is no
+# overridable lockfile entry (it is vendored, not a resolvable dep); the only upstream fix is Next 16
+# (a major upgrade requiring full frontend re-validation). FOLLOW-UP: drop this entry when the
+# frontend moves to Next 16 (vendors picomatch >= 4.0.4) — the allowlist will then fail if it reappears.
+#
 #
 # ── multer 2.1.1 (transitive PROD dep) — Denial of Service (malformed/deeply-nested/dropped uploads) ──
 # HIGH, 0 CRITICAL, no RCE. @nestjs/platform-express@11.1.27 still depends on multer 2.1.1; npm audit
@@ -22,6 +33,7 @@
 # Mitigated meanwhile: this app exposes no file-upload controller, and the public API sits behind the
 # PR-011 WAF/rate-limits. Availability-only. FOLLOW-UP: upgrade @nestjs/platform-express once it depends
 # on multer >=2.2.0, or switch to a package-manager override that reifies 2.2.0 and is proven by CI.
+CVE-2026-33671
 CVE-2026-2359
 CVE-2026-3304
 CVE-2026-3520
