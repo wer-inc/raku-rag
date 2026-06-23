@@ -136,6 +136,18 @@ class IndustryApiService:
     def run_workflow(
         self, tenant_id: str, actor_id: str, industry_id: str, workflow_id: str, body: dict
     ) -> dict:
+        # The 'manufacturing' vertical has a BESPOKE, safety-gated surface (/v1/manufacturing/*) that
+        # runs the real high-risk gate + approved+effective citation requirement + 001 ACL pre-filter
+        # over the live store. This generic framework path answers from CALLER-SUPPLIED citations with
+        # no retrieval, no ACL pre-filter and no ManufacturingSafetyGate — so it must NOT also answer
+        # for manufacturing (two reachable surfaces with divergent safety guarantees). The framework
+        # still exposes the manufacturing PROFILE (metadata schema / validation); only the answering
+        # workflow path is refused, redirecting callers to the safety-gated endpoint.
+        if industry_id == "manufacturing":
+            raise ValueError(
+                "manufacturing is served only by the safety-gated /v1/manufacturing/* endpoints "
+                "(POST /v1/manufacturing/answer), not the generic industry workflow path"
+            )
         result = self.workflow_service.run(
             WorkflowRequest(
                 tenant_id=tenant_id,
