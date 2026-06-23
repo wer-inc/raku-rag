@@ -3694,7 +3694,7 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   db: {
     fields: [
       { id: "db_engine", label: "エンジン", placeholder: "postgres または mysql" },
-      { id: "connection_string", label: "接続文字列", placeholder: "postgresql://… または mysql://user:pass@host:3306/db", type: "password" }, // pragma: allowlist secret -- UI placeholder example, not a real credential
+      { id: "connection_string", label: "接続文字列", placeholder: "postgresql://… または mysql://user:pass@host:3306/db", type: "password" }, // pragma: allowlist secret -- illustrative placeholder, not a credential
       { id: "table_name", label: "対象テーブル", placeholder: "public.maintenance_cases" },
       { id: "updated_column", label: "更新検知列（任意）", placeholder: "updated_at" },
       { id: "allow_private_host", label: "内部ホストを許可（任意）", placeholder: "社内DBに接続する場合は true" },
