@@ -11,8 +11,29 @@ export interface Principal {
   roles: string[];
 }
 
-function tokenSecret(): string {
-  return process.env.RAKU_TOKEN_SIGNING_SECRET ?? "dev-secret-change-me";
+const DEFAULT_DEV_SECRET = "dev-secret-change-me"; // pragma: allowlist secret -- public placeholder; rejected at runtime by tokenSecret()
+
+/**
+ * Resolve the X-User-Token signing secret, FAIL-CLOSED.
+ *
+ * The in-repo literal `dev-secret-change-me` is public, so accepting it in a real environment lets
+ * anyone forge a valid X-User-Token and impersonate any tenant/user (a full ACL/tenant bypass). We
+ * therefore require an explicit, non-default `RAKU_TOKEN_SIGNING_SECRET` everywhere EXCEPT the test
+ * harness (e2e specs set NODE_ENV=test and rely on the shared dev default).
+ */
+export function tokenSecret(): string {
+  const secret = process.env.RAKU_TOKEN_SIGNING_SECRET;
+  if (secret && secret !== DEFAULT_DEV_SECRET) {
+    return secret;
+  }
+  if (process.env.NODE_ENV === "test") {
+    return DEFAULT_DEV_SECRET;
+  }
+  throw new Error(
+    "RAKU_TOKEN_SIGNING_SECRET must be set to a non-default value. The in-repo default " +
+      "'dev-secret-change-me' is public; using it would let anyone forge an X-User-Token and " +
+      "impersonate any tenant/user. Set the SAME secret on the API and the dev-token issuer.",
+  );
 }
 
 function canonicalPayload(p: Principal) {
