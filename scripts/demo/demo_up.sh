@@ -9,7 +9,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 cd "$ROOT"
 
-PGURL="${POSTGRES_URL:-postgresql://raku:raku@127.0.0.1:5432/raku_parity}"
+PGURL="${POSTGRES_URL:-postgresql://raku:raku@127.0.0.1:5432/raku_parity}"  # pragma: allowlist secret -- local dev DB credential
 AS_PORT="${AS_PORT:-8088}"
 API_PORT="${API_PORT:-3000}"
 WEB_PORT="${WEB_PORT:-3002}"
