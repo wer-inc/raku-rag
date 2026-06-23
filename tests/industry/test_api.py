@@ -14,6 +14,16 @@ class IndustryApiServiceTest(unittest.TestCase):
         ids = {item["industry_id"] for item in listing["industries"]}
         self.assertEqual(ids, {"manufacturing", "real_estate_pm", "investment_management"})
 
+    def test_manufacturing_workflow_run_is_refused_redirecting_to_bespoke_surface(self) -> None:
+        # The generic (caller-citation, no-safety-gate) workflow path must NOT answer for
+        # manufacturing — that vertical has the bespoke safety-gated /v1/manufacturing/* surface.
+        # The PROFILE is still exposed (above); only the answering workflow run is refused.
+        self.service.profile("manufacturing")  # profile still available
+        with self.assertRaises(ValueError):
+            self.service.run_workflow(
+                "tenant_alpha", "operator_1", "manufacturing", "any_workflow", {"query": "x"}
+            )
+
         profile = self.service.profile("real_estate_pm")
         self.assertEqual(profile["industry_id"], "real_estate_pm")
         self.assertIn("metadata_schema", profile)

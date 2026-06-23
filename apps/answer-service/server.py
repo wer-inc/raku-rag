@@ -44,6 +44,7 @@ from raku_rag.eval import EvaluationRunner, EvaluationSet  # noqa: E402
 from raku_rag.manufacturing.wiring import (  # noqa: E402
     build_manufacturing_answer_service,
 )
+from raku_rag.manufacturing.drafts.review import InvalidTransitionError  # noqa: E402
 from raku_rag.persistence.evaluation_runs import (  # noqa: E402
     InMemoryEvaluationRunRepository,
 )
@@ -1752,6 +1753,15 @@ def make_handler(system: ProductionSystem):
                     self._send(404, {"error": "not found"})
             except KeyError as exc:
                 self._send(400, {"error": f"missing field: {exc}"})
+            except InvalidTransitionError as exc:
+                # Out-of-order lifecycle transition (e.g. approve before assign) — a client/state
+                # conflict, not a server fault. Surface 409 so the facade returns a real 4xx, not 502.
+                self._send(409, {"error": str(exc)})
+            except PermissionError as exc:
+                self._send(403, {"error": str(exc)})
+            except ValueError as exc:
+                # Invalid input (e.g. an unknown DraftType, missing reviewer, bad decision).
+                self._send(422, {"error": str(exc)})
             except Exception as exc:  # pragma: no cover - surface as 500 to the facade
                 self._send(500, {"error": str(exc)})
 
