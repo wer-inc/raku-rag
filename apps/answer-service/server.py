@@ -1125,6 +1125,17 @@ def make_handler(system: ProductionSystem):
                         if draft
                         else self._send(404, {"error": "not found"})
                     )
+                elif parts == ["internal", "manufacturing", "documents"]:
+                    qs = parse_qs(parsed.query)
+                    self._send(
+                        200,
+                        {
+                            "documents": manufacturing_system.list_documents(
+                                _claims_from_headers(self.headers),
+                                collection_id=(qs.get("collection_id") or [None])[0],
+                            )
+                        },
+                    )
                 elif parts == ["internal", "manufacturing", "dashboard"]:
                     qs = parse_qs(parsed.query)
                     self._send(
