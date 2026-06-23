@@ -19,6 +19,7 @@ prod = [
   "psycopg[binary]>=3",
   "pgvector",
   "boto3",
+  "pymysql",
   "pydantic>=2",
   "arq",
   "opentelemetry-sdk",

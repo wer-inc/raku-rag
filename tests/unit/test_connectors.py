@@ -14,6 +14,7 @@ class FakeS3Client:
     def __init__(self, objects: dict[tuple[str, str], bytes]) -> None:
         self.objects = objects
         self.requests: list[dict] = []
+        self.list_requests: list[dict] = []
 
     def get_object(self, **kwargs):
         self.requests.append(kwargs)
@@ -21,6 +22,17 @@ class FakeS3Client:
         if key not in self.objects:
             raise FileNotFoundError(key)
         return {"Body": io.BytesIO(self.objects[key])}
+
+    def list_objects_v2(self, **kwargs):
+        self.list_requests.append(kwargs)
+        bucket = kwargs["Bucket"]
+        prefix = kwargs.get("Prefix") or ""
+        contents = [
+            {"Key": key}
+            for obj_bucket, key in sorted(self.objects)
+            if obj_bucket == bucket and key.startswith(prefix)
+        ]
+        return {"Contents": contents, "IsTruncated": False}
 
 
 class TestConnectors(unittest.TestCase):
@@ -49,6 +61,21 @@ class TestConnectors(unittest.TestCase):
         connector = S3Connector(client=FakeS3Client({}))
         with self.assertRaises(ValueError):
             connector.fetch("missing-bucket-key")
+
+    def test_s3_connector_lists_refs_by_prefix(self) -> None:
+        client = FakeS3Client(
+            {
+                ("docs", "manuals/a.txt"): b"a",
+                ("docs", "manuals/b.txt"): b"b",
+                ("docs", "other/c.txt"): b"c",
+            }
+        )
+        connector = S3Connector(bucket="docs", client=client)
+
+        self.assertEqual(
+            connector.list_refs(prefix="manuals/", limit=10),
+            ["s3://docs/manuals/a.txt", "s3://docs/manuals/b.txt"],
+        )
 
 
 if __name__ == "__main__":

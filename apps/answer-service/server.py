@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import hmac
 import json
 import os
 import sys
@@ -41,9 +42,6 @@ sys.path.insert(0, str(_ROOT / "src"))
 
 from raku_rag.domain.models import ACLGrant, IdentityClaims, ScopeType, SubjectType  # noqa: E402
 from raku_rag.eval import EvaluationRunner, EvaluationSet  # noqa: E402
-from raku_rag.manufacturing.wiring import (  # noqa: E402
-    build_manufacturing_answer_service,
-)
 from raku_rag.persistence.evaluation_runs import (  # noqa: E402
     InMemoryEvaluationRunRepository,
 )
@@ -59,6 +57,7 @@ from raku_rag.production import (  # noqa: E402
     build_manufacturing_system_for_base,
 )
 from raku_rag.services.answer_format import answer_format_metadata  # noqa: E402
+from raku_rag.services.datasource_sync import build_sync_documents  # noqa: E402
 from raku_rag.providers.connectors import default_connector_from_env  # noqa: E402
 from workers.ingest.provider_policy import (  # noqa: E402
     ProviderPolicy,
@@ -610,6 +609,23 @@ def _assert_demo_reset_allowed(dsn: str) -> None:
     )
 
 
+# P4-4 / AF-9 — shared-secret gate for the internal API boundary. The answer-service used to blindly
+# trust the loopback request + its x-raku-* identity headers. When RAKU_INTERNAL_AUTH_SECRET is configured
+# (production), every /internal/* request must carry a matching X-Internal-Auth header (constant-time
+# compare); /healthz stays public. When the secret is UNSET (local dev / tests) the gate is a no-op so
+# nothing regresses. (Full mTLS on the deployed API<->answer-service hop is the deployment-topology half.)
+_INTERNAL_AUTH_SECRET = os.environ.get("RAKU_INTERNAL_AUTH_SECRET", "")
+
+
+def internal_auth_ok(secret: str, path: str, presented: str) -> bool:
+    """Pure decision for the internal-boundary shared-secret gate (unit-testable offline)."""
+    if not secret:
+        return True  # dev/test no-op: backward compatible
+    if path == "/healthz":
+        return True  # health is public
+    return hmac.compare_digest(presented or "", secret)
+
+
 def _claims(body: dict) -> IdentityClaims:
     return IdentityClaims(
         tenant_id=str(body["tenant_id"]),
@@ -876,6 +892,53 @@ def _ingest_response_json(job) -> dict:
     }
 
 
+def _sync_datasource_to_ingest(
+    system: ProductionSystem,
+    tenant_id: str,
+    source_id: str,
+    datasource: dict,
+    body: dict,
+) -> dict:
+    documents = build_sync_documents(source_id, datasource, body=body)
+    if not documents:
+        raise ValueError("datasource did not produce any documents")
+    collection_id = str(body.get("collection_id") or datasource.get("collection_id") or "manuals")
+    runs: list[dict] = []
+    for document in documents:
+        mfg_meta = _mfg_metadata_from_body(body, tenant_id, document.document_id)
+        run = system.ingest_document(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document.document_id,
+            document_ref=document.document_ref,
+            raw=document.raw,
+            content_type=document.content_type,
+            manufacturing_metadata=mfg_meta,
+        )
+        runs.append(_ingest_response_json(run))
+
+    failed = [run for run in runs if run.get("status") == "failed"]
+    if len(failed) == len(runs):
+        status = "failed"
+    elif failed:
+        status = "partially_succeeded"
+    else:
+        status = "succeeded"
+    first = runs[0]
+    return {
+        "source_id": source_id,
+        "collection_id": collection_id,
+        "status": status,
+        "ingestion_run_id": first["ingestion_run_id"],
+        "status_url": first["status_url"],
+        "observed_count": len(documents),
+        "changed_count": len(runs),
+        "failed_count": len(failed),
+        "runs": runs,
+    }
+
+
 def _mfg_metadata_from_body(body: dict, tenant_id: str, document_id: str):
     """P1-1: build ManufacturingDocumentMetadata from the ingest request, or None if absent.
 
@@ -960,10 +1023,21 @@ def make_handler(system: ProductionSystem):
                 raise KeyError("x-raku-tenant-id")
             return tenant_id
 
+        def _internal_auth_ok(self, path: str) -> bool:
+            """P4-4 — enforce the internal-boundary shared secret; 401 + False on mismatch."""
+            if internal_auth_ok(
+                _INTERNAL_AUTH_SECRET, path, self.headers.get("X-Internal-Auth", "")
+            ):
+                return True
+            self._send(401, {"error": "internal_auth_required"})
+            return False
+
         def do_GET(self) -> None:  # noqa: N802
             try:
                 parsed = urlparse(self.path)
                 path = parsed.path
+                if not self._internal_auth_ok(path):
+                    return
                 parts = [unquote(p) for p in path.split("/") if p]
                 if path == "/healthz":
                     self._send(200, {"status": "ok", "backend": "production-system"})
@@ -1125,6 +1199,17 @@ def make_handler(system: ProductionSystem):
                         if draft
                         else self._send(404, {"error": "not found"})
                     )
+                elif parts == ["internal", "manufacturing", "documents"]:
+                    qs = parse_qs(parsed.query)
+                    self._send(
+                        200,
+                        {
+                            "documents": manufacturing_system.list_documents(
+                                _claims_from_headers(self.headers),
+                                collection_id=(qs.get("collection_id") or [None])[0],
+                            )
+                        },
+                    )
                 elif parts == ["internal", "manufacturing", "dashboard"]:
                     qs = parse_qs(parsed.query)
                     self._send(
@@ -1267,8 +1352,10 @@ def make_handler(system: ProductionSystem):
 
         def do_POST(self) -> None:  # noqa: N802
             try:
-                body = self._body()
                 path = urlparse(self.path).path
+                if not self._internal_auth_ok(path):
+                    return
+                body = self._body()
                 parts = [unquote(p) for p in path.split("/") if p]
                 if path == "/internal/answer":
                     principal = _claims(body)
@@ -1276,19 +1363,24 @@ def make_handler(system: ProductionSystem):
                     collection_id = body.get("collection_id")
                     self._send(200, _answer_json(system.answer(principal, query, collection_id)))
                 elif path == "/internal/manufacturing/answer":
-                    # P1-1: the manufacturing safety overlay (high-risk gate, approved+effective
+                    # P2-1: the manufacturing safety overlay (high-risk gate, approved+effective
                     # evidence requirement, draft/obsolete never primary) on the deployed answer path.
+                    # Route through ``manufacturing_system.answer`` (NOT the audit-less
+                    # ``build_manufacturing_answer_service`` overlay): identical safety behaviour over the
+                    # same Postgres base, but it ALSO records the high-risk classification + safety
+                    # decision + citation access to the tamper-evident hash-chain audit (parity with the
+                    # drafts/approval routes). Previously this handler discarded the decision (`*_`) and
+                    # wrote no audit row for a deployed safety-gate answer (AF-6 / FR-MFG-021).
                     principal = _claims(body)
                     query = str(body.get("query") or "")
                     collection_id = body.get("collection_id")
-                    service = build_manufacturing_answer_service(system)
-                    profile = system.profiles.resolve(collection_id)
-                    mfg_ans, *_ = service.answer(
+                    mfg_ans = manufacturing_system.answer(
                         principal,
                         query,
-                        profile,
+                        collection_id,
                         intent_hint=body.get("intent_hint"),
                         manufacturing_filters=body.get("manufacturing_filters"),
+                        factory_id=body.get("factory_id"),
                     )
                     self._send(200, _manufacturing_answer_json(mfg_ans))
                 elif (
@@ -1693,6 +1785,27 @@ def make_handler(system: ProductionSystem):
                             202 if retried.status in {"queued", "running", "succeeded"} else 200,
                             _ingest_response_json(retried),
                         )
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "sources"]
+                    and parts[3] == "sync"
+                ):
+                    tenant_id = self._tenant_header()
+                    source_id = parts[2]
+                    datasource = admin_settings.get_resource(tenant_id, "datasources", source_id)
+                    if datasource is None:
+                        self._send(404, {"error": "datasource not found"})
+                        return
+                    self._send(
+                        202,
+                        _sync_datasource_to_ingest(
+                            system,
+                            tenant_id,
+                            source_id,
+                            datasource,
+                            body,
+                        ),
+                    )
                 elif (
                     len(parts) == 5
                     and parts[:3] == ["internal", "admin", "provider-policies"]

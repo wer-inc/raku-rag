@@ -102,6 +102,16 @@ export class AdminJobsController {
     return this.getFromCore(req, `/internal/sources/${encodeURIComponent(sourceId)}/sync-status`);
   }
 
+  @Post("sources/:source_id/sync")
+  @HttpCode(202)
+  async syncSource(
+    @Req() req: Request,
+    @Param("source_id") sourceId: string,
+    @Body() body: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.postToCore(req, `/internal/sources/${encodeURIComponent(sourceId)}/sync`, body);
+  }
+
   @Get("jobs")
   async jobs(
     @Req() req: Request,

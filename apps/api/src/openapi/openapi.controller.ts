@@ -89,6 +89,31 @@ const OPENAPI_DOC = {
           chunk_count: { type: "number" },
         },
       },
+      AdminSourceSyncResponse: {
+        type: "object",
+        required: [
+          "source_id",
+          "collection_id",
+          "status",
+          "ingestion_run_id",
+          "status_url",
+          "observed_count",
+          "changed_count",
+          "failed_count",
+          "runs",
+        ],
+        properties: {
+          source_id: { type: "string" },
+          collection_id: { type: "string" },
+          status: { type: "string", enum: ["succeeded", "failed", "partially_succeeded"] },
+          ingestion_run_id: { type: "string" },
+          status_url: { type: "string" },
+          observed_count: { type: "number" },
+          changed_count: { type: "number" },
+          failed_count: { type: "number" },
+          runs: { type: "array", items: { $ref: "#/components/schemas/IngestResponse" } },
+        },
+      },
       AdminDataSource: {
         type: "object",
         required: ["source_id", "tenant_id", "collection_id", "type", "config", "status"],
@@ -96,7 +121,7 @@ const OPENAPI_DOC = {
           source_id: { type: "string" },
           tenant_id: { type: "string" },
           collection_id: { type: "string" },
-          type: { type: "string", enum: ["upload", "object_storage", "slack", "confluence"] },
+          type: { type: "string", enum: ["upload", "object_storage", "slack", "confluence", "database", "notion", "box"] },
           config: { type: "object" },
           sync_schedule: { type: "string", nullable: true },
           last_synced_at: { type: "string", nullable: true },
@@ -110,7 +135,7 @@ const OPENAPI_DOC = {
         required: ["collection_id", "type"],
         properties: {
           collection_id: { type: "string" },
-          type: { type: "string", enum: ["upload", "object_storage", "slack", "confluence"] },
+          type: { type: "string", enum: ["upload", "object_storage", "slack", "confluence", "database", "notion", "box"] },
           config: { type: "object" },
           sync_schedule: { type: "string", nullable: true },
           status: { type: "string", enum: ["active", "draft", "archived"] },
@@ -1704,6 +1729,57 @@ const OPENAPI_DOC = {
             },
           },
           "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "404": { description: "Not found", content: { "application/json": {} } },
+          "502": {
+            description: "Ingestion service unavailable",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
+            },
+          },
+        },
+      },
+    },
+    "/admin/sources/{source_id}/sync": {
+      post: {
+        operationId: "syncAdminSource",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          {
+            name: "source_id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  collection_id: { type: "string" },
+                  limit: { type: "number" },
+                  manufacturing: { type: "object" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description: "Datasource sync accepted",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/AdminSourceSyncResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden", content: { "application/json": {} } },
           "404": { description: "Not found", content: { "application/json": {} } },
           "502": {
             description: "Ingestion service unavailable",

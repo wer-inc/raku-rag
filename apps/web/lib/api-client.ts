@@ -153,6 +153,32 @@ export async function submitFeedback(
 
 // --- Operations read views (specs/014; all GET, audit-derived, read-only) ----------------------
 
+/** Tenant-scoped manufacturing document inventory with approval state (ドキュメント一覧). */
+export interface ManufacturingDocumentSummary {
+  document_id: string;
+  collection_id: string;
+  source_id: string;
+  document_kind: string | null;
+  approval_status: string;
+  effective_date: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  superseded_by: string | null;
+  equipment: string | null;
+  safety_category: string | null;
+}
+
+export async function manufacturingDocuments(
+  userToken: string,
+  collectionId?: string,
+): Promise<ManufacturingDocumentSummary[]> {
+  const path = collectionId
+    ? `documents?collection_id=${encodeURIComponent(collectionId)}`
+    : "documents";
+  const res = await mfgGet<{ documents: ManufacturingDocumentSummary[] }>(path, userToken);
+  return res.documents ?? [];
+}
+
 export async function manufacturingDashboard(userToken: string): Promise<KnowledgeOpsDashboard> {
   return mfgGet<KnowledgeOpsDashboard>("dashboard", userToken);
 }
@@ -188,6 +214,30 @@ export async function manufacturingSourceSyncStatus(
 ): Promise<ManufacturingSourceSyncStatus> {
   return mfgGet<ManufacturingSourceSyncStatus>(
     `sources/${encodeURIComponent(sourceId)}/sync-status`,
+    userToken,
+  );
+}
+
+export interface AdminSourceSyncResponse {
+  source_id: string;
+  collection_id: string;
+  status: string;
+  ingestion_run_id: string;
+  status_url: string;
+  observed_count: number;
+  changed_count: number;
+  failed_count: number;
+  runs: IngestResponse[];
+}
+
+export async function adminSourceSync(
+  sourceId: string,
+  body: Record<string, unknown>,
+  userToken: string,
+): Promise<AdminSourceSyncResponse> {
+  return apiPostJson<AdminSourceSyncResponse>(
+    `/admin/sources/${encodeURIComponent(sourceId)}/sync`,
+    body,
     userToken,
   );
 }

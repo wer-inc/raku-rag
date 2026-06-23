@@ -54,12 +54,33 @@ class StructuredLogTelemetryExporter:
         log(f"telemetry.{event.kind}", name=event.name, payload=sanitize_payload(event.payload))
 
 
-def exporter_from_settings(settings) -> TelemetryExporter | None:
-    return (
-        StructuredLogTelemetryExporter()
-        if getattr(settings, "telemetry_export_enabled", False)
-        else None
-    )
+class LangfuseTelemetryExporter:
+    """P1-5 — ship sanitized telemetry events to Langfuse (one trace per answer span). The Langfuse
+    client is INJECTED (the network dependency lives at the edge); when absent this is a fail-safe no-op,
+    so telemetry never takes down retrieval/generation and the real network export is verify_live (needs a
+    Langfuse host/keys). Signature of ``client``: (kind, name, payload) -> None.
+    """
+
+    def __init__(self, *, client=None) -> None:
+        self._client = client
+
+    def export(self, event: TelemetryEvent) -> None:
+        if self._client is None:
+            return
+        try:
+            self._client(kind=event.kind, name=event.name, payload=sanitize_payload(event.payload))
+        except Exception:
+            # Telemetry must never take down retrieval/generation.
+            return
+
+
+def exporter_from_settings(settings, *, langfuse_client=None) -> TelemetryExporter | None:
+    profile = str(getattr(settings, "runtime_profile", "deterministic") or "deterministic")
+    if profile.strip().lower() == "production" and getattr(settings, "langfuse_enabled", False):
+        return LangfuseTelemetryExporter(client=langfuse_client)
+    if getattr(settings, "telemetry_export_enabled", False):
+        return StructuredLogTelemetryExporter()
+    return None
 
 
 def safe_export(exporter: TelemetryExporter | None, event: TelemetryEvent) -> None:

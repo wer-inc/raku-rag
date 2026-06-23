@@ -17,6 +17,8 @@ import type {
   DraftArtifact,
 } from "@raku-rag/shared";
 import {
+  adminSourceSync,
+  type AdminSourceSyncResponse,
   apiDeleteJson,
   apiGetJson,
   apiPostJson,
@@ -30,6 +32,7 @@ import {
   manufacturingDataUsePolicy,
   manufacturingDeleteDocument,
   manufacturingDocumentApproval,
+  manufacturingDocuments,
   manufacturingGetDraft,
   manufacturingDashboard,
   manufacturingGovernanceStatus,
@@ -43,7 +46,13 @@ import {
   manufacturingUpdateDocumentMetadata,
   submitFeedback,
 } from "../../lib/api-client";
-import { clearSessionToken, DEMO_TENANT, getSessionToken, mintTokenFor } from "../../lib/session";
+import {
+  clearSessionToken,
+  DEMO_COLLECTION,
+  DEMO_TENANT,
+  getSessionToken,
+  mintTokenFor,
+} from "../../lib/session";
 import { missingApis, type ManifestScreen } from "../../lib/full-saas";
 import CitationViewer, { type CitationViewTarget } from "./CitationViewer";
 import {
@@ -94,11 +103,6 @@ const MOCK_SOURCES: AdminListRow[] = [
   { id: "src-troubles", label: "Trouble cases", meta: "postgres · 6,204 cases", status: "ready" },
 ];
 
-const MOCK_DOCUMENTS: AdminListRow[] = [
-  { id: "doc-1122", label: "Pump P-12 maintenance", meta: "approved · source src-sop", status: "current" },
-  { id: "doc-2048", label: "Overheat triage", meta: "pending_review · source src-troubles", status: "draft" },
-  { id: "doc-3321", label: "Shift handover guide", meta: "obsolete · source src-press", status: "obsolete" },
-];
 
 const MOCK_BILLING = {
   plan: "Enterprise",
@@ -797,10 +801,61 @@ function MockBanner({ screen }: { screen: ManifestScreen }) {
 
 function SourceListBody() {
   const sources = [
-    { name: "Press line manuals", type: "SharePoint", status: "正常", docs: "2,184", fresh: "2日前", owner: "北島" },
-    { name: "SOP library", type: "S3", status: "同期中", docs: "418", fresh: "12時間前", owner: "山本" },
-    { name: "Trouble cases", type: "Postgres", status: "準備完了", docs: "6,204", fresh: "5時間前", owner: "佐藤" },
-    { name: "CAD 図面ソース", type: "SharePoint", status: "認証エラー", docs: "126", fresh: "1日前", owner: "設計" },
+    {
+      id: "notion-manufacturing",
+      name: "Notion（製造手順）",
+      type: "Notion",
+      status: "同期済み",
+      statusKey: "ok",
+      docs: "1,284",
+      fresh: "10分前",
+      owner: "製造技術部",
+      mono: "N",
+    },
+    {
+      id: "sharepoint-quality",
+      name: "SharePoint（品質文書）",
+      type: "SharePoint",
+      status: "同期済み",
+      statusKey: "ok",
+      docs: "862",
+      fresh: "1時間前",
+      owner: "品質保証部",
+      mono: "S",
+    },
+    {
+      id: "maintenance-db",
+      name: "設備保全 DB",
+      type: "Database",
+      status: "同期中",
+      statusKey: "wait",
+      docs: "2,800",
+      fresh: "進行中",
+      owner: "保全課",
+      mono: "DB",
+    },
+    {
+      id: "incident-db",
+      name: "過去トラブル DB",
+      type: "Database",
+      status: "同期済み",
+      statusKey: "ok",
+      docs: "3,410",
+      fresh: "今朝",
+      owner: "品質保証部",
+      mono: "DB",
+    },
+    {
+      id: "cad-s3",
+      name: "CAD 図面ストレージ（S3）",
+      type: "S3",
+      status: "失敗",
+      statusKey: "bad",
+      docs: "—",
+      fresh: "失敗",
+      owner: "設計部",
+      mono: "S3",
+    },
   ];
 
   return (
@@ -814,7 +869,7 @@ function SourceListBody() {
             <span aria-hidden="true">⌕</span>
             <input placeholder="ソースを検索" />
           </label>
-          <button type="button">ソースを追加</button>
+          <Link href="/sources/new">ソースを追加</Link>
         </div>
       </header>
       <div className="standalone-table-wrap">
@@ -827,16 +882,14 @@ function SourceListBody() {
           <div>オーナー</div>
         </div>
         {sources.map((source) => (
-          <Link key={source.name} href="/sources/list" className="standalone-table-row">
+          <Link key={source.id} href={`/sources/${source.id}`} className="standalone-table-row">
             <div className="standalone-source-cell">
-              <div className="standalone-source-mark">{source.name.slice(0, 1)}</div>
+              <div className="standalone-source-mark">{source.mono}</div>
               <span>{source.name}</span>
             </div>
             <div>{source.type}</div>
             <div>
-              <span
-                className={`standalone-status ${source.status === "正常" ? "ok" : source.status === "認証エラー" ? "bad" : "wait"}`}
-              >
+              <span className={`standalone-status ${source.statusKey}`}>
                 {source.status}
               </span>
             </div>
@@ -1874,11 +1927,267 @@ const APPROVAL_OPTIONS: Array<{ value: string; label: string }> = [
 
 const ACCEPT_EXT = ".txt,.md,.markdown,.csv,.html,.htm,.docx,.xlsx";
 
+type AddSourceTypeId =
+  | "file"
+  | "url"
+  | "googledrive"
+  | "sharepoint"
+  | "onedrive"
+  | "box"
+  | "confluence"
+  | "notion"
+  | "slack"
+  | "kintone"
+  | "garoon"
+  | "s3"
+  | "db";
+
+type AddSourceField = {
+  id: string;
+  label: string;
+  placeholder: string;
+  type?: "text" | "password";
+};
+
+type AddSourceType = {
+  id: AddSourceTypeId;
+  name: string;
+  desc: string;
+  mono: string;
+  readiness: "ready" | "three_days" | "later";
+};
+
+type AddSourceConfig = {
+  upload?: boolean;
+  oauth?: string;
+  fields: AddSourceField[];
+  dataSourceType: "upload" | "object_storage" | "slack" | "confluence" | "database" | "notion" | "box";
+  note: string;
+};
+
+const ADD_SOURCE_TYPES: AddSourceType[] = [
+  {
+    id: "file",
+    name: "ファイルアップロード",
+    desc: "PDF・Word・Excel・CAD などを直接アップロード",
+    mono: "UP",
+    readiness: "ready",
+  },
+  {
+    id: "url",
+    name: "URL / Web",
+    desc: "公開ページや社内 Wiki をクロール",
+    mono: "URL",
+    readiness: "ready",
+  },
+  {
+    id: "googledrive",
+    name: "Google Drive",
+    desc: "共有ドライブ・フォルダの文書を同期",
+    mono: "GD",
+    readiness: "three_days",
+  },
+  {
+    id: "sharepoint",
+    name: "SharePoint",
+    desc: "ドキュメントライブラリを接続",
+    mono: "SP",
+    readiness: "three_days",
+  },
+  {
+    id: "onedrive",
+    name: "OneDrive",
+    desc: "個人・部門のファイルを同期",
+    mono: "OD",
+    readiness: "three_days",
+  },
+  {
+    id: "box",
+    name: "Box",
+    desc: "フォルダ単位で文書を取込",
+    mono: "BOX",
+    readiness: "ready",
+  },
+  {
+    id: "confluence",
+    name: "Confluence",
+    desc: "スペース・ページを同期",
+    mono: "CF",
+    readiness: "ready",
+  },
+  {
+    id: "notion",
+    name: "Notion",
+    desc: "手順・ナレッジページを同期",
+    mono: "NO",
+    readiness: "ready",
+  },
+  {
+    id: "slack",
+    name: "Slack",
+    desc: "チャンネルの Q&A を取込",
+    mono: "SL",
+    readiness: "later",
+  },
+  {
+    id: "kintone",
+    name: "kintone",
+    desc: "サイボウズ kintone アプリを連携",
+    mono: "KT",
+    readiness: "ready",
+  },
+  {
+    id: "garoon",
+    name: "Garoon",
+    desc: "サイボウズ Garoon の文書・掲示板",
+    mono: "GR",
+    readiness: "three_days",
+  },
+  {
+    id: "s3",
+    name: "Amazon S3",
+    desc: "バケットから図面・文書を同期",
+    mono: "S3",
+    readiness: "ready",
+  },
+  {
+    id: "db",
+    name: "データベース",
+    desc: "PostgreSQL / MySQL のレコードを取込",
+    mono: "DB",
+    readiness: "ready",
+  },
+];
+
+const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
+  file: {
+    upload: true,
+    fields: [],
+    dataSourceType: "upload",
+    note: "既存のアップロード API でそのまま取込できます。",
+  },
+  url: {
+    fields: [
+      { id: "target_url", label: "クロール対象 URL", placeholder: "https://intranet.example/manuals" },
+      { id: "crawl_depth", label: "クロール深度", placeholder: "例: 2" },
+      { id: "sync_schedule", label: "更新スケジュール", placeholder: "例: 毎日 03:00" },
+    ],
+    dataSourceType: "object_storage",
+    note: "URL・深度・スケジュールを保存し、同一ホスト内（公開アドレスのみ）をクロールして取込します。",
+  },
+  googledrive: {
+    oauth: "Google",
+    fields: [
+      { id: "target_folder", label: "対象フォルダ / 共有ドライブ", placeholder: "フォルダ URL または ID" },
+      { id: "file_formats", label: "取込ファイル形式", placeholder: "PDF, DOCX, XLSX" },
+    ],
+    dataSourceType: "object_storage",
+    note: "OAuth 前提のコネクタ設定を入力できます。認可フロー本体は次の実装対象です。",
+  },
+  sharepoint: {
+    oauth: "Microsoft",
+    fields: [
+      { id: "site_url", label: "サイト URL", placeholder: "https://tenant.sharepoint.com/sites/quality" },
+      { id: "document_library", label: "ドキュメントライブラリ", placeholder: "Documents" },
+    ],
+    dataSourceType: "object_storage",
+    note: "サイトとライブラリ単位の設定UIです。Microsoft OAuth 接続はバックエンド連携が必要です。",
+  },
+  onedrive: {
+    oauth: "Microsoft",
+    fields: [{ id: "target_folder", label: "対象サイト / フォルダ", placeholder: "OneDrive フォルダ URL または ID" }],
+    dataSourceType: "object_storage",
+    note: "OneDrive の対象フォルダを保存できます。認証と差分同期はバックエンド側で接続します。",
+  },
+  box: {
+    fields: [
+      { id: "folder_id", label: "対象フォルダ ID", placeholder: "0（ルート）または フォルダ ID" },
+      { id: "access_token", label: "アクセストークン / 開発者トークン", placeholder: "Box developer token", type: "password" },
+    ],
+    dataSourceType: "box",
+    note: "開発者トークン（Bearer）方式でフォルダ内の文書を取込します。対応形式（txt/md/csv/html/docx/xlsx）のみ同期します。",
+  },
+  confluence: {
+    fields: [
+      { id: "site_url", label: "サイト URL", placeholder: "https://example.atlassian.net/wiki" },
+      { id: "space_key", label: "対象スペース", placeholder: "MFG" },
+      { id: "email", label: "メールアドレス", placeholder: "bot@example.com" },
+      { id: "api_token", label: "API トークン", placeholder: "Atlassian API token", type: "password" },
+    ],
+    dataSourceType: "confluence",
+    note: "API トークン方式（メール + トークンの Basic 認証）で対象スペースのページを取込します。",
+  },
+  notion: {
+    fields: [
+      { id: "database_id", label: "対象データベース ID", placeholder: "Notion database ID" },
+      { id: "integration_token", label: "インテグレーショントークン", placeholder: "secret_xxx", type: "password" },
+    ],
+    dataSourceType: "notion",
+    note: "インテグレーショントークン方式でデータベース内のページをブロック展開し、Markdown 化して取込します。",
+  },
+  slack: {
+    oauth: "Slack",
+    fields: [{ id: "target_channel", label: "対象チャンネル", placeholder: "#quality-q-and-a" }],
+    dataSourceType: "slack",
+    note: "Slack はメッセージ履歴、権限、削除反映の扱いが重く、3日対応候補からは外しています。",
+  },
+  kintone: {
+    fields: [
+      { id: "subdomain", label: "サブドメイン", placeholder: "example.cybozu.com" },
+      { id: "api_token", label: "API トークン", placeholder: "API token", type: "password" },
+      { id: "app_id", label: "対象アプリ", placeholder: "123" },
+    ],
+    dataSourceType: "object_storage",
+    note: "API トークン方式で kintone アプリのレコードを取込します（cybozu.com / kintone.com のみ許可）。",
+  },
+  garoon: {
+    fields: [
+      { id: "site_url", label: "サイト URL", placeholder: "https://example.cybozu.com/g/" },
+      { id: "login_name", label: "ログイン名", placeholder: "bot@example.com" },
+      { id: "password", label: "パスワード", placeholder: "password", type: "password" },
+      { id: "target_space", label: "対象スペース", placeholder: "掲示板 / スペース名" },
+    ],
+    dataSourceType: "object_storage",
+    note: "Garoon の接続項目を入力できます。資格情報の保管先と同期処理はバックエンド実装が必要です。",
+  },
+  s3: {
+    fields: [
+      { id: "bucket", label: "バケット名", placeholder: "raku-rag-documents" },
+      { id: "region", label: "リージョン", placeholder: "ap-northeast-1" },
+      { id: "access_key_id", label: "アクセスキー ID", placeholder: "AKIA..." },
+      { id: "secret_access_key", label: "シークレットアクセスキー", placeholder: "secret", type: "password" },
+      { id: "prefix", label: "プレフィックス（任意）", placeholder: "manuals/" },
+      { id: "endpoint_url", label: "エンドポイント（任意・MinIO等）", placeholder: "https://minio.example.com" },
+      { id: "allow_private_host", label: "内部エンドポイントを許可（任意）", placeholder: "社内 MinIO は true" },
+    ],
+    dataSourceType: "object_storage",
+    note: "S3 はバケット・リージョン・プレフィックスを保存して同期します。独自エンドポイント利用時はアクセスキーが必須で、社内エンドポイントは内部ホスト許可を true にしてください。",
+  },
+  db: {
+    fields: [
+      { id: "db_engine", label: "エンジン", placeholder: "postgres または mysql" },
+      { id: "connection_string", label: "接続文字列", placeholder: "postgresql://… または mysql://user:pass@host:3306/db", type: "password" },
+      { id: "table_name", label: "対象テーブル", placeholder: "public.maintenance_cases" },
+      { id: "updated_column", label: "更新検知列（任意）", placeholder: "updated_at" },
+      { id: "allow_private_host", label: "内部ホストを許可（任意）", placeholder: "社内DBに接続する場合は true" },
+    ],
+    dataSourceType: "database",
+    note: "PostgreSQL / MySQL の接続文字列と対象テーブルを保存して同期します。エンジンは接続文字列から自動判定（未指定時）。社内ネットワークの DB に接続する場合は内部ホスト許可を true にしてください。",
+  },
+};
+
+function sourceReadinessLabel(readiness: AddSourceType["readiness"]): string {
+  if (readiness === "ready") return "利用可";
+  if (readiness === "three_days") return "3日候補";
+  return "要追加設計";
+}
+
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
 function AddSourceBody() {
+  const [selectedSource, setSelectedSource] = useState<AddSourceTypeId>("file");
   const [mode, setMode] = useState<"file" | "text">("file");
   const [file, setFile] = useState<File | null>(null);
   const [text, setText] = useState("");
@@ -1890,6 +2199,28 @@ function AddSourceBody() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<IngestedDoc | null>(null);
+  const [configValues, setConfigValues] = useState<Record<string, string>>({});
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configMessage, setConfigMessage] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<AdminSourceSyncResponse | null>(null);
+
+  const selectedSourceDef = ADD_SOURCE_TYPES.find((source) => source.id === selectedSource) ?? ADD_SOURCE_TYPES[0];
+  const selectedConfig = ADD_SOURCE_CONFIGS[selectedSource];
+
+  function onSelectSource(sourceIdValue: AddSourceTypeId) {
+    setSelectedSource(sourceIdValue);
+    setSourceId(sourceIdValue === "file" ? "upload" : sourceIdValue);
+    setConfigValues({});
+    setConfigMessage(null);
+    setError(null);
+    setResult(null);
+    setSyncResult(null);
+  }
+
+  function onConfigChange(fieldId: string, value: string) {
+    setConfigValues((current) => ({ ...current, [fieldId]: value }));
+  }
 
   function onPickFile(picked: File | null) {
     setFile(picked);
@@ -1898,11 +2229,88 @@ function AddSourceBody() {
     }
   }
 
+  async function saveDatasource(): Promise<string | null> {
+    if (selectedSource === "file" || configSaving || syncing) return null;
+    setError(null);
+    setConfigMessage(null);
+    setSyncResult(null);
+    setConfigSaving(true);
+    try {
+      const datasourceId = sourceId.trim() || selectedSource;
+      const token = await getSessionToken();
+      await apiPutJson(
+        `/admin/datasources/${encodeURIComponent(datasourceId)}`,
+        {
+          collection_id: collectionId.trim() || "manuals",
+          type: selectedConfig.dataSourceType,
+          config: {
+            source_type: selectedSource,
+            display_name: selectedSourceDef.name,
+            oauth_provider: selectedConfig.oauth ?? null,
+            ...configValues,
+          },
+          sync_schedule: configValues.sync_schedule || null,
+          status: "active",
+          reason: "configured_from_add_source_screen",
+        },
+        token,
+      );
+      setConfigMessage(`${selectedSourceDef.name} の接続設定を保存しました。`);
+      return datasourceId;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "接続設定の保存に失敗しました");
+      return null;
+    } finally {
+      setConfigSaving(false);
+    }
+  }
+
+  async function onSaveDatasource(event: FormEvent) {
+    event.preventDefault();
+    await saveDatasource();
+  }
+
+  async function onSaveAndSync() {
+    if (syncing || configSaving) return;
+    const datasourceId = await saveDatasource();
+    if (!datasourceId) return;
+    setSyncing(true);
+    setError(null);
+    try {
+      const token = await getSessionToken();
+      const sync = await adminSourceSync(
+        datasourceId,
+        {
+          collection_id: collectionId.trim() || "manuals",
+          limit: 25,
+          manufacturing: {
+            approval_status: approvalStatus,
+            effective_date: effectiveDate || null,
+            approval_source: "workflow",
+          },
+        },
+        token,
+      );
+      setSyncResult(sync);
+      setConfigMessage(`${selectedSourceDef.name} の接続設定を保存し、同期を開始しました。`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "同期開始に失敗しました");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (submitting) return;
     setError(null);
     setResult(null);
+    setConfigMessage(null);
+
+    if (selectedSource !== "file") {
+      setError("このソース種別は接続設定フォームから保存してください。");
+      return;
+    }
 
     let payload: File | null = file;
     if (mode === "text") {
@@ -1982,11 +2390,36 @@ function AddSourceBody() {
   return (
     <>
       <p className="src-warning">
-        ファイルをアップロードすると、取込ランが作成され、パース・分割・埋め込み・保存まで実行されます。
-        承認済みに設定したドキュメントは、その場で「質問する」の正式な根拠になります（PDF は次フェーズ）。
+        最新の standalone 版に合わせて、追加できるデータソース種別を表示しています。
+        ファイルアップロードは即時取込、その他は接続設定の保存までをこの画面から行えます。
       </p>
 
-      <form className="upload-form" onSubmit={onSubmit}>
+      <Section title="データソース種別" note="3日以内の接続候補も、先に設定フォームを表示できるようにしています。">
+        <div className="source-type-grid">
+          {ADD_SOURCE_TYPES.map((source) => (
+            <button
+              key={source.id}
+              type="button"
+              className={`source-type-card ${selectedSource === source.id ? "active" : ""}`}
+              aria-pressed={selectedSource === source.id}
+              onClick={() => onSelectSource(source.id)}
+            >
+              <span className="source-type-mark">{source.mono}</span>
+              <span className="source-type-body">
+                <strong>{source.name}</strong>
+                <span>{source.desc}</span>
+              </span>
+              <span className={`source-type-status ${source.readiness}`}>
+                {sourceReadinessLabel(source.readiness)}
+              </span>
+            </button>
+          ))}
+        </div>
+        <p className="source-config-note">{selectedConfig.note}</p>
+      </Section>
+
+      {selectedSource === "file" ? (
+        <form className="upload-form" onSubmit={onSubmit}>
         <Section title="ドキュメントを追加" note="対応形式: テキスト / Markdown / HTML / CSV / Word(.docx) / Excel(.xlsx)">
           <div className="upload-mode-tabs" role="tablist">
             <button
@@ -2070,12 +2503,106 @@ function AddSourceBody() {
             </button>
           </div>
         </Section>
-      </form>
+        </form>
+      ) : (
+        <form className="connector-form" onSubmit={onSaveDatasource}>
+          <Section title={`${selectedSourceDef.name} の接続設定`} note={selectedSourceDef.desc}>
+            {selectedConfig.oauth && (
+              <div className="connector-oauth">
+                <div>
+                  <strong>{selectedConfig.oauth} OAuth</strong>
+                  <span>認可フローを接続すると、この設定から自動同期を開始できます。</span>
+                </div>
+                <button type="button" disabled>
+                  OAuth 接続待ち
+                </button>
+              </div>
+            )}
+
+            <div className="connector-form-grid">
+              <label>
+                <span>コレクション</span>
+                <input value={collectionId} onChange={(e) => setCollectionId(e.target.value)} />
+              </label>
+              <label>
+                <span>ソース ID</span>
+                <input value={sourceId} onChange={(e) => setSourceId(e.target.value)} />
+              </label>
+              <label>
+                <span>承認状態</span>
+                <select value={approvalStatus} onChange={(e) => setApprovalStatus(e.target.value)}>
+                  {APPROVAL_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>発効日</span>
+                <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
+              </label>
+              {selectedConfig.fields.map((field) => (
+                <label key={field.id}>
+                  <span>{field.label}</span>
+                  <input
+                    type={field.type ?? "text"}
+                    value={configValues[field.id] ?? ""}
+                    onChange={(e) => onConfigChange(field.id, e.target.value)}
+                    placeholder={field.placeholder}
+                  />
+                </label>
+              ))}
+            </div>
+
+            <div className="screen-actions">
+              <button type="submit" disabled={configSaving}>
+                {configSaving ? "保存中…" : "接続設定を保存"}
+              </button>
+              <button type="button" onClick={onSaveAndSync} disabled={configSaving || syncing}>
+                {syncing ? "同期中…" : "保存して同期開始"}
+              </button>
+            </div>
+          </Section>
+        </form>
+      )}
 
       {error && (
         <section className="result-panel error-panel" aria-live="polite">
           <h3>取込メッセージ</h3>
           <p>{error}</p>
+        </section>
+      )}
+
+      {configMessage && (
+        <section className="result-panel config-success" aria-live="polite">
+          <h3>保存しました</h3>
+          <p>{configMessage}</p>
+        </section>
+      )}
+
+      {syncResult && (
+        <section className="result-panel" aria-live="polite">
+          <div className="result-head">
+            <span className={`status-badge status-${syncResult.status === "succeeded" ? "ok" : "temporarily_unavailable"}`}>
+              {syncResult.status === "succeeded" ? "同期開始" : syncResult.status}
+            </span>
+            <span className="correlation-id">{syncResult.ingestion_run_id}</span>
+          </div>
+          <FieldGrid
+            rows={[
+              ["ソース", syncResult.source_id],
+              ["コレクション", syncResult.collection_id],
+              ["対象ドキュメント", String(syncResult.observed_count)],
+              ["開始した取込", String(syncResult.changed_count)],
+              ["失敗", String(syncResult.failed_count)],
+            ]}
+          />
+          <div className="screen-actions">
+            <Link className="button-link secondary" href="/ingestion-runs">
+              取込ランを見る
+            </Link>
+          </div>
         </section>
       )}
 
@@ -2155,8 +2682,23 @@ const UPLOAD_APPROVAL_LABEL: Record<string, string> = {
   obsolete: "旧版",
 };
 
+const DOCUMENT_KIND_LABEL: Record<string, string> = {
+  work_instruction: "作業手順書",
+  standard: "標準",
+  inspection: "検査基準",
+  safety: "安全",
+  trouble_case: "トラブル事例",
+  manual: "マニュアル",
+  drawing: "図面",
+  spec: "仕様書",
+};
+
 function DocumentListBody() {
   const [uploaded, setUploaded] = useState<IngestedDoc[]>([]);
+  const docs = useLoad(
+    async () => manufacturingDocuments(await getSessionToken(), DEMO_COLLECTION),
+    [],
+  );
 
   useEffect(() => {
     setUploaded(loadIngestedDocs());
@@ -2167,7 +2709,7 @@ function DocumentListBody() {
       {uploaded.length > 0 && (
         <Section
           title="最近アップロードしたドキュメント"
-          note="このブラウザから取り込み、検索対象になっているドキュメントです（一覧 API 提供まではローカル表示）。"
+          note="このブラウザから取り込んだドキュメントです（取込直後の控え。テナント全体は下の一覧に表示されます）。"
         >
           <DataTable
             columns={["文書", "承認状態", "チャンク", "コレクション", "取込日時"]}
@@ -2191,23 +2733,40 @@ function DocumentListBody() {
                 setUploaded([]);
               }}
             >
-              この一覧を消去
+              この控えを消去
             </button>
           </div>
         </Section>
       )}
-      <Section title="ドキュメント" note="テナント全体の一覧 API が来るまでは型付きモックです。">
-        <DataTable
-          columns={["文書", "状態", "ソース"]}
-          rows={MOCK_DOCUMENTS.map((doc) => [
-            <Link key={doc.id} href={`/documents/${doc.id}`}>
-              {doc.label}
-            </Link>,
-            doc.status ?? "不明",
-            doc.meta ?? "—",
-          ])}
-          empty="文書はありません。"
-        />
+      <Section
+        title="ドキュメント"
+        note="テナントのナレッジベースに取り込まれ、検索・回答の根拠になっているドキュメントです。"
+      >
+        {docs.state === "loading" && <p className="ops-empty">ドキュメントを読み込み中…</p>}
+        {docs.state === "error" && <ScreenLoadError error={docs.error} />}
+        {docs.state === "ready" && (
+          <DataTable
+            columns={["文書", "種別", "承認状態", "発効日", "ソース", "コレクション"]}
+            rows={docs.data.map((doc) => [
+              <Link key={doc.document_id} href={`/documents/${doc.document_id}`}>
+                {doc.document_id}
+              </Link>,
+              ((kind) => (kind ? DOCUMENT_KIND_LABEL[kind] ?? kind : "—"))(
+                doc.document_kind ?? doc.source_id,
+              ),
+              <span
+                key={`${doc.document_id}-status`}
+                className={`review-queue-status approval-${doc.approval_status}`}
+              >
+                {UPLOAD_APPROVAL_LABEL[doc.approval_status] ?? doc.approval_status}
+              </span>,
+              doc.effective_date ?? "—",
+              doc.source_id,
+              doc.collection_id,
+            ])}
+            empty="ドキュメントはまだありません。「ソースを追加」から取り込めます。"
+          />
+        )}
       </Section>
     </>
   );

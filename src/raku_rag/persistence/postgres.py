@@ -674,6 +674,48 @@ class PostgresDocumentRegistry:
             tombstone=row[10],
         )
 
+    def list_documents(
+        self, tenant_id: str, *, collection_id: str | None = None
+    ) -> list[Document]:
+        """Tenant-scoped inventory of live (non-tombstoned) documents (ドキュメント一覧 read view).
+
+        Tenant scoping is enforced by an explicit ``AND tenant_id = %s`` predicate (defense-in-depth):
+        the deployed connection runs as a Postgres superuser which BYPASSES RLS, so the ``_use_tenant``
+        session var alone would not isolate rows — the WHERE clause makes this method tenant-safe
+        regardless of role/RLS. Tombstoned docs are excluded so a source-deleted document never
+        resurfaces in the inventory (GAP-S2). No ranking/retrieval.
+        """
+        _use_tenant(self._conn, tenant_id)
+        sql = (
+            "SELECT tenant_id, collection_id, document_id, source_id, version, checksum, metadata, "
+            "created_at, updated_at, indexed_at, tombstone FROM documents "
+            "WHERE tombstone = false AND tenant_id = %s"
+        )
+        params: list = [tenant_id]
+        if collection_id:
+            sql += " AND collection_id = %s"
+            params.append(collection_id)
+        sql += " ORDER BY collection_id, document_id"
+        with self._conn.cursor() as cur:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+        return [
+            Document(
+                tenant_id=r[0],
+                collection_id=r[1],
+                document_id=r[2],
+                source_id=r[3] or "",
+                version=r[4],
+                checksum=r[5] or "",
+                metadata=_load_jsonish(r[6]) or {},
+                created_at=_iso(r[7]),
+                updated_at=_iso(r[8]),
+                indexed_at=_iso(r[9]),
+                tombstone=r[10],
+            )
+            for r in rows
+        ]
+
     def put(self, doc: Document) -> None:
         _use_tenant(self._conn, doc.tenant_id)
         _ensure_doc_parents(
