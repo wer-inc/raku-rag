@@ -11,7 +11,7 @@ export interface Principal {
   roles: string[];
 }
 
-const DEFAULT_DEV_SECRET = "dev-secret-change-me";
+const DEFAULT_DEV_SECRET = "dev-secret-change-me"; // pragma: allowlist secret -- public placeholder; rejected at runtime by tokenSecret()
 
 /**
  * Resolve the X-User-Token signing secret, FAIL-CLOSED.

@@ -11,7 +11,7 @@ cd "$ROOT"
 
 # Demo runs on a DEDICATED database (raku_demo), NOT raku_parity — the Tier-B postgres tests default to
 # raku_parity and TRUNCATE it, which would silently wipe a demo served from the same DB. Keep them apart.
-PGURL="${POSTGRES_URL:-postgresql://raku:raku@127.0.0.1:5432/raku_demo}"
+PGURL="${POSTGRES_URL:-postgresql://raku:raku@127.0.0.1:5432/raku_demo}"  # pragma: allowlist secret -- local dev DB credential
 case "${PGURL##*/}" in
   raku_parity|raku_tier_b_gate)
     echo "Refusing to run the demo on a TEST database (${PGURL##*/}) — tests TRUNCATE it. Use raku_demo." >&2
