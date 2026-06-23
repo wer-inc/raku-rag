@@ -270,6 +270,50 @@ describe("manufacturing answer facade (e2e)", () => {
     expect(audit.body.records).toEqual([]);
   });
 
+  it("denies a no-role principal the tenant-wide aggregate read views (before forwarding)", async () => {
+    // A provisioned-but-roleless tenant member must not read org-wide aggregates (no per-doc ACL).
+    const noRole = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "nobody",
+      groups: [],
+      roles: [],
+    });
+    const before = upstreamRequestCount;
+    for (const path of [
+      "/v1/manufacturing/dashboard",
+      "/v1/manufacturing/kpi",
+      "/v1/manufacturing/safety-telemetry",
+      "/v1/manufacturing/governance/status",
+      "/v1/manufacturing/audit/export?fmt=dict",
+    ]) {
+      const res = await request(app.getHttpServer())
+        .get(path)
+        .set("Authorization", "Bearer local-dev-key")
+        .set("X-User-Token", noRole);
+      expect(res.status).toBe(403);
+    }
+    expect(upstreamRequestCount).toBe(before); // gated BEFORE the answer-service is ever called
+  });
+
+  it("admin-gates audit/export specifically: a reader can see dashboards but not the audit log", async () => {
+    const reader = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "reader",
+      groups: ["ops"],
+      roles: ["reader"],
+    });
+    const dash = await request(app.getHttpServer())
+      .get("/v1/manufacturing/dashboard")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", reader);
+    expect(dash.status).toBe(200); // any role may read operational dashboards
+    const audit = await request(app.getHttpServer())
+      .get("/v1/manufacturing/audit/export?fmt=dict")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", reader);
+    expect(audit.status).toBe(403); // but the audit log is admin-only
+  });
+
   it("forwards the remaining manufacturing contract routes through the facade", async () => {
     const adminToken = makeUserToken({
       tenant_id: "tenant_a",
