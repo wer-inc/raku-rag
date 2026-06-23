@@ -5,8 +5,8 @@ Manufacturing Field Knowledge RAG built **on top of** the 001 base platform (do 
 features — reference them). Plan & design artifacts complete (GQ1=block, GQ2=customer 1yr/audit 1yr
 resolved). `tasks.md` is fully checked (T001–T072 + sub-tasks, all `[x]` = 実装済み). The cross-spec
 implementation (002 manufacturing + 003/006/010 + observability/providers/workers/SDK/infra/tests) is
-committed on branch `002-manufacturing-field-knowledge-rag`; the GitHub `gate` workflow is green as of
-`1e2abb5`. A 2026-06-20 design-vs-impl audit filed **20 confirmed gap-remediation items** (2 safety-boundary,
+committed on `002-manufacturing-field-knowledge-rag` (now folded into the `develop` trunk — see
+"Repository / branches" below); the GitHub `gate` workflow is green as of `1e2abb5`. A 2026-06-20 design-vs-impl audit filed **20 confirmed gap-remediation items** (2 safety-boundary,
 reproduced) into the specs' `tasks.md` (§Gap Remediation Backlog) — implementation deferred; these are why
 "all tasks `[x]` + gate green" is necessary but NOT sufficient for "design complete". Local
 `scripts/gate.sh all` GREEN is also necessary but not sufficient — confirm the GitHub `gate` run
@@ -49,3 +49,13 @@ Driven via loop engineering — see `docs/loop-engineering.md` (SSOT). Verificat
 `scripts/gate.sh` (Tier A hard gates, ~3ms, stdlib). Track A = stdlib-first to keep the gate fast.
 Supervised (~1–2h/day); phased driver automation — non-safety loops self-drive, the safety boundary
 (hard-gate design, draft approval, high-risk assertion, no-train, audit) is always human.
+
+## Repository / branches
+
+Default & integration branch: **`develop`** (set 2026-06-23) — open PRs against `develop`. There is
+no `main`/`master`. Spec Kit workflow: feature work lives on numbered `NNN-<slug>` branches (matching
+`specs/NNN-*`) that merge into `develop`. `develop` was seeded as
+`002-manufacturing-field-knowledge-rag ⊕ 015-mfg-answer-workspace-poc` and now carries the full
+implemented stack: RAG core + manufacturing safety overlay + the answer-workspace **frontend**
+(`apps/web`, goal.md flows) on the live `web → NestJS API → Python answer-service → Postgres` path.
+(Earlier numbered branches 003–014 are already merged into the 002 line that `develop` descends from.)
