@@ -290,6 +290,67 @@ class ManufacturingSystem:
             doc.metadata[_MFG_META_KEY] = metadata.to_mapping()
             self._mvp.registry.put(doc)
 
+    def list_documents(
+        self, principal: IdentityClaims, *, collection_id: str | None = None
+    ) -> list[dict]:
+        """ACL-filtered manufacturing document inventory for the ドキュメント一覧 screen.
+
+        Enumerates live (non-tombstoned, so a source-deleted doc never resurfaces — GAP-S2)
+        documents from the 001 registry — the deployed source of truth, since ``/internal/ingest``
+        persists the manufacturing metadata into ``Document.metadata`` over Postgres rather than the
+        in-process ``_mfg_meta`` map. Every document is re-checked against the 001 deny-by-default
+        ACL (``can_read_document``) so the inventory never leaks a document the caller cannot read —
+        the same isolation the search/answer paths enforce (top risk: ACL leakage). Approval state is
+        resolved per document via ``get_mfg_meta`` (honors the tombstone/restore path). Read-only.
+        """
+        tenant_id = principal.tenant_id
+        registry = self._mvp.registry
+        acl = self._mvp.acl
+        lister = getattr(registry, "list_documents", None)
+        pairs: list[tuple] = []
+        if callable(lister):
+            for doc in lister(tenant_id, collection_id=collection_id):
+                if getattr(doc, "tombstone", False):
+                    continue
+                if not acl.can_read_document(principal, doc):
+                    continue
+                pairs.append((doc, self.get_mfg_meta(tenant_id, doc.document_id)))
+        else:
+            # In-memory MvpSystem path: the manufacturing ingest populates ``_mfg_meta`` directly.
+            for (meta_tenant, document_id), meta in self._mfg_meta.items():
+                if meta_tenant != tenant_id:
+                    continue
+                doc = registry.get(tenant_id, document_id)
+                if doc is None or doc.tombstone:
+                    continue
+                if collection_id and doc.collection_id != collection_id:
+                    continue
+                if not acl.can_read_document(principal, doc):
+                    continue
+                pairs.append((doc, meta))
+
+        out: list[dict] = []
+        for doc, meta in pairs:
+            kind = getattr(getattr(meta, "document_kind", None), "value", None)
+            status = getattr(getattr(meta, "approval_status", None), "value", None)
+            out.append(
+                {
+                    "document_id": doc.document_id,
+                    "collection_id": doc.collection_id,
+                    "source_id": doc.source_id,
+                    "document_kind": kind if kind is not None else getattr(meta, "document_kind", None),
+                    "approval_status": status if status is not None else "unknown",
+                    "effective_date": getattr(meta, "effective_date", None),
+                    "approved_by": getattr(meta, "approved_by", None),
+                    "approved_at": getattr(meta, "approved_at", None),
+                    "superseded_by": getattr(meta, "superseded_by", None),
+                    "equipment": getattr(meta, "equipment", None),
+                    "safety_category": getattr(meta, "safety_category", None),
+                }
+            )
+        out.sort(key=lambda d: (d["collection_id"] or "", d["document_id"]))
+        return out
+
     # --- ingestion (001 body path + manufacturing metadata attach) --------------------------------
     def ingest_manufacturing(
         self,

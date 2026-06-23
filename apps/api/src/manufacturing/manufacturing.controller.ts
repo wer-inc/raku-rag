@@ -259,6 +259,18 @@ export class ManufacturingController {
     );
   }
 
+  @Get("documents")
+  async documents(
+    @Req() req: Request,
+    @Query("collection_id") collectionId?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.requestCore(
+      req,
+      "GET",
+      queryPath("/internal/manufacturing/documents", { collection_id: collectionId }),
+    );
+  }
+
   @Get("dashboard")
   async dashboard(
     @Req() req: Request,

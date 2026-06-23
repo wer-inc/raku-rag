@@ -30,6 +30,7 @@ import {
   manufacturingDataUsePolicy,
   manufacturingDeleteDocument,
   manufacturingDocumentApproval,
+  manufacturingDocuments,
   manufacturingGetDraft,
   manufacturingDashboard,
   manufacturingGovernanceStatus,
@@ -43,7 +44,13 @@ import {
   manufacturingUpdateDocumentMetadata,
   submitFeedback,
 } from "../../lib/api-client";
-import { clearSessionToken, DEMO_TENANT, getSessionToken, mintTokenFor } from "../../lib/session";
+import {
+  clearSessionToken,
+  DEMO_COLLECTION,
+  DEMO_TENANT,
+  getSessionToken,
+  mintTokenFor,
+} from "../../lib/session";
 import { missingApis, type ManifestScreen } from "../../lib/full-saas";
 import CitationViewer, { type CitationViewTarget } from "./CitationViewer";
 import {
@@ -92,12 +99,6 @@ const MOCK_SOURCES: AdminListRow[] = [
   { id: "src-press", label: "Press line manuals", meta: "sharepoint · 2,184 docs", status: "synced" },
   { id: "src-sop", label: "SOP library", meta: "s3 · 418 docs", status: "syncing" },
   { id: "src-troubles", label: "Trouble cases", meta: "postgres · 6,204 cases", status: "ready" },
-];
-
-const MOCK_DOCUMENTS: AdminListRow[] = [
-  { id: "doc-1122", label: "Pump P-12 maintenance", meta: "approved · source src-sop", status: "current" },
-  { id: "doc-2048", label: "Overheat triage", meta: "pending_review · source src-troubles", status: "draft" },
-  { id: "doc-3321", label: "Shift handover guide", meta: "obsolete · source src-press", status: "obsolete" },
 ];
 
 const MOCK_BILLING = {
@@ -2155,8 +2156,23 @@ const UPLOAD_APPROVAL_LABEL: Record<string, string> = {
   obsolete: "旧版",
 };
 
+const DOCUMENT_KIND_LABEL: Record<string, string> = {
+  work_instruction: "作業手順書",
+  standard: "標準",
+  inspection: "検査基準",
+  safety: "安全",
+  trouble_case: "トラブル事例",
+  manual: "マニュアル",
+  drawing: "図面",
+  spec: "仕様書",
+};
+
 function DocumentListBody() {
   const [uploaded, setUploaded] = useState<IngestedDoc[]>([]);
+  const docs = useLoad(
+    async () => manufacturingDocuments(await getSessionToken(), DEMO_COLLECTION),
+    [],
+  );
 
   useEffect(() => {
     setUploaded(loadIngestedDocs());
@@ -2167,7 +2183,7 @@ function DocumentListBody() {
       {uploaded.length > 0 && (
         <Section
           title="最近アップロードしたドキュメント"
-          note="このブラウザから取り込み、検索対象になっているドキュメントです（一覧 API 提供まではローカル表示）。"
+          note="このブラウザから取り込んだドキュメントです（取込直後の控え。テナント全体は下の一覧に表示されます）。"
         >
           <DataTable
             columns={["文書", "承認状態", "チャンク", "コレクション", "取込日時"]}
@@ -2191,23 +2207,40 @@ function DocumentListBody() {
                 setUploaded([]);
               }}
             >
-              この一覧を消去
+              この控えを消去
             </button>
           </div>
         </Section>
       )}
-      <Section title="ドキュメント" note="テナント全体の一覧 API が来るまでは型付きモックです。">
-        <DataTable
-          columns={["文書", "状態", "ソース"]}
-          rows={MOCK_DOCUMENTS.map((doc) => [
-            <Link key={doc.id} href={`/documents/${doc.id}`}>
-              {doc.label}
-            </Link>,
-            doc.status ?? "不明",
-            doc.meta ?? "—",
-          ])}
-          empty="文書はありません。"
-        />
+      <Section
+        title="ドキュメント"
+        note="テナントのナレッジベースに取り込まれ、検索・回答の根拠になっているドキュメントです。"
+      >
+        {docs.state === "loading" && <p className="ops-empty">ドキュメントを読み込み中…</p>}
+        {docs.state === "error" && <ScreenLoadError error={docs.error} />}
+        {docs.state === "ready" && (
+          <DataTable
+            columns={["文書", "種別", "承認状態", "発効日", "ソース", "コレクション"]}
+            rows={docs.data.map((doc) => [
+              <Link key={doc.document_id} href={`/documents/${doc.document_id}`}>
+                {doc.document_id}
+              </Link>,
+              ((kind) => (kind ? DOCUMENT_KIND_LABEL[kind] ?? kind : "—"))(
+                doc.document_kind ?? doc.source_id,
+              ),
+              <span
+                key={`${doc.document_id}-status`}
+                className={`review-queue-status approval-${doc.approval_status}`}
+              >
+                {UPLOAD_APPROVAL_LABEL[doc.approval_status] ?? doc.approval_status}
+              </span>,
+              doc.effective_date ?? "—",
+              doc.source_id,
+              doc.collection_id,
+            ])}
+            empty="ドキュメントはまだありません。「ソースを追加」から取り込めます。"
+          />
+        )}
       </Section>
     </>
   );
