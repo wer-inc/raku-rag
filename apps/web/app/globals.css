@@ -760,6 +760,36 @@ textarea {
   line-height: 1.6;
 }
 
+.answers-composer-meta {
+  max-width: 800px;
+  margin: 0 auto 8px;
+}
+
+.answers-collection-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.answers-collection-field select {
+  min-width: 140px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+}
+
+.sync-poll-badge {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #9f6a14;
+}
+
 .standalone-list-shell {
   display: grid;
   gap: 0;

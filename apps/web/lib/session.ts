@@ -6,6 +6,25 @@ export const DEMO_USER = process.env.NEXT_PUBLIC_DEMO_USER_ID ?? "alice";
 export const DEMO_COLLECTION = process.env.NEXT_PUBLIC_DEMO_COLLECTION_ID ?? "manuals";
 
 const STORAGE_KEY = "raku.devtoken";
+const COLLECTION_KEY = "raku.answerCollection";
+
+/** Last selected answer/search collection in the browser (defaults to DEMO_COLLECTION). */
+export function loadAnswerCollection(): string {
+  if (typeof window === "undefined") return DEMO_COLLECTION;
+  const cached = window.localStorage.getItem(COLLECTION_KEY);
+  return cached?.trim() || DEMO_COLLECTION;
+}
+
+export function saveAnswerCollection(collectionId: string): void {
+  if (typeof window === "undefined") return;
+  const trimmed = collectionId.trim();
+  if (!trimmed) return;
+  try {
+    window.localStorage.setItem(COLLECTION_KEY, trimmed);
+  } catch {
+    /* best-effort */
+  }
+}
 
 let inflight: Promise<string> | null = null;
 

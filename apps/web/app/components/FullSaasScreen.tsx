@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type {
+  AdminDataSource,
   Citation,
   GovernanceStatus,
   KnowledgeOpsDashboard,
@@ -17,6 +18,7 @@ import type {
   DraftArtifact,
 } from "@raku-rag/shared";
 import {
+  adminDataSources,
   adminSourceSync,
   type AdminSourceSyncResponse,
   apiDeleteJson,
@@ -47,11 +49,18 @@ import {
   submitFeedback,
 } from "../../lib/api-client";
 import {
+  loadConnectorRuns,
+  recordConnectorRun,
+  type ConnectorRunRecord,
+} from "../../lib/connector-runs";
+import {
   clearSessionToken,
   DEMO_COLLECTION,
   DEMO_TENANT,
   getSessionToken,
+  loadAnswerCollection,
   mintTokenFor,
+  saveAnswerCollection,
 } from "../../lib/session";
 import { missingApis, type ManifestScreen } from "../../lib/full-saas";
 import CitationViewer, { type CitationViewTarget } from "./CitationViewer";
@@ -119,8 +128,39 @@ async function runWithToken<T>(loader: (token: string) => Promise<T>): Promise<T
   return loader(token);
 }
 
-function useLoad<T>(loader: () => Promise<T>, deps: React.DependencyList): ViewState<T> {
+const SYNC_POLL_MS = 5000;
+const SYNC_ACTIVE_STATUSES = new Set([
+  "syncing",
+  "queued",
+  "observing",
+  "partially_succeeded",
+]);
+
+function isSyncActive(status: string | undefined | null): boolean {
+  return !!status && SYNC_ACTIVE_STATUSES.has(status);
+}
+
+function formatLoadError(err: unknown): string {
+  const message = err instanceof Error ? err.message : "リクエストに失敗しました";
+  if (/failed to fetch|networkerror|load failed/i.test(message)) {
+    return "バックエンド API に接続できません。API が起動しているか確認してください。";
+  }
+  return message;
+}
+
+type UseLoadOptions<T> = {
+  pollIntervalMs?: number;
+  shouldPoll?: (data: T) => boolean;
+};
+
+function useLoad<T>(
+  loader: () => Promise<T>,
+  deps: React.DependencyList,
+  options?: UseLoadOptions<T>,
+): [ViewState<T>, () => void] {
+  const [tick, setTick] = useState(0);
   const [state, setState] = useState<ViewState<T>>({ state: "loading" });
+  const reload = useCallback(() => setTick((value) => value + 1), []);
 
   useEffect(() => {
     let active = true;
@@ -131,15 +171,23 @@ function useLoad<T>(loader: () => Promise<T>, deps: React.DependencyList): ViewS
       })
       .catch((err) => {
         if (isAuthError(err)) clearSessionToken();
-        if (active) setState({ state: "error", error: err instanceof Error ? err.message : "リクエストに失敗しました" });
+        if (active) setState({ state: "error", error: formatLoadError(err) });
       });
     return () => {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, tick]);
 
-  return state;
+  useEffect(() => {
+    if (state.state !== "ready" || !options?.pollIntervalMs || !options.shouldPoll?.(state.data)) {
+      return;
+    }
+    const id = window.setInterval(reload, options.pollIntervalMs);
+    return () => window.clearInterval(id);
+  }, [state, options?.pollIntervalMs, options?.shouldPoll, reload]);
+
+  return [state, reload];
 }
 
 function Section({ title, note, children }: { title: string; note?: ReactNode; children: ReactNode }) {
@@ -206,18 +254,6 @@ function DataTable({
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function QuickLinks() {
-  return (
-    <div className="quick-links">
-      <Link href="/">質問する</Link>
-      <Link href="/sources">ソース</Link>
-      <Link href="/reviews">レビュー</Link>
-      <Link href="/operations">運用</Link>
-      <Link href="/admin/users">管理</Link>
     </div>
   );
 }
@@ -478,14 +514,35 @@ function AnswerPanel({
 
 function AnswersBody() {
   const [query, setQuery] = useState("");
+  const [collectionId, setCollectionId] = useState(DEMO_COLLECTION);
+  const [collections, setCollections] = useState<string[]>([DEMO_COLLECTION]);
   const [turns, setTurns] = useState<AnswerTurn[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewer, setViewer] = useState<CitationViewTarget | null>(null);
+
+  useEffect(() => {
+    setCollectionId(loadAnswerCollection());
+    void getSessionToken()
+      .then((token) => adminDataSources(token))
+      .then((sources) => {
+        const ids = [...new Set(sources.map((source) => source.collection_id).filter(Boolean))].sort();
+        if (ids.length > 0) setCollections(ids);
+      })
+      .catch(() => {
+        /* keep default collection list */
+      });
+  }, []);
+
+  function onCollectionChange(value: string) {
+    setCollectionId(value);
+    saveAnswerCollection(value);
+  }
 
   async function onAsk(event: FormEvent) {
     event.preventDefault();
     const trimmed = query.trim();
     if (!trimmed || loading) return;
+    const targetCollection = collectionId.trim() || DEMO_COLLECTION;
 
     const turnId = `${Date.now().toString(36)}-${turns.length}`;
     setTurns((prev) => [...prev, { kind: "user", id: `${turnId}-q`, text: trimmed }]);
@@ -493,7 +550,10 @@ function AnswersBody() {
     setLoading(true);
     try {
       const token = await getSessionToken();
-      const response = await manufacturingAnswer({ query: trimmed, collection_id: "manuals" }, token);
+      const response = await manufacturingAnswer(
+        { query: trimmed, collection_id: targetCollection },
+        token,
+      );
       recordAnswer(trimmed, response);
       setTurns((prev) => [...prev, { kind: "answer", id: `${turnId}-a`, question: trimmed, response }]);
     } catch (err) {
@@ -504,7 +564,7 @@ function AnswersBody() {
           kind: "error",
           id: `${turnId}-e`,
           question: trimmed,
-          error: err instanceof Error ? err.message : "リクエストに失敗しました",
+          error: formatLoadError(err),
         },
       ]);
     } finally {
@@ -549,6 +609,22 @@ function AnswersBody() {
       </div>
 
       <form className="answers-composer" onSubmit={onAsk}>
+        <div className="answers-composer-meta">
+          <label className="answers-collection-field">
+            <span>検索コレクション</span>
+            <select
+              aria-label="Collection"
+              value={collectionId}
+              onChange={(event) => onCollectionChange(event.target.value)}
+            >
+              {collections.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         <div className="answers-composer-inner">
           <textarea
             aria-label="Question"
@@ -781,11 +857,18 @@ function ScreenShell({ screen, children }: { screen: ManifestScreen; children: R
   );
 }
 
-function ScreenLoadError({ error }: { error: string }) {
+function ScreenLoadError({ error, onRetry }: { error: string; onRetry?: () => void }) {
   return (
     <section className="result-panel error-panel" aria-live="polite">
       <h3>読み込みに失敗しました</h3>
       <p>{error}</p>
+      {onRetry && (
+        <div className="screen-actions">
+          <button type="button" onClick={onRetry}>
+            再試行
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -799,106 +882,109 @@ function MockBanner({ screen }: { screen: ManifestScreen }) {
   );
 }
 
+const SOURCE_SYNC_STATUS: Record<string, { label: string; key: string }> = {
+  succeeded: { label: "同期済み", key: "ok" },
+  idle: { label: "待機", key: "ok" },
+  partially_succeeded: { label: "一部成功", key: "wait" },
+  syncing: { label: "同期中", key: "wait" },
+  queued: { label: "待機中", key: "wait" },
+  observing: { label: "確認中", key: "wait" },
+  failed: { label: "失敗", key: "bad" },
+};
+
+type SourceListRow = { source: AdminDataSource; sync: ManufacturingSourceSyncStatus | null };
+
+function sourceFreshness(row: SourceListRow): string {
+  const at = row.source.last_synced_at;
+  if (!at) return "未同期";
+  const parsed = new Date(at);
+  return Number.isNaN(parsed.getTime()) ? at : parsed.toLocaleString("ja-JP");
+}
+
+async function loadSourceListRows(): Promise<SourceListRow[]> {
+  const token = await getSessionToken();
+  const sources = await adminDataSources(token);
+  return Promise.all(
+    sources.map(async (source) => {
+      let sync: ManufacturingSourceSyncStatus | null = null;
+      try {
+        sync = await manufacturingSourceSyncStatus(source.source_id, token);
+      } catch {
+        sync = null;
+      }
+      return { source, sync };
+    }),
+  );
+}
+
 function SourceListBody() {
-  const sources = [
-    {
-      id: "notion-manufacturing",
-      name: "Notion（製造手順）",
-      type: "Notion",
-      status: "同期済み",
-      statusKey: "ok",
-      docs: "1,284",
-      fresh: "10分前",
-      owner: "製造技術部",
-      mono: "N",
-    },
-    {
-      id: "sharepoint-quality",
-      name: "SharePoint（品質文書）",
-      type: "SharePoint",
-      status: "同期済み",
-      statusKey: "ok",
-      docs: "862",
-      fresh: "1時間前",
-      owner: "品質保証部",
-      mono: "S",
-    },
-    {
-      id: "maintenance-db",
-      name: "設備保全 DB",
-      type: "Database",
-      status: "同期中",
-      statusKey: "wait",
-      docs: "2,800",
-      fresh: "進行中",
-      owner: "保全課",
-      mono: "DB",
-    },
-    {
-      id: "incident-db",
-      name: "過去トラブル DB",
-      type: "Database",
-      status: "同期済み",
-      statusKey: "ok",
-      docs: "3,410",
-      fresh: "今朝",
-      owner: "品質保証部",
-      mono: "DB",
-    },
-    {
-      id: "cad-s3",
-      name: "CAD 図面ストレージ（S3）",
-      type: "S3",
-      status: "失敗",
-      statusKey: "bad",
-      docs: "—",
-      fresh: "失敗",
-      owner: "設計部",
-      mono: "S3",
-    },
-  ];
+  const [state, reload] = useLoad(loadSourceListRows, [], {
+    pollIntervalMs: SYNC_POLL_MS,
+    shouldPoll: (rows) => rows.some(({ sync }) => isSyncActive(sync?.status)),
+  });
+  const polling = state.state === "ready" && state.data.some(({ sync }) => isSyncActive(sync?.status));
 
   return (
     <div className="standalone-list-shell">
       <header className="standalone-list-head">
         <div className="standalone-list-head-title">
           <h3>ソース</h3>
+          {polling && <span className="sync-poll-badge">同期中 — 自動更新</span>}
         </div>
         <div className="standalone-list-tools">
-          <label className="standalone-search">
-            <span aria-hidden="true">⌕</span>
-            <input placeholder="ソースを検索" />
-          </label>
+          <button type="button" onClick={reload}>
+            更新
+          </button>
           <Link href="/sources/new">ソースを追加</Link>
         </div>
       </header>
-      <div className="standalone-table-wrap">
-        <div className="standalone-table-head">
-          <div>ソース</div>
-          <div>種別</div>
-          <div>ステータス</div>
-          <div className="is-right">文書数</div>
-          <div className="is-right">鮮度</div>
-          <div>オーナー</div>
-        </div>
-        {sources.map((source) => (
-          <Link key={source.id} href={`/sources/${source.id}`} className="standalone-table-row">
-            <div className="standalone-source-cell">
-              <div className="standalone-source-mark">{source.mono}</div>
-              <span>{source.name}</span>
+      {state.state === "loading" && <p className="ops-empty">ソースを読み込み中…</p>}
+      {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
+      {state.state === "ready" &&
+        (state.data.length === 0 ? (
+          <p className="ops-empty">
+            登録済みのソースはありません。「ソースを追加」から接続・同期してください。
+          </p>
+        ) : (
+          <div className="standalone-table-wrap">
+            <div className="standalone-table-head">
+              <div>ソース</div>
+              <div>種別</div>
+              <div>ステータス</div>
+              <div className="is-right">変更数</div>
+              <div className="is-right">最終同期</div>
+              <div>コレクション</div>
             </div>
-            <div>{source.type}</div>
-            <div>
-              <span className={`standalone-status ${source.statusKey}`}>
-                {source.status}
-              </span>
-            </div>
-            <div className="is-right mono">{source.docs}</div>
-            <div className="is-right muted">{source.fresh}</div>
-            <div className="muted">{source.owner}</div>
-          </Link>
+            {state.data.map(({ source, sync }) => {
+              const config = (source.config ?? {}) as Record<string, unknown>;
+              const name = (config.display_name as string) || source.source_id;
+              const kind = (config.source_type as string) || source.type;
+              const status = sync?.status
+                ? SOURCE_SYNC_STATUS[sync.status] ?? { label: sync.status, key: "wait" }
+                : { label: "未同期", key: "wait" };
+              const changed = sync?.summary?.changed_count;
+              return (
+                <Link
+                  key={source.source_id}
+                  href={`/sources/${source.source_id}`}
+                  className="standalone-table-row"
+                >
+                  <div className="standalone-source-cell">
+                    <div className="standalone-source-mark">{kind.slice(0, 2).toUpperCase()}</div>
+                    <span>{name}</span>
+                  </div>
+                  <div>{kind}</div>
+                  <div>
+                    <span className={`standalone-status ${status.key}`}>{status.label}</span>
+                  </div>
+                  <div className="is-right mono">{changed ?? "—"}</div>
+                  <div className="is-right muted">{sourceFreshness({ source, sync })}</div>
+                  <div className="muted">{source.collection_id}</div>
+                </Link>
+              );
+            })}
+          </div>
         ))}
-      </div>
     </div>
   );
 }
@@ -954,7 +1040,7 @@ function AnswerHistoryBody() {
 }
 
 function HomeDashboardBody() {
-  const state = useLoad(
+  const [state, reload] = useLoad(
     async () => {
       const token = await getSessionToken();
       const [dashboard, telemetry, kpi, governance] = await Promise.all([
@@ -969,7 +1055,7 @@ function HomeDashboardBody() {
   );
 
   if (state.state === "loading") return <p className="ops-empty">ホームダッシュボードを読み込み中…</p>;
-  if (state.state === "error") return <ScreenLoadError error={state.error} />;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
 
   const { dashboard, telemetry, kpi, governance } = state.data;
   return (
@@ -1021,9 +1107,9 @@ function HomeDashboardBody() {
               <strong>質問する</strong>
               <span>根拠付きの質問を投げる</span>
             </Link>
-            <Link href="/sources" className="action-card">
-              <strong>ソース</strong>
-              <span>トラブルケースとソース状態を確認する</span>
+            <Link href="/sources/list" className="action-card">
+              <strong>ソース一覧</strong>
+              <span>接続済みソースと同期状態を確認する</span>
             </Link>
             <Link href="/reviews" className="action-card">
               <strong>レビュー</strong>
@@ -1053,8 +1139,11 @@ function HomeDashboardBody() {
 
 function SourceDetailBody({ sourceId }: { sourceId: string }) {
   const [syncState, setSyncState] = useState<ViewState<ManufacturingSourceSyncStatus>>({ state: "loading" });
-  const [runState, setRunState] = useState<ViewState<ManufacturingIngestionRun>>({ state: "loading" });
+  const [runState, setRunState] = useState<ViewState<ManufacturingIngestionRun | null>>({ state: "loading" });
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
 
   useEffect(() => {
     let active = true;
@@ -1062,24 +1151,35 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
     setRunState({ state: "loading" });
     runWithToken((token) => manufacturingSourceSyncStatus(sourceId, token))
       .then((data) => {
-        if (active) setSyncState({ state: "ready", data });
+        if (!active) return;
+        setSyncState({ state: "ready", data });
         const latest = data.correlation_id;
-        if (latest) {
-          return runWithToken((token) => manufacturingIngestionRun(latest, token));
+        if (!latest) {
+          setRunState({ state: "ready", data: null });
+          return;
         }
-        return null;
+        return runWithToken((token) => manufacturingIngestionRun(latest, token));
       })
       .then((data) => {
-        if (active && data) setRunState({ state: "ready", data });
+        if (active) setRunState({ state: "ready", data: data ?? null });
       })
       .catch((err) => {
         if (isAuthError(err)) clearSessionToken();
-        if (active) setSyncState({ state: "error", error: err instanceof Error ? err.message : "リクエストに失敗しました" });
+        if (active) {
+          setSyncState({ state: "error", error: formatLoadError(err) });
+          setRunState({ state: "ready", data: null });
+        }
       });
     return () => {
       active = false;
     };
-  }, [sourceId]);
+  }, [sourceId, refreshTick]);
+
+  useEffect(() => {
+    if (syncState.state !== "ready" || !isSyncActive(syncState.data.status)) return;
+    const id = window.setInterval(reload, SYNC_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [syncState, reload]);
 
   async function onSyncRequest(event: FormEvent) {
     event.preventDefault();
@@ -1087,10 +1187,13 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
     try {
       await runWithToken((token) => manufacturingRequestSourceSync(sourceId, { reason: "manual_refresh" }, token));
       setSyncMessage("同期を依頼しました");
+      reload();
     } catch (err) {
-      setSyncMessage(err instanceof Error ? err.message : "同期依頼に失敗しました");
+      setSyncMessage(formatLoadError(err));
     }
   }
+
+  const polling = syncState.state === "ready" && isSyncActive(syncState.data.status);
 
   return (
     <>
@@ -1098,12 +1201,16 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
         <form className="src-inline-form" onSubmit={onSyncRequest}>
           <input value={sourceId} readOnly aria-label="ソース ID" />
           <button type="submit">同期を依頼</button>
+          <button type="button" onClick={reload}>
+            状態を更新
+          </button>
         </form>
+        {polling && <p className="ops-note">同期中です — {SYNC_POLL_MS / 1000} 秒ごとに自動更新します。</p>}
         {syncMessage && <p className="ops-note">{syncMessage}</p>}
       </Section>
 
       {syncState.state === "loading" && <p className="ops-empty">ソース同期状態を読み込み中…</p>}
-      {syncState.state === "error" && <ScreenLoadError error={syncState.error} />}
+      {syncState.state === "error" && <ScreenLoadError error={syncState.error} onRetry={reload} />}
       {syncState.state === "ready" && (
         <>
           <Section title="同期状態">
@@ -1133,7 +1240,7 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
         </>
       )}
 
-      {runState.state === "ready" && (
+      {runState.state === "ready" && runState.data && (
         <Section title="最新取り込み実行">
           <FieldGrid
             rows={[
@@ -1593,23 +1700,42 @@ function IngestionRunsBody() {
   const [runId, setRunId] = useState("");
   const [state, setState] = useState<ViewState<ManufacturingIngestionRun>>({ state: "loading" });
   const [uploads, setUploads] = useState<IngestedDoc[]>([]);
+  const [connectorRuns, setConnectorRuns] = useState<ConnectorRunRecord[]>([]);
+  const [lastLookupId, setLastLookupId] = useState("");
 
   useEffect(() => {
     setUploads(loadIngestedDocs());
+    setConnectorRuns(loadConnectorRuns());
   }, []);
 
-  async function lookup(event: FormEvent) {
-    event.preventDefault();
-    const id = runId.trim();
-    if (!id) return;
+  async function loadRun(id: string) {
+    const trimmed = id.trim();
+    if (!trimmed) return;
+    setLastLookupId(trimmed);
     setState({ state: "loading" });
     try {
-      const data = await runWithToken((token) => manufacturingIngestionRun(id, token));
+      const data = await runWithToken((token) => manufacturingIngestionRun(trimmed, token));
       setState({ state: "ready", data });
     } catch (err) {
       if (isAuthError(err)) clearSessionToken();
-        setState({ state: "error", error: err instanceof Error ? err.message : "リクエストに失敗しました" });
+      setState({ state: "error", error: formatLoadError(err) });
     }
+  }
+
+  async function lookup(event: FormEvent) {
+    event.preventDefault();
+    await loadRun(runId);
+  }
+
+  function retryLookup() {
+    if (lastLookupId) void loadRun(lastLookupId);
+  }
+
+  function connectorStatusLabel(status: string): string {
+    if (status === "succeeded") return "成功";
+    if (isSyncActive(status)) return "実行中";
+    if (status === "failed") return "失敗";
+    return status;
   }
 
   return (
@@ -1622,8 +1748,37 @@ function IngestionRunsBody() {
           </button>
         </form>
       </Section>
+      {connectorRuns.length > 0 && (
+        <Section
+          title="最近のコネクタ同期（このブラウザ）"
+          note="「ソースを追加」から開始した同期です。実行 ID で詳細を確認できます。"
+        >
+          <DataTable
+            columns={["実行 ID", "ソース", "コレクション", "状態", "変更", "日時"]}
+            rows={connectorRuns.map((run) => [
+              <button
+                type="button"
+                key={run.ingestion_run_id}
+                className="linklike"
+                onClick={() => {
+                  setRunId(run.ingestion_run_id);
+                  void loadRun(run.ingestion_run_id);
+                }}
+              >
+                {run.ingestion_run_id}
+              </button>,
+              run.source_id,
+              run.collection_id,
+              connectorStatusLabel(run.status),
+              String(run.changed_count),
+              new Date(run.synced_at).toLocaleString("ja-JP"),
+            ])}
+            empty="コネクタ同期はまだありません。"
+          />
+        </Section>
+      )}
       {uploads.length > 0 && (
-        <Section title="最近の取込（このブラウザ）" note="アップロードから作成された取込ランです。実行 ID で詳細を確認できます。">
+        <Section title="最近のアップロード取込（このブラウザ）" note="ファイルアップロードから作成された取込ランです。">
           <DataTable
             columns={["実行 ID", "ドキュメント", "状態", "チャンク", "日時"]}
             rows={uploads.map((doc) => [
@@ -1633,11 +1788,7 @@ function IngestionRunsBody() {
                 className="linklike"
                 onClick={() => {
                   setRunId(doc.ingestion_run_id);
-                  void runWithToken((token) => manufacturingIngestionRun(doc.ingestion_run_id, token))
-                    .then((data) => setState({ state: "ready", data }))
-                    .catch((err) =>
-                      setState({ state: "error", error: err instanceof Error ? err.message : "参照に失敗しました" }),
-                    );
+                  void loadRun(doc.ingestion_run_id);
                 }}
               >
                 {doc.ingestion_run_id}
@@ -1651,19 +1802,13 @@ function IngestionRunsBody() {
           />
         </Section>
       )}
-      <Section title="サンプル実行" note="テナント全体の一覧 API が来るまでは型付きモックです。">
-        <DataTable
-          columns={["実行", "ソース", "状態"]}
-          rows={[
-            ["run-1024", "src-sop", "成功"],
-            ["run-2048", "src-press", "実行中"],
-            ["run-4096", "src-troubles", "失敗"],
-          ]}
-          empty="実行はまだありません。"
-        />
-      </Section>
-      {state.state === "loading" && <p className="ops-empty">実行状態を読み込み中…</p>}
-      {state.state === "error" && <ScreenLoadError error={state.error} />}
+      {connectorRuns.length === 0 && uploads.length === 0 && (
+        <p className="ops-empty">
+          まだ取込履歴はありません。<Link href="/sources/new">ソースを追加</Link> から同期またはアップロードしてください。
+        </p>
+      )}
+      {state.state === "loading" && lastLookupId && <p className="ops-empty">実行状態を読み込み中…</p>}
+      {state.state === "error" && <ScreenLoadError error={state.error} onRetry={retryLookup} />}
       {state.state === "ready" && (
         <Section title="実行詳細">
           <FieldGrid
@@ -1683,7 +1828,7 @@ function IngestionRunsBody() {
 }
 
 function OperationTelemetryBody() {
-  const state = useLoad(
+  const [state, reload] = useLoad(
     async () => {
       const token = await getSessionToken();
       const [telemetry, governance] = await Promise.all([
@@ -1696,7 +1841,7 @@ function OperationTelemetryBody() {
   );
 
   if (state.state === "loading") return <p className="ops-empty">安全テレメトリを読み込み中…</p>;
-  if (state.state === "error") return <ScreenLoadError error={state.error} />;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const breakdown = state.data.telemetry.block_breakdown ?? state.data.telemetry.safety_gate_block_breakdown ?? {};
   return (
     <>
@@ -1720,7 +1865,7 @@ function OperationTelemetryBody() {
 }
 
 function QualityBody() {
-  const state = useLoad(
+  const [state, reload] = useLoad(
     async () => {
       const token = await getSessionToken();
       const [kpi, governance] = await Promise.all([manufacturingKpi(token), manufacturingGovernanceStatus(token)]);
@@ -1729,7 +1874,7 @@ function QualityBody() {
     [],
   );
   if (state.state === "loading") return <p className="ops-empty">品質データを読み込み中…</p>;
-  if (state.state === "error") return <ScreenLoadError error={state.error} />;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const { kpi } = state.data;
   return (
     <>
@@ -1840,7 +1985,7 @@ function ImprovementQueueBody() {
 }
 
 function ComplianceExportBody() {
-  const state = useLoad(
+  const [state, reload] = useLoad(
     async () => {
       const token = await getSessionToken();
       const [exportPayload, governance, policy] = await Promise.all([
@@ -1853,7 +1998,7 @@ function ComplianceExportBody() {
     [],
   );
   if (state.state === "loading") return <p className="ops-empty">出力データを読み込み中…</p>;
-  if (state.state === "error") return <ScreenLoadError error={state.error} />;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   return (
       <Section title="コンプライアンス出力">
         <pre className="code-block">{JSON.stringify(state.data.exportPayload, null, 2)}</pre>
@@ -2292,6 +2437,16 @@ function AddSourceBody() {
         token,
       );
       setSyncResult(sync);
+      recordConnectorRun({
+        ingestion_run_id: sync.ingestion_run_id,
+        source_id: sync.source_id,
+        collection_id: sync.collection_id,
+        status: sync.status,
+        observed_count: sync.observed_count,
+        changed_count: sync.changed_count,
+        failed_count: sync.failed_count,
+        synced_at: new Date().toISOString(),
+      });
       setConfigMessage(`${selectedSourceDef.name} の接続設定を保存し、同期を開始しました。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "同期開始に失敗しました");
@@ -2695,7 +2850,7 @@ const DOCUMENT_KIND_LABEL: Record<string, string> = {
 
 function DocumentListBody() {
   const [uploaded, setUploaded] = useState<IngestedDoc[]>([]);
-  const docs = useLoad(
+  const [docs, reloadDocs] = useLoad(
     async () => manufacturingDocuments(await getSessionToken(), DEMO_COLLECTION),
     [],
   );
@@ -2743,7 +2898,7 @@ function DocumentListBody() {
         note="テナントのナレッジベースに取り込まれ、検索・回答の根拠になっているドキュメントです。"
       >
         {docs.state === "loading" && <p className="ops-empty">ドキュメントを読み込み中…</p>}
-        {docs.state === "error" && <ScreenLoadError error={docs.error} />}
+        {docs.state === "error" && <ScreenLoadError error={docs.error} onRetry={reloadDocs} />}
         {docs.state === "ready" && (
           <DataTable
             columns={["文書", "種別", "承認状態", "発効日", "ソース", "コレクション"]}
@@ -2777,6 +2932,9 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
   const [metadata, setMetadata] = useState("{\n  \"owner\": \"ops\"\n}");
   const [state, setState] = useState<ViewState<{ processing: Record<string, unknown> }>>({ state: "loading" });
   const [actionError, setActionError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
 
   useEffect(() => {
     let active = true;
@@ -2787,12 +2945,12 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
       )
       .catch((err) => {
         if (isAuthError(err)) clearSessionToken();
-        if (active) setState({ state: "error", error: err instanceof Error ? err.message : "リクエストに失敗しました" });
+        if (active) setState({ state: "error", error: formatLoadError(err) });
       });
     return () => {
       active = false;
     };
-  }, [documentId]);
+  }, [documentId, refreshTick]);
 
   async function onSave() {
     setSaving(true);
@@ -2848,7 +3006,7 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
         </div>
       </Section>
       {state.state === "loading" && <p className="ops-empty">処理状態を読み込み中…</p>}
-      {state.state === "error" && <ScreenLoadError error={state.error} />}
+      {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
       {state.state === "ready" && (
         <Section title="処理状態">
           <pre className="code-block">{JSON.stringify(state.data.processing, null, 2)}</pre>
@@ -2861,12 +3019,12 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
 
 function ApprovalWorkflowBody() {
   const [memo, setMemo] = useState("Review flow is controlled by governance status.");
-  const state = useLoad(async () => {
+  const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
     return manufacturingGovernanceStatus(token);
   }, []);
   if (state.state === "loading") return <p className="ops-empty">ガバナンス状態を読み込み中…</p>;
-  if (state.state === "error") return <ScreenLoadError error={state.error} />;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   return (
     <>
       <Section title="ガバナンスベースの承認ルール">
@@ -2887,7 +3045,7 @@ function ApprovalWorkflowBody() {
 }
 
 function GenericOpsOverview() {
-  const state = useLoad(
+  const [state, reload] = useLoad(
     async () => {
       const token = await getSessionToken();
       const [dashboard, telemetry, kpi, governance] = await Promise.all([
@@ -2901,7 +3059,7 @@ function GenericOpsOverview() {
     [],
   );
   if (state.state === "loading") return <p className="ops-empty">運用概要を読み込み中…</p>;
-  if (state.state === "error") return <ScreenLoadError error={state.error} />;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const telemetryBreakdown =
     state.data.telemetry.block_breakdown ?? state.data.telemetry.safety_gate_block_breakdown ?? {};
   const breakdownEntries = Object.entries(telemetryBreakdown);
@@ -3036,12 +3194,12 @@ function fmtTime(value?: string): string {
 }
 
 function AuditLogBody() {
-  const state = useLoad(async () => {
+  const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
     return manufacturingAuditExport(token, "dict");
   }, []);
   if (state.state === "loading") return <p className="ops-empty">監査ログを読み込み中…</p>;
-  if (state.state === "error") return <ScreenLoadError error={state.error} />;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
 
   const records = ((state.data as { records?: AuditRecord[] }).records ?? []) as AuditRecord[];
 
@@ -3215,7 +3373,7 @@ function PermissionSimulator() {
 }
 
 function RolesAclBody() {
-  const state = useLoad(async () => {
+  const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
     return apiGetJson<{ grants?: Array<Record<string, unknown>> }>("/admin/acl", token);
   }, []);
@@ -3235,7 +3393,7 @@ function RolesAclBody() {
 
       <Section title="ACL 付与" note="GET /v1/admin/acl から取得した実データです。">
         {state.state === "loading" && <p className="ops-empty">ACL を読み込み中…</p>}
-        {state.state === "error" && <ScreenLoadError error={state.error} />}
+        {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
         {state.state === "ready" && (
           <DataTable
             columns={["サブジェクト", "リソース", "権限"]}
@@ -3297,7 +3455,7 @@ function NoTrainSummary({ policy }: { policy: DataUsePolicy }) {
 }
 
 function ProviderPolicyBody() {
-  const state = useLoad(async () => {
+  const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
     const [policies, dataUse] = await Promise.all([
       apiGetJson<unknown>("/admin/provider-policies", token),
@@ -3306,7 +3464,7 @@ function ProviderPolicyBody() {
     return { policies, dataUse };
   }, []);
   if (state.state === "loading") return <p className="ops-empty">プロバイダーポリシーを読み込み中…</p>;
-  if (state.state === "error") return <ScreenLoadError error={state.error} />;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const policies = (Array.isArray(state.data.policies) ? state.data.policies : []) as ProviderPolicy[];
   const dataUse = state.data.dataUse as DataUsePolicy;
   return (
@@ -3518,7 +3676,7 @@ function RetrievalDebugBody() {
 }
 
 function RetrievalBody() {
-  const state = useLoad(async () => {
+  const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
     const [profiles, queries] = await Promise.all([
       apiGetJson("/admin/retrieval-profiles", token),
@@ -3527,12 +3685,12 @@ function RetrievalBody() {
     return { profiles, queries };
   }, []);
   if (state.state === "loading") return <p className="ops-empty">検索設定を読み込み中…</p>;
-  if (state.state === "error") return <ScreenLoadError error={state.error} />;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   return <Section title="検索設定"><pre className="code-block">{JSON.stringify(state.data, null, 2)}</pre></Section>;
 }
 
 function LoggingPrivacyBody() {
-  const state = useLoad(async () => {
+  const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
     const [logging, policy] = await Promise.all([
       apiGetJson<unknown>("/admin/logging-policies", token),
@@ -3541,7 +3699,7 @@ function LoggingPrivacyBody() {
     return { logging, policy };
   }, []);
   if (state.state === "loading") return <p className="ops-empty">ログポリシーを読み込み中…</p>;
-  if (state.state === "error") return <ScreenLoadError error={state.error} />;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const dataUse = state.data.policy as DataUsePolicy;
   return (
     <>
