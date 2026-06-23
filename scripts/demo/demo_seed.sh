@@ -4,7 +4,7 @@
 # running answer-service. Requires: Postgres + answer-service up (see scripts/demo/demo_up.sh).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-DSN="${POSTGRES_URL:-postgresql://raku:raku@127.0.0.1:5432/raku_parity}"
+DSN="${POSTGRES_URL:-postgresql://raku:raku@127.0.0.1:5432/raku_demo}"  # pragma: allowlist secret -- local dev DB credential
 TENANT="${DEMO_TENANT:-demo}"
 
 # NOTE: this script assumes the answer-service was started fresh with --reset-demo-db

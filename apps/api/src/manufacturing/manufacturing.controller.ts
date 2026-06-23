@@ -12,7 +12,7 @@ import {
 } from "@nestjs/common";
 import type { Request } from "express";
 import type { ManufacturingAnswerRequest, ManufacturingAnswerResponse } from "@raku-rag/shared";
-import { assertAdminMutationAllowed } from "../auth/roles";
+import { assertAdminMutationAllowed, assertReadViewAllowed } from "../auth/roles";
 
 /**
  * P1-1 — `/v1/manufacturing/answer` product facade. THIN HTTP boundary: AuthMiddleware authenticates
@@ -280,6 +280,7 @@ export class ManufacturingController {
     @Query("from") from?: string,
     @Query("to") to?: string,
   ): Promise<Record<string, unknown>> {
+    assertReadViewAllowed(req);
     return this.requestCore(
       req,
       "GET",
@@ -303,6 +304,7 @@ export class ManufacturingController {
     @Query("to") to?: string,
     @Query("granularity") granularity?: string,
   ): Promise<Record<string, unknown>> {
+    assertReadViewAllowed(req);
     return this.requestCore(
       req,
       "GET",
@@ -325,6 +327,7 @@ export class ManufacturingController {
     @Query("to") to?: string,
     @Query("format") format?: string,
   ): Promise<Record<string, unknown>> {
+    assertReadViewAllowed(req);
     return this.requestCore(
       req,
       "GET",
@@ -348,6 +351,7 @@ export class ManufacturingController {
 
   @Get("governance/status")
   async governanceStatus(@Req() req: Request): Promise<Record<string, unknown>> {
+    assertReadViewAllowed(req);
     return this.requestCore(req, "GET", "/internal/manufacturing/governance/status");
   }
 
@@ -356,6 +360,9 @@ export class ManufacturingController {
     @Req() req: Request,
     @Query("fmt") fmt?: string,
   ): Promise<Record<string, unknown>> {
+    // The audit log is the most sensitive aggregate (cross-user actor IDs, decisions, hash chain) —
+    // admin-only, not merely any-role.
+    assertAdminMutationAllowed(req);
     const path = fmt
       ? `/internal/manufacturing/audit/export?fmt=${encodeURIComponent(fmt)}`
       : "/internal/manufacturing/audit/export";
