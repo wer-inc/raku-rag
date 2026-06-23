@@ -674,9 +674,7 @@ class PostgresDocumentRegistry:
             tombstone=row[10],
         )
 
-    def list_documents(
-        self, tenant_id: str, *, collection_id: str | None = None
-    ) -> list[Document]:
+    def list_documents(self, tenant_id: str, *, collection_id: str | None = None) -> list[Document]:
         """Tenant-scoped inventory of live (non-tombstoned) documents (ドキュメント一覧 read view).
 
         Tenant scoping is enforced by an explicit ``AND tenant_id = %s`` predicate (defense-in-depth):

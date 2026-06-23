@@ -338,7 +338,9 @@ class ManufacturingSystem:
                     "document_id": doc.document_id,
                     "collection_id": doc.collection_id,
                     "source_id": doc.source_id,
-                    "document_kind": kind if kind is not None else getattr(meta, "document_kind", None),
+                    "document_kind": (
+                        kind if kind is not None else getattr(meta, "document_kind", None)
+                    ),
                     "approval_status": status if status is not None else "unknown",
                     "effective_date": getattr(meta, "effective_date", None),
                     "approved_by": getattr(meta, "approved_by", None),
