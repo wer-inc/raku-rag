@@ -6,7 +6,11 @@ import type {
   DocumentApprovalRequest,
   DocumentApprovalResult,
   DraftArtifact,
+  FeedbackRequest,
+  FeedbackResponse,
   GovernanceStatus,
+  IngestRequest,
+  IngestResponse,
   KnowledgeOpsDashboard,
   ManufacturingAnswerRequest,
   ManufacturingAnswerResponse,
@@ -15,6 +19,8 @@ import type {
   ManufacturingSourceSyncStatus,
   ReviewDraftRequest,
   SafetyTelemetryView,
+  SearchRequest,
+  SearchResponse,
   TroubleCaseSearchRequest,
   TroubleCaseSearchResponse,
 } from "@raku-rag/shared";
@@ -36,6 +42,44 @@ function authHeaders(userToken: string): Record<string, string> {
     authorization: "Bearer local-dev-key",
     "x-user-token": userToken,
   };
+}
+
+function authedRequestInit(
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+  userToken: string,
+  body?: unknown,
+): RequestInit {
+  return {
+    method,
+    headers: authHeaders(userToken),
+    cache: method === "GET" ? "no-store" : undefined,
+    body: body === undefined ? undefined : JSON.stringify(body ?? {}),
+  };
+}
+
+export async function apiGetJson<T>(path: string, userToken: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, authedRequestInit("GET", userToken));
+  return jsonOrThrow<T>(res);
+}
+
+export async function apiPostJson<T>(path: string, body: unknown, userToken: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, authedRequestInit("POST", userToken, body));
+  return jsonOrThrow<T>(res);
+}
+
+export async function apiPutJson<T>(path: string, body: unknown, userToken: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, authedRequestInit("PUT", userToken, body));
+  return jsonOrThrow<T>(res);
+}
+
+export async function apiPatchJson<T>(path: string, body: unknown, userToken: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, authedRequestInit("PATCH", userToken, body));
+  return jsonOrThrow<T>(res);
+}
+
+export async function apiDeleteJson<T>(path: string, userToken: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, authedRequestInit("DELETE", userToken));
+  return jsonOrThrow<T>(res);
 }
 
 /** Authenticated GET against a `/v1/manufacturing/*` read view. */
@@ -82,6 +126,29 @@ export async function manufacturingAnswer(
     body: JSON.stringify(req),
   });
   return jsonOrThrow<ManufacturingAnswerResponse>(res);
+}
+
+/** Ingest a document (POST /v1/ingest). The `ref` is a connector ref (file:// for local uploads). */
+export async function ingestDocument(req: IngestRequest, userToken: string): Promise<IngestResponse> {
+  return apiPostJson<IngestResponse>("/ingest", req, userToken);
+}
+
+/** Retrieve ranked candidate chunks (POST /v1/search) — already ACL deny-by-default filtered. */
+export async function searchChunks(req: SearchRequest, userToken: string): Promise<SearchResponse> {
+  const res = await fetch(`${API_BASE}/search`, {
+    method: "POST",
+    headers: authHeaders(userToken),
+    body: JSON.stringify(req),
+  });
+  return jsonOrThrow<SearchResponse>(res);
+}
+
+/** Record answer/citation feedback (👍/👎, "この引用は正しい/間違い"). */
+export async function submitFeedback(
+  req: FeedbackRequest,
+  userToken: string,
+): Promise<FeedbackResponse> {
+  return apiPostJson<FeedbackResponse>("/feedback", req, userToken);
 }
 
 // --- Operations read views (specs/014; all GET, audit-derived, read-only) ----------------------
@@ -133,6 +200,50 @@ export async function manufacturingIngestionRun(
     `ingestion-runs/${encodeURIComponent(runId)}`,
     userToken,
   );
+}
+
+export async function manufacturingRequestSourceSync(
+  sourceId: string,
+  body: Record<string, unknown>,
+  userToken: string,
+): Promise<Record<string, unknown>> {
+  return mfgPost<Record<string, unknown>>(`sources/${encodeURIComponent(sourceId)}/sync`, body, userToken);
+}
+
+export async function manufacturingUpdateDocumentMetadata(
+  documentId: string,
+  body: Record<string, unknown>,
+  userToken: string,
+): Promise<Record<string, unknown>> {
+  return apiPutJson<Record<string, unknown>>(
+    `/manufacturing/documents/${encodeURIComponent(documentId)}/metadata`,
+    body,
+    userToken,
+  );
+}
+
+export async function manufacturingDeleteDocument(
+  documentId: string,
+  userToken: string,
+): Promise<Record<string, unknown>> {
+  return apiDeleteJson<Record<string, unknown>>(
+    `/admin/documents/${encodeURIComponent(documentId)}`,
+    userToken,
+  );
+}
+
+export async function manufacturingAuditExport(
+  userToken: string,
+  fmt?: string,
+): Promise<Record<string, unknown>> {
+  const suffix = fmt ? `?fmt=${encodeURIComponent(fmt)}` : "";
+  return apiGetJson<Record<string, unknown>>(`/manufacturing/audit/export${suffix}`, userToken);
+}
+
+export async function manufacturingDataUsePolicy(
+  userToken: string,
+): Promise<Record<string, unknown>> {
+  return apiGetJson<Record<string, unknown>>("/manufacturing/policy/data-use", userToken);
 }
 
 // --- Reviews view (specs/014 slice 3) — human review loop; mutations are explicit human actions --

@@ -48,3 +48,12 @@ export async function getSessionToken(
 export function clearSessionToken(): void {
   if (typeof window !== "undefined") window.sessionStorage.removeItem(STORAGE_KEY);
 }
+
+/**
+ * Mint a fresh (uncached) dev-token for an arbitrary identity — used by the
+ * permission simulator to run a query AS another user and prove ACL isolation.
+ * Roles are assigned authoritatively server-side by the issuer (never the body).
+ */
+export async function mintTokenFor(tenantId: string, userId: string): Promise<string> {
+  return mint(tenantId, userId);
+}
