@@ -3249,12 +3249,10 @@ function GenericOpsOverview() {
     state.data.telemetry.block_breakdown ?? state.data.telemetry.safety_gate_block_breakdown ?? {};
   const breakdownEntries = Object.entries(telemetryBreakdown);
   const totalBlocks = breakdownEntries.reduce((sum, [, count]) => sum + Number(count || 0), 0) || 1;
-  const coverage = Math.max(0, Math.min(100, Math.round(Number(state.data.governance.policy_version) * 3.1)));
-  const expiring = [
-    { doc: "WI-0457", expiry: "2026-07-01", days: 9 },
-    { doc: "QC-08", expiry: "2026-07-03", days: 11 },
-    { doc: "SOP-220", expiry: "2026-07-08", days: 16 },
-  ];
+  // 承認カバレッジ = 根拠付き回答率（承認済み引用に裏付けられた回答の割合）。実 KPI 由来。
+  const coverage = Math.max(0, Math.min(100, Math.round((state.data.kpi.grounded_answer_rate ?? 0) * 100)));
+  // 旧版・要見直し候補（実データ）。以前はハードコードの「有効期限が近い引用」を表示していた。
+  const reviewCandidates = state.data.kpi.obsolete_document_candidates ?? [];
   return (
     <>
       <div className="standalone-ops-kpis">
@@ -3314,22 +3312,26 @@ function GenericOpsOverview() {
           </div>
           <div className="standalone-ops-coverage">
             <div className="standalone-ops-coverage-value">{coverage}%</div>
-            <span>{state.data.dashboard.frequently_referenced_documents.length} / {Math.max(1, state.data.dashboard.frequently_referenced_documents.length + 2)} 文書</span>
+            <span>根拠付き回答率</span>
           </div>
           <div className="standalone-ops-progress">
             <div style={{ width: `${coverage}%` }} />
           </div>
-          <div className="standalone-ops-expiring-title">有効期限が近い引用</div>
+          <div className="standalone-ops-expiring-title">旧版・要見直し候補</div>
           <div className="standalone-ops-expiring">
-            {expiring.map((item) => (
-              <div key={item.doc} className="standalone-ops-expiring-row">
-                <div>
-                  <div className="standalone-ops-expiring-doc">{item.doc}</div>
-                  <div className="standalone-ops-expiring-date">{item.expiry}</div>
+            {reviewCandidates.length > 0 ? (
+              reviewCandidates.slice(0, 6).map((docId) => (
+                <div key={docId} className="standalone-ops-expiring-row">
+                  <div>
+                    <div className="standalone-ops-expiring-doc">{docId}</div>
+                    <div className="standalone-ops-expiring-date">旧版のみヒット / 要見直し</div>
+                  </div>
+                  <Link href={`/documents/${docId}`}>確認</Link>
                 </div>
-                <span>{item.days}</span>
-              </div>
-            ))}
+              ))
+            ) : (
+              <div className="ops-empty">要見直しの候補はありません。</div>
+            )}
           </div>
         </section>
       </div>
