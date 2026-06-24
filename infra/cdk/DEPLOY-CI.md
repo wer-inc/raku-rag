@@ -23,14 +23,27 @@ GitHub Actions の runner には Docker があるので、**イメージのビ�
 - 出力 **`RoleArn`**（`arn:aws:iam::<account>:role/raku-rag-github-deploy`）を控える。
 - 既にこのアカウントに GitHub OIDC プロバイダがある場合はパラメータ `CreateOidcProvider=false`。
 
-> 補足: ロールは初回デプロイを通すため `AdministratorAccess`。安定後に CDK bootstrap ロール群へ絞れます。
+> **権限（既定で最小権限）**: パラメータ `PermissionsMode` の既定は **`cdk-scoped`** = このロールは
+> 「CDKのbootstrapロールをassume」＋「migrate-seedタスク実行」しかできません（アカウント全権は持たない。
+> 実際のデプロイ権限は CloudFormation 実行ロール側＝CloudFormationだけがassume可能）。万一スコープ不足で
+> デプロイが失敗したら、一時的に `PermissionsMode=admin`（AdministratorAccess）にして通し、後で戻せます。
+> **信頼範囲**: `GitHubRefFilter` 既定は **`ref:refs/heads/develop`**（`develop`ブランチで実行した時だけ
+> assume可。`*`=全ブランチは危険なので使わない）。ワークフローは必ず **develop** ブランチで実行してください。
 
-### 2. GitHub にリポジトリ変数を登録
+### 2. 一回だけ：CDK bootstrap（AWS CloudShell・Docker不要）
+`cdk-scoped` ロールは bootstrap できない設計なので、bootstrap は管理者セッションで一度だけ行います。
+**AWSコンソール右上の CloudShell**（Docker不要・Node同梱）で：
+```bash
+npx aws-cdk@2 bootstrap aws://<ACCOUNT_ID>/ap-northeast-1
+```
+（bootstrap はイメージをビルドしないので CloudShell で実行できます。1アカウント×リージョンに一度だけ。）
+
+### 3. GitHub にリポジトリ変数を登録
 **GitHub → リポジトリ → Settings → Secrets and variables → Actions → Variables（Secretsではない）** で：
 - `AWS_DEPLOY_ROLE_ARN` = 上の RoleArn
 - `AWS_REGION` = `ap-northeast-1`（未設定なら既定で東京）
 
-### 3.（任意）prod に承認ゲート
+### 4.（任意）prod に承認ゲート
 **Settings → Environments → `prod`** を作り、Required reviewers を設定すると prod デプロイに承認が要る。
 
 ## デプロイの実行

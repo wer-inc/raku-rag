@@ -45,9 +45,13 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.stage }} # add required reviewers on the `prod` Environment for a gate
     env:
+      # All workflow_dispatch inputs are passed via env and referenced as shell vars (never inlined into
+      # run: scripts) to avoid GitHub Actions expression injection. STAGE/FRONTEND are constrained
+      # choices; DOMAIN_NAME is free text and is format-validated in Preflight before any use.
       STAGE: ${{ inputs.stage }}
       FRONTEND: ${{ inputs.frontend }}
       DOMAIN_NAME: ${{ inputs.domain_name }}
+      ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
       AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
     steps:
@@ -59,11 +63,16 @@ jobs:
       - name: Preflight
         run: |
           set -euo pipefail
-          if [ -z "${{ vars.AWS_DEPLOY_ROLE_ARN }}" ]; then
+          if [ -z "${ROLE_ARN}" ]; then
             echo "::error::Set repo Variable AWS_DEPLOY_ROLE_ARN (OIDC deploy role). See infra/cdk/DEPLOY-CI.md."
             exit 1
           fi
-          echo "stage=${STAGE} frontend=${FRONTEND} domain='${DOMAIN_NAME}' region=${AWS_REGION} dry_run=${{ inputs.dry_run }}"
+          # DOMAIN_NAME is free-text input — allow only hostname chars (or empty); reject anything else.
+          if ! printf '%s' "${DOMAIN_NAME}" | grep -qE '^[A-Za-z0-9.-]*$'; then
+            echo "::error::domain_name must be a hostname ([A-Za-z0-9.-]) or blank."
+            exit 1
+          fi
+          echo "stage=${STAGE} frontend=${FRONTEND} domain='${DOMAIN_NAME}' region=${AWS_REGION}"
 
       - name: Install + build CDK app
         working-directory: infra/cdk
@@ -81,17 +90,19 @@ jobs:
         if: ${{ !inputs.dry_run }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Bootstrap + deploy (builds images on the runner)
+      - name: Deploy (builds images on the runner)
         if: ${{ !inputs.dry_run }}
         working-directory: infra/cdk
+        # NOTE: `cdk bootstrap` is a ONE-TIME admin step done separately (see DEPLOY-CI.md) — the
+        # cdk-scoped deploy role intentionally cannot bootstrap. This step assumes the account is
+        # already bootstrapped.
         run: |
           set -euo pipefail
           CTX="--context stage=${STAGE} --context frontendHosting=${FRONTEND}"
           if [ -n "${DOMAIN_NAME}" ]; then CTX="${CTX} --context domainName=${DOMAIN_NAME}"; fi
-          npx cdk bootstrap                                  # idempotent (one-time per account/region)
           npx cdk deploy --require-approval never ${CTX}
 
       - name: Migrate + seed (in-VPC one-off task)

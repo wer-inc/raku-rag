@@ -15,8 +15,20 @@ Parameters:
     Default: raku-rag
   GitHubRefFilter:
     Type: String
-    Default: "*"
-    Description: Which git refs may assume the role (e.g. "*" = any branch, or "ref:refs/heads/develop").
+    Default: "ref:refs/heads/develop"
+    Description: >
+      Which git ref may assume the role. Default = the develop integration branch only. "*" (ANY
+      branch) is UNSAFE — a pushed/PR branch could then assume this role. Tighten further with
+      "environment:prod" if you add a GitHub Environment gate.
+  PermissionsMode:
+    Type: String
+    AllowedValues: ["cdk-scoped", "admin"]
+    Default: "cdk-scoped"
+    Description: >
+      cdk-scoped (recommended) = the role may only assume the CDK bootstrap roles + run the
+      migrate-seed task (least privilege; the real deploy power lives in the CloudFormation execution
+      role, assumed only by CloudFormation). admin = AdministratorAccess (account-wide; convenience
+      escape hatch if a scoped deploy hits a permissions gap — flip back to cdk-scoped afterwards).
   CreateOidcProvider:
     Type: String
     AllowedValues: ["true", "false"]
@@ -25,6 +37,7 @@ Parameters:
 
 Conditions:
   ShouldCreateOidcProvider: !Equals [!Ref CreateOidcProvider, "true"]
+  IsAdmin: !Equals [!Ref PermissionsMode, "admin"]
 
 Resources:
   GitHubOidcProvider:
@@ -57,11 +70,51 @@ Resources:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
               StringLike:
                 "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/${GitHubRepo}:${GitHubRefFilter}"
-      # CDK creates IAM roles, VPC, RDS, ECS, ALB, WAF, Cognito, KMS, SQS, S3 — a first deploy needs broad
-      # permissions. AdministratorAccess keeps the first deploy unblocked; scope it down to the CDK
-      # bootstrap roles (cdk-*-deploy/-file-publishing/-image-publishing) once the stack is stable.
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AdministratorAccess
+      # admin mode only: account-wide (opt-in escape hatch).
+      ManagedPolicyArns: !If
+        - IsAdmin
+        - [arn:aws:iam::aws:policy/AdministratorAccess]
+        - !Ref "AWS::NoValue"
+      # cdk-scoped mode (default): least privilege. The role may only (a) assume the CDK bootstrap
+      # roles — which hold the real deploy/publish permissions and whose CloudFormation execution role
+      # is the only admin, assumable solely by CloudFormation — and (b) run the post-deploy migrate-seed
+      # ECS task. It canNOT perform arbitrary account actions directly.
+      Policies: !If
+        - IsAdmin
+        - !Ref "AWS::NoValue"
+        - - PolicyName: raku-rag-cdk-deploy-and-migrate-seed
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                # `cdk deploy` assumes these bootstrap roles to publish assets + run CloudFormation.
+                - Effect: Allow
+                  Action: sts:AssumeRole
+                  Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/cdk-*"
+                # Discover the bootstrap qualifier/version.
+                - Effect: Allow
+                  Action: [ssm:GetParameter, ssm:GetParameters]
+                  Resource: !Sub "arn:aws:ssm:*:${AWS::AccountId}:parameter/cdk-bootstrap/*"
+                - Effect: Allow
+                  Action: sts:GetCallerIdentity
+                  Resource: "*"
+                # scripts/aws/migrate-seed.sh runs these directly as this role after the deploy.
+                - Effect: Allow
+                  Action: cloudformation:DescribeStacks
+                  Resource: !Sub "arn:aws:cloudformation:*:${AWS::AccountId}:stack/RakuRag-*/*"
+                - Effect: Allow
+                  Action: [ecs:RunTask, ecs:DescribeTasks, ecs:ListTasks]
+                  Resource: "*"
+                - Effect: Allow
+                  Action: [logs:DescribeLogGroups, logs:GetLogEvents, logs:FilterLogEvents]
+                  Resource: "*"
+                # ECS RunTask must pass the task's execution+task roles — restricted to ECS tasks only,
+                # so this cannot be used to pass a role to any other service (no privilege escalation).
+                - Effect: Allow
+                  Action: iam:PassRole
+                  Resource: "*"
+                  Condition:
+                    StringEquals:
+                      iam:PassedToService: ecs-tasks.amazonaws.com
 
 Outputs:
   RoleArn:
