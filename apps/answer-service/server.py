@@ -1583,6 +1583,77 @@ def make_handler(system: ProductionSystem):
                         top_k=body.get("top_k"),
                     )
                     self._send(200, _jsonable(response))
+                elif parts == ["internal", "manufacturing", "trouble-cases", "register"]:
+                    # Seed a past TroubleCase as a knowledge graph (symptom -> cause/FailureMode ->
+                    # split provisional/permanent Countermeasures), so trouble-cases/search can resolve
+                    # an ACL-visible source document back to its structured countermeasures. Without
+                    # this the curated demo ingested trouble reports as plain text and the symptom
+                    # search returned 0 (the graph store was empty).
+                    from raku_rag.manufacturing.domain.entities import (
+                        Countermeasure,
+                        FailureMode,
+                        MeasureClass,
+                        TroubleCase,
+                    )
+
+                    # Identity in the body (same convention as /internal/ingest), so the curated demo
+                    # seed can register graphs without forging x-raku-* headers.
+                    principal = _claims(body)
+                    doc_id = str(body.get("source_document_id") or body.get("document_id") or "")
+                    tc_id = f"tc:{doc_id}"
+                    fm_id = f"fm:{doc_id}"
+                    fm_body = body.get("failure_mode") or {}
+                    measures = []
+                    for i, desc in enumerate(body.get("provisional") or ()):
+                        measures.append(
+                            Countermeasure(
+                                tenant_id=principal.tenant_id,
+                                measure_id=f"{tc_id}:prov:{i}",
+                                trouble_case_id=tc_id,
+                                description=str(desc),
+                                measure_class=MeasureClass.PROVISIONAL,
+                                source_document_id=doc_id,
+                            )
+                        )
+                    for i, desc in enumerate(body.get("permanent") or ()):
+                        measures.append(
+                            Countermeasure(
+                                tenant_id=principal.tenant_id,
+                                measure_id=f"{tc_id}:perm:{i}",
+                                trouble_case_id=tc_id,
+                                description=str(desc),
+                                measure_class=MeasureClass.PERMANENT,
+                                source_document_id=doc_id,
+                            )
+                        )
+                    manufacturing_system.register_trouble_case(
+                        tenant_id=principal.tenant_id,
+                        collection_id=str(body.get("collection_id") or "manuals"),
+                        source_document_id=doc_id,
+                        text=str(body.get("text") or ""),
+                        metadata=_mfg_metadata_from_body(body, principal.tenant_id, doc_id),
+                        trouble_case=TroubleCase(
+                            tenant_id=principal.tenant_id,
+                            trouble_case_id=tc_id,
+                            symptom=str(body.get("symptom") or ""),
+                            equipment_id=body.get("equipment_id"),
+                            failure_mode_id=fm_id,
+                            source_document_id=doc_id,
+                        ),
+                        failure_mode=FailureMode(
+                            tenant_id=principal.tenant_id,
+                            failure_mode_id=fm_id,
+                            name=str(fm_body.get("name") or ""),
+                            description=str(fm_body.get("description") or ""),
+                        ),
+                        countermeasures=tuple(measures),
+                        recurrence_prevention=body.get("recurrence"),
+                        source_id=str(body.get("source_id") or "case"),
+                    )
+                    self._send(
+                        202,
+                        {"trouble_case_id": tc_id, "document_id": doc_id, "status": "registered"},
+                    )
                 elif parts == ["internal", "manufacturing", "drafts"]:
                     principal = _claims_from_headers(self.headers)
                     draft = manufacturing_system.generate_draft(

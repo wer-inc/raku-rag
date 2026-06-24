@@ -24,7 +24,67 @@ UPLOAD_DIR = os.environ.get("RAKU_UPLOAD_DIR", "/tmp/raku-demo-seed")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
+def _post(path: str, body: dict) -> tuple[str, object]:
+    headers = {"content-type": "application/json"}
+    if INTERNAL_AUTH:
+        headers["X-Internal-Auth"] = INTERNAL_AUTH
+    req = urllib.request.Request(
+        AS_URL + path, data=json.dumps(body).encode("utf-8"), headers=headers
+    )
+    try:
+        res = json.load(urllib.request.urlopen(req, timeout=30))
+        return res.get("status", "?"), res.get("chunk_count")
+    except urllib.error.HTTPError as exc:
+        return "ERROR", exc.read().decode("utf-8", "replace")[:160]
+    except Exception as exc:  # noqa: BLE001
+        return "ERROR", str(exc)[:160]
+
+
+def _mfg_block(doc: dict) -> dict:
+    return {
+        "approval_status": doc["approval_status"],
+        "effective_date": doc.get("effective_date") or None,
+        "approval_source": "workflow",
+        "document_kind": doc.get("document_kind"),
+        **(
+            {"safety_category": doc["safety_category"]}
+            if doc.get("safety_category") and doc["safety_category"] != "none"
+            else {}
+        ),
+    }
+
+
+def register_trouble_case(doc: dict) -> tuple[str, object]:
+    """Trouble reports are registered as a TroubleCase graph (symptom -> cause -> split
+    provisional/permanent countermeasures) so trouble-cases/search resolves structured countermeasures,
+    not just text. The register route ingests the body too, so do NOT also call /internal/ingest."""
+    tc = doc["trouble_case"]
+    body = {
+        "tenant_id": TENANT,
+        "user_id": "alice",
+        "groups": [],
+        "roles": ["tenant_admin"],
+        "collection_id": COLLECTION,
+        "source_id": "case",
+        "source_document_id": doc["document_id"],
+        "document_id": doc["document_id"],
+        "text": doc["content"],
+        "manufacturing": _mfg_block(doc),
+        "symptom": tc.get("symptom") or "",
+        "equipment_id": tc.get("equipment_id"),
+        "failure_mode": tc.get("failure_mode") or {},
+        "provisional": tc.get("provisional") or [],
+        "permanent": tc.get("permanent") or [],
+        "recurrence": tc.get("recurrence"),
+    }
+    status, _ = _post("/internal/manufacturing/trouble-cases/register", body)
+    # The register route returns {"status": "registered"}; report it as a success for the seed summary.
+    return ("succeeded" if status in ("registered", "?") else status), "graph"
+
+
 def ingest(doc: dict) -> tuple[str, object]:
+    if doc.get("trouble_case"):
+        return register_trouble_case(doc)
     path = os.path.join(UPLOAD_DIR, doc["document_id"] + ".txt")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(doc["content"])
