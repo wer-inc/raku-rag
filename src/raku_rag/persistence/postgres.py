@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
+import time
 import uuid
 from typing import Sequence
 
@@ -76,6 +78,29 @@ _CORE_TABLES = (
 )
 
 
+def _connect_with_retry(dsn: str) -> psycopg.Connection:
+    """Open the connection, retrying transient failures on boot.
+
+    On a fresh deploy the DB endpoint may not resolve / accept connections yet (Aurora still coming
+    up, brief failover). Rather than crash-loop the container — which trips the ECS deployment circuit
+    breaker and rolls the whole stack back — we retry ``psycopg.OperationalError`` (DNS, refused,
+    starting up) with backoff for a bounded window. CFN already orders services after the DB, so this
+    only absorbs the small remaining gap. Tuneable via RAKU_DB_CONNECT_TIMEOUT_S (default 90).
+    """
+    deadline_s = float(os.environ.get("RAKU_DB_CONNECT_TIMEOUT_S", "90"))
+    delay_s = 1.0
+    waited_s = 0.0
+    while True:
+        try:
+            return psycopg.connect(dsn, autocommit=True)
+        except psycopg.OperationalError:
+            if waited_s >= deadline_s:
+                raise
+            time.sleep(delay_s)
+            waited_s += delay_s
+            delay_s = min(delay_s * 2, 10.0)
+
+
 def connect(dsn: str, *, reset: bool = False) -> psycopg.Connection:
     """Open an autocommit connection for the app workload.
 
@@ -86,7 +111,7 @@ def connect(dsn: str, *, reset: bool = False) -> psycopg.Connection:
         raise RuntimeError(
             "psycopg is required for the Postgres adapters; install 'psycopg[binary]'."
         )
-    conn = psycopg.connect(dsn, autocommit=True)
+    conn = _connect_with_retry(dsn)
     with conn.cursor() as cur:
         if reset:
             cur.execute(
