@@ -11,7 +11,7 @@ import math
 from dataclasses import dataclass
 from typing import Sequence
 
-from raku_rag.core.text import content_tokens as _tokens
+from raku_rag.core.text import retrieval_tokens as _tokens
 from raku_rag.interfaces.base import EmbeddingProvider, Vector
 
 

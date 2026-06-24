@@ -92,3 +92,30 @@ def content_tokens(text: str) -> list[str]:
 
 def content_terms(text: str) -> set[str]:
     return set(content_tokens(text))
+
+
+# CJK ranges (Hiragana, Katakana, CJK Unified incl. ext-A). Used ONLY by retrieval_tokens — the safety
+# classifier keeps using content_tokens, so this never changes high-risk keyword matching.
+_CJK = re.compile(r"[぀-ヿ㐀-鿿豈-﫿]")
+
+
+def retrieval_tokens(text: str) -> list[str]:
+    """Tokens for retrieval (embedding + lexical), Japanese-aware.
+
+    ``\\w+`` runs of Japanese text carry no spaces, so the whole run becomes one token and "耐圧試験"
+    never matches "耐圧試験の試験圧力". For runs containing CJK we emit character bigrams (so distinctive
+    terms overlap and dominate cosine similarity over generic "magnet" docs); ASCII/alphanumeric runs
+    (e.g. v, 205, mcc, loto, pwht) stay whole words so identifiers still match exactly. This is a
+    retrieval-only tokenizer — ``content_tokens`` (and the safety classifier) are intentionally unchanged.
+    """
+    out: list[str] = []
+    for tok in _WORD.findall(text.lower()):
+        if _CJK.search(tok):
+            chars = list(tok)
+            if len(chars) == 1:
+                out.append(chars[0])
+            else:
+                out.extend(chars[i] + chars[i + 1] for i in range(len(chars) - 1))
+        elif tok not in _STOPWORDS:
+            out.append(tok)
+    return out
