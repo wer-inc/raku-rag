@@ -85,7 +85,8 @@ export default function Sidebar() {
   const router = useRouter();
   const active = activeNavHref(pathname);
   const [userId, setUserId] = useState(DEMO_USER_FALLBACK);
-  const [roles, setRoles] = useState<WorkspaceRole[]>(["reviewer", "tenant_admin"]);
+  // Least privilege until loadSessionUserId resolves the real role (avoids an admin-nav flash on load).
+  const [roles, setRoles] = useState<WorkspaceRole[]>(["field_user"]);
 
   useEffect(() => {
     const uid = loadSessionUserId() ?? "misaki";
