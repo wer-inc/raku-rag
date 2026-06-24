@@ -9,8 +9,11 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app/src
 
-# 002 manufacturing parsers (pyproject [manufacturing] extra); CSV/text use the stdlib.
-RUN pip install --no-cache-dir python-docx==1.1.2 openpyxl==3.1.5
+# psycopg drives the Postgres adapters (ProductionSystem connects on boot); boto3 is needed when
+# RAKU_RUNTIME_PROFILE=production wires the real Bedrock providers; python-docx/openpyxl back the
+# 002 manufacturing parsers (pyproject [manufacturing] extra). CSV/text use the stdlib.
+RUN pip install --no-cache-dir \
+      "psycopg[binary]>=3" boto3 python-docx==1.1.2 openpyxl==3.1.5
 
 COPY pyproject.toml ./
 COPY src/ ./src/
