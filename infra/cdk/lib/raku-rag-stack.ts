@@ -211,7 +211,7 @@ export class RakuRagStack extends cdk.Stack {
     const database = new rds.DatabaseCluster(this, "AuroraPgvectorCluster", {
       clusterIdentifier: `${servicePrefix}-aurora-pgvector`,
       engine: rds.DatabaseClusterEngine.auroraPostgres({
-        version: rds.AuroraPostgresEngineVersion.of("16.1", "16")
+        version: rds.AuroraPostgresEngineVersion.of("16.6", "16")
       }),
       credentials: rds.Credentials.fromGeneratedSecret("raku_rag", {
         encryptionKey: dataKey,
