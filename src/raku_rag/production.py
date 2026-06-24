@@ -19,6 +19,7 @@ from raku_rag.core.security.token import TokenVerifier
 from raku_rag.domain.models import JobStatus
 from raku_rag.domain.models import QueryProfile
 from raku_rag.observability.exporters import exporter_from_settings
+from raku_rag.observability.langfuse_client import build_langfuse_client
 from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.persistence.postgres import (
@@ -96,7 +97,9 @@ class ProductionSystem(MvpSystem):
         self.guardrail = guardrail_from_settings(self.settings)
         self.vlm = ExtractiveVLMProvider()
         self.cost = CostService()
-        self.telemetry_exporter = exporter_from_settings(self.settings)
+        self.telemetry_exporter = exporter_from_settings(
+            self.settings, langfuse_client=build_langfuse_client(self.settings)
+        )
         self.metrics = MetricsRecorder(exporter=self.telemetry_exporter)
         self.tracer = InMemoryTracer(exporter=self.telemetry_exporter)
         self.audit = PostgresAuditSink(self._conn)

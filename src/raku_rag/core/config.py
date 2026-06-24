@@ -35,6 +35,11 @@ class Settings:
     runtime_profile: str = "deterministic"
     bedrock_claude_model_id: str = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
     langfuse_enabled: bool = False
+    # P1-5 Langfuse self-host edge (host/keys live at the composition edge; the SDK is a `prod` extra).
+    # Empty host/keys -> build_langfuse_client returns None -> LangfuseTelemetryExporter is a fail-safe no-op.
+    langfuse_host: str = ""
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
     # Observability defaults (OD-008 / ADR-010 / ADR-015): raw retrieved context and raw user
     # query are NOT stored by default. Allowed: "disabled" | "redacted" | "full_opt_in".
     logging_raw_retrieved_context_storage: str = "disabled"
@@ -126,6 +131,9 @@ def settings_from_env(env: dict | None = None) -> Settings:
             "RAKU_BEDROCK_CLAUDE_MODEL_ID", Settings.bedrock_claude_model_id
         ),
         langfuse_enabled=_bool("LANGFUSE_ENABLED", Settings.langfuse_enabled),
+        langfuse_host=_get("LANGFUSE_HOST", Settings.langfuse_host),
+        langfuse_public_key=_get("LANGFUSE_PUBLIC_KEY", Settings.langfuse_public_key),
+        langfuse_secret_key=_get("LANGFUSE_SECRET_KEY", Settings.langfuse_secret_key),
         logging_raw_retrieved_context_storage=_get("RAKU_LOG_RAW_RETRIEVED_CONTEXT", "disabled"),
         logging_raw_user_query_storage=_get("RAKU_LOG_RAW_USER_QUERY", "disabled"),
         telemetry_export_enabled=_bool(
