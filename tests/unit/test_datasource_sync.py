@@ -319,6 +319,24 @@ class TestDatasourceSync(unittest.TestCase):
         self.assertEqual(sink[1]["method"], "GET")
         self.assertIsNone(sink[1]["body"])
 
+    def test_fetch_url_drops_authorization_on_cross_host_redirect(self) -> None:
+        sink: list = []
+        responses = [
+            FakeResponse(302, _http_headers({"Location": "http://8.8.8.8/file"}), b""),
+            FakeResponse(200, _http_headers({"Content-Type": "text/plain"}), b"data"),
+        ]
+
+        def fake_make_connection(scheme, host, port, pinned_ip, timeout):
+            return FakeHTTPConnection(responses.pop(0), sink)
+
+        with patch.object(ds, "_make_connection", fake_make_connection):
+            raw, _content_type = ds._fetch_url(
+                "http://93.184.216.34/start", headers={"Authorization": "Bearer secret"}
+            )
+        self.assertEqual(raw, b"data")
+        self.assertIn("Authorization", sink[0]["headers"])  # first hop keeps the token
+        self.assertNotIn("Authorization", sink[1]["headers"])  # cross-host redirect drops it
+
     def test_confluence_surfaces_api_error_message(self) -> None:
         fetch = RecordingFetch([(lambda u: True, (json.dumps({"message": "space not found"}).encode("utf-8"), "text/plain"))])
         with self.assertRaises(ValueError) as ctx:

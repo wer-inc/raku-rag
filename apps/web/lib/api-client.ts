@@ -1,4 +1,5 @@
 import type {
+  AdminDataSource,
   AnswerRequest,
   AnswerResponse,
   AssignReviewerRequest,
@@ -228,6 +229,17 @@ export interface AdminSourceSyncResponse {
   changed_count: number;
   failed_count: number;
   runs: IngestResponse[];
+}
+
+/** List the tenant's configured datasources (GET /admin/datasources). */
+export async function adminDataSources(
+  userToken: string,
+  collectionId?: string,
+): Promise<AdminDataSource[]> {
+  const path = collectionId
+    ? `/admin/datasources?collection_id=${encodeURIComponent(collectionId)}`
+    : "/admin/datasources";
+  return apiGetJson<AdminDataSource[]>(path, userToken);
 }
 
 export async function adminSourceSync(

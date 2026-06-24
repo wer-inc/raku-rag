@@ -148,7 +148,12 @@ def _assert_public_host(url: str, *, allow_hosts: tuple[str, ...] | None = None)
 
 def _assert_public_db_host(host: str, *, allow_private: bool) -> None:
     """SSRF guard for relational connectors. A DB host often lives on a private network, so internal
-    addresses require an explicit ``allow_private_host`` opt-in instead of being allowed silently."""
+    addresses require an explicit ``allow_private_host`` opt-in instead of being allowed silently.
+
+    Residual (accepted): unlike the HTTP path this does not IP-pin — the DB driver re-resolves the
+    host on connect, so a DNS-rebind between this check and connect is theoretically possible. The
+    threat is bounded (operator-supplied DSN + credentials, not anonymous SSRF), so it is documented
+    rather than pinned (psycopg/pymysql do not expose a pre-resolved-IP connect seam)."""
 
     if allow_private:
         return
@@ -591,7 +596,7 @@ def _notion_documents(
             allow_hosts=_NOTION_HOSTS,
         )
         payload = json.loads(raw.decode("utf-8"))
-        markdown = _notion_blocks_to_markdown(payload.get("results") or [])
+        markdown = _notion_blocks_to_markdown(_api_results(payload, "results", "Notion"))
         ref = f"https://www.notion.so/{pid.replace('-', '')}"
         heading = f"# {title}\n\n" if title else ""
         body_text = f"{heading}{markdown}".strip() or title or pid
@@ -768,6 +773,7 @@ def _fetch_url(
     request_data = data
     request_method = method or ("POST" if data is not None else "GET")
     request_headers = {"User-Agent": "raku-rag-source-sync/0.1", **dict(headers or {})}
+    current_host = (urlparse(url).hostname or "").lower()
     for _hop in range(max_redirects + 1):
         status, response_headers, raw = _open_validated(
             current,
@@ -782,6 +788,14 @@ def _fetch_url(
             if not location:
                 break
             current = urljoin(current, location)
+            next_host = (urlparse(current).hostname or "").lower()
+            if next_host != current_host:
+                # Drop credentials when the redirect crosses hosts so a Bearer/Basic token is never
+                # replayed to a different host (e.g. Box's 302 to a pre-signed boxcloud.com URL).
+                request_headers = {
+                    k: v for k, v in request_headers.items() if k.lower() != "authorization"
+                }
+            current_host = next_host
             if status in {301, 302, 303}:
                 request_method = "GET"
                 request_data = None
