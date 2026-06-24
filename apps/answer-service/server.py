@@ -1662,14 +1662,27 @@ def make_handler(system: ProductionSystem):
                         202, eval_feedback.create_run(self._tenant_header(), body, principal)
                     )
                 elif path == "/internal/feedback":
-                    self._send(
-                        202,
-                        eval_feedback.create_feedback(
-                            self._tenant_header(),
-                            body,
-                            self.headers.get("x-raku-user-id") or "unknown",
-                        ),
+                    result = eval_feedback.create_feedback(
+                        self._tenant_header(),
+                        body,
+                        self.headers.get("x-raku-user-id") or "unknown",
                     )
+                    # Also record a user rating of an answer into the manufacturing audit chain — the
+                    # single source of truth the knowledge-improvement queue + low_rating KPI derive
+                    # from. Without this the eval store held the rating in isolation and low-rating
+                    # feedback never surfaced in the improvement queue (FR-MFG-012/021/028). Eval-job
+                    # feedback stays in the eval store only. Best-effort: never fail the user's POST.
+                    if str(body.get("subject") or "user") == "user" and body.get("answer_id"):
+                        try:
+                            manufacturing_system.record_answer_feedback(
+                                principal=_claims_from_headers(self.headers),
+                                rating=int(body.get("rating") or 0),
+                                answer_correlation_id=str(body.get("answer_id") or ""),
+                                comment=body.get("comment"),
+                            )
+                        except Exception:
+                            pass
+                    self._send(202, result)
                 elif parts == ["internal", "real-estate", "metadata", "import"]:
                     self._send(202, real_estate_api.metadata_import(self._tenant_header(), body))
                 elif parts == ["internal", "real-estate", "documents", "enrich"]:
