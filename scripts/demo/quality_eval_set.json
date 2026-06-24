@@ -1,0 +1,15 @@
+{
+  "_comment": "Live quality scorecard eval set for the curated demo KB (東洋精機). Ground-truth expected_evidence = the approved document that should back each query. Run with scripts/demo/quality_scorecard.sh to measure recall@k / groundedness / high-risk recall / security checks against the running demo. Used to baseline and track retrieval/answer quality (e.g. before/after Japanese-aware retrieval).",
+  "items": [
+    { "question": "コンベアの M8 カバーボルト 締付トルク は何 N·m か", "expected_evidence": [{ "document_id": "eq-motor-m8-torque" }] },
+    { "question": "圧力容器 V-205 耐圧試験 の 試験圧力 と 保持時間 と 昇圧手順", "expected_evidence": [{ "document_id": "std-2210-hydrotest" }] },
+    { "question": "受電盤 MCC-3 の 感電 防止 LOTO ロックアウト 検電 手順", "expected_evidence": [{ "document_id": "safe-0331-loto" }] },
+    { "question": "ポンプ P-12 の 潤滑 グリス 給脂 間隔", "expected_evidence": [{ "document_id": "eq-pump-p12-lubrication" }] },
+    { "question": "コンベヤ ベルト 点検 標準 摩耗 蛇行", "expected_evidence": [{ "document_id": "eq-belt-inspection-standard" }] },
+    { "question": "アラーム E-152 油圧 異常 アキュムレータ 確認", "expected_evidence": [{ "document_id": "eq-alarm-e152-al21" }] },
+    { "question": "PWHT 溶接後熱処理 の 保持温度 保持時間", "expected_evidence": [{ "document_id": "wi-0457-pwht" }] },
+    { "question": "薬液 注入 ChemDose 取扱 注意 保護具", "expected_evidence": [{ "document_id": "wi-0588-chemdose" }] },
+    { "question": "ベアリング 異音 発熱 軌道 摩耗 の 対策", "expected_evidence": [{ "document_id": "tc-0258" }] },
+    { "question": "ヒケ ボイド 寸法不良 成形 保圧 の 対策", "expected_evidence": [{ "document_id": "tc-0231" }] }
+  ]
+}
