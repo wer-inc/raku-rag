@@ -123,8 +123,33 @@ def connect(dsn: str, *, reset: bool = False) -> psycopg.Connection:
             reset_tables = [t for t in _CORE_TABLES if t in existing]
             if reset_tables:
                 cur.execute("TRUNCATE " + ", ".join(reset_tables) + " CASCADE")
-        cur.execute(f"SET ROLE {_APP_ROLE}")
+        _set_app_role(conn, cur)
     return conn
+
+
+def _set_app_role(conn: "psycopg.Connection", cur: "psycopg.Cursor") -> None:
+    """``SET ROLE raku_app``, bootstrapping the role on first boot if needed.
+
+    On a fresh deploy the services start before the migrations have run, so ``raku_app`` may not exist
+    yet — or it exists but the connecting (non-superuser) user is not a member, so ``SET ROLE`` is
+    refused (the Aurora master is rds_superuser, NOT a true superuser, so membership is required).
+    Either way we crash-loop the container and trip the ECS circuit breaker. To break that deadlock we
+    create the NOLOGIN role and grant it to the current user, then retry. This is idempotent and
+    fail-closed: ``raku_app`` has no table privileges until the migrations grant them, so nothing the
+    app does before migration can bypass RLS. (autocommit → a failed statement does not poison the rest.)
+    """
+    try:
+        cur.execute(f"SET ROLE {_APP_ROLE}")
+        return
+    except (psycopg.errors.UndefinedObject, psycopg.errors.InsufficientPrivilege):
+        pass
+    # _APP_ROLE is a fixed module constant (not user input), safe to inline.
+    cur.execute(
+        f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{_APP_ROLE}') THEN "
+        f"CREATE ROLE {_APP_ROLE} NOLOGIN; END IF; END $$;"
+    )
+    cur.execute(f"GRANT {_APP_ROLE} TO CURRENT_USER")
+    cur.execute(f"SET ROLE {_APP_ROLE}")
 
 
 def _use_tenant(conn: psycopg.Connection, tenant_id: str) -> None:
