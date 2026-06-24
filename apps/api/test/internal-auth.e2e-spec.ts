@@ -16,7 +16,7 @@ describe("internal-auth forwarding (e2e)", () => {
   let prevSecret: string | undefined;
   let seenInternalAuth: string | string[] | undefined;
 
-  const SECRET = "test-internal-secret";
+  const SECRET = "test-internal-secret"; // pragma: allowlist secret -- test fixture, not a real key
   const token = makeUserToken({
     tenant_id: "tenant_a",
     user_id: "alice",

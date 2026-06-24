@@ -25,7 +25,7 @@ def _wired_settings() -> Settings:
         langfuse_enabled=True,
         langfuse_host="http://localhost:3001",
         langfuse_public_key="pk-lf-test",
-        langfuse_secret_key="sk-lf-test",
+        langfuse_secret_key="sk-lf-test",  # pragma: allowlist secret -- test fixture, not a real key
     )
 
 
