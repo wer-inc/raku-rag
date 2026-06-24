@@ -568,6 +568,10 @@ export class RakuRagStack extends cdk.Stack {
         rollback: true
       }
     });
+    // The worker connects to Postgres on boot — don't start it until Aurora (cluster + writer
+    // instance) is available, or the task crash-loops on an unresolvable endpoint and the circuit
+    // breaker rolls the whole stack back. A short connect-retry in the app absorbs the rest.
+    workerService.node.addDependency(database);
 
     // Python answer-service — the internal HTTP boundary serving /internal/* (retrieval / ACL /
     // ranking / manufacturing safety overlay) over the Postgres-backed ProductionSystem. The NestJS
@@ -630,6 +634,8 @@ export class RakuRagStack extends cdk.Stack {
       path: "/healthz",
       healthyHttpCodes: "200-399"
     });
+    // Same boot-ordering guard as the worker: answer-service opens a Postgres connection at startup.
+    answerService.service.node.addDependency(database);
     // Wire the API -> answer-service internal endpoint now that both exist.
     apiContainer.addEnvironment(
       "ANSWER_SERVICE_URL",
