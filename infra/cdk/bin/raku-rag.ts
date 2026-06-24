@@ -12,6 +12,8 @@ new RakuRagStack(app, `RakuRag-${stageName}`, {
   frontendHosting,
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION ?? "us-east-1"
+    // Default to Tokyo for Japanese manufacturing customers; the deployer's CDK_DEFAULT_REGION
+    // (from their AWS profile) still wins when set.
+    region: process.env.CDK_DEFAULT_REGION ?? "ap-northeast-1"
   }
 });

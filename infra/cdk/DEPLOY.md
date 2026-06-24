@@ -3,7 +3,29 @@
 このCDKは **VPC / Aurora Serverless v2(pgvector) / ECS Fargate(API・answer-service・ingest worker・
 Langfuse) / Cognito / S3・SQS・KMS / WAF / CloudWatch** を1スタックで定義します。営業用は同じスタックを
 `stage=sales`（非prodなので 1タスク/DESTROY=安価）で、本番は `stage=prod`（2タスク/RETAIN/HA）でデプロイ
-します。**構成は完全に同一**、スケールだけ stage で変わります。
+します。**構成は完全に同一**、スケールだけ stage で変わります。既定リージョンは **東京(ap-northeast-1)**
+（`CDK_DEFAULT_REGION` があればそちら優先）。
+
+## 最小スペック（`minimalSpec`）— 「最低限動く最安」構成
+コストの効く部分だけ落とした最小プロファイルを、**耐久性(RETAIN/バックアップ/削除保護)とは独立に**選べます。
+`--context minimalSpec=true|false` で上書き（既定: 非prod=ON / prod=OFF）。`minimalSpec` が効かせる差分:
+
+- **Aurora: reader を外し writer 1台のみ**（常時2台→1台 ＝ 最大の削減）／ max ACU 4→2。
+- **Fargate 縮小**: API 1vCPU→0.5・worker 0.5→0.25・answer 1vCPU→0.5。
+- **Langfuse 停止**（Fargate＋内部ALB を作らない。観測性は後で `minimalSpec=false` で復帰）。
+- NAT/ALB はそのまま（接続リスク最小＝バランス型）。
+
+概算（東京・常時起動、参考値）: フル `sales` ≈ **$440/月** → `minimalSpec` ≈ **$150〜180/月**。
+`cdk synth` 実数: `stage=sales` = Aurora 1 / ECS 3 / ALB 2 / Langfuse無、`stage=prod` = Aurora 2 / ECS 4 / ALB 3 / Langfuse有。
+
+```bash
+# 最小・営業/初期本番（使い捨て可）:
+npx cdk deploy --context stage=sales
+# 耐久性は本番、サイズは最小（RETAIN＋削除保護のまま最安）:
+npx cdk deploy --context stage=prod --context minimalSpec=true
+# フル本番(HA・Langfuse有):
+npx cdk deploy --context stage=prod
+```
 
 ```
 [ユーザ/Vercel web] → ALB+WAF → ECS:NestJS API ──(ANSWER_SERVICE_URL, 内部ALB)──→ ECS:answer-service(Python)

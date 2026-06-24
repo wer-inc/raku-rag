@@ -100,6 +100,21 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)
 
+    def test_minimal_spec_profile_is_wired(self) -> None:
+        # The cost-minimised tier (single Aurora instance, small Fargate tasks, Langfuse off) must be
+        # selectable independently of durability (isProd governs RETAIN/backups), via --context minimalSpec.
+        for token in (
+            "minimalSpec",
+            'tryGetContext("minimalSpec")',
+            "deployLangfuse",
+            "fargateSize",
+            "readers: minimalSpec",
+            "serverlessV2MaxCapacity: minimalSpec ? 2 : 4",
+            "if (deployLangfuse)",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.stack)
+
     def test_frontend_hosting_context_is_wired(self) -> None:
         for token in (
             "FrontendHostingMode",

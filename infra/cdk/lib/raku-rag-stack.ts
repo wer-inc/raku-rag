@@ -40,6 +40,21 @@ export class RakuRagStack extends cdk.Stack {
     const removalPolicy = isProd ? cdk.RemovalPolicy.RETAIN : cdk.RemovalPolicy.DESTROY;
     const pgvectorExtensionSql = "CREATE EXTENSION IF NOT EXISTS vector;";
 
+    // minimalSpec — size the stack for "lowest cost that still works" (single Aurora instance, small
+    // Fargate tasks, Langfuse observability off). This is DECOUPLED from durability: isProd still
+    // governs RETAIN / backups / deletion-protection. Default: on for any non-prod stage, off for prod;
+    // override either way with `--context minimalSpec=true|false`
+    // (e.g. `stage=prod --context minimalSpec=true` = a durable production env at minimal cost).
+    const minimalSpecCtx = this.node.tryGetContext("minimalSpec");
+    const minimalSpec =
+      minimalSpecCtx === "true" || (minimalSpecCtx !== "false" && !isProd);
+    const deployLangfuse = !minimalSpec;
+    const fargateSize = {
+      api: minimalSpec ? { cpu: 512, memoryLimitMiB: 1024 } : { cpu: 1024, memoryLimitMiB: 2048 },
+      worker: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 512, memoryLimitMiB: 1024 },
+      answer: minimalSpec ? { cpu: 512, memoryLimitMiB: 1024 } : { cpu: 1024, memoryLimitMiB: 2048 }
+    };
+
     cdk.Tags.of(this).add("app", "raku-rag");
     cdk.Tags.of(this).add("stage", props.stageName);
 
@@ -196,14 +211,18 @@ export class RakuRagStack extends cdk.Stack {
       writer: rds.ClusterInstance.serverlessV2("writer", {
         publiclyAccessible: false
       }),
-      readers: [
-        rds.ClusterInstance.serverlessV2("reader", {
-          scaleWithWriter: true,
-          publiclyAccessible: false
-        })
-      ],
+      // HA reader only when NOT minimal — a second always-on Serverless v2 instance is the single
+      // biggest cost line, so the minimal tier runs a lone writer.
+      readers: minimalSpec
+        ? []
+        : [
+            rds.ClusterInstance.serverlessV2("reader", {
+              scaleWithWriter: true,
+              publiclyAccessible: false
+            })
+          ],
       serverlessV2MinCapacity: 0.5,
-      serverlessV2MaxCapacity: 4,
+      serverlessV2MaxCapacity: minimalSpec ? 2 : 4,
       storageEncrypted: true,
       storageEncryptionKey: dataKey,
       backup: {
@@ -226,8 +245,8 @@ export class RakuRagStack extends cdk.Stack {
 
     const apiTask = new ecs.FargateTaskDefinition(this, "ApiTaskDefinition", {
       family: `${servicePrefix}-api`,
-      cpu: 1024,
-      memoryLimitMiB: 2048,
+      cpu: fargateSize.api.cpu,
+      memoryLimitMiB: fargateSize.api.memoryLimitMiB,
       runtimePlatform: {
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
         cpuArchitecture: ecs.CpuArchitecture.X86_64
@@ -360,8 +379,8 @@ export class RakuRagStack extends cdk.Stack {
 
     const workerTask = new ecs.FargateTaskDefinition(this, "PythonWorkerTaskDefinition", {
       family: `${servicePrefix}-worker`,
-      cpu: 512,
-      memoryLimitMiB: 1024,
+      cpu: fargateSize.worker.cpu,
+      memoryLimitMiB: fargateSize.worker.memoryLimitMiB,
       runtimePlatform: {
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
         cpuArchitecture: ecs.CpuArchitecture.X86_64
@@ -420,8 +439,8 @@ export class RakuRagStack extends cdk.Stack {
     // API proxies to it; it is internal-only (no public ALB).
     const answerTask = new ecs.FargateTaskDefinition(this, "AnswerServiceTaskDefinition", {
       family: `${servicePrefix}-answer`,
-      cpu: 1024,
-      memoryLimitMiB: 2048,
+      cpu: fargateSize.answer.cpu,
+      memoryLimitMiB: fargateSize.answer.memoryLimitMiB,
       runtimePlatform: {
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
         cpuArchitecture: ecs.CpuArchitecture.X86_64
@@ -482,6 +501,10 @@ export class RakuRagStack extends cdk.Stack {
       `http://${answerService.loadBalancer.loadBalancerDnsName}:8088`
     );
 
+    // Langfuse (self-hosted observability) is an always-on Fargate task + internal ALB — pure
+    // overhead for a minimal demo/early-prod env, so it only deploys when minimalSpec is off.
+    let langfuseService: ecsPatterns.ApplicationLoadBalancedFargateService | undefined;
+    if (deployLangfuse) {
     const langfuseTask = new ecs.FargateTaskDefinition(this, "LangfuseTaskDefinition", {
       family: `${servicePrefix}-langfuse`,
       cpu: 1024,
@@ -517,7 +540,7 @@ export class RakuRagStack extends cdk.Stack {
     });
     langfuseContainer.addPortMappings({ containerPort: 3000 });
 
-    const langfuseService = new ecsPatterns.ApplicationLoadBalancedFargateService(
+    langfuseService = new ecsPatterns.ApplicationLoadBalancedFargateService(
       this,
       "LangfuseService",
       {
@@ -541,6 +564,7 @@ export class RakuRagStack extends cdk.Stack {
       path: "/api/public/health",
       healthyHttpCodes: "200-399"
     });
+    }
 
     const frontendHosting = props.frontendHosting ?? "external-vercel";
     if (frontendHosting === "aws-nextjs") {
@@ -656,7 +680,7 @@ export class RakuRagStack extends cdk.Stack {
         left: [
           apiService.service.metricCpuUtilization(),
           workerService.metricCpuUtilization(),
-          langfuseService.service.metricCpuUtilization()
+          ...(langfuseService ? [langfuseService.service.metricCpuUtilization()] : [])
         ]
       }),
       new cloudwatch.GraphWidget({
@@ -688,9 +712,11 @@ export class RakuRagStack extends cdk.Stack {
     new cdk.CfnOutput(this, "ApiLoadBalancerDnsName", {
       value: apiService.loadBalancer.loadBalancerDnsName
     });
-    new cdk.CfnOutput(this, "LangfuseInternalLoadBalancerDnsName", {
-      value: langfuseService.loadBalancer.loadBalancerDnsName
-    });
+    if (langfuseService) {
+      new cdk.CfnOutput(this, "LangfuseInternalLoadBalancerDnsName", {
+        value: langfuseService.loadBalancer.loadBalancerDnsName
+      });
+    }
     new cdk.CfnOutput(this, "AnswerServiceInternalLoadBalancerDnsName", {
       value: answerService.loadBalancer.loadBalancerDnsName
     });
