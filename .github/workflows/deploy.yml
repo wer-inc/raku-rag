@@ -1,27 +1,37 @@
 name: deploy
 
-# P1-12 tail: SAFE CD skeleton. It is intentionally inert until an operator configures AWS OIDC.
-# - Manual only (workflow_dispatch); never auto-runs on push.
-# - Environment-gated: `production` should require a reviewer (GitHub Environment protection rules).
-# - No secrets in the repo: AWS auth is OIDC role assumption; the role ARN is a repo/env VARIABLE.
-# - dry_run defaults to true → prints the plan and changes nothing. A real deploy needs dry_run=false
-#   AND the environment approval AND the role/region vars set.
-# See docs/production-readiness/release-and-rollback.md §3 for the full CD path + rollback policy.
+# CD via GitHub Actions — builds the container images ON THE RUNNER (which has Docker) and runs
+# `cdk deploy`, so NO local/sandbox Docker is needed anywhere. AWS auth is OIDC role assumption
+# (no long-lived keys in the repo). One-time setup: create the OIDC provider + deploy role from
+# infra/cdk/github-oidc.cfn.yaml, then set repo Variables AWS_DEPLOY_ROLE_ARN (+ optional AWS_REGION).
+# See infra/cdk/DEPLOY-CI.md.
+#
+# Manual only (workflow_dispatch); dry_run defaults to true → synth/plan only, changes nothing.
 
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: Target environment
+      stage:
+        description: CDK stage (sales = cheap/throwaway, prod = HA/retained)
         type: choice
-        options: [staging, production]
-        default: staging
-      image_tag:
-        description: Image tag / digest to deploy (rollback = a previous digest)
+        options: [sales, prod]
+        default: sales
+      frontend:
+        description: Frontend hosting (aws-nextjs = same-origin web+API on one ALB)
+        type: choice
+        options: [aws-nextjs, external-vercel]
+        default: aws-nextjs
+      domain_name:
+        description: Optional custom domain for HTTPS (blank = HTTP:80). e.g. demo.example.com
         type: string
-        required: true
+        required: false
+        default: ""
+      run_migrate_seed:
+        description: After deploy, apply schema migrations + seed the demo KB
+        type: boolean
+        default: true
       dry_run:
-        description: Print the plan only (no AWS changes)
+        description: Synth/plan only (no AWS changes)
         type: boolean
         default: true
 
@@ -31,53 +41,70 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy (${{ inputs.environment }})
+    name: Deploy (${{ inputs.stage }})
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }} # production should have required reviewers configured
+    environment: ${{ inputs.stage }} # add required reviewers on the `prod` Environment for a gate
     env:
-      ENVIRONMENT: ${{ inputs.environment }}
-      IMAGE_TAG: ${{ inputs.image_tag }}
-      AWS_REGION: ${{ vars.AWS_REGION }}
-      AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+      STAGE: ${{ inputs.stage }}
+      FRONTEND: ${{ inputs.frontend }}
+      DOMAIN_NAME: ${{ inputs.domain_name }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+      AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
-      - name: Preflight (skeleton is inert until OIDC is configured)
+      - name: Preflight
         run: |
           set -euo pipefail
-          missing=0
-          if [ -z "${AWS_DEPLOY_ROLE_ARN}" ]; then echo "::error::set repo/env variable AWS_DEPLOY_ROLE_ARN (OIDC role to assume)"; missing=1; fi
-          if [ -z "${AWS_REGION}" ]; then echo "::error::set repo/env variable AWS_REGION"; missing=1; fi
-          if [ "$missing" -ne 0 ]; then
-            echo "This is a CD skeleton. Configure GitHub OIDC + the AWS deploy role, then re-run."
-            echo "See docs/production-readiness/release-and-rollback.md §3."
+          if [ -z "${{ vars.AWS_DEPLOY_ROLE_ARN }}" ]; then
+            echo "::error::Set repo Variable AWS_DEPLOY_ROLE_ARN (OIDC deploy role). See infra/cdk/DEPLOY-CI.md."
             exit 1
           fi
-          echo "Preflight OK for environment=${ENVIRONMENT}, image_tag=${IMAGE_TAG}, dry_run=${{ inputs.dry_run }}"
+          echo "stage=${STAGE} frontend=${FRONTEND} domain='${DOMAIN_NAME}' region=${AWS_REGION} dry_run=${{ inputs.dry_run }}"
 
-      - name: Plan (always; the documented CD sequence)
+      - name: Install + build CDK app
+        working-directory: infra/cdk
+        run: npm ci && npm run build
+
+      - name: Synth (always — validates the template, no AWS changes)
+        working-directory: infra/cdk
         run: |
           set -euo pipefail
-          echo "PLAN for ${ENVIRONMENT} @ ${IMAGE_TAG}:"
-          echo "  1. assume ${AWS_DEPLOY_ROLE_ARN} via OIDC in ${AWS_REGION}"
-          echo "  2. push images raku-rag-{api,web,worker}:${IMAGE_TAG} to ECR (immutable)"
-          echo "  3. apply expand-only DB migrations to the ${ENVIRONMENT} cluster"
-          echo "  4. cdk deploy --context stage=${ENVIRONMENT}"
-          echo "  5. smoke (/v1/health, grounded answer, cross-tenant probe), then record rollback target"
+          CTX="--context stage=${STAGE} --context frontendHosting=${FRONTEND}"
+          if [ -n "${DOMAIN_NAME}" ]; then CTX="${CTX} --context domainName=${DOMAIN_NAME}"; fi
+          npx cdk synth ${CTX} --quiet
 
       - name: Configure AWS credentials (OIDC)
         if: ${{ !inputs.dry_run }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
 
-      - name: CDK deploy
+      - name: Bootstrap + deploy (builds images on the runner)
         if: ${{ !inputs.dry_run }}
         working-directory: infra/cdk
         run: |
           set -euo pipefail
-          npm ci
-          npx cdk deploy --require-approval never --context stage="${ENVIRONMENT}"
-          # Image build/push to ECR and migration apply are account-specific (ECR URIs, DB endpoint);
-          # wire them here once the account is provisioned — see release-and-rollback.md §3.
+          CTX="--context stage=${STAGE} --context frontendHosting=${FRONTEND}"
+          if [ -n "${DOMAIN_NAME}" ]; then CTX="${CTX} --context domainName=${DOMAIN_NAME}"; fi
+          npx cdk bootstrap                                  # idempotent (one-time per account/region)
+          npx cdk deploy --require-approval never ${CTX}
+
+      - name: Migrate + seed (in-VPC one-off task)
+        if: ${{ !inputs.dry_run && inputs.run_migrate_seed }}
+        run: |
+          set -euo pipefail
+          STACK="RakuRag-${STAGE}" AWS_REGION="${AWS_REGION}" bash scripts/aws/migrate-seed.sh
+
+      - name: Outputs
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          echo "## Deploy outputs (stage=${STAGE})" >> "$GITHUB_STEP_SUMMARY"
+          aws cloudformation describe-stacks --stack-name "RakuRag-${STAGE}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiLoadBalancerDnsName'].OutputValue" --output text \
+            | sed 's#^#Public URL (http): http://#' >> "$GITHUB_STEP_SUMMARY"

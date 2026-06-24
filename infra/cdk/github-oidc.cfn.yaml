@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  GitHub Actions OIDC provider + a deploy role the `deploy.yml` workflow assumes (no long-lived keys).
+  Create ONCE per AWS account (region-agnostic IAM). Paste this into the CloudFormation console
+  (Create stack > upload template) or: aws cloudformation deploy --template-file
+  infra/cdk/github-oidc.cfn.yaml --stack-name raku-rag-github-oidc --capabilities CAPABILITY_NAMED_IAM
+  Then copy the RoleArn output into a GitHub repo VARIABLE named AWS_DEPLOY_ROLE_ARN.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: wer-inc
+  GitHubRepo:
+    Type: String
+    Default: raku-rag
+  GitHubRefFilter:
+    Type: String
+    Default: "*"
+    Description: Which git refs may assume the role (e.g. "*" = any branch, or "ref:refs/heads/develop").
+  CreateOidcProvider:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: Set false if this AWS account ALREADY has the token.actions.githubusercontent.com provider.
+
+Conditions:
+  ShouldCreateOidcProvider: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # GitHub's OIDC certificate thumbprints (AWS validates via its trusted CA; these satisfy the API).
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: raku-rag-github-deploy
+      Description: Assumed by GitHub Actions (deploy.yml) via OIDC to run cdk deploy + migrate-seed.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": sts.amazonaws.com
+              StringLike:
+                "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/${GitHubRepo}:${GitHubRefFilter}"
+      # CDK creates IAM roles, VPC, RDS, ECS, ALB, WAF, Cognito, KMS, SQS, S3 — a first deploy needs broad
+      # permissions. AdministratorAccess keeps the first deploy unblocked; scope it down to the CDK
+      # bootstrap roles (cdk-*-deploy/-file-publishing/-image-publishing) once the stack is stable.
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+Outputs:
+  RoleArn:
+    Description: Put this into a GitHub repo Variable named AWS_DEPLOY_ROLE_ARN.
+    Value: !GetAtt GitHubDeployRole.Arn

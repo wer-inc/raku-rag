@@ -1,0 +1,55 @@
+# CI デプロイ (GitHub Actions) — Docker不要・鍵を貼らない
+
+GitHub Actions の runner には Docker があるので、**イメージのビルドも `cdk deploy` も CI 上で実行**します。
+あなたのPCにもサンドボックスにも **Docker は不要**。AWS 認証は **OIDC**（長期アクセスキーを作らない/貼らない）。
+
+```
+[手動実行 or 後でpush] → GitHub Actions(Docker有) → OIDCでAWSにrole assume
+   → cdk bootstrap → cdk deploy(5イメージbuild&push&スタック構築) → migrate-seed(スキーマ+デモKB)
+```
+
+## 一回だけの準備（AWS側 + GitHub側）
+
+### 1. OIDCプロバイダ + デプロイロールを作成（AWSコンソール）
+`infra/cdk/github-oidc.cfn.yaml` を CloudFormation で1スタック作成するだけ：
+
+- コンソール: **CloudFormation → スタックの作成 → テンプレートをアップロード** → `infra/cdk/github-oidc.cfn.yaml` →
+  パラメータ既定（`GitHubOrg=wer-inc` / `GitHubRepo=raku-rag`）→ **「IAMリソース作成を許可」にチェック** → 作成
+- またはCLI:
+  ```bash
+  aws cloudformation deploy --template-file infra/cdk/github-oidc.cfn.yaml \
+    --stack-name raku-rag-github-oidc --capabilities CAPABILITY_NAMED_IAM
+  ```
+- 出力 **`RoleArn`**（`arn:aws:iam::<account>:role/raku-rag-github-deploy`）を控える。
+- 既にこのアカウントに GitHub OIDC プロバイダがある場合はパラメータ `CreateOidcProvider=false`。
+
+> 補足: ロールは初回デプロイを通すため `AdministratorAccess`。安定後に CDK bootstrap ロール群へ絞れます。
+
+### 2. GitHub にリポジトリ変数を登録
+**GitHub → リポジトリ → Settings → Secrets and variables → Actions → Variables（Secretsではない）** で：
+- `AWS_DEPLOY_ROLE_ARN` = 上の RoleArn
+- `AWS_REGION` = `ap-northeast-1`（未設定なら既定で東京）
+
+### 3.（任意）prod に承認ゲート
+**Settings → Environments → `prod`** を作り、Required reviewers を設定すると prod デプロイに承認が要る。
+
+## デプロイの実行
+**GitHub → Actions →「deploy」→ Run workflow** で入力を選ぶだけ：
+
+| 入力 | 初回おすすめ |
+|---|---|
+| stage | `sales`（安価・使い捨て可） |
+| frontend | `aws-nextjs`（web+API同一オリジン） |
+| domain_name | 空（まずHTTPで疎通／後でドメイン追加） |
+| run_migrate_seed | ✅（スキーマ＋デモKB投入まで自動） |
+| **dry_run** | **まず `true`**（synthのみ・無変更で配線確認）→ OKなら `false` で本番実行 |
+
+完了後、ワークフローの **Summary に公開URL（`http://<ALB>`）** が出ます。ブラウザで開いて回答が返ればOK。
+
+## TLS/ドメインを足すとき
+`domain_name=demo.example.com` で再実行 → ACM(DNS検証)＋HTTPS＋80→443リダイレクトが入る。デプロイ中に
+ACMのDNS検証レコードを足し、`demo.example.com` を ALB の DNS 名へ向ける（Route53 Alias か CNAME）。
+
+## つまずいたら
+各ステップのログ（特に `cdk deploy` / `migrate-seed`）を貼ってください。よくある詰まり: OIDCロールのsub条件
+（`repo:wer-inc/raku-rag:*`）不一致、bootstrap未実行（ワークフローが自動実行）、ヘルスチェック猶予。
