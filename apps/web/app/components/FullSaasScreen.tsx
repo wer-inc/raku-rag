@@ -44,6 +44,8 @@ import {
   manufacturingKpi,
   manufacturingListDrafts,
   manufacturingImprovements,
+  runManufacturingQualityEval,
+  type QualityEvalResult,
   manufacturingRequestSourceSync,
   manufacturingReviewDraft,
   manufacturingSafetyTelemetry,
@@ -1953,7 +1955,86 @@ function QualityBody() {
           ]}
         />
       </Section>
+      <QualityEvalSection />
     </>
+  );
+}
+
+// AI quality & safety scorecard: runs a fixed eval set against the live answer path and shows
+// retrieval recall / groundedness / high-risk recall / security checks. The same measurement as
+// scripts/demo/quality_scorecard.sh, surfaced for decision-makers (continuous safety/quality evidence).
+const QUALITY_EVAL_ITEMS = [
+  { question: "コンベアの M8 カバーボルト 締付トルク は何 N·m か", expected_evidence: [{ document_id: "eq-motor-m8-torque" }] },
+  { question: "圧力容器 V-205 耐圧試験 の 試験圧力 と 保持時間 と 昇圧手順", expected_evidence: [{ document_id: "std-2210-hydrotest" }] },
+  { question: "受電盤 MCC-3 の 感電 防止 LOTO ロックアウト 検電 手順", expected_evidence: [{ document_id: "safe-0331-loto" }] },
+  { question: "ポンプ P-12 の 潤滑 グリス 給脂 間隔", expected_evidence: [{ document_id: "eq-pump-p12-lubrication" }] },
+  { question: "コンベヤ ベルト 点検 標準 摩耗 蛇行", expected_evidence: [{ document_id: "eq-belt-inspection-standard" }] },
+  { question: "アラーム E-152 油圧 異常 アキュムレータ 確認", expected_evidence: [{ document_id: "eq-alarm-e152-al21" }] },
+  { question: "PWHT 溶接後熱処理 の 保持温度 保持時間", expected_evidence: [{ document_id: "wi-0457-pwht" }] },
+  { question: "ベアリング 異音 発熱 軌道 摩耗 の 対策", expected_evidence: [{ document_id: "tc-0258" }] },
+  { question: "ヒケ ボイド 寸法不良 成形 保圧 の 対策", expected_evidence: [{ document_id: "tc-0231" }] },
+];
+
+function pct(value: number | undefined): string {
+  return `${Math.round((value ?? 0) * 100)}%`;
+}
+
+function QualityEvalSection() {
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<QualityEvalResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    if (running) return;
+    setRunning(true);
+    setError(null);
+    try {
+      const token = await getSessionToken();
+      setResult(await runManufacturingQualityEval(QUALITY_EVAL_ITEMS, token));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "評価の実行に失敗しました");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const securityEntries = result ? Object.entries(result.security_checks) : [];
+  const securityFailed = securityEntries.filter(
+    ([, v]) => !(typeof v === "object" ? v.passed : v),
+  );
+
+  return (
+    <Section
+      title="AI品質・安全評価（eval）"
+      note="固定の評価セットを実回答パスに対して実行し、検索再現率・根拠率・高リスク再現・セキュリティ検査を測定します。リリース前の品質確認や継続的な安全性の証跡に使えます。"
+    >
+      <div className="screen-actions">
+        <button type="button" onClick={() => void run()} disabled={running}>
+          {running ? "評価を実行中…" : "品質評価を実行"}
+        </button>
+      </div>
+      {error && <p className="cv-foot-error">{error}</p>}
+      {result && (
+        <>
+          <div className="metric-grid">
+            <Stat label="検索再現率 (recall@k)" value={pct(result.metrics.recall_at_k)} />
+            <Stat label="根拠率 (groundedness)" value={pct(result.metrics.groundedness)} />
+            <Stat label="高リスク再現" value={pct(result.metrics.high_risk_recall)} />
+          </div>
+          <FieldGrid
+            rows={[
+              ["ゲート判定", result.gate_result === "passed" ? "合格" : result.gate_result],
+              [
+                "セキュリティ検査",
+                securityFailed.length === 0
+                  ? `全${securityEntries.length}項目パス`
+                  : `失敗: ${securityFailed.map(([k]) => k).join(", ")}`,
+              ],
+            ]}
+          />
+        </>
+      )}
+    </Section>
   );
 }
 

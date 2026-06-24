@@ -260,6 +260,37 @@ export async function manufacturingKpi(userToken: string): Promise<Manufacturing
   return mfgGet<ManufacturingKpi>("kpi", userToken);
 }
 
+export interface QualityEvalItem {
+  question: string;
+  expected_evidence: Array<{ document_id: string }>;
+}
+
+export interface QualityEvalResult {
+  run_id: string;
+  gate_result: string;
+  status: string;
+  metrics: { recall_at_k?: number; groundedness?: number; high_risk_recall?: number };
+  security_checks: Record<string, { passed?: boolean } | boolean>;
+}
+
+/** Register a quality eval set and run it against the live answer path, returning the scorecard
+ *  (recall@k / groundedness / high-risk recall / security checks). Mirrors scripts/demo/quality_scorecard.sh. */
+export async function runManufacturingQualityEval(
+  items: QualityEvalItem[],
+  userToken: string,
+): Promise<QualityEvalResult> {
+  const set = await apiPostJson<{ eval_set_id: string }>("/evaluations/sets", { items }, userToken);
+  const run = await apiPostJson<{ run_id: string }>(
+    "/evaluations/runs",
+    { eval_set_id: set.eval_set_id, collection_id: "manuals" },
+    userToken,
+  );
+  return apiGetJson<QualityEvalResult>(
+    `/evaluations/runs/${encodeURIComponent(run.run_id)}`,
+    userToken,
+  );
+}
+
 export async function manufacturingGovernanceStatus(
   userToken: string,
 ): Promise<GovernanceStatus> {
