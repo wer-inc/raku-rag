@@ -141,7 +141,14 @@ def _set_app_role(conn: "psycopg.Connection", cur: "psycopg.Cursor") -> None:
     try:
         cur.execute(f"SET ROLE {_APP_ROLE}")
         return
-    except (psycopg.errors.UndefinedObject, psycopg.errors.InsufficientPrivilege):
+    except (
+        # role absent: "role \"raku_app\" does not exist" is SQLSTATE 22023 (InvalidParameterValue),
+        # not 42704 — both are caught so the bootstrap covers either Postgres phrasing.
+        psycopg.errors.InvalidParameterValue,
+        psycopg.errors.UndefinedObject,
+        # role exists but the connecting (non-superuser) user is not a member.
+        psycopg.errors.InsufficientPrivilege,
+    ):
         pass
     # _APP_ROLE is a fixed module constant (not user input), safe to inline.
     cur.execute(
