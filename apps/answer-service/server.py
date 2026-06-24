@@ -1390,12 +1390,14 @@ def make_handler(system: ProductionSystem):
                     else:
                         self._send(404, {"error": "not found"})
                 elif (
-                    len(parts) == 5
+                    len(parts) == 4
                     and parts[:2] == ["internal", "documents"]
-                    and parts[4] == "file"
+                    and parts[3] == "file"
                 ):
+                    # /internal/documents/{id}/file -> docid is parts[2] (4 segments, matching the API
+                    # facade and the sibling processing-status route). Was mis-indexed for 5 segments.
                     payload = manufacturing_system.get_document_file(
-                        _claims_from_headers(self.headers), parts[3]
+                        _claims_from_headers(self.headers), parts[2]
                     )
                     (
                         self._send(200, _jsonable(payload))
@@ -1403,15 +1405,17 @@ def make_handler(system: ProductionSystem):
                         else self._send(404, {"error": "not found"})
                     )
                 elif (
-                    len(parts) == 5
+                    len(parts) == 4
                     and parts[:2] == ["internal", "documents"]
-                    and parts[4] == "citation-view"
+                    and parts[3] == "citation-view"
                 ):
+                    # /internal/documents/{id}/citation-view -> docid is parts[2] (4 segments). The
+                    # 5-segment guard here previously 404'd every citation-view open.
                     qs = parse_qs(parsed.query)
                     chunk_id = (qs.get("chunk_id") or [None])[0]
                     payload = manufacturing_system.get_citation_source(
                         _claims_from_headers(self.headers),
-                        parts[3],
+                        parts[2],
                         chunk_id=chunk_id,
                     )
                     (
