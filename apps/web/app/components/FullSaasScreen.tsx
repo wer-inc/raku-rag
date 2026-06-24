@@ -20,7 +20,6 @@ import type {
 import {
   adminDataSources,
   adminCitationView,
-  adminDocuments,
   adminSourceSync,
   type AdminSourceSyncResponse,
   apiDeleteJson,
@@ -1291,7 +1290,10 @@ function DocumentApprovalQueueBody() {
     setDocs(loadIngestedDocs());
     try {
       const token = await getSessionToken();
-      const rows = await adminDocuments(token);
+      // Manufacturing approval queue reads the manufacturing overlay endpoint (same one its
+      // approve/obsolete writes use). The old /admin/documents path 404s on this build, leaving the
+      // queue silently empty even when 18 docs exist.
+      const rows = await manufacturingDocuments(token);
       setServerDocs(rows);
     } catch {
       setServerDocs([]);

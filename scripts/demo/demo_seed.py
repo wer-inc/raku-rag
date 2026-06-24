@@ -14,6 +14,10 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS = json.load(open(os.path.join(HERE, "demo_docs.json"), encoding="utf-8"))
 AS_URL = os.environ.get("ANSWER_SERVICE_URL", "http://127.0.0.1:8088")
+# The answer-service enforces the internal-boundary shared secret when RAKU_INTERNAL_AUTH_SECRET is
+# set (demo_up.sh exports it). Seeding posts straight to /internal/ingest, so it must present the same
+# header or every ingest 401s with internal_auth_required (silent empty KB). No secret -> dev no-op.
+INTERNAL_AUTH = os.environ.get("RAKU_INTERNAL_AUTH_SECRET", "")
 TENANT = os.environ.get("DEMO_TENANT", "demo")
 COLLECTION = os.environ.get("DEMO_COLLECTION", "manuals")
 UPLOAD_DIR = os.environ.get("RAKU_UPLOAD_DIR", "/tmp/raku-demo-seed")
@@ -49,10 +53,13 @@ def ingest(doc: dict) -> tuple[str, object]:
             ),
         },
     }
+    headers = {"content-type": "application/json"}
+    if INTERNAL_AUTH:
+        headers["X-Internal-Auth"] = INTERNAL_AUTH
     req = urllib.request.Request(
         AS_URL + "/internal/ingest",
         data=json.dumps(body).encode("utf-8"),
-        headers={"content-type": "application/json"},
+        headers=headers,
     )
     try:
         res = json.load(urllib.request.urlopen(req, timeout=30))

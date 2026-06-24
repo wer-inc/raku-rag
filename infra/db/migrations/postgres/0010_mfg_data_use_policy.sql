@@ -1,5 +1,10 @@
 -- P1-3: durable manufacturing DataUsePolicy / no-train posture.
 
+-- Pin the target schema like every domain migration (0001-0006). Without this the unqualified
+-- CREATE lands in whatever the session search_path happens to be (e.g. the role-named `raku` schema),
+-- where the answer-service connection (search_path=public) cannot resolve it -> governance/policy 500.
+SET search_path TO public;
+
 CREATE TABLE IF NOT EXISTS manufacturing_data_use_policies (
   tenant_id text PRIMARY KEY,
   no_train_default boolean NOT NULL DEFAULT true,

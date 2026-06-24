@@ -194,21 +194,6 @@ export async function manufacturingDocuments(
   return res.documents ?? [];
 }
 
-export async function adminDocuments(
-  userToken: string,
-  opts?: { collectionId?: string; approvalStatus?: string },
-): Promise<ManufacturingDocumentSummary[]> {
-  const params = new URLSearchParams();
-  if (opts?.collectionId) params.set("collection_id", opts.collectionId);
-  if (opts?.approvalStatus) params.set("approval_status", opts.approvalStatus);
-  const qs = params.toString();
-  const res = await apiGetJson<{ documents: ManufacturingDocumentSummary[] }>(
-    `/admin/documents${qs ? `?${qs}` : ""}`,
-    userToken,
-  );
-  return res.documents ?? [];
-}
-
 export async function adminDocumentDetail(
   documentId: string,
   userToken: string,

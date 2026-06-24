@@ -24,8 +24,11 @@ THRESH="${RAKU_DEFAULT_SCORE_THRESHOLD:-0.4}"
 # A real (non-default) token signing secret, shared by the API verifier AND the web dev-token issuer
 # (the API now refuses to boot on the public 'dev-secret-change-me' default). Override for a real env.
 export RAKU_TOKEN_SIGNING_SECRET="${RAKU_TOKEN_SIGNING_SECRET:-raku-demo-local-secret-change-me}"
-# Internal API->answer-service auth secret (enforced once the internal-auth gate lands on this branch).
-export RAKU_INTERNAL_AUTH_SECRET="${RAKU_INTERNAL_AUTH_SECRET:-raku-demo-internal-secret}"
+# Internal API->answer-service shared-secret gate. DISABLED by default for the demo: the answer-service
+# enforces it, but the NestJS API does not yet forward an X-Internal-Auth header (the gate is only
+# half-landed — see B6 follow-up), so enabling it 502s every API->answer-service call. Over loopback the
+# boundary is a no-op anyway. Set RAKU_INTERNAL_AUTH_SECRET explicitly to opt in once the API forwards it.
+export RAKU_INTERNAL_AUTH_SECRET="${RAKU_INTERNAL_AUTH_SECRET-}"
 LOG=/tmp/raku-demo
 mkdir -p "$LOG"
 
