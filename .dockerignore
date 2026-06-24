@@ -17,3 +17,12 @@ coverage/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+# CDK Docker-image assets use the repo root as build context; exclude the synth output (and any
+# nested copies) to avoid recursive self-copy (ENAMETOOLONG), plus other heavy/irrelevant trees.
+**/cdk.out/
+cdk.out/
+.github/
+specs/
+docs/
+**/__pycache__/
+.pytest_cache/

@@ -13,7 +13,16 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
+import * as path from "path";
 import { Construct } from "constructs";
+
+// Docker build context = repo root (the Dockerfiles use npm workspaces / src+workers).
+const REPO_ROOT = path.join(__dirname, "..", "..", "..");
+// Build POSTGRES_URL at container start from the injected DATABASE_* parts (the password is a secret
+// env, so it must be assembled at runtime, not baked into a plain env var). DB user = the Aurora
+// master "raku_rag"; the app then SET ROLE raku_app for RLS.
+const PG_URL_EXPR =
+  "postgresql://raku_rag:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}";
 
 export type FrontendHostingMode = "external-vercel" | "aws-nextjs";
 
@@ -101,6 +110,19 @@ export class RakuRagStack extends cdk.Stack {
           jwtIssuer: servicePrefix
         }),
         generateStringKey: "jwtSigningSecret",
+        excludePunctuation: true
+      }
+    });
+
+    // Shared internal-boundary secret: the API forwards it as X-Internal-Auth and the answer-service
+    // enforces it on every /internal/* call (apps/answer-service + auth/internal-auth.ts).
+    const internalAuthSecret = new secretsmanager.Secret(this, "InternalAuthSecret", {
+      secretName: `${servicePrefix}/internal-auth`,
+      description: "Shared secret for the API -> answer-service internal boundary",
+      encryptionKey: dataKey,
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ purpose: "internal-auth" }),
+        generateStringKey: "secret",
         excludePunctuation: true
       }
     });
@@ -214,11 +236,11 @@ export class RakuRagStack extends cdk.Stack {
     this.attachRuntimePolicies(apiTask.taskRole, documentBucket, dataKey);
     ingestionQueue.grantSendMessages(apiTask.taskRole);
     appSecret.grantRead(apiTask.taskRole);
+    internalAuthSecret.grantRead(apiTask.taskRole);
     database.secret?.grantRead(apiTask.taskRole);
 
     const apiContainer = apiTask.addContainer("NestjsApiContainer", {
-      image: ecs.ContainerImage.fromRegistry("public.ecr.aws/docker/library/node:20-alpine"),
-      command: ["sh", "-c", "node --version && sleep infinity"],
+      image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "apps/api/Dockerfile" }),
       essential: true,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "api",
@@ -238,6 +260,8 @@ export class RakuRagStack extends cdk.Stack {
       },
       secrets: {
         APPLICATION_SECRET: ecs.Secret.fromSecretsManager(appSecret),
+        RAKU_TOKEN_SIGNING_SECRET: ecs.Secret.fromSecretsManager(appSecret, "jwtSigningSecret"),
+        RAKU_INTERNAL_AUTH_SECRET: ecs.Secret.fromSecretsManager(internalAuthSecret, "secret"),
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password")
       }
     });
@@ -348,9 +372,11 @@ export class RakuRagStack extends cdk.Stack {
     deadLetterQueue.grantSendMessages(workerTask.taskRole);
     database.secret?.grantRead(workerTask.taskRole);
 
+    this.grantBedrockInvoke(workerTask.taskRole);
     workerTask.addContainer("PythonIngestWorkerContainer", {
-      image: ecs.ContainerImage.fromRegistry("public.ecr.aws/docker/library/python:3.12-slim"),
-      command: ["python", "-m", "workers.ingest.worker", "--serve"],
+      image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "workers/ingest/Dockerfile" }),
+      entryPoint: ["/bin/sh", "-c"],
+      command: [`POSTGRES_URL="${PG_URL_EXPR}" exec python -m workers.ingest.worker --serve`],
       essential: true,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "worker",
@@ -388,6 +414,73 @@ export class RakuRagStack extends cdk.Stack {
         rollback: true
       }
     });
+
+    // Python answer-service — the internal HTTP boundary serving /internal/* (retrieval / ACL /
+    // ranking / manufacturing safety overlay) over the Postgres-backed ProductionSystem. The NestJS
+    // API proxies to it; it is internal-only (no public ALB).
+    const answerTask = new ecs.FargateTaskDefinition(this, "AnswerServiceTaskDefinition", {
+      family: `${servicePrefix}-answer`,
+      cpu: 1024,
+      memoryLimitMiB: 2048,
+      runtimePlatform: {
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+        cpuArchitecture: ecs.CpuArchitecture.X86_64
+      }
+    });
+    this.attachRuntimePolicies(answerTask.taskRole, documentBucket, dataKey);
+    this.grantBedrockInvoke(answerTask.taskRole);
+    internalAuthSecret.grantRead(answerTask.taskRole);
+    database.secret?.grantRead(answerTask.taskRole);
+
+    const answerContainer = answerTask.addContainer("AnswerServiceContainer", {
+      image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "apps/answer-service/Dockerfile" }),
+      entryPoint: ["/bin/sh", "-c"],
+      command: [`POSTGRES_URL="${PG_URL_EXPR}" exec python apps/answer-service/server.py --port 8088`],
+      essential: true,
+      logging: ecs.LogDrivers.awsLogs({
+        streamPrefix: "answer",
+        logRetention: logs.RetentionDays.ONE_MONTH
+      }),
+      environment: {
+        STAGE_NAME: props.stageName,
+        DATABASE_HOST: database.clusterEndpoint.hostname,
+        DATABASE_PORT: database.clusterEndpoint.port.toString(),
+        DATABASE_NAME: "raku_rag"
+      },
+      secrets: {
+        RAKU_INTERNAL_AUTH_SECRET: ecs.Secret.fromSecretsManager(internalAuthSecret, "secret"),
+        DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password")
+      }
+    });
+    answerContainer.addPortMappings({ containerPort: 8088 });
+
+    const answerService = new ecsPatterns.ApplicationLoadBalancedFargateService(
+      this,
+      "AnswerService",
+      {
+        cluster,
+        taskDefinition: answerTask,
+        serviceName: `${servicePrefix}-answer`,
+        publicLoadBalancer: false, // internal — reached by the API over the VPC only
+        listenerPort: 8088,
+        desiredCount: isProd ? 2 : 1,
+        minHealthyPercent: 100,
+        circuitBreaker: { rollback: true },
+        assignPublicIp: false,
+        securityGroups: [ecsSecurityGroup],
+        taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        healthCheckGracePeriod: cdk.Duration.seconds(90)
+      }
+    );
+    answerService.targetGroup.configureHealthCheck({
+      path: "/healthz",
+      healthyHttpCodes: "200-399"
+    });
+    // Wire the API -> answer-service internal endpoint now that both exist.
+    apiContainer.addEnvironment(
+      "ANSWER_SERVICE_URL",
+      `http://${answerService.loadBalancer.loadBalancerDnsName}:8088`
+    );
 
     const langfuseTask = new ecs.FargateTaskDefinition(this, "LangfuseTaskDefinition", {
       family: `${servicePrefix}-langfuse`,
@@ -598,6 +691,9 @@ export class RakuRagStack extends cdk.Stack {
     new cdk.CfnOutput(this, "LangfuseInternalLoadBalancerDnsName", {
       value: langfuseService.loadBalancer.loadBalancerDnsName
     });
+    new cdk.CfnOutput(this, "AnswerServiceInternalLoadBalancerDnsName", {
+      value: answerService.loadBalancer.loadBalancerDnsName
+    });
     new cdk.CfnOutput(this, "DocumentBucketName", {
       value: documentBucket.bucketName
     });
@@ -661,6 +757,21 @@ export class RakuRagStack extends cdk.Stack {
   ): void {
     documentBucket.grantReadWrite(taskRole);
     dataKey.grantEncryptDecrypt(taskRole);
+  }
+
+  // Allow a task role to invoke Bedrock foundation models (the #1 semantic-embeddings + Claude
+  // generation path). Inert until RAKU_RUNTIME_PROFILE=production wires the real providers; scoped to
+  // InvokeModel on Bedrock model resources.
+  private grantBedrockInvoke(taskRole: iam.IRole): void {
+    taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+        resources: [
+          `arn:aws:bedrock:*::foundation-model/*`,
+          `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:inference-profile/*`
+        ]
+      })
+    );
   }
 
   private addAwsNextjsFallback(

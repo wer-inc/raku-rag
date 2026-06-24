@@ -68,6 +68,9 @@ jobs:
           - name: worker
             dockerfile: workers/ingest/Dockerfile
             tag: raku-rag-worker:ci
+          - name: answer
+            dockerfile: apps/answer-service/Dockerfile
+            tag: raku-rag-answer:ci
     env:
       IMAGE_TAG: ${{ matrix.tag }}
       DOCKERFILE: ${{ matrix.dockerfile }}
