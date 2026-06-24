@@ -1,4 +1,5 @@
 import * as cdk from "aws-cdk-lib";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
@@ -49,6 +50,15 @@ export class RakuRagStack extends cdk.Stack {
     const minimalSpec =
       minimalSpecCtx === "true" || (minimalSpecCtx !== "false" && !isProd);
     const deployLangfuse = !minimalSpec;
+    // Frontend hosting shape (resolved early — it decides who owns the public ALB):
+    //  - external-vercel (default): the NestJS API owns the public ALB; web is hosted off-AWS (Vercel).
+    //  - aws-nextjs: the Next.js web owns the public ALB and is the default target; the API is attached
+    //    behind the SAME listener under /v1/* → one origin (no CORS / no https→http mixed-content).
+    // Optional `--context domainName=demo.example.com` adds an ACM (DNS-validated) cert + HTTPS:443 with
+    // an HTTP→HTTPS redirect; without it the public ALB serves HTTP:80 (still same-origin, add TLS later).
+    const frontendHosting = props.frontendHosting ?? "external-vercel";
+    const awsWeb = frontendHosting === "aws-nextjs";
+    const publicDomainName = this.node.tryGetContext("domainName") as string | undefined;
     const fargateSize = {
       api: minimalSpec ? { cpu: 512, memoryLimitMiB: 1024 } : { cpu: 1024, memoryLimitMiB: 2048 },
       worker: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 512, memoryLimitMiB: 1024 },
@@ -286,30 +296,155 @@ export class RakuRagStack extends cdk.Stack {
     });
     apiContainer.addPortMappings({ containerPort: 3000 });
 
-    const apiService = new ecsPatterns.ApplicationLoadBalancedFargateService(
-      this,
-      "NestjsApiService",
-      {
+    // Shared downstream handles (WAF, alarms, dashboard, outputs) — set by whichever branch builds the
+    // public ALB so the rest of the stack is hosting-mode agnostic.
+    let publicAlb: elbv2.IApplicationLoadBalancer;
+    let apiTargetGroup: elbv2.IApplicationTargetGroup;
+    let apiFargateService: ecs.BaseService;
+
+    if (awsWeb) {
+      // ---- Next.js web owns the public ALB; API rides the same listener under /v1/* (same origin) ----
+      const webTask = new ecs.FargateTaskDefinition(this, "AwsNextjsTaskDefinition", {
+        family: `${servicePrefix}-web`,
+        cpu: fargateSize.api.cpu,
+        memoryLimitMiB: fargateSize.api.memoryLimitMiB,
+        runtimePlatform: {
+          operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+          cpuArchitecture: ecs.CpuArchitecture.X86_64
+        }
+      });
+      appSecret.grantRead(webTask.taskRole);
+      const webContainer = webTask.addContainer("AwsNextjsContainer", {
+        // Real web image; NEXT_PUBLIC_API_BASE is baked at BUILD time (Next inlines it), and because web
+        // and API are same-origin the browser calls the relative "/v1" — no domain needed at build.
+        image: ecs.ContainerImage.fromAsset(REPO_ROOT, {
+          file: "apps/web/Dockerfile",
+          buildArgs: { NEXT_PUBLIC_API_BASE: "/v1" }
+        }),
+        essential: true,
+        logging: ecs.LogDrivers.awsLogs({
+          streamPrefix: "web",
+          logRetention: logs.RetentionDays.ONE_MONTH
+        }),
+        environment: {
+          NODE_ENV: "production",
+          STAGE_NAME: props.stageName,
+          WEB_PORT: "3002",
+          // Demo auth: lets the browser mint the HMAC X-User-Token the API verifies (no Cognito yet).
+          RAKU_ENABLE_DEV_TOKEN_ISSUER: "1",
+          COGNITO_USER_POOL_ID: userPool.userPoolId,
+          COGNITO_USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId
+        },
+        secrets: {
+          // MUST match the API's signing secret so issued tokens validate at the API.
+          RAKU_TOKEN_SIGNING_SECRET: ecs.Secret.fromSecretsManager(appSecret, "jwtSigningSecret")
+        }
+      });
+      webContainer.addPortMappings({ containerPort: 3002 });
+
+      const certificate = publicDomainName
+        ? new acm.Certificate(this, "WebCertificate", {
+            domainName: publicDomainName,
+            validation: acm.CertificateValidation.fromDns()
+          })
+        : undefined;
+
+      const webService = new ecsPatterns.ApplicationLoadBalancedFargateService(
+        this,
+        "AwsNextjsService",
+        {
+          cluster,
+          taskDefinition: webTask,
+          serviceName: `${servicePrefix}-web`,
+          publicLoadBalancer: true,
+          desiredCount: 1,
+          minHealthyPercent: 100,
+          circuitBreaker: { rollback: true },
+          assignPublicIp: false,
+          securityGroups: [ecsSecurityGroup],
+          taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+          healthCheckGracePeriod: cdk.Duration.seconds(120),
+          ...(certificate
+            ? {
+                protocol: elbv2.ApplicationProtocol.HTTPS,
+                certificate,
+                redirectHTTP: true,
+                listenerPort: 443
+              }
+            : { listenerPort: 80 })
+        }
+      );
+      webService.targetGroup.configureHealthCheck({
+        path: "/",
+        healthyHttpCodes: "200-399"
+      });
+
+      // API as a plain service behind the SAME listener, matched only on /v1/*.
+      const apiSvc = new ecs.FargateService(this, "NestjsApiService", {
         cluster,
         taskDefinition: apiTask,
         serviceName: `${servicePrefix}-api`,
-        publicLoadBalancer: true,
-        listenerPort: 80,
         desiredCount: isProd ? 2 : 1,
         minHealthyPercent: 100,
         circuitBreaker: { rollback: true },
         assignPublicIp: false,
         securityGroups: [ecsSecurityGroup],
-        taskSubnets: {
-          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
-        },
-        healthCheckGracePeriod: cdk.Duration.seconds(60)
-      }
-    );
-    apiService.targetGroup.configureHealthCheck({
-      path: "/healthz",
-      healthyHttpCodes: "200-399"
-    });
+        vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS }
+      });
+      const apiTg = new elbv2.ApplicationTargetGroup(this, "ApiTargetGroup", {
+        vpc,
+        port: 3000,
+        protocol: elbv2.ApplicationProtocol.HTTP,
+        targetType: elbv2.TargetType.IP,
+        deregistrationDelay: cdk.Duration.seconds(10),
+        healthCheck: { path: "/healthz", healthyHttpCodes: "200-399" }
+      });
+      apiSvc.attachToApplicationTargetGroup(apiTg);
+      webService.listener.addAction("ApiRoute", {
+        priority: 10,
+        conditions: [elbv2.ListenerCondition.pathPatterns(["/v1/*"])],
+        action: elbv2.ListenerAction.forward([apiTg])
+      });
+      // The L3 pattern only opened the ALB->web tasks on 3002; allow it to reach API tasks on 3000 too.
+      apiSvc.connections.allowFrom(
+        webService.loadBalancer,
+        ec2.Port.tcp(3000),
+        "Public ALB to NestJS API (/v1/*)"
+      );
+
+      publicAlb = webService.loadBalancer;
+      apiTargetGroup = apiTg;
+      apiFargateService = apiSvc;
+    } else {
+      // ---- external-vercel (default): the NestJS API owns the public ALB ----
+      const apiService = new ecsPatterns.ApplicationLoadBalancedFargateService(
+        this,
+        "NestjsApiService",
+        {
+          cluster,
+          taskDefinition: apiTask,
+          serviceName: `${servicePrefix}-api`,
+          publicLoadBalancer: true,
+          listenerPort: 80,
+          desiredCount: isProd ? 2 : 1,
+          minHealthyPercent: 100,
+          circuitBreaker: { rollback: true },
+          assignPublicIp: false,
+          securityGroups: [ecsSecurityGroup],
+          taskSubnets: {
+            subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
+          },
+          healthCheckGracePeriod: cdk.Duration.seconds(60)
+        }
+      );
+      apiService.targetGroup.configureHealthCheck({
+        path: "/healthz",
+        healthyHttpCodes: "200-399"
+      });
+      publicAlb = apiService.loadBalancer;
+      apiTargetGroup = apiService.targetGroup;
+      apiFargateService = apiService.service;
+    }
 
     const apiWebAcl = new wafv2.CfnWebACL(this, "ApiWebAcl", {
       name: `${servicePrefix}-api-web-acl`,
@@ -373,7 +508,7 @@ export class RakuRagStack extends cdk.Stack {
       ]
     });
     new wafv2.CfnWebACLAssociation(this, "ApiWebAclAssociation", {
-      resourceArn: apiService.loadBalancer.loadBalancerArn,
+      resourceArn: publicAlb.loadBalancerArn,
       webAclArn: apiWebAcl.attrArn
     });
 
@@ -566,20 +701,7 @@ export class RakuRagStack extends cdk.Stack {
     });
     }
 
-    const frontendHosting = props.frontendHosting ?? "external-vercel";
-    if (frontendHosting === "aws-nextjs") {
-      this.addAwsNextjsFallback(
-        servicePrefix,
-        props.stageName,
-        cluster,
-        ecsSecurityGroup,
-        userPool,
-        userPoolClient,
-        appSecret
-      );
-    }
-
-    const apiTarget5xxMetric = apiService.targetGroup.metrics.httpCodeTarget(
+    const apiTarget5xxMetric = apiTargetGroup.metrics.httpCodeTarget(
       elbv2.HttpCodeTarget.TARGET_5XX_COUNT,
       { period: cdk.Duration.minutes(5), statistic: "Sum" }
     );
@@ -678,7 +800,7 @@ export class RakuRagStack extends cdk.Stack {
       new cloudwatch.GraphWidget({
         title: "ECS CPU utilization",
         left: [
-          apiService.service.metricCpuUtilization(),
+          apiFargateService.metricCpuUtilization(),
           workerService.metricCpuUtilization(),
           ...(langfuseService ? [langfuseService.service.metricCpuUtilization()] : [])
         ]
@@ -710,7 +832,7 @@ export class RakuRagStack extends cdk.Stack {
     );
 
     new cdk.CfnOutput(this, "ApiLoadBalancerDnsName", {
-      value: apiService.loadBalancer.loadBalancerDnsName
+      value: publicAlb.loadBalancerDnsName
     });
     if (langfuseService) {
       new cdk.CfnOutput(this, "LangfuseInternalLoadBalancerDnsName", {
@@ -798,64 +920,5 @@ export class RakuRagStack extends cdk.Stack {
         ]
       })
     );
-  }
-
-  private addAwsNextjsFallback(
-    servicePrefix: string,
-    stageName: string,
-    cluster: ecs.ICluster,
-    ecsSecurityGroup: ec2.ISecurityGroup,
-    userPool: cognito.IUserPool,
-    userPoolClient: cognito.IUserPoolClient,
-    appSecret: secretsmanager.ISecret
-  ): ecsPatterns.ApplicationLoadBalancedFargateService {
-    const task = new ecs.FargateTaskDefinition(this, "AwsNextjsTaskDefinition", {
-      family: `${servicePrefix}-web`,
-      cpu: 512,
-      memoryLimitMiB: 1024,
-      runtimePlatform: {
-        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
-        cpuArchitecture: ecs.CpuArchitecture.X86_64
-      }
-    });
-    appSecret.grantRead(task.taskRole);
-
-    const container = task.addContainer("AwsNextjsContainer", {
-      image: ecs.ContainerImage.fromRegistry("public.ecr.aws/docker/library/node:20-alpine"),
-      command: ["sh", "-c", "node --version && sleep infinity"],
-      essential: true,
-      logging: ecs.LogDrivers.awsLogs({
-        streamPrefix: "web",
-        logRetention: logs.RetentionDays.ONE_MONTH
-      }),
-      environment: {
-        NODE_ENV: "production",
-        STAGE_NAME: stageName,
-        COGNITO_USER_POOL_ID: userPool.userPoolId,
-        COGNITO_USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId,
-        FRONTEND_TELEMETRY_RAW_CONTEXT: "false"
-      },
-      secrets: {
-        APPLICATION_SECRET: ecs.Secret.fromSecretsManager(appSecret)
-      }
-    });
-    container.addPortMappings({ containerPort: 3000 });
-
-    return new ecsPatterns.ApplicationLoadBalancedFargateService(this, "AwsNextjsService", {
-      cluster,
-      taskDefinition: task,
-      serviceName: `${servicePrefix}-web`,
-      publicLoadBalancer: true,
-      listenerPort: 80,
-      desiredCount: 1,
-      minHealthyPercent: 100,
-      circuitBreaker: { rollback: true },
-      assignPublicIp: false,
-      securityGroups: [ecsSecurityGroup],
-      taskSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS
-      },
-      healthCheckGracePeriod: cdk.Duration.seconds(60)
-    });
   }
 }

@@ -126,6 +126,28 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack + self.bin + self.readme)
 
+    def test_aws_nextjs_is_same_origin_real_web(self) -> None:
+        # aws-nextjs must host the REAL web image and put web + API behind ONE ALB (web default,
+        # API on /v1/*) so the browser is same-origin (no CORS / no mixed-content). Optional domainName
+        # context adds an ACM cert + HTTPS redirect.
+        for token in (
+            'file: "apps/web/Dockerfile"',
+            "buildArgs",
+            "NEXT_PUBLIC_API_BASE",
+            "ApiTargetGroup",
+            '"ApiRoute"',
+            '"/v1/*"',
+            "RAKU_ENABLE_DEV_TOKEN_ISSUER",
+            "WebCertificate",
+            "redirectHTTP",
+            "allowFrom",
+            'tryGetContext("domainName")',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.stack)
+        # The old sleep-forever placeholder must be gone.
+        self.assertNotIn("sleep infinity", self.stack)
+
     def test_readme_documents_synth_and_resource_scope(self) -> None:
         for token in (
             "npm run build",

@@ -64,9 +64,28 @@ Aurora は空なので、**マイグレーション適用**が必須（営業用
 ```
 （CDK へのマイグレ自動化＝ECS RunTask カスタムリソースは未。当面は上記ワンオフ。）
 
-## フロント（web）
-既定は **Vercel(external-vercel)**。Vercel 側で `NEXT_PUBLIC_API_BASE=https://<ApiLoadBalancerDnsName>/v1`
-を設定。AWS内で完結させたい場合は `frontendHosting: "aws-nextjs"` だが現状フォールバックは雛形（要結線）。
+## フロント（web）— 2通り
+**A. AWS内で完結（推奨・同一オリジン）** `--context frontendHosting=aws-nextjs`
+- Next.js web が**公開ALBを所有**し既定ターゲット、**API は同じリスナの `/v1/*`** に同居 → ブラウザは
+  **同一オリジン**（CORSも https→http 混在ブロックも無し）。`NEXT_PUBLIC_API_BASE` は web イメージの
+  **ビルド時に `/v1`（相対）** を埋め込む（`apps/web/Dockerfile` の build-arg）。デモ認証は web に
+  `RAKU_ENABLE_DEV_TOKEN_ISSUER=1` ＋ API と同じ署名Secret を注入済み（発行トークンがAPIで検証可）。
+- **TLS/ドメイン**: `--context domainName=demo.example.com` を付けると **ACM(DNS検証)証明書＋HTTPS:443＋
+  80→443リダイレクト**を自動作成。デプロイ中にACMのDNS検証レコードを足し、`demo.example.com` を ALB の
+  DNS 名へ向ける（Route53 Alias か任意DNSのCNAME）。付けない場合は HTTP:80（同一オリジンのまま、TLSは後付け可）。
+
+```bash
+# AWS完結・TLS付き（最小スペック）:
+npx cdk deploy --context stage=sales --context frontendHosting=aws-nextjs --context domainName=demo.example.com
+```
+`cdk synth` 実数(aws-nextjs)：公開ALB=1 / リスナ既定=web・Rule `/v1/*`=API / domain時はACM1＋443＋80リダイレクト。
+
+**B. Vercel/外部(external-vercel・既定)** Vercel 側で `NEXT_PUBLIC_API_BASE=https://<ApiLoadBalancerDnsName>/v1`
+を設定（このとき API ALB 側に別途 TLS/ドメイン/CORS が必要）。
+
+> 注意（実機未検証）：web/API/同一ALB結線・SG(ALB→API:3000)・ACM は `cdk synth` 緑まで。初回デプロイで
+> web "/" と API "/healthz" のヘルスチェック通過・`/v1/*`到達・ブラウザのトークン発行→API検証を実機確認のこと。
+> web のサーバ側(SSR)から API を呼ぶ箇所がある場合、相対 `/v1` は解決しない（クライアント側fetch前提）。
 
 ## まだ残る穴（正直に）
 - **初回 cdk deploy は未実機検証**（この環境にAWS鍵・Docker無し→ `cdk synth` 緑まで）。最初のデプロイで

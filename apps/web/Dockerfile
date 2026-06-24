@@ -3,7 +3,12 @@
 #   docker build -f apps/web/Dockerfile -t raku-rag-web .
 FROM node:22-slim AS build
 WORKDIR /repo
-ENV NEXT_TELEMETRY_DISABLED=1
+# NEXT_PUBLIC_* is inlined into the client bundle at BUILD time. Default "/v1" = same-origin relative
+# (web + API behind one ALB); override with --build-arg NEXT_PUBLIC_API_BASE=https://api.example.com/v1
+# for a split-origin (e.g. Vercel) deploy.
+ARG NEXT_PUBLIC_API_BASE=/v1
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE}
 COPY . .
 # Build with full deps, then do a CLEAN prod-only install so dev tooling (jest/@nestjs/cli/
 # @angular-devkit and their transitive globs — glob/tmp/picomatch) is ABSENT from the runtime image,
