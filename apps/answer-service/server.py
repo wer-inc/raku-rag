@@ -903,9 +903,10 @@ def _sync_datasource_to_ingest(
     if not documents:
         raise ValueError("datasource did not produce any documents")
     collection_id = str(body.get("collection_id") or datasource.get("collection_id") or "manuals")
+    applied_approval_status = _approval_from_datasource_policy(datasource)[0]
     runs: list[dict] = []
     for document in documents:
-        mfg_meta = _mfg_metadata_from_body(body, tenant_id, document.document_id)
+        mfg_meta = _mfg_metadata_for_sync(body, datasource, tenant_id, document.document_id)
         run = system.ingest_document(
             tenant_id=tenant_id,
             collection_id=collection_id,
@@ -935,16 +936,21 @@ def _sync_datasource_to_ingest(
         "observed_count": len(documents),
         "changed_count": len(runs),
         "failed_count": len(failed),
+        # Which trust policy the saved datasource applied to EVERY synced file (Step 0/1): a
+        # 'review_required' source lands its files in pending_review for the human review queue; a
+        # 'trusted' source stamps them approved (source-of-truth) so they are immediately citable.
+        "approval_policy": _datasource_approval_policy(datasource),
+        "applied_approval_status": applied_approval_status,
         "runs": runs,
     }
 
 
-def _mfg_metadata_from_body(body: dict, tenant_id: str, document_id: str):
-    """P1-1: build ManufacturingDocumentMetadata from the ingest request, or None if absent.
+def _mfg_raw_from_body(body: dict) -> dict | None:
+    """The raw manufacturing-metadata mapping carried by an ingest request, or None if absent.
 
     Accepts either a single ``manufacturing`` object (the to_mapping()/from_mapping() shape) or the
-    contract's split ``manufacturing_metadata`` + ``approval`` blocks (mfg-openapi.md). tenant_id and
-    document_id are taken from the authenticated principal / request, never from the metadata block.
+    contract's split ``manufacturing_metadata`` + ``approval`` blocks (mfg-openapi.md). Does NOT inject
+    tenant_id/document_id — those are the caller's (authenticated) responsibility.
     """
     raw = body.get("manufacturing")
     if raw is None:
@@ -958,8 +964,75 @@ def _mfg_metadata_from_body(body: dict, tenant_id: str, document_id: str):
             raw["document_kind"] = raw.pop("document_type")
     if not isinstance(raw, dict):
         return None
+    return raw
+
+
+def _mfg_metadata_from_body(body: dict, tenant_id: str, document_id: str):
+    """P1-1: build ManufacturingDocumentMetadata from the ingest request, or None if absent.
+
+    tenant_id and document_id are taken from the authenticated principal / request, never from the
+    metadata block. Used by the single-document ``/internal/ingest`` boundary, where the caller
+    explicitly chose the approval state for ONE document (1 reviewer, 1 doc).
+    """
+    raw = _mfg_raw_from_body(body)
+    if raw is None:
+        return None
     from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
 
+    return ManufacturingDocumentMetadata.from_mapping(
+        {**raw, "tenant_id": tenant_id, "document_id": document_id}
+    )
+
+
+def _datasource_approval_policy(datasource: dict) -> str:
+    """The saved datasource's trust policy: 'trusted' or (default) 'review_required'.
+
+    A datasource is review-required unless an operator EXPLICITLY marked it trusted (an audited
+    ``data_source_changed`` event at upsert). Anything unrecognised falls back to review_required
+    (fail-safe): an unknown/garbled policy must never grant auto-approval.
+    """
+    config = datasource.get("config") or {}
+    policy = str(config.get("approval_policy") or "review_required").strip().lower()
+    return "trusted" if policy == "trusted" else "review_required"
+
+
+def _approval_from_datasource_policy(datasource: dict) -> tuple[str, str, str | None]:
+    """Derive (approval_status, approval_source, effective_date) for EVERY file of a sync from the
+    saved datasource trust policy — NEVER from the (forgeable, per-request) sync body (Step 0 safety).
+
+    - 'trusted'        -> ('approved', 'imported', effective_date): the operator asserted the source
+                          is the system of record (FR-MFG-004a). effective_date defaults to today so
+                          the doc is approved+effective and immediately citable for high-risk answers.
+    - 'review_required'-> ('pending_review', 'workflow', None): each file enters the human review
+                          queue. pending_review is usable as a non-primary / non-high-risk basis but
+                          is NEVER an approved+effective citation, so a high-risk answer stays blocked
+                          (APPROVED_CITATION_MISSING) until a human approves it.
+    """
+    if _datasource_approval_policy(datasource) == "trusted":
+        config = datasource.get("config") or {}
+        eff = config.get("approval_effective_date") or _now()[:10]
+        return ("approved", "imported", str(eff))
+    return ("pending_review", "workflow", None)
+
+
+def _mfg_metadata_for_sync(body: dict, datasource: dict, tenant_id: str, document_id: str):
+    """Sync-time manufacturing metadata for ONE synced file.
+
+    NON-approval fields (equipment, safety_category, …) may still come from the sync body, but the
+    approval triplet (approval_status / approval_source / effective_date) is ALWAYS overridden by the
+    saved datasource trust policy — the body can never self-grant 'approved' for a connector sync.
+
+    Always returns metadata (never None): every synced file carries an EXPLICIT approval_status
+    (pending_review at minimum), closing the 'absent metadata == usable primary' gap (gate.py
+    ``_usable_primary(None) is True``).
+    """
+    from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
+
+    raw = dict(_mfg_raw_from_body(body) or {})
+    status, source, eff = _approval_from_datasource_policy(datasource)
+    raw["approval_status"] = status
+    raw["approval_source"] = source
+    raw["effective_date"] = eff
     return ManufacturingDocumentMetadata.from_mapping(
         {**raw, "tenant_id": tenant_id, "document_id": document_id}
     )

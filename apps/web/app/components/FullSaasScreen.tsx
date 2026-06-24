@@ -2341,6 +2341,12 @@ function AddSourceBody() {
   const [sourceId, setSourceId] = useState("upload");
   const [approvalStatus, setApprovalStatus] = useState("approved");
   const [effectiveDate, setEffectiveDate] = useState(todayIso());
+  // Connector (multi-file) trust policy. Default review_required so synced files land in the review
+  // queue (pending_review) — never auto-approved. 'trusted' inherits approval from the source of
+  // truth (approval_source=imported) so a governed source approves all its files at sync time.
+  const [approvalPolicy, setApprovalPolicy] = useState<"review_required" | "trusted">(
+    "review_required",
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<IngestedDoc | null>(null);
@@ -2392,6 +2398,10 @@ function AddSourceBody() {
             source_type: selectedSource,
             display_name: selectedSourceDef.name,
             oauth_provider: selectedConfig.oauth ?? null,
+            // Trust policy (server derives every synced file's approval state from this, not from the
+            // sync request): 'trusted' => approved+imported; 'review_required' => pending_review.
+            approval_policy: approvalPolicy,
+            approval_effective_date: approvalPolicy === "trusted" ? effectiveDate || todayIso() : null,
             ...configValues,
           },
           sync_schedule: configValues.sync_schedule || null,
@@ -2423,16 +2433,14 @@ function AddSourceBody() {
     setError(null);
     try {
       const token = await getSessionToken();
+      // No approval block here: the server derives every synced file's approval state from the saved
+      // datasource trust policy (config.approval_policy), so the sync request can never self-grant
+      // 'approved'. review_required => files land in pending_review for the review queue.
       const sync = await adminSourceSync(
         datasourceId,
         {
           collection_id: collectionId.trim() || "manuals",
           limit: 25,
-          manufacturing: {
-            approval_status: approvalStatus,
-            effective_date: effectiveDate || null,
-            approval_source: "workflow",
-          },
         },
         token,
       );
@@ -2447,7 +2455,11 @@ function AddSourceBody() {
         failed_count: sync.failed_count,
         synced_at: new Date().toISOString(),
       });
-      setConfigMessage(`${selectedSourceDef.name} の接続設定を保存し、同期を開始しました。`);
+      const policyNote =
+        approvalPolicy === "trusted"
+          ? `${sync.changed_count ?? 0} 件を「承認済み（信頼ソース）」として取り込みました。`
+          : `${sync.changed_count ?? 0} 件を「承認待ち（pending_review）」として取り込みました。レビューキューで承認すると正式な根拠になります。`;
+      setConfigMessage(`${selectedSourceDef.name} の同期を開始しました。${policyNote}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "同期開始に失敗しました");
     } finally {
@@ -2684,19 +2696,25 @@ function AddSourceBody() {
                 <input value={sourceId} onChange={(e) => setSourceId(e.target.value)} />
               </label>
               <label>
-                <span>承認状態</span>
-                <select value={approvalStatus} onChange={(e) => setApprovalStatus(e.target.value)}>
-                  {APPROVAL_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
+                <span>信頼ポリシー</span>
+                <select
+                  value={approvalPolicy}
+                  onChange={(e) => setApprovalPolicy(e.target.value as "review_required" | "trusted")}
+                >
+                  <option value="review_required">レビューが必要（pending_review で取込）</option>
+                  <option value="trusted">信頼する（承認済みとして取込）</option>
                 </select>
               </label>
-              <label>
-                <span>発効日</span>
-                <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
-              </label>
+              {approvalPolicy === "trusted" && (
+                <label>
+                  <span>発効日（信頼ソース）</span>
+                  <input
+                    type="date"
+                    value={effectiveDate}
+                    onChange={(e) => setEffectiveDate(e.target.value)}
+                  />
+                </label>
+              )}
               {selectedConfig.fields.map((field) => (
                 <label key={field.id}>
                   <span>{field.label}</span>
@@ -2709,6 +2727,12 @@ function AddSourceBody() {
                 </label>
               ))}
             </div>
+
+            <p className="ops-note">
+              {approvalPolicy === "trusted"
+                ? "信頼ソース: 同期した全ファイルを承認済み（source-of-truth）として取り込みます。1件ずつのレビューは行いません。"
+                : "既定: 同期した全ファイルは pending_review で取り込まれ、レビューキューで承認するまで高リスク回答の正式な根拠にはなりません。"}
+            </p>
 
             <div className="screen-actions">
               <button type="submit" disabled={configSaving}>
