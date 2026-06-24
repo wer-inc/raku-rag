@@ -115,6 +115,24 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)
 
+    def test_migrate_seed_oneoff_task_is_wired(self) -> None:
+        # A one-off in-VPC task must apply migrations + seed (Aurora is private-isolated), with the
+        # outputs scripts/aws/migrate-seed.sh needs to RunTask it.
+        for token in (
+            "MigrateSeedTaskDefinition",
+            'file: "infra/ops/Dockerfile"',
+            "scripts/pg-migrate.sh up",
+            "demo_seed.sh",
+            "EcsClusterName",
+            "MigrateSeedTaskDefinitionArn",
+            "PrivateSubnetIds",
+            "EcsTaskSecurityGroupId",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.stack)
+        self.assertTrue((ROOT / "infra/ops/Dockerfile").exists())
+        self.assertTrue((ROOT / "scripts/aws/migrate-seed.sh").exists())
+
     def test_frontend_hosting_context_is_wired(self) -> None:
         for token in (
             "FrontendHostingMode",

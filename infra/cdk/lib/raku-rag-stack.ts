@@ -636,6 +636,48 @@ export class RakuRagStack extends cdk.Stack {
       `http://${answerService.loadBalancer.loadBalancerDnsName}:8088`
     );
 
+    // One-off ops task (NOT a service): applies schema migrations (psql + the SQL files) and seeds the
+    // curated demo KB. Aurora is private-isolated and the answer-service is internal-only, so this MUST
+    // run inside the VPC. Invoked on demand by scripts/aws/migrate-seed.sh after `cdk deploy` — the
+    // outputs below give that script the cluster / task-def / subnets / SG it needs to RunTask.
+    const migrateSeedTask = new ecs.FargateTaskDefinition(this, "MigrateSeedTaskDefinition", {
+      family: `${servicePrefix}-migrate-seed`,
+      cpu: 256,
+      memoryLimitMiB: 512,
+      runtimePlatform: {
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+        cpuArchitecture: ecs.CpuArchitecture.X86_64
+      }
+    });
+    internalAuthSecret.grantRead(migrateSeedTask.taskRole);
+    database.secret?.grantRead(migrateSeedTask.taskRole);
+    migrateSeedTask.addContainer("MigrateSeedContainer", {
+      image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "infra/ops/Dockerfile" }),
+      entryPoint: ["/bin/bash", "-lc"],
+      // migrate (idempotent) -> then seed the demo KB via the internal answer-service ALB.
+      command: [
+        `set -euo pipefail; export POSTGRES_URL="${PG_URL_EXPR}"; ` +
+          `scripts/pg-migrate.sh up; ` +
+          `ANSWER_SERVICE_URL="http://${answerService.loadBalancer.loadBalancerDnsName}:8088" ` +
+          `bash scripts/demo/demo_seed.sh`
+      ],
+      essential: true,
+      logging: ecs.LogDrivers.awsLogs({
+        streamPrefix: "migrate-seed",
+        logRetention: logs.RetentionDays.ONE_MONTH
+      }),
+      environment: {
+        STAGE_NAME: props.stageName,
+        DATABASE_HOST: database.clusterEndpoint.hostname,
+        DATABASE_PORT: database.clusterEndpoint.port.toString(),
+        DATABASE_NAME: "raku_rag"
+      },
+      secrets: {
+        RAKU_INTERNAL_AUTH_SECRET: ecs.Secret.fromSecretsManager(internalAuthSecret, "secret"),
+        DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password")
+      }
+    });
+
     // Langfuse (self-hosted observability) is an always-on Fargate task + internal ALB — pure
     // overhead for a minimal demo/early-prod env, so it only deploys when minimalSpec is off.
     let langfuseService: ecsPatterns.ApplicationLoadBalancedFargateService | undefined;
@@ -841,6 +883,17 @@ export class RakuRagStack extends cdk.Stack {
     }
     new cdk.CfnOutput(this, "AnswerServiceInternalLoadBalancerDnsName", {
       value: answerService.loadBalancer.loadBalancerDnsName
+    });
+    // Inputs for scripts/aws/migrate-seed.sh (one-off RunTask after deploy).
+    new cdk.CfnOutput(this, "EcsClusterName", { value: cluster.clusterName });
+    new cdk.CfnOutput(this, "MigrateSeedTaskDefinitionArn", {
+      value: migrateSeedTask.taskDefinitionArn
+    });
+    new cdk.CfnOutput(this, "PrivateSubnetIds", {
+      value: vpc.privateSubnets.map((s) => s.subnetId).join(",")
+    });
+    new cdk.CfnOutput(this, "EcsTaskSecurityGroupId", {
+      value: ecsSecurityGroup.securityGroupId
     });
     new cdk.CfnOutput(this, "DocumentBucketName", {
       value: documentBucket.bucketName

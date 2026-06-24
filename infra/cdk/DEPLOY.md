@@ -54,15 +54,19 @@ npx cdk deploy --context stage=sales  # 営業用（or prod）
 # 出力: ApiLoadBalancerDnsName / AnswerServiceInternalLoadBalancerDnsName / CognitoUserPoolId ...
 ```
 
-## デプロイ後の一回タスク（スキーマ＋シード）
-Aurora は空なので、**マイグレーション適用**が必須（営業用はさらにデモ KB をシード）：
+## デプロイ後の一回タスク（スキーマ＋シード）— ワンコマンド化済み
+Aurora は空なので **マイグレーション適用＋デモKBシード**が必須。Aurora は隔離サブネット、answer-service は
+内部のみ＝**VPC内実行が必要**。これを `MigrateSeedTask`（専用 ops 像 `infra/ops/Dockerfile`：psql＋
+`scripts/`＋`infra/db/`）として CDK に内蔵し、デプロイ後に **1コマンド**で実行できます：
 ```bash
-# answer-service イメージ(= src + scripts + psql)で一回限り run-task、または踏み台から:
-#   POSTGRES_URL="postgresql://raku_rag:<pw>@<AuroraEndpoint>:5432/raku_rag" bash scripts/pg-migrate.sh up
-# 営業デモ KB をシード（answer-service が稼働後）:
-#   ANSWER_SERVICE_URL="http://<AnswerServiceInternalLB>:8088" bash scripts/demo/demo_seed.sh
+AWS_REGION=ap-northeast-1 STACK=RakuRag-sales bash scripts/aws/migrate-seed.sh
 ```
-（CDK へのマイグレ自動化＝ECS RunTask カスタムリソースは未。当面は上記ワンオフ。）
+スクリプトがスタック出力（cluster / task-def / private subnets / SG）を読んで ECS RunTask を起動し、
+`scripts/pg-migrate.sh up`（冪等）→ `scripts/demo/demo_seed.sh`（18件KB）を流して終了を待ちます。失敗時は
+CloudWatch ログを案内。`prod` なら `STACK=RakuRag-prod`。
+
+> 補足：このタスクは**常駐サービスではない**（呼ぶまで課金ゼロ）。answer-service の `/healthz` は浅いので
+> 空スキーマでもデプロイは安定 → デプロイ完了後にこのスクリプトを実行、の順で動きます。
 
 ## フロント（web）— 2通り
 **A. AWS内で完結（推奨・同一オリジン）** `--context frontendHosting=aws-nextjs`
