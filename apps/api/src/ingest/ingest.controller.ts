@@ -1,6 +1,7 @@
 import { BadGatewayException, Body, Controller, HttpCode, Post, Req } from "@nestjs/common";
 import type { Request } from "express";
 import type { IngestRequest, IngestResponse } from "@raku-rag/shared";
+import { internalAuthHeaders } from "../auth/internal-auth";
 
 @Controller({ path: "ingest", version: "1" })
 export class IngestController {
@@ -25,7 +26,7 @@ export class IngestController {
     };
     const upstream = await fetch(`${base}/internal/ingest`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...internalAuthHeaders() },
       body: JSON.stringify(payload),
     }).catch(() => {
       throw new BadGatewayException("answer-service unreachable");

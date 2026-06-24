@@ -7,6 +7,7 @@ import type {
   ProviderPolicyValidationRequest,
   ProviderPolicyValidationResponse,
 } from "@raku-rag/shared";
+import { internalAuthHeaders } from "../auth/internal-auth";
 
 @Injectable()
 export class ProviderPolicyService {
@@ -21,6 +22,7 @@ export class ProviderPolicyService {
       "x-raku-user-id": p.user_id,
       "x-raku-groups": JSON.stringify(p.groups),
       "x-raku-roles": JSON.stringify(p.roles),
+      ...internalAuthHeaders(),
     };
   }
 

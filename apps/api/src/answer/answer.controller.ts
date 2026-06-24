@@ -1,6 +1,7 @@
 import { BadGatewayException, Body, Controller, HttpCode, Post, Req } from "@nestjs/common";
 import type { Request } from "express";
 import type { AnswerRequest, AnswerResponse } from "@raku-rag/shared";
+import { internalAuthHeaders } from "../auth/internal-auth";
 
 /**
  * Step 4a — `/v1/answer` product facade. This is a THIN HTTP boundary: AuthMiddleware authenticates the
@@ -28,7 +29,7 @@ export class AnswerController {
     };
     const upstream = await fetch(`${base}/internal/answer`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...internalAuthHeaders() },
       body: JSON.stringify(payload),
     }).catch(() => {
       throw new BadGatewayException("answer-service unreachable");

@@ -8,6 +8,7 @@ import type {
   RetrievalProfileUpsertRequest,
 } from "@raku-rag/shared";
 import { findIdentifierMatches } from "./identifier-match";
+import { internalAuthHeaders } from "../auth/internal-auth";
 
 export interface RetrievalCandidate {
   chunk_id: string;
@@ -42,6 +43,7 @@ export class RetrievalProfileService {
       "x-raku-user-id": p.user_id,
       "x-raku-groups": JSON.stringify(p.groups),
       "x-raku-roles": JSON.stringify(p.roles),
+      ...internalAuthHeaders(),
     };
   }
 

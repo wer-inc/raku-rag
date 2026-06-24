@@ -13,6 +13,7 @@ import {
 import type { Request } from "express";
 import type { ManufacturingAnswerRequest, ManufacturingAnswerResponse } from "@raku-rag/shared";
 import { assertAdminMutationAllowed, assertReadViewAllowed } from "../auth/roles";
+import { internalAuthHeaders } from "../auth/internal-auth";
 
 /**
  * P1-1 — `/v1/manufacturing/answer` product facade. THIN HTTP boundary: AuthMiddleware authenticates
@@ -49,6 +50,7 @@ export class ManufacturingController {
       "x-raku-user-id": p.user_id,
       "x-raku-groups": JSON.stringify(p.groups),
       "x-raku-roles": JSON.stringify(p.roles),
+      ...internalAuthHeaders(),
     };
   }
 

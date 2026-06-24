@@ -10,6 +10,7 @@ import {
   Req,
 } from "@nestjs/common";
 import type { Request } from "express";
+import { internalAuthHeaders } from "../auth/internal-auth";
 
 type JsonObject = Record<string, unknown>;
 
@@ -26,6 +27,7 @@ export class InvestmentController {
       "x-raku-user-id": p.user_id,
       "x-raku-groups": JSON.stringify(p.groups),
       "x-raku-roles": JSON.stringify(p.roles),
+      ...internalAuthHeaders(),
     };
   }
 

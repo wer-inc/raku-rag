@@ -1,6 +1,7 @@
 import { BadGatewayException, Controller, Get, NotFoundException, Param, Req } from "@nestjs/common";
 import type { Request } from "express";
 import type { VisualAssetResponse } from "@raku-rag/shared";
+import { internalAuthHeaders } from "../auth/internal-auth";
 
 @Controller({ path: "assets", version: "1" })
 export class AssetsController {
@@ -15,6 +16,7 @@ export class AssetsController {
       "x-raku-user-id": p.user_id,
       "x-raku-groups": JSON.stringify(p.groups),
       "x-raku-roles": JSON.stringify(p.roles),
+      ...internalAuthHeaders(),
     };
   }
 

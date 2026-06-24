@@ -28,6 +28,7 @@ import type {
   QueryProfileUpsertRequest,
 } from "@raku-rag/shared";
 import { assertAdminMutationAllowed } from "../auth/roles";
+import { internalAuthHeaders } from "../auth/internal-auth";
 
 @Controller({ path: "admin", version: "1" })
 export class AdminSettingsController {
@@ -42,6 +43,7 @@ export class AdminSettingsController {
       "x-raku-user-id": p.user_id,
       "x-raku-groups": JSON.stringify(p.groups),
       "x-raku-roles": JSON.stringify(p.roles),
+      ...internalAuthHeaders(),
     };
   }
 

@@ -17,6 +17,7 @@ import type {
   EvaluationSetCreateRequest,
   EvaluationSetCreateResponse,
 } from "@raku-rag/shared";
+import { internalAuthHeaders } from "../auth/internal-auth";
 
 @Controller({ path: "evaluations", version: "1" })
 export class EvalController {
@@ -31,6 +32,7 @@ export class EvalController {
       "x-raku-user-id": p.user_id,
       "x-raku-groups": JSON.stringify(p.groups),
       "x-raku-roles": JSON.stringify(p.roles),
+      ...internalAuthHeaders(),
     };
   }
 

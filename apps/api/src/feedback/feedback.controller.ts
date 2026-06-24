@@ -1,6 +1,7 @@
 import { BadGatewayException, Body, Controller, HttpCode, Post, Req } from "@nestjs/common";
 import type { Request } from "express";
 import type { FeedbackRequest, FeedbackResponse } from "@raku-rag/shared";
+import { internalAuthHeaders } from "../auth/internal-auth";
 
 @Controller({ path: "feedback", version: "1" })
 export class FeedbackController {
@@ -17,6 +18,7 @@ export class FeedbackController {
         "x-raku-user-id": p.user_id,
         "x-raku-groups": JSON.stringify(p.groups),
         "x-raku-roles": JSON.stringify(p.roles),
+        ...internalAuthHeaders(),
       },
       body: JSON.stringify(body),
     }).catch(() => {
