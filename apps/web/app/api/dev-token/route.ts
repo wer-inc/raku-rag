@@ -28,7 +28,11 @@ function enabled(): boolean {
 // reviewer is granted tenant_admin so the human review loop (assign/approve, document approval) is
 // usable locally; every other identity gets no roles (reads work; admin mutations are server-rejected).
 const DEV_ROLES_BY_USER: Record<string, string[]> = {
-  alice: ["tenant_admin"],
+  alice: ["tenant_admin", "reviewer"],
+  bob: ["field_user"],
+  carol: ["reviewer"],
+  dave: ["ops_owner"],
+  misaki: ["tenant_admin", "reviewer"],
 };
 
 function normalize(body: Record<string, unknown>): DevClaims | null {

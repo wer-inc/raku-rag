@@ -20,6 +20,7 @@ stdlib only.
 
 from __future__ import annotations
 
+import base64
 import os
 from datetime import date, datetime, timedelta, timezone
 
@@ -30,9 +31,11 @@ from raku_rag.manufacturing.api import record_answer_decision, record_answer_fee
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, ManufacturingAnswerService
 from raku_rag.manufacturing.api.dashboard import DashboardService
 from raku_rag.manufacturing.api.drafts import DraftService
+from raku_rag.manufacturing.api.improvements import ImprovementQueueService
 from raku_rag.manufacturing.api.ingest_metadata import ManufacturingSyncStatusService
 from raku_rag.manufacturing.api.policy import GovernanceService
 from raku_rag.manufacturing.api.search_ext import ManufacturingSearchService
+from raku_rag.providers.parsers import parse_cell_anchor
 from raku_rag.manufacturing.api.trouble import TroubleCaseSearchService
 from raku_rag.manufacturing.domain.acl_mapping import ManufacturingScope, apply_scope, record_denial
 from raku_rag.manufacturing.domain.audit import AuditLogEntry, InMemoryAuditLogWriter
@@ -216,6 +219,7 @@ class ManufacturingSystem:
             retention=self.retention,
             materialized_kpi_store=self.kpi_materializations,
         )
+        self._improvements = ImprovementQueueService(audit=self.audit)
         self._sync_status = ManufacturingSyncStatusService(self.control_plane)
 
     # --- admin / ACL (delegates to 001) -----------------------------------------------------------
@@ -291,7 +295,11 @@ class ManufacturingSystem:
             self._mvp.registry.put(doc)
 
     def list_documents(
-        self, principal: IdentityClaims, *, collection_id: str | None = None
+        self,
+        principal: IdentityClaims,
+        *,
+        collection_id: str | None = None,
+        approval_status: str | None = None,
     ) -> list[dict]:
         """ACL-filtered manufacturing document inventory for the ドキュメント一覧 screen.
 
@@ -350,8 +358,207 @@ class ManufacturingSystem:
                     "safety_category": getattr(meta, "safety_category", None),
                 }
             )
+        if approval_status:
+            out = [d for d in out if d.get("approval_status") == approval_status]
         out.sort(key=lambda d: (d["collection_id"] or "", d["document_id"]))
         return out
+
+    def get_document_detail(
+        self, principal: IdentityClaims, document_id: str
+    ) -> dict | None:
+        """ACL-filtered document inventory row plus chunk summaries for review / citation view."""
+        tenant_id = principal.tenant_id
+        doc = self._mvp.registry.get(tenant_id, document_id)
+        if doc is None or doc.tombstone:
+            return None
+        if not self._mvp.acl.can_read_document(principal, doc):
+            return None
+        meta = self.get_mfg_meta(tenant_id, document_id)
+        kind = getattr(getattr(meta, "document_kind", None), "value", None)
+        status = getattr(getattr(meta, "approval_status", None), "value", None)
+        visible = self._mvp.acl.visibility(principal)
+        chunks: list[dict] = []
+        for chunk, _vec in self._mvp.store.iter_items():
+            if chunk.tenant_id != tenant_id or chunk.document_id != document_id:
+                continue
+            if chunk.tombstone or not visible(chunk):
+                continue
+            chunks.append(
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "text": chunk.text,
+                    "position": chunk.position,
+                    "heading_path": list(chunk.heading_path or ()),
+                    "metadata": dict(chunk.metadata or {}),
+                }
+            )
+        chunks.sort(key=lambda c: c["position"])
+        return {
+            "document_id": doc.document_id,
+            "collection_id": doc.collection_id,
+            "source_id": doc.source_id,
+            "document_kind": kind,
+            "approval_status": status if status is not None else "unknown",
+            "effective_date": getattr(meta, "effective_date", None),
+            "approved_by": getattr(meta, "approved_by", None),
+            "approved_at": getattr(meta, "approved_at", None),
+            "superseded_by": getattr(meta, "superseded_by", None),
+            "equipment": getattr(meta, "equipment", None),
+            "safety_category": getattr(meta, "safety_category", None),
+            "chunk_count": len(chunks),
+            "chunks": chunks,
+        }
+
+    def _stash_document_source(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        document_ref: str = "",
+        content_type: str = "text/plain",
+    ) -> None:
+        doc = self._mvp.registry.get(tenant_id, document_id)
+        if doc is None:
+            return
+        if document_ref:
+            doc.metadata["document_ref"] = document_ref
+        if content_type:
+            doc.metadata["content_type"] = content_type
+        self._mvp.registry.put(doc)
+
+    @staticmethod
+    def _preview_from_chunk(doc, chunk: dict) -> dict:
+        text = str(chunk.get("text") or "")
+        meta = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+        ct = str((doc.metadata.get("content_type") if doc else None) or "text/plain")
+        anchor = parse_cell_anchor(text)
+        kind = "text"
+        if "spreadsheet" in ct or anchor is not None:
+            kind = "spreadsheet"
+        elif "pdf" in ct:
+            kind = "pdf"
+        elif "word" in ct or "docx" in ct:
+            kind = "word"
+        preview: dict = {"kind": kind, "content_type": ct}
+        if anchor is not None:
+            sheet, row, col = anchor
+            preview.update(
+                {
+                    "sheet_name": sheet,
+                    "row": row,
+                    "col": col,
+                    "cell_range": f"{sheet}!R{row}C{col}",
+                }
+            )
+        heading = chunk.get("heading_path") or []
+        if heading:
+            preview["heading_path"] = list(heading)
+        page = meta.get("page_number")
+        if page not in (None, "", 0):
+            preview["page_number"] = int(page)
+        ref = doc.metadata.get("document_ref") if doc else None
+        if ref:
+            preview["has_source_file"] = True
+        return preview
+
+    def get_citation_source(
+        self,
+        principal: IdentityClaims,
+        document_id: str,
+        *,
+        chunk_id: str | None = None,
+    ) -> dict | None:
+        """Return citation-view payload: approval metadata + chunk text + structured preview."""
+        tenant_id = principal.tenant_id
+        doc = self._mvp.registry.get(tenant_id, document_id)
+        detail = self.get_document_detail(principal, document_id)
+        if detail is None:
+            return None
+        chunks = detail["chunks"]
+        if chunk_id:
+            chunks = [c for c in chunks if c["chunk_id"] == chunk_id]
+            if not chunks:
+                return None
+        primary = chunks[0] if chunks else {}
+        preview = self._preview_from_chunk(doc, primary) if doc and primary else {"kind": "text"}
+        return {
+            "document_id": detail["document_id"],
+            "collection_id": detail["collection_id"],
+            "source_id": detail["source_id"],
+            "approval_status": detail["approval_status"],
+            "effective_date": detail["effective_date"],
+            "superseded_by": detail["superseded_by"],
+            "document_kind": detail["document_kind"],
+            "chunks": chunks,
+            "preview": preview,
+        }
+
+    def get_document_file(
+        self, principal: IdentityClaims, document_id: str, *, max_bytes: int = 10_485_760
+    ) -> dict | None:
+        """Return source file bytes (dev ``file://`` refs only) for citation preview."""
+        tenant_id = principal.tenant_id
+        doc = self._mvp.registry.get(tenant_id, document_id)
+        if doc is None or doc.tombstone:
+            return None
+        if not self._mvp.acl.can_read_document(principal, doc):
+            return None
+        ref = str(doc.metadata.get("document_ref") or "")
+        if not ref.startswith("file://"):
+            return None
+        path = ref[7:]
+        if not os.path.isfile(path):
+            return None
+        size = os.path.getsize(path)
+        if size > max_bytes:
+            return {
+                "document_id": document_id,
+                "content_type": str(doc.metadata.get("content_type") or "application/octet-stream"),
+                "size": size,
+                "too_large": True,
+            }
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        return {
+            "document_id": document_id,
+            "content_type": str(doc.metadata.get("content_type") or "application/octet-stream"),
+            "size": len(raw),
+            "content_base64": base64.b64encode(raw).decode("ascii"),
+        }
+
+    def improvement_queue(self, principal: IdentityClaims, *, limit: int = 100) -> dict:
+        """GET /v1/manufacturing/improvements — audit-derived improvement backlog."""
+        self._audit_admin_access(
+            principal=principal, action="improvements.access", resource_type="improvements"
+        )
+        view = self._improvements.list_items(principal, limit=limit)
+        return {
+            "items": [
+                {
+                    "id": i.id,
+                    "kind": i.kind,
+                    "answer_id": i.answer_id,
+                    "document_ids": list(i.document_ids),
+                    "reason": i.reason,
+                    "created_at": i.created_at,
+                    "rating": i.rating,
+                    "safety_block_reason": i.safety_block_reason,
+                }
+                for i in view.items
+            ],
+            "total": view.total,
+            "correlation_id": view.correlation_id,
+        }
+
+    def list_drafts(
+        self,
+        tenant_id: str,
+        *,
+        status: str | None = None,
+        reviewer_id: str | None = None,
+    ) -> list[DraftArtifact]:
+        """GET /v1/manufacturing/drafts — tenant-scoped draft inventory."""
+        return self._drafts.list(tenant_id, status=status, reviewer_id=reviewer_id)
 
     # --- ingestion (001 body path + manufacturing metadata attach) --------------------------------
     def ingest_manufacturing(
@@ -376,6 +583,9 @@ class ManufacturingSystem:
         self._set_mfg_meta(tenant_id, document_id, metadata)
         # Propagate to indexed chunks (FR-MFG-003) so the metadata travels with the evidence.
         self._enricher.propagate_to_chunks(tenant_id, document_id, metadata)
+        self._stash_document_source(
+            tenant_id, document_id, document_ref=f"inline://{document_id}", content_type="text/plain"
+        )
         # Audit the ingest / metadata enrichment (reference IDs only; no body text) — FR-MFG-021.
         self._audit_ingest(
             tenant_id=tenant_id, document_id=document_id, content_type="text/plain", job=job
@@ -418,6 +628,8 @@ class ManufacturingSystem:
         # Attach manufacturing metadata to Document.metadata + propagate to chunks (FR-MFG-003).
         self._enricher.attach(tenant_id, document_id, metadata)
         self._set_mfg_meta(tenant_id, document_id, metadata)
+        file_ref = path if path.startswith("file://") else f"file://{os.path.abspath(path)}"
+        self._stash_document_source(tenant_id, document_id, document_ref=file_ref, content_type=ct)
         # Audit the ingest/parse (reference IDs only; no body text) — FR-MFG-021.
         self._audit_ingest(tenant_id=tenant_id, document_id=document_id, content_type=ct, job=job)
         return job
@@ -900,6 +1112,19 @@ class ManufacturingSystem:
     def governance_status(self, tenant_id: str) -> dict:
         """GET /v1/manufacturing/governance/status — core features + ISMAP readiness memo."""
         return self._governance.governance_status(tenant_id)
+
+    def list_audit_events(
+        self,
+        *,
+        principal: IdentityClaims,
+        action: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        """GET /v1/manufacturing/audit/events — paginated tenant-scoped audit browser."""
+        return self._governance.list_audit_events(
+            principal=principal, action=action, limit=limit, offset=offset
+        )
 
     def export_audit(self, *, principal: IdentityClaims, fmt: str = "jsonl"):
         """GET /v1/manufacturing/audit/export — tenant-scoped, reference-only, hash-chain exposed."""

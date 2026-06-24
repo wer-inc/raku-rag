@@ -167,6 +167,21 @@ export interface ManufacturingSourceSyncStatus {
   [key: string]: unknown;
 }
 
+/** GET /v1/manufacturing/documents — tenant document inventory row. */
+export interface ManufacturingDocumentSummary {
+  document_id: string;
+  collection_id: string;
+  source_id: string;
+  document_kind: string | null;
+  approval_status: string;
+  effective_date: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  superseded_by: string | null;
+  equipment: string | null;
+  safety_category: string | null;
+}
+
 /** Ingestion-run count rollup (nested under `summary`). */
 export interface ManufacturingRunSummary {
   document_count?: number;
@@ -261,4 +276,97 @@ export interface DocumentApprovalRequest {
 export interface DocumentApprovalResult {
   document_id: string;
   approval_state: unknown;
+}
+
+/** GET /v1/manufacturing/drafts — tenant draft inventory. */
+export interface DraftListResponse {
+  drafts: DraftArtifact[];
+}
+
+/** GET /v1/admin/documents — tenant document inventory with approval metadata. */
+export interface AdminDocumentListResponse {
+  documents: ManufacturingDocumentSummary[];
+}
+
+export interface DocumentChunkSummary {
+  chunk_id: string;
+  text: string;
+  position: number;
+  heading_path: string[];
+  metadata: Record<string, unknown>;
+}
+
+/** GET /v1/admin/documents/:id — document detail for review / citation. */
+export interface AdminDocumentDetail {
+  document_id: string;
+  collection_id: string;
+  source_id: string;
+  document_kind: string | null;
+  approval_status: string;
+  effective_date: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  superseded_by: string | null;
+  equipment: string | null;
+  safety_category: string | null;
+  chunk_count: number;
+  chunks: DocumentChunkSummary[];
+}
+
+/** GET /v1/admin/documents/:id/citation-view — citation viewer payload. */
+export interface CitationSourceView {
+  document_id: string;
+  collection_id: string;
+  source_id: string;
+  approval_status: string;
+  effective_date: string | null;
+  superseded_by: string | null;
+  document_kind: string | null;
+  chunks: DocumentChunkSummary[];
+  preview?: CitationPreview;
+}
+
+/** GET /v1/manufacturing/audit/events — paginated audit browser. */
+export interface AuditEventListResponse {
+  events: Record<string, unknown>[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface CitationPreview {
+  kind: "text" | "spreadsheet" | "pdf" | "word" | string;
+  content_type: string;
+  sheet_name?: string;
+  row?: number;
+  col?: number;
+  cell_range?: string;
+  heading_path?: string[];
+  page_number?: number;
+  has_source_file?: boolean;
+}
+
+export interface ImprovementQueueItem {
+  id: string;
+  kind: string;
+  answer_id: string | null;
+  document_ids: string[];
+  reason: string | null;
+  created_at: string;
+  rating?: number | null;
+  safety_block_reason?: string | null;
+}
+
+export interface ImprovementQueueResponse {
+  items: ImprovementQueueItem[];
+  total: number;
+  correlation_id: string;
+}
+
+export interface DocumentFileResponse {
+  document_id: string;
+  content_type: string;
+  size: number;
+  content_base64?: string;
+  too_large?: boolean;
 }

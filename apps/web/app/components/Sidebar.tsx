@@ -2,19 +2,26 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   activeNavHref,
   HOME_NAV,
-  NAV_GROUPS,
-  REVIEW_BADGE_COUNT,
-  WORKSPACE_IDENTITY,
   type NavIconName,
   type NavItem,
+  REVIEW_BADGE_COUNT,
+  WORKSPACE_IDENTITY,
 } from "../../lib/full-saas";
-import { clearSessionToken } from "../../lib/session";
+import {
+  filterNavGroups,
+  homeNavVisible,
+  primaryRole,
+  roleLabel,
+  rolesForUser,
+  userDisplayName,
+  type WorkspaceRole,
+} from "../../lib/nav-rbac";
+import { clearSessionToken, loadSessionUserId } from "../../lib/session";
 
-// Inline icon set transcribed from the standalone sidebar. Static,
-// developer-authored SVG path data — no user input flows in here.
 const ICON_PATHS: Record<NavIconName | "orgswitch" | "signout", string> = {
   home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
   answers: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="m9 10 2 2 4-4"/>',
@@ -77,6 +84,19 @@ export default function Sidebar() {
   const pathname = usePathname() ?? "/";
   const router = useRouter();
   const active = activeNavHref(pathname);
+  const [userId, setUserId] = useState(DEMO_USER_FALLBACK);
+  const [roles, setRoles] = useState<WorkspaceRole[]>(["reviewer", "tenant_admin"]);
+
+  useEffect(() => {
+    const uid = loadSessionUserId() ?? "misaki";
+    setUserId(uid);
+    setRoles(rolesForUser(uid));
+  }, []);
+
+  const groups = filterNavGroups(roles);
+  const showHome = homeNavVisible(roles);
+  const displayName = userDisplayName(userId);
+  const displayRole = roleLabel(primaryRole(roles));
 
   function onSignOut() {
     clearSessionToken();
@@ -99,8 +119,8 @@ export default function Sidebar() {
       </div>
 
       <nav className="sidebar-nav" aria-label="Primary">
-        <NavLink item={HOME_NAV} active={active === HOME_NAV.href} />
-        {NAV_GROUPS.map((group) => (
+        {showHome && <NavLink item={HOME_NAV} active={active === HOME_NAV.href} />}
+        {groups.map((group) => (
           <div key={group.label} className="sidebar-group">
             <p className="sidebar-group-label">{group.label}</p>
             {group.items.map((item) => (
@@ -112,11 +132,11 @@ export default function Sidebar() {
 
       <div className="sidebar-foot">
         <span className="sidebar-foot-avatar" aria-hidden="true">
-          {WORKSPACE_IDENTITY.userInitial}
+          {displayName.slice(0, 1)}
         </span>
         <span className="sidebar-foot-copy">
-          <span className="sidebar-foot-name">{WORKSPACE_IDENTITY.userName}</span>
-          <span className="sidebar-foot-role">{WORKSPACE_IDENTITY.userRole}</span>
+          <span className="sidebar-foot-name">{displayName}</span>
+          <span className="sidebar-foot-role">{displayRole}</span>
         </span>
         <button type="button" className="sidebar-foot-signout" title="サインアウト" onClick={onSignOut}>
           <NavIcon name="signout" size={17} />
@@ -125,3 +145,5 @@ export default function Sidebar() {
     </aside>
   );
 }
+
+const DEMO_USER_FALLBACK = "misaki";

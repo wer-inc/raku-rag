@@ -14,12 +14,14 @@ mock until the backend exists, and keep the GAP visible in `screens.manifest.jso
 | `add-source` | `POST /v1/admin/datasources/:source_id/test-connection` | Validate connector credentials/settings before enabling sync. |
 | `document-list` | `GET /v1/admin/documents` | Tenant-scoped document inventory with approval, freshness, source, and ACL columns. |
 | `document-detail` | `GET /v1/admin/documents/:document_id` | Document metadata/body/chunk summary for review and governance workflows. |
-| `review-queue` | `GET /v1/manufacturing/drafts` | Queue of AI-authored drafts awaiting assignment/review. |
-| `review-queue` | `GET /v1/admin/documents?approval_status=pending_review` | Queue of documents waiting for approval review. |
+| `review-queue` | `GET /v1/manufacturing/drafts` | **Implemented** — tenant draft list for review backlog. |
+| `document-list` | `GET /v1/admin/documents` | **Implemented** — proxies manufacturing document inventory (+ `approval_status` filter). |
+| `document-detail` | `GET /v1/admin/documents/:document_id` | **Implemented** — ACL-filtered detail + chunk summaries. |
+| `audit-log` | `GET /v1/manufacturing/audit/events` | **Implemented** — paginated audit browser (`audit/export` remains for bulk export). |
+| `knowledge-improvement-queue` | `GET /v1/manufacturing/improvements` | **Implemented** — audit-derived improvement queue (low_rating, safety_block, etc.). |
 | `approval-workflow-settings` | `GET /v1/manufacturing/approval-workflow` | Read approval rules, required reviewers, and allowed state transitions. |
 | `approval-workflow-settings` | `PUT /v1/manufacturing/approval-workflow` | Update approval workflow rules with auditability. |
 | `quality-kpi` | `GET /v1/evaluations/runs` | List evaluation runs for quality trend and comparison views. |
-| `audit-log` | `GET /v1/manufacturing/audit/events` | Paginated/filterable audit event browser separate from export. |
 | `users` | `GET /v1/admin/users` | Tenant user directory. |
 | `users` | `POST /v1/admin/users/invites` | Invite a user to the tenant. |
 | `users` | `PATCH /v1/admin/users/:user_id` | Update user status, membership, or profile fields. |

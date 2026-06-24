@@ -88,6 +88,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/operations", label: "運用ダッシュボード", icon: "operations" },
       { href: "/operations/safety", label: "安全テレメトリ", icon: "safety" },
       { href: "/operations/quality", label: "品質・KPI", icon: "quality" },
+      { href: "/operations/poc-report", label: "PoC効果レポート", icon: "operations" },
       { href: "/operations/improvements", label: "ナレッジ改善", icon: "improvements" },
       { href: "/audit", label: "監査ログ", icon: "audit" },
       { href: "/compliance/export", label: "コンプラ出力", icon: "compliance" },

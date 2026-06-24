@@ -215,6 +215,19 @@ export class ManufacturingController {
     return this.requestCore(req, "POST", "/internal/manufacturing/drafts", body);
   }
 
+  @Get("drafts")
+  async listDrafts(
+    @Req() req: Request,
+    @Query("status") status?: string,
+    @Query("reviewer_id") reviewerId?: string,
+  ): Promise<Record<string, unknown>> {
+    return this.requestCore(
+      req,
+      "GET",
+      queryPath("/internal/manufacturing/drafts", { status, reviewer_id: reviewerId }),
+    );
+  }
+
   @Get("drafts/:artifactId")
   async draft(
     @Req() req: Request,
@@ -263,11 +276,27 @@ export class ManufacturingController {
   async documents(
     @Req() req: Request,
     @Query("collection_id") collectionId?: string,
+    @Query("approval_status") approvalStatus?: string,
   ): Promise<Record<string, unknown>> {
     return this.requestCore(
       req,
       "GET",
-      queryPath("/internal/manufacturing/documents", { collection_id: collectionId }),
+      queryPath("/internal/manufacturing/documents", {
+        collection_id: collectionId,
+        approval_status: approvalStatus,
+      }),
+    );
+  }
+
+  @Get("documents/:documentId")
+  async documentDetail(
+    @Req() req: Request,
+    @Param("documentId") documentId: string,
+  ): Promise<Record<string, unknown>> {
+    return this.requestCore(
+      req,
+      "GET",
+      `/internal/manufacturing/documents/${encodeURIComponent(documentId)}`,
     );
   }
 
@@ -353,6 +382,34 @@ export class ManufacturingController {
   async governanceStatus(@Req() req: Request): Promise<Record<string, unknown>> {
     assertReadViewAllowed(req);
     return this.requestCore(req, "GET", "/internal/manufacturing/governance/status");
+  }
+
+  @Get("improvements")
+  async improvements(
+    @Req() req: Request,
+    @Query("limit") limit?: string,
+  ): Promise<Record<string, unknown>> {
+    assertReadViewAllowed(req);
+    return this.requestCore(
+      req,
+      "GET",
+      queryPath("/internal/manufacturing/improvements", { limit }),
+    );
+  }
+
+  @Get("audit/events")
+  async auditEvents(
+    @Req() req: Request,
+    @Query("action") action?: string,
+    @Query("limit") limit?: string,
+    @Query("offset") offset?: string,
+  ): Promise<Record<string, unknown>> {
+    assertAdminMutationAllowed(req);
+    return this.requestCore(
+      req,
+      "GET",
+      queryPath("/internal/manufacturing/audit/events", { action, limit, offset }),
+    );
   }
 
   @Get("audit/export")

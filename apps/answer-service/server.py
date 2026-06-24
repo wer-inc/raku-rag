@@ -1266,6 +1266,14 @@ def make_handler(system: ProductionSystem):
                             )
                         ),
                     )
+                elif parts == ["internal", "manufacturing", "drafts"]:
+                    qs = parse_qs(parsed.query)
+                    drafts = manufacturing_system.list_drafts(
+                        self._tenant_header(),
+                        status=(qs.get("status") or [None])[0],
+                        reviewer_id=(qs.get("reviewer_id") or [None])[0],
+                    )
+                    self._send(200, {"drafts": [_jsonable(d) for d in drafts]})
                 elif len(parts) == 4 and parts[:3] == ["internal", "manufacturing", "drafts"]:
                     draft = manufacturing_system.get_draft(self._tenant_header(), parts[3])
                     (
@@ -1281,8 +1289,41 @@ def make_handler(system: ProductionSystem):
                             "documents": manufacturing_system.list_documents(
                                 _claims_from_headers(self.headers),
                                 collection_id=(qs.get("collection_id") or [None])[0],
+                                approval_status=(qs.get("approval_status") or [None])[0],
                             )
                         },
+                    )
+                elif len(parts) == 4 and parts[:3] == ["internal", "manufacturing", "documents"]:
+                    detail = manufacturing_system.get_document_detail(
+                        _claims_from_headers(self.headers), parts[3]
+                    )
+                    (
+                        self._send(200, _jsonable(detail))
+                        if detail
+                        else self._send(404, {"error": "not found"})
+                    )
+                elif parts == ["internal", "manufacturing", "audit", "events"]:
+                    qs = parse_qs(parsed.query)
+                    limit_raw = (qs.get("limit") or ["100"])[0]
+                    offset_raw = (qs.get("offset") or ["0"])[0]
+                    self._send(
+                        200,
+                        manufacturing_system.list_audit_events(
+                            principal=_claims_from_headers(self.headers),
+                            action=(qs.get("action") or [None])[0],
+                            limit=int(limit_raw) if str(limit_raw).isdigit() else 100,
+                            offset=int(offset_raw) if str(offset_raw).isdigit() else 0,
+                        ),
+                    )
+                elif parts == ["internal", "manufacturing", "improvements"]:
+                    qs = parse_qs(parsed.query)
+                    limit_raw = (qs.get("limit") or ["100"])[0]
+                    self._send(
+                        200,
+                        manufacturing_system.improvement_queue(
+                            _claims_from_headers(self.headers),
+                            limit=int(limit_raw) if str(limit_raw).isdigit() else 100,
+                        ),
                     )
                 elif parts == ["internal", "manufacturing", "dashboard"]:
                     qs = parse_qs(parsed.query)
@@ -1348,6 +1389,36 @@ def make_handler(system: ProductionSystem):
                         self._send(200, asset)
                     else:
                         self._send(404, {"error": "not found"})
+                elif (
+                    len(parts) == 5
+                    and parts[:2] == ["internal", "documents"]
+                    and parts[4] == "file"
+                ):
+                    payload = manufacturing_system.get_document_file(
+                        _claims_from_headers(self.headers), parts[3]
+                    )
+                    (
+                        self._send(200, _jsonable(payload))
+                        if payload
+                        else self._send(404, {"error": "not found"})
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:2] == ["internal", "documents"]
+                    and parts[4] == "citation-view"
+                ):
+                    qs = parse_qs(parsed.query)
+                    chunk_id = (qs.get("chunk_id") or [None])[0]
+                    payload = manufacturing_system.get_citation_source(
+                        _claims_from_headers(self.headers),
+                        parts[3],
+                        chunk_id=chunk_id,
+                    )
+                    (
+                        self._send(200, _jsonable(payload))
+                        if payload
+                        else self._send(404, {"error": "not found"})
+                    )
                 elif (
                     len(parts) == 4
                     and parts[:2] == ["internal", "documents"]

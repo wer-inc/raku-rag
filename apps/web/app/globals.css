@@ -2897,6 +2897,28 @@ button,
   color: #18181b;
 }
 
+.cv-source-text {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid var(--line, #ececec);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.cv-pdf-frame {
+  width: 100%;
+  height: 280px;
+  border: 1px solid var(--line, #ececec);
+  border-radius: 8px;
+  background: #fff;
+}
+
 .cv-note {
   margin: 0;
   font-size: 12px;

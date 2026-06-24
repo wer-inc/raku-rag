@@ -19,6 +19,8 @@ import type {
 } from "@raku-rag/shared";
 import {
   adminDataSources,
+  adminCitationView,
+  adminDocuments,
   adminSourceSync,
   type AdminSourceSyncResponse,
   apiDeleteJson,
@@ -29,6 +31,7 @@ import {
   manufacturingAnswer,
   searchChunks,
   manufacturingAssignReviewer,
+  manufacturingAuditEvents,
   manufacturingAuditExport,
   manufacturingCreateDraft,
   manufacturingDataUsePolicy,
@@ -40,6 +43,8 @@ import {
   manufacturingGovernanceStatus,
   manufacturingIngestionRun,
   manufacturingKpi,
+  manufacturingListDrafts,
+  manufacturingImprovements,
   manufacturingRequestSourceSync,
   manufacturingReviewDraft,
   manufacturingSafetyTelemetry,
@@ -825,6 +830,7 @@ function screenTitle(screen: ManifestScreen): string {
     "operations-dashboard": "運用ダッシュボード",
     "safety-telemetry": "安全テレメトリ",
     "quality-kpi": "品質・KPI",
+    "poc-effect-report": "PoC効果レポート",
     "knowledge-improvement-queue": "ナレッジ改善キュー",
     "audit-log": "監査ログ",
     "compliance-export": "コンプライアンス出力",
@@ -1274,15 +1280,44 @@ const DOC_LIFECYCLE_RANK: Record<string, number> = {
 
 function DocumentApprovalQueueBody() {
   const [docs, setDocs] = useState<IngestedDoc[]>([]);
+  const [serverDocs, setServerDocs] = useState<
+    Array<{ document_id: string; approval_status: string; collection_id: string; effective_date: string | null }>
+  >([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  async function reload() {
     setDocs(loadIngestedDocs());
+    try {
+      const token = await getSessionToken();
+      const rows = await adminDocuments(token);
+      setServerDocs(rows);
+    } catch {
+      setServerDocs([]);
+    }
+  }
+
+  useEffect(() => {
+    void reload();
   }, []);
 
-  async function transition(doc: IngestedDoc, toStatus: string) {
+  const merged = [
+    ...serverDocs.map((d) => ({
+      document_id: d.document_id,
+      filename: d.document_id,
+      collection_id: d.collection_id,
+      approval_status: d.approval_status,
+      effective_date: d.effective_date,
+      chunk_count: 0,
+      source: "server" as const,
+    })),
+    ...docs
+      .filter((d) => !serverDocs.some((s) => s.document_id === d.document_id))
+      .map((d) => ({ ...d, source: "local" as const })),
+  ];
+
+  async function transition(doc: { document_id: string; approval_status: string; effective_date: string | null }, toStatus: string) {
     if (busy) return;
     setBusy(doc.document_id);
     setError(null);
@@ -1296,7 +1331,7 @@ function DocumentApprovalQueueBody() {
         approval_status: nextStatus,
         effective_date: state.effective_date ?? doc.effective_date,
       });
-      setDocs(loadIngestedDocs());
+      await reload();
       setMessage(`${doc.document_id} を「${DOC_APPROVAL_STATUS[nextStatus]?.label ?? nextStatus}」に更新しました。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "更新に失敗しました");
@@ -1305,25 +1340,25 @@ function DocumentApprovalQueueBody() {
     }
   }
 
-  const pending = docs.filter((d) => (DOC_LIFECYCLE_RANK[d.approval_status] ?? 0) < 2);
+  const pending = merged.filter((d) => (DOC_LIFECYCLE_RANK[d.approval_status] ?? 0) < 2);
 
   return (
     <>
       <p className="src-warning">
-        取り込んだ文書は、ここで承認するまで正式な根拠になりません。承認ワークフローは前進のみで、obsolete
-        化が可能です（差し戻しは未対応・source-of-truth 上書きは import_external が必要）。
+        取り込んだ文書は、ここで承認するまで正式な根拠になりません。AIドラフトのレビュー（
+        <Link href="/reviews">レビューキュー</Link>）とは別キューです。
       </p>
       <Section
         title="文書承認キュー"
-        note={`このブラウザで取り込んだ ${docs.length} 件（承認待ち相当 ${pending.length} 件）。承認すると質問の正式な根拠になり、旧版化すると警告表示になります。`}
+        note={`テナント ${merged.length} 件（承認待ち相当 ${pending.length} 件）。承認すると質問の正式な根拠になります。`}
       >
-        {docs.length === 0 ? (
+        {merged.length === 0 ? (
           <p className="ops-empty">
             取り込んだ文書がありません。<Link href="/sources/new">ソースを追加</Link> からアップロードしてください。
           </p>
         ) : (
           <div className="approval-list">
-            {docs.map((doc) => {
+            {merged.map((doc) => {
               const st = DOC_APPROVAL_STATUS[doc.approval_status] ?? {
                 label: doc.approval_status,
                 cls: "approval-draft",
@@ -1593,8 +1628,27 @@ function ReviewQueueBody() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  async function reloadDrafts() {
+    try {
+      const token = await getSessionToken();
+      const rows = await manufacturingListDrafts(token);
+      setDrafts(
+        rows.map((d) => ({
+          artifact_id: d.artifact_id,
+          kind: d.type,
+          status: d.status,
+          source_document_ids: d.source_document_ids ?? [],
+          reviewer_id: d.reviewer_id ?? null,
+          created_at: d.created_at ?? new Date().toISOString(),
+        })),
+      );
+    } catch {
+      setDrafts(loadDrafts());
+    }
+  }
+
   useEffect(() => {
-    setDrafts(loadDrafts());
+    void reloadDrafts();
   }, []);
 
   async function onCreate(event: FormEvent) {
@@ -1901,11 +1955,82 @@ function QualityBody() {
   );
 }
 
+function PocReportBody() {
+  const [state, reload] = useLoad(async () => {
+    const token = await getSessionToken();
+    const [dashboard, telemetry, kpi, drafts] = await Promise.all([
+      manufacturingDashboard(token),
+      manufacturingSafetyTelemetry(token),
+      manufacturingKpi(token),
+      manufacturingListDrafts(token).catch(() => []),
+    ]);
+    const reviewDone = drafts.filter((d) => d.status === "approved" || d.status === "rejected").length;
+    return { dashboard, telemetry, kpi, draftCount: drafts.length, reviewDone };
+  }, []);
+  if (state.state === "loading") return <p className="ops-empty">PoCレポートを読み込み中…</p>;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
+  const { dashboard, telemetry, kpi, draftCount, reviewDone } = state.data;
+  const blocks = telemetry.safety_gate_block_breakdown ?? telemetry.block_breakdown ?? {};
+  return (
+    <>
+      <p className="src-warning">
+        PoC / 営業報告向けサマリーです。現場の自己解決、危険な断定の阻止、不足文書の可視化を重視しています。
+      </p>
+      <Section title="現場インパクト">
+        <div className="metric-grid">
+          <Stat label="自己解決率" value={`${(kpi.self_resolution_rate * 100).toFixed(0)}%`} />
+          <Stat label="根拠付き回答率" value={`${(kpi.grounded_answer_rate * 100).toFixed(0)}%`} />
+          <Stat label="根拠不足率" value={`${(kpi.insufficient_evidence_rate * 100).toFixed(0)}%`} />
+          <Stat label="低評価率" value={`${(kpi.low_rating_rate * 100).toFixed(0)}%`} />
+        </div>
+      </Section>
+      <Section title="安全・品質">
+        <FieldGrid
+          rows={[
+            ["高リスク質問数", telemetry.high_risk_query_count],
+            ["安全ゲート block", telemetry.safety_gate_block_count],
+            ["未回答質問", dashboard.unanswered_question_count],
+            ["ドラフト生成数", draftCount],
+            ["レビュー完了数", reviewDone],
+            ["よく参照された文書", kpi.frequently_referenced_documents.slice(0, 5).join(", ") || "—"],
+            ["旧版候補", kpi.obsolete_document_candidates.slice(0, 5).join(", ") || "—"],
+          ]}
+        />
+      </Section>
+      {Object.keys(blocks).length > 0 && (
+        <Section title="ゲート block 内訳">
+          <FieldGrid rows={Object.entries(blocks).map(([k, v]) => [k, String(v)])} />
+        </Section>
+      )}
+    </>
+  );
+}
+
 function ImprovementQueueBody() {
   const [items, setItems] = useState<ImprovementItem[]>([]);
+  const [serverItems, setServerItems] = useState<
+    Array<{ id: string; kind: string; answer_id: string | null; reason: string | null; created_at: string }>
+  >([]);
 
   useEffect(() => {
     setItems(loadImprovementItems());
+    void (async () => {
+      try {
+        const token = await getSessionToken();
+        const res = await manufacturingImprovements(token);
+        setServerItems(
+          res.items.map((i) => ({
+            id: i.id,
+            kind: i.kind,
+            answer_id: i.answer_id,
+            reason: i.reason,
+            created_at: i.created_at,
+          })),
+        );
+      } catch {
+        setServerItems([]);
+      }
+    })();
   }, []);
 
   function resolve(id: string) {
@@ -1923,11 +2048,44 @@ function ImprovementQueueBody() {
 
   const open = items.filter((i) => i.status === "open");
 
+  const kindLabel: Record<string, string> = {
+    low_rating: "低評価",
+    unanswered: "未回答",
+    insufficient_evidence: "根拠不足",
+    safety_block: "安全ブロック",
+    obsolete_only: "旧版のみヒット",
+  };
+
   return (
     <>
       <p className="src-warning">
-        回答への「要改善」フィードバックを集約します。理由ごとに、文書追加・FAQ化・メタデータ修正・再評価につなげてください。
+        監査ログ由来の改善候補と、ブラウザ内フィードバックを合わせて表示します。
       </p>
+      {serverItems.length > 0 && (
+        <Section title="監査由来の改善候補" note={`${serverItems.length} 件`}>
+          <div className="improve-list">
+            {serverItems.map((item) => (
+              <article className="improve-row" key={item.id}>
+                <div className="improve-row-titles">
+                  <span className="citation-chip approval-obsolete">{kindLabel[item.kind] ?? item.kind}</span>
+                  <strong>{item.answer_id ?? item.id}</strong>
+                  <span>
+                    {item.reason ?? "—"} · {new Date(item.created_at).toLocaleString("ja-JP")}
+                  </span>
+                </div>
+                <div className="improve-row-actions">
+                  <Link className="button-link secondary" href="/sources/new">
+                    文書を追加
+                  </Link>
+                  <Link className="button-link secondary" href="/admin/retrieval/debug">
+                    再評価
+                  </Link>
+                </div>
+              </article>
+            ))}
+          </div>
+        </Section>
+      )}
       <Section
         title="改善キュー"
         note={`未対応 ${open.length} 件 / 全 ${items.length} 件（このブラウザのフィードバック）。`}
@@ -2045,6 +2203,7 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
       {screen.id === "operations-dashboard" && <GenericOpsOverview />}
       {screen.id === "safety-telemetry" && <OperationTelemetryBody />}
       {screen.id === "quality-kpi" && <QualityBody />}
+      {screen.id === "poc-effect-report" && <PocReportBody />}
       {screen.id === "knowledge-improvement-queue" && <ImprovementQueueBody />}
       {screen.id === "audit-log" && <AuditLogBody />}
       {screen.id === "compliance-export" && <ComplianceExportBody />}
@@ -3220,12 +3379,18 @@ function fmtTime(value?: string): string {
 function AuditLogBody() {
   const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
-    return manufacturingAuditExport(token, "dict");
+    try {
+      return manufacturingAuditEvents(token, { limit: 200 });
+    } catch {
+      const exported = await manufacturingAuditExport(token, "dict");
+      const records = (exported as { records?: AuditRecord[] }).records ?? [];
+      return { events: records, total: records.length, offset: 0, limit: records.length };
+    }
   }, []);
   if (state.state === "loading") return <p className="ops-empty">監査ログを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
 
-  const records = ((state.data as { records?: AuditRecord[] }).records ?? []) as AuditRecord[];
+  const records = (state.data.events ?? []) as AuditRecord[];
 
   function onExportCsv() {
     const header = [
@@ -3266,7 +3431,7 @@ function AuditLogBody() {
       <p className="src-warning">
         監査ログは改ざん不可・追記のみ（ハッシュチェーン）。重要操作の actor / action / resource / decision を記録します。
       </p>
-      <Section title="監査イベント" note={`${records.length} 件`}>
+      <Section title="監査イベント" note={`${state.data.total ?? records.length} 件`}>
         <div className="screen-actions">
           <button type="button" onClick={onExportCsv} disabled={records.length === 0}>
             CSV を出力

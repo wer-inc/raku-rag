@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "description": "Manufacturing MVP UAT synthetic fixtures (text-only; no real tenant data).",
+  "fixtures": [
+    {
+      "test_ids": ["MFG-01"],
+      "document_id": "EQ-PRESS-100-manual-v3",
+      "path": "manufacturing/EQ-PRESS-100-manual-v3.txt",
+      "document_type": "manual",
+      "approval_status": "approved",
+      "metadata": {
+        "equipment_id": "EQ-PRESS-100",
+        "alarm_code": "E-142",
+        "factory_id": "F001"
+      }
+    },
+    {
+      "test_ids": ["MFG-02"],
+      "document_id": "safety-cover-memo-draft",
+      "path": "manufacturing/safety-cover-memo-draft.txt",
+      "document_type": "meeting_minutes",
+      "approval_status": "draft",
+      "metadata": { "hazard_tags": "safety_cover" }
+    },
+    {
+      "test_ids": ["MFG-05"],
+      "document_id": "EQ-PRESS-100-manual-v2-obsolete",
+      "path": "manufacturing/EQ-PRESS-100-manual-v2-obsolete.txt",
+      "document_type": "manual",
+      "approval_status": "obsolete",
+      "metadata": { "superseded_by": "EQ-PRESS-100-manual-v3" }
+    },
+    {
+      "test_ids": ["MFG-03"],
+      "document_id": "quality-history-2022-2025",
+      "path": "manufacturing/quality-history-2022-2025.txt",
+      "document_type": "quality_report",
+      "approval_status": "approved",
+      "metadata": { "customer": "A社", "part_number": "PN-10024" }
+    }
+  ]
+}

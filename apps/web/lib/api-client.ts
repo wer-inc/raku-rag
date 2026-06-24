@@ -1,9 +1,14 @@
 import type {
   AdminDataSource,
+  AdminDocumentDetail,
   AnswerRequest,
   AnswerResponse,
   AssignReviewerRequest,
+  AuditEventListResponse,
+  CitationSourceView,
   CreateDraftRequest,
+  DocumentFileResponse,
+  ImprovementQueueResponse,
   DocumentApprovalRequest,
   DocumentApprovalResult,
   DraftArtifact,
@@ -13,6 +18,7 @@ import type {
   IngestRequest,
   IngestResponse,
   KnowledgeOpsDashboard,
+  ManufacturingDocumentSummary,
   ManufacturingAnswerRequest,
   ManufacturingAnswerResponse,
   ManufacturingIngestionRun,
@@ -154,30 +160,105 @@ export async function submitFeedback(
 
 // --- Operations read views (specs/014; all GET, audit-derived, read-only) ----------------------
 
-/** Tenant-scoped manufacturing document inventory with approval state (ドキュメント一覧). */
-export interface ManufacturingDocumentSummary {
-  document_id: string;
-  collection_id: string;
-  source_id: string;
-  document_kind: string | null;
-  approval_status: string;
-  effective_date: string | null;
-  approved_by: string | null;
-  approved_at: string | null;
-  superseded_by: string | null;
-  equipment: string | null;
-  safety_category: string | null;
+export async function manufacturingImprovements(
+  userToken: string,
+  limit = 100,
+): Promise<ImprovementQueueResponse> {
+  return mfgGet<ImprovementQueueResponse>(
+    `improvements?limit=${encodeURIComponent(String(limit))}`,
+    userToken,
+  );
+}
+
+export async function adminDocumentFile(
+  documentId: string,
+  userToken: string,
+): Promise<DocumentFileResponse> {
+  return apiGetJson<DocumentFileResponse>(
+    `/admin/documents/${encodeURIComponent(documentId)}/file`,
+    userToken,
+  );
 }
 
 export async function manufacturingDocuments(
   userToken: string,
   collectionId?: string,
+  approvalStatus?: string,
 ): Promise<ManufacturingDocumentSummary[]> {
-  const path = collectionId
-    ? `documents?collection_id=${encodeURIComponent(collectionId)}`
-    : "documents";
+  const params = new URLSearchParams();
+  if (collectionId) params.set("collection_id", collectionId);
+  if (approvalStatus) params.set("approval_status", approvalStatus);
+  const qs = params.toString();
+  const path = qs ? `documents?${qs}` : "documents";
   const res = await mfgGet<{ documents: ManufacturingDocumentSummary[] }>(path, userToken);
   return res.documents ?? [];
+}
+
+export async function adminDocuments(
+  userToken: string,
+  opts?: { collectionId?: string; approvalStatus?: string },
+): Promise<ManufacturingDocumentSummary[]> {
+  const params = new URLSearchParams();
+  if (opts?.collectionId) params.set("collection_id", opts.collectionId);
+  if (opts?.approvalStatus) params.set("approval_status", opts.approvalStatus);
+  const qs = params.toString();
+  const res = await apiGetJson<{ documents: ManufacturingDocumentSummary[] }>(
+    `/admin/documents${qs ? `?${qs}` : ""}`,
+    userToken,
+  );
+  return res.documents ?? [];
+}
+
+export async function adminDocumentDetail(
+  documentId: string,
+  userToken: string,
+): Promise<AdminDocumentDetail> {
+  return apiGetJson<AdminDocumentDetail>(
+    `/admin/documents/${encodeURIComponent(documentId)}`,
+    userToken,
+  );
+}
+
+export async function adminCitationView(
+  documentId: string,
+  userToken: string,
+  chunkId?: string,
+): Promise<CitationSourceView> {
+  const qs = chunkId ? `?chunk_id=${encodeURIComponent(chunkId)}` : "";
+  return apiGetJson<CitationSourceView>(
+    `/admin/documents/${encodeURIComponent(documentId)}/citation-view${qs}`,
+    userToken,
+  );
+}
+
+export async function manufacturingListDrafts(
+  userToken: string,
+  opts?: { status?: string; reviewerId?: string },
+): Promise<DraftArtifact[]> {
+  const params = new URLSearchParams();
+  if (opts?.status) params.set("status", opts.status);
+  if (opts?.reviewerId) params.set("reviewer_id", opts.reviewerId);
+  const qs = params.toString();
+  const res = await mfgGet<{ drafts: DraftArtifact[] }>(
+    qs ? `drafts?${qs}` : "drafts",
+    userToken,
+  );
+  return res.drafts ?? [];
+}
+
+export async function manufacturingAuditEvents(
+  userToken: string,
+  opts?: { action?: string; limit?: number; offset?: number },
+): Promise<AuditEventListResponse> {
+  const params = new URLSearchParams();
+  if (opts?.action) params.set("action", opts.action);
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  if (opts?.offset != null) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  return apiGetJson<AuditEventListResponse>(
+    `/manufacturing/audit/events${qs ? `?${qs}` : ""}`,
+    userToken,
+  );
 }
 
 export async function manufacturingDashboard(userToken: string): Promise<KnowledgeOpsDashboard> {

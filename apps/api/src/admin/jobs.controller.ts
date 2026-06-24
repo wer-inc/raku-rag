@@ -156,6 +156,65 @@ export class AdminJobsController {
     return this.postToCore(req, `/internal/admin/collections/${encodeURIComponent(collectionId)}/reindex`, body);
   }
 
+  @Get("documents")
+  async documents(
+    @Req() req: Request,
+    @Query("collection_id") collectionId?: string,
+    @Query("approval_status") approvalStatus?: string,
+  ): Promise<{ documents: Record<string, unknown>[] }> {
+    const params = new URLSearchParams();
+    if (collectionId) {
+      params.set("collection_id", collectionId);
+    }
+    if (approvalStatus) {
+      params.set("approval_status", approvalStatus);
+    }
+    const query = params.toString();
+    return this.getFromCore(
+      req,
+      `/internal/manufacturing/documents${query ? `?${query}` : ""}`,
+    );
+  }
+
+  @Get("documents/:document_id")
+  async documentDetail(
+    @Req() req: Request,
+    @Param("document_id") documentId: string,
+  ): Promise<Record<string, unknown>> {
+    return this.getFromCore(
+      req,
+      `/internal/manufacturing/documents/${encodeURIComponent(documentId)}`,
+    );
+  }
+
+  @Get("documents/:document_id/file")
+  async documentFile(
+    @Req() req: Request,
+    @Param("document_id") documentId: string,
+  ): Promise<Record<string, unknown>> {
+    return this.getFromCore(
+      req,
+      `/internal/documents/${encodeURIComponent(documentId)}/file`,
+    );
+  }
+
+  @Get("documents/:document_id/citation-view")
+  async documentCitationView(
+    @Req() req: Request,
+    @Param("document_id") documentId: string,
+    @Query("chunk_id") chunkId?: string,
+  ): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams();
+    if (chunkId) {
+      params.set("chunk_id", chunkId);
+    }
+    const query = params.toString();
+    return this.getFromCore(
+      req,
+      `/internal/documents/${encodeURIComponent(documentId)}/citation-view${query ? `?${query}` : ""}`,
+    );
+  }
+
   @Get("documents/:document_id/processing-status")
   async documentProcessingStatus(
     @Req() req: Request,

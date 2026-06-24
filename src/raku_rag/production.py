@@ -202,6 +202,11 @@ class ProductionSystem(MvpSystem):
         )
         if job.status == JobStatus.SUCCEEDED.value:
             self.ingestion_runs.mark_succeeded(run, chunk_count=job.chunk_count)
+            doc = self.registry.get(tenant_id, document_id)
+            if doc is not None:
+                doc.metadata["document_ref"] = document_ref
+                doc.metadata["content_type"] = content_type
+                self.registry.put(doc)
             if manufacturing_metadata is not None:
                 # Persist mfg approval metadata so the safety overlay (high-risk gate, draft/obsolete
                 # demotion) fires for this production-ingested document (P1-1 write path).

@@ -6,6 +6,7 @@ export const DEMO_USER = process.env.NEXT_PUBLIC_DEMO_USER_ID ?? "alice";
 export const DEMO_COLLECTION = process.env.NEXT_PUBLIC_DEMO_COLLECTION_ID ?? "manuals";
 
 const STORAGE_KEY = "raku.devtoken";
+const USER_KEY = "raku.devuser";
 const COLLECTION_KEY = "raku.answerCollection";
 
 /** Last selected answer/search collection in the browser (defaults to DEMO_COLLECTION). */
@@ -44,16 +45,20 @@ async function mint(tenantId: string, userId: string): Promise<string> {
 /** Return a cached dev-token for the demo identity, minting (once) if needed. */
 export async function getSessionToken(
   tenantId: string = DEMO_TENANT,
-  userId: string = DEMO_USER,
+  userId: string = loadSessionUserId() ?? DEMO_USER,
 ): Promise<string> {
   if (typeof window !== "undefined") {
     const cached = window.sessionStorage.getItem(STORAGE_KEY);
-    if (cached) return cached;
+    const cachedUser = window.sessionStorage.getItem(USER_KEY);
+    if (cached && cachedUser === userId) return cached;
   }
   if (!inflight) {
     inflight = mint(tenantId, userId)
       .then((token) => {
-        if (typeof window !== "undefined") window.sessionStorage.setItem(STORAGE_KEY, token);
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(STORAGE_KEY, token);
+          window.sessionStorage.setItem(USER_KEY, userId);
+        }
         return token;
       })
       .finally(() => {
@@ -63,9 +68,22 @@ export async function getSessionToken(
   return inflight;
 }
 
+export function loadSessionUserId(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.sessionStorage.getItem(USER_KEY);
+}
+
+export function saveSessionUserId(userId: string): void {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(USER_KEY, userId.trim());
+}
+
 /** Forget the cached token (e.g. on auth failure) so the next call re-mints. */
 export function clearSessionToken(): void {
-  if (typeof window !== "undefined") window.sessionStorage.removeItem(STORAGE_KEY);
+  if (typeof window !== "undefined") {
+    window.sessionStorage.removeItem(STORAGE_KEY);
+    window.sessionStorage.removeItem(USER_KEY);
+  }
 }
 
 /**

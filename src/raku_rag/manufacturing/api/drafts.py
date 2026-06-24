@@ -116,6 +116,27 @@ class DraftService:
         self._store[(tenant_id, artifact_id)] = artifact
         return self._copy(artifact)
 
+    # --- GET /v1/manufacturing/drafts (list) -------------------------------------------------------
+    def list(
+        self,
+        tenant_id: str,
+        *,
+        status: str | None = None,
+        reviewer_id: str | None = None,
+    ) -> list[DraftArtifact]:
+        """Return detached copies of tenant drafts, newest first. Optional status/reviewer filters."""
+        items: list[DraftArtifact] = []
+        for (tid, _aid), artifact in self._store.items():
+            if tid != tenant_id:
+                continue
+            if status and artifact.status.value != status:
+                continue
+            if reviewer_id and artifact.reviewer_id != reviewer_id:
+                continue
+            items.append(self._copy(artifact))
+        items.sort(key=lambda a: a.created_at or "", reverse=True)
+        return items
+
     # --- GET /v1/manufacturing/drafts/{artifact_id} ------------------------------------------------
     def get(self, tenant_id: str, artifact_id: str) -> DraftArtifact | None:
         """Return a DETACHED COPY of the stored draft (external mutation cannot flip the record)."""

@@ -187,6 +187,23 @@ class GovernanceService:
         }
 
     # --- GET /v1/manufacturing/audit/export (T064) -------------------------------------------------
+    def list_audit_events(
+        self,
+        *,
+        principal: IdentityClaims,
+        action: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
+        """Paginated audit event browser (reference IDs only). Tenant-scoped to principal."""
+        entries = self._audit.read_all(principal)
+        if action:
+            entries = tuple(e for e in entries if e.action == action)
+        total = len(entries)
+        page = entries[offset : offset + max(1, min(limit, 500))]
+        records = [_entry_to_dict(e, self._redactor) for e in page]
+        return {"events": records, "total": total, "offset": offset, "limit": limit}
+
     def export_audit(self, *, principal: IdentityClaims, fmt: str = "jsonl"):
         """Export the principal's OWN tenant's audit entries (tenant-scoped, reference-only).
 

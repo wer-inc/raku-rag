@@ -1,17 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { Citation } from "@raku-rag/shared";
-import { submitFeedback } from "../../lib/api-client";
+import { useEffect, useMemo, useState } from "react";
+import type { Citation, CitationPreview } from "@raku-rag/shared";
+import { adminCitationView, adminDocumentFile, submitFeedback } from "../../lib/api-client";
 import { getSessionToken } from "../../lib/session";
 
 export interface CitationViewTarget {
   citation: Citation;
-  /** correlation_id of the answer this citation supports (feedback answer_id). */
   answerId: string;
-  /** The grounded answer statement this citation backs (for context). */
   groundedText: string | null;
-  /** 1-based position within the answer's citation list. */
   index: number;
 }
 
@@ -27,14 +24,18 @@ function approval(status?: string | null): { label: string; cls: string } {
   return { label: status ? status : "承認状態 不明", cls: "approval-draft" };
 }
 
-function locatorRow(c: Citation): { label: string; value: string } {
-  if (c.kind === "visual") {
-    return { label: "位置", value: `ビジュアル引用（アセット ${c.source_id}）` };
+function locatorFromPreview(preview?: CitationPreview | null): { label: string; value: string } {
+  if (!preview) return { label: "位置", value: "—" };
+  if (preview.kind === "spreadsheet" && preview.cell_range) {
+    return { label: "Excel", value: `${preview.sheet_name ?? "—"} · ${preview.cell_range}` };
   }
-  if (c.text_range && c.text_range.length === 2) {
-    return { label: "本文範囲", value: `文字 ${c.text_range[0]}–${c.text_range[1]}（code-point offset）` };
+  if (preview.heading_path?.length) {
+    return { label: "見出し", value: preview.heading_path.join(" › ") };
   }
-  return { label: "位置", value: c.chunk_id ?? "—" };
+  if (preview.page_number) {
+    return { label: "PDF ページ", value: String(preview.page_number) };
+  }
+  return { label: "形式", value: preview.content_type };
 }
 
 export default function CitationViewer({
@@ -47,15 +48,61 @@ export default function CitationViewer({
   const [sent, setSent] = useState<null | "correct" | "incorrect">(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sourceText, setSourceText] = useState<string | null>(null);
+  const [preview, setPreview] = useState<CitationPreview | null>(null);
+  const [fileUrl, setFileUrl] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Reset feedback state whenever a different citation is opened.
   useEffect(() => {
     setSent(null);
     setError(null);
     setBusy(false);
+    setSourceText(null);
+    setPreview(null);
+    setLoadError(null);
+    if (fileUrl) URL.revokeObjectURL(fileUrl);
+    setFileUrl(null);
   }, [target?.answerId, target?.index]);
 
-  // Close on Escape.
+  useEffect(() => {
+    if (!target) return;
+    let active = true;
+    void (async () => {
+      try {
+        const token = await getSessionToken();
+        const view = await adminCitationView(
+          target.citation.document_id,
+          token,
+          target.citation.chunk_id ?? undefined,
+        );
+        if (!active) return;
+        const chunk = view.chunks?.[0];
+        setSourceText(chunk?.text ?? null);
+        setPreview(view.preview ?? null);
+        if (view.preview?.has_source_file) {
+          try {
+            const file = await adminDocumentFile(target.citation.document_id, token);
+            if (!active || file.too_large || !file.content_base64) return;
+            const binary = atob(file.content_base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+            const blob = new Blob([bytes], { type: file.content_type || "application/octet-stream" });
+            setFileUrl(URL.createObjectURL(blob));
+          } catch {
+            /* file preview optional */
+          }
+        }
+      } catch (err) {
+        if (active) {
+          setLoadError(err instanceof Error ? err.message : "引用元の読み込みに失敗しました");
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [target]);
+
   useEffect(() => {
     if (!target) return;
     function onKey(e: KeyboardEvent) {
@@ -65,10 +112,19 @@ export default function CitationViewer({
     return () => window.removeEventListener("keydown", onKey);
   }, [target, onClose]);
 
+  useEffect(() => {
+    return () => {
+      if (fileUrl) URL.revokeObjectURL(fileUrl);
+    };
+  }, [fileUrl]);
+
+  const loc = useMemo(() => locatorFromPreview(preview), [preview]);
+
   if (!target) return null;
   const { citation, answerId, groundedText, index } = target;
   const ap = approval(citation.approval_status);
-  const loc = locatorRow(citation);
+  const isObsolete = citation.approval_status === "obsolete";
+  const isPdf = preview?.kind === "pdf" || (preview?.content_type ?? "").includes("pdf");
 
   async function sendFeedback(verdict: "correct" | "incorrect") {
     if (busy) return;
@@ -112,6 +168,10 @@ export default function CitationViewer({
           <span className="citation-chip">スコア {citation.retrieval_score.toFixed(3)}</span>
         </div>
 
+        {isObsolete && (
+          <p className="src-warning">この引用元は旧版です。正式な根拠として使わないでください。</p>
+        )}
+
         <dl className="cv-fields">
           <div>
             <dt>ドキュメント</dt>
@@ -122,12 +182,6 @@ export default function CitationViewer({
             <dd>{citation.chunk_id ?? "—"}</dd>
           </div>
           <div>
-            <dt>ソース</dt>
-            <dd>
-              {citation.source_id} · v{citation.version}
-            </dd>
-          </div>
-          <div>
             <dt>{loc.label}</dt>
             <dd>{loc.value}</dd>
           </div>
@@ -135,11 +189,39 @@ export default function CitationViewer({
             <dt>有効期限 / 発効</dt>
             <dd>{citation.effective_date ?? "—"}</dd>
           </div>
-          <div>
-            <dt>承認元</dt>
-            <dd>{citation.approval_source ?? "—"}</dd>
-          </div>
         </dl>
+
+        {preview?.kind === "spreadsheet" && (
+          <section className="cv-grounded">
+            <h4>Excel セル参照</h4>
+            <FieldGrid
+              rows={[
+                ["シート", preview.sheet_name ?? "—"],
+                ["行", preview.row ?? "—"],
+                ["列", preview.col ?? "—"],
+                ["範囲", preview.cell_range ?? "—"],
+              ]}
+            />
+          </section>
+        )}
+
+        {fileUrl && isPdf && (
+          <section className="cv-grounded">
+            <h4>PDF プレビュー</h4>
+            <iframe className="cv-pdf-frame" src={fileUrl} title={`${citation.document_id} preview`} />
+          </section>
+        )}
+
+        <section className="cv-grounded">
+          <h4>引用元テキスト</h4>
+          {sourceText ? (
+            <pre className="cv-source-text">{sourceText}</pre>
+          ) : loadError ? (
+            <p className="cv-foot-error">{loadError}</p>
+          ) : (
+            <p className="ops-empty">引用元を読み込み中…</p>
+          )}
+        </section>
 
         {groundedText && (
           <section className="cv-grounded">
@@ -147,11 +229,6 @@ export default function CitationViewer({
             <p>{groundedText}</p>
           </section>
         )}
-
-        <p className="cv-note">
-          原本（PDFページ / Excelセル範囲 / 図面）の表示にはドキュメント本文・アセット取得 API が必要です（GAP）。
-          現状は引用メタデータと根拠範囲を表示します。
-        </p>
 
         <footer className="cv-foot">
           <span className="cv-foot-label">この引用は正しいですか？</span>
@@ -178,5 +255,18 @@ export default function CitationViewer({
         </footer>
       </div>
     </div>
+  );
+}
+
+function FieldGrid({ rows }: { rows: Array<[string, string | number]> }) {
+  return (
+    <dl className="cv-fields">
+      {rows.map(([label, value]) => (
+        <div key={label}>
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }

@@ -54,7 +54,7 @@
         { "method": "GET", "path": "/v1/manufacturing/safety-telemetry", "status": "existing" },
         { "method": "GET", "path": "/v1/manufacturing/kpi", "status": "existing" },
         { "method": "GET", "path": "/v1/admin/jobs", "status": "existing" },
-        { "method": "GET", "path": "/v1/manufacturing/drafts", "status": "missing" }
+        { "method": "GET", "path": "/v1/manufacturing/drafts", "status": "existing" }
       ],
       "states": ["loading", "empty", "error", "ready", "partial"],
       "rbac": ["field_user", "reviewer", "ops_owner", "tenant_admin"],
@@ -188,13 +188,13 @@
       "absorbs": [],
       "data": ["documents", "approval_status", "freshness_state", "source", "processing_status", "acl_summary"],
       "apis": [
-        { "method": "GET", "path": "/v1/admin/documents", "status": "missing" },
+        { "method": "GET", "path": "/v1/admin/documents", "status": "existing" },
         { "method": "GET", "path": "/v1/admin/jobs", "status": "existing" }
       ],
       "states": ["loading", "empty", "error", "ready", "filtered"],
       "rbac": ["reviewer", "ops_owner", "tenant_admin"],
       "deps": ["source-list"],
-      "status": "spec"
+      "status": "done"
     },
     {
       "id": "document-detail",
@@ -204,7 +204,9 @@
       "absorbs": [],
       "data": ["document_body", "metadata", "chunks", "approval_status", "citation_usage", "processing_status", "audit_refs"],
       "apis": [
-        { "method": "GET", "path": "/v1/admin/documents/:document_id", "status": "missing" },
+        { "method": "GET", "path": "/v1/admin/documents/:document_id", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/documents/:document_id/citation-view", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/documents/:document_id/file", "status": "existing" },
         { "method": "GET", "path": "/v1/admin/documents/:document_id/processing-status", "status": "existing" },
         { "method": "PUT", "path": "/v1/manufacturing/documents/:documentId/metadata", "status": "existing" },
         { "method": "POST", "path": "/v1/manufacturing/documents/:documentId/approval", "status": "existing" },
@@ -214,7 +216,7 @@
       "states": ["loading", "empty", "error", "ready", "not_found", "saving"],
       "rbac": ["reviewer", "ops_owner", "tenant_admin"],
       "deps": ["document-list"],
-      "status": "spec"
+      "status": "done"
     },
     {
       "id": "review-queue",
@@ -224,13 +226,13 @@
       "absorbs": ["current:/reviews"],
       "data": ["draft_queue", "document_approval_queue", "assignee", "priority", "sla", "review_status"],
       "apis": [
-        { "method": "GET", "path": "/v1/manufacturing/drafts", "status": "missing" },
-        { "method": "GET", "path": "/v1/admin/documents?approval_status=pending_review", "status": "missing" }
+        { "method": "GET", "path": "/v1/manufacturing/drafts", "status": "existing" },
+        { "method": "GET", "path": "/v1/admin/documents?approval_status=pending_review", "status": "existing" }
       ],
       "states": ["loading", "empty", "error", "ready", "filtered"],
       "rbac": ["reviewer", "tenant_admin"],
       "deps": [],
-      "status": "spec"
+      "status": "done"
     },
     {
       "id": "review-detail",
@@ -260,12 +262,12 @@
       "data": ["pending_documents", "approval_status", "effective_date", "access_scope", "source"],
       "apis": [
         { "method": "POST", "path": "/v1/manufacturing/documents/:documentId/approval", "status": "existing" },
-        { "method": "GET", "path": "/v1/admin/documents?approval_status=pending_review", "status": "missing" }
+        { "method": "GET", "path": "/v1/admin/documents?approval_status=pending_review", "status": "existing" }
       ],
       "states": ["loading", "empty", "error", "ready", "saving"],
       "rbac": ["reviewer", "tenant_admin"],
       "deps": ["document-list"],
-      "status": "spec"
+      "status": "done"
     },
     {
       "id": "approval-workflow-settings",
@@ -334,6 +336,24 @@
       "status": "spec"
     },
     {
+      "id": "poc-effect-report",
+      "category": "operations-compliance",
+      "route": "/operations/poc-report",
+      "title": "PoC Effect Report",
+      "absorbs": [],
+      "data": ["kpi_report", "safety_telemetry", "dashboard_summary", "draft_counts", "business_impact"],
+      "apis": [
+        { "method": "GET", "path": "/v1/manufacturing/kpi", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/safety-telemetry", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/dashboard", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/drafts", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": ["quality-kpi"],
+      "status": "done"
+    },
+    {
       "id": "knowledge-improvement-queue",
       "category": "operations-compliance",
       "route": "/operations/improvements",
@@ -342,12 +362,12 @@
       "data": ["low_rating_feedback", "reason", "question", "answer_id", "status"],
       "apis": [
         { "method": "POST", "path": "/v1/feedback", "status": "existing" },
-        { "method": "GET", "path": "/v1/manufacturing/feedback", "status": "missing" }
+        { "method": "GET", "path": "/v1/manufacturing/improvements", "status": "existing" }
       ],
       "states": ["loading", "empty", "error", "ready", "filtered"],
       "rbac": ["reviewer", "ops_owner", "tenant_admin"],
       "deps": ["quality-kpi"],
-      "status": "spec"
+      "status": "done"
     },
     {
       "id": "audit-log",
@@ -358,12 +378,12 @@
       "data": ["audit_events", "actor", "action", "resource", "tenant_scope", "hash_chain", "export_refs"],
       "apis": [
         { "method": "GET", "path": "/v1/manufacturing/audit/export", "status": "existing" },
-        { "method": "GET", "path": "/v1/manufacturing/audit/events", "status": "missing" }
+        { "method": "GET", "path": "/v1/manufacturing/audit/events", "status": "existing" }
       ],
       "states": ["loading", "empty", "error", "ready", "filtered", "exporting"],
       "rbac": ["ops_owner", "tenant_admin", "auditor"],
       "deps": ["operations-dashboard"],
-      "status": "spec"
+      "status": "done"
     },
     {
       "id": "compliance-export",
