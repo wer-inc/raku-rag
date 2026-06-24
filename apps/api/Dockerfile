@@ -25,5 +25,6 @@ COPY --from=build /repo/packages/shared ./packages/shared
 COPY --from=build /repo/apps/api ./apps/api
 WORKDIR /repo/apps/api
 EXPOSE 3000
-# nest-cli sourceRoot=src, outDir=dist → entrypoint is dist/src/main.js
-CMD ["node", "dist/src/main.js"]
+# The API imports @raku-rag/shared from source, so tsc computes the project rootDir as the repo root
+# and mirrors it under outDir → the entrypoint is the NESTED dist/apps/api/src/main.js (not dist/src).
+CMD ["node", "dist/apps/api/src/main.js"]
