@@ -35,3 +35,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+# Kakuto landing page — the 7.2MB self-contained source bundle is the regen source for the
+# deployable index.html + assets/ (via LP/unpack_bundle.py); keep the bundle out of git history.
+LP/Kakuto LP (standalone).html
