@@ -68,7 +68,9 @@ jobs:
             exit 1
           fi
           # DOMAIN_NAME is free-text input — allow only hostname chars (or empty); reject anything else.
-          if ! printf '%s' "${DOMAIN_NAME}" | grep -qE '^[A-Za-z0-9.-]*$'; then
+          # Skip the regex when blank: an empty string yields no line for grep to match, which would
+          # otherwise (incorrectly) fail validation for the no-domain / HTTP-only case.
+          if [ -n "${DOMAIN_NAME}" ] && ! printf '%s\n' "${DOMAIN_NAME}" | grep -qE '^[A-Za-z0-9.-]+$'; then
             echo "::error::domain_name must be a hostname ([A-Za-z0-9.-]) or blank."
             exit 1
           fi
