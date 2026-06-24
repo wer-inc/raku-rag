@@ -73,10 +73,29 @@ class CdkInfrastructureContractTest(unittest.TestCase):
 
     def test_worker_service_is_long_running_and_has_dlq_projection(self) -> None:
         for token in (
-            'command: ["python", "-m", "workers.ingest.worker", "--serve"]',
+            "workers.ingest.worker --serve",
             "SQS_QUEUE_URL",
             "SQS_DLQ_URL",
             "deadLetterQueue.queueUrl",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.stack)
+
+    def test_answer_service_is_wired_over_real_images(self) -> None:
+        # The Python answer-service must be a deployed ECS service the API proxies to, and the app
+        # containers must build from the real Dockerfiles (not placeholder base images).
+        for token in (
+            "AnswerService",
+            "apps/answer-service/Dockerfile",
+            "ANSWER_SERVICE_URL",
+            "ContainerImage.fromAsset",
+            "apps/api/Dockerfile",
+            "workers/ingest/Dockerfile",
+            "InternalAuthSecret",
+            "RAKU_INTERNAL_AUTH_SECRET",
+            "grantBedrockInvoke",
+            "bedrock:InvokeModel",
+            "POSTGRES_URL",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)
