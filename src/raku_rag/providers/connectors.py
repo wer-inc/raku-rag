@@ -48,6 +48,10 @@ class S3Connector(Connector):
 
     bucket: str | None = None
     client: object | None = None
+    endpoint_url: str | None = None
+    region_name: str | None = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
 
     def __post_init__(self) -> None:
         if self.client is None:
@@ -57,10 +61,14 @@ class S3Connector(Connector):
                 raise RuntimeError(
                     "boto3 is required for S3Connector without an injected client"
                 ) from exc
-            endpoint_url = os.environ.get("S3_ENDPOINT_URL") or os.environ.get("AWS_ENDPOINT_URL")
-            region_name = os.environ.get("AWS_REGION", "us-east-1")
-            access_key = os.environ.get("S3_ACCESS_KEY")
-            secret_key = os.environ.get("S3_SECRET_KEY")
+            endpoint_url = (
+                self.endpoint_url
+                or os.environ.get("S3_ENDPOINT_URL")
+                or os.environ.get("AWS_ENDPOINT_URL")
+            )
+            region_name = self.region_name or os.environ.get("AWS_REGION", "us-east-1")
+            access_key = self.access_key_id or os.environ.get("S3_ACCESS_KEY")
+            secret_key = self.secret_access_key or os.environ.get("S3_SECRET_KEY")
             kwargs = {"endpoint_url": endpoint_url, "region_name": region_name}
             if access_key and secret_key:
                 kwargs["aws_access_key_id"] = access_key
@@ -73,6 +81,33 @@ class S3Connector(Connector):
         obj = self.client.get_object(Bucket=bucket, Key=key)
         body = obj["Body"]
         return body.read()
+
+    def list_refs(self, *, prefix: str = "", limit: int = 25) -> list[str]:
+        bucket = self.bucket or ""
+        if not bucket:
+            raise ValueError("S3 list requires a default bucket")
+        if limit <= 0:
+            return []
+        assert self.client is not None
+        refs: list[str] = []
+        kwargs: dict[str, object] = {
+            "Bucket": bucket,
+            "Prefix": prefix,
+            "MaxKeys": min(limit, 1000),
+        }
+        while len(refs) < limit:
+            response = self.client.list_objects_v2(**kwargs)
+            for item in response.get("Contents", []):
+                key = str(item.get("Key") or "")
+                if key and not key.endswith("/"):
+                    refs.append(f"s3://{bucket}/{key}")
+                    if len(refs) >= limit:
+                        break
+            token = response.get("NextContinuationToken")
+            if not response.get("IsTruncated") or not token or len(refs) >= limit:
+                break
+            kwargs["ContinuationToken"] = token
+        return refs
 
     def _parse_ref(self, ref: str) -> tuple[str, str]:
         if ref.startswith("s3://"):

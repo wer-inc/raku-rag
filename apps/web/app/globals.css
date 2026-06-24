@@ -760,6 +760,36 @@ textarea {
   line-height: 1.6;
 }
 
+.answers-composer-meta {
+  max-width: 800px;
+  margin: 0 auto 8px;
+}
+
+.answers-collection-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.answers-collection-field select {
+  min-width: 140px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+}
+
+.sync-poll-badge {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #9f6a14;
+}
+
 .standalone-list-shell {
   display: grid;
   gap: 0;
@@ -816,13 +846,20 @@ textarea {
   font-size: 13px;
 }
 
-.standalone-list-tools button {
+.standalone-list-tools button,
+.standalone-list-tools a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 34px;
   min-width: 0;
   padding: 0 14px;
   border-radius: 8px;
+  background: var(--accent);
+  color: #ffffff;
   font-size: 13px;
   font-weight: 500;
+  text-decoration: none;
 }
 
 .standalone-table-head,
@@ -2928,6 +2965,182 @@ button,
 /* ============================================================
    Priority #2 — Add Source upload form.
    ============================================================ */
+.source-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.source-type-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: auto;
+  min-height: 76px;
+  padding: 12px;
+  border: 1px solid var(--line, #ececec);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #18181b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.source-type-card:hover,
+.source-type-card.active {
+  border-color: var(--accent, #5b5bd6);
+  background: var(--accent-weak, #f7f7fd);
+}
+
+.source-type-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: #f4f4f5;
+  color: #52525b;
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.source-type-card.active .source-type-mark {
+  background: var(--accent, #5b5bd6);
+  color: #ffffff;
+}
+
+.source-type-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.source-type-body strong {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.source-type-body span {
+  color: #71717a;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.source-type-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f4f4f5;
+  color: #52525b;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.source-type-status.ready {
+  background: #ecfdf3;
+  color: #15803d;
+}
+
+.source-type-status.three_days {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.source-type-status.later {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.source-config-note {
+  margin: 12px 0 0;
+  color: #52525b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.connector-form {
+  display: block;
+}
+
+.connector-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.connector-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.connector-form-grid span {
+  color: #71717a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.connector-form-grid input,
+.connector-form-grid select {
+  padding: 8px 10px;
+  border: 1px solid var(--line, #ececec);
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 13.5px;
+}
+
+.connector-oauth {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.connector-oauth div {
+  display: grid;
+  gap: 3px;
+}
+
+.connector-oauth strong {
+  color: #1e3a8a;
+  font-size: 13.5px;
+}
+
+.connector-oauth span {
+  color: #1d4ed8;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.connector-oauth button {
+  flex: none;
+}
+
+.config-success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.config-success h3,
+.config-success p {
+  margin: 0;
+  color: #15803d;
+}
+
 .upload-form {
   display: block;
 }
@@ -3026,6 +3239,31 @@ button,
   border-radius: 8px;
   background: #ffffff;
   font-size: 13.5px;
+}
+
+@media (max-width: 780px) {
+  .source-type-card {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .source-type-status {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .connector-oauth {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .connector-oauth button {
+    width: 100%;
+  }
+
+  .connector-form-grid,
+  .upload-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 .linklike {

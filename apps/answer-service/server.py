@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import hmac
 import json
 import os
 import sys
@@ -41,9 +42,6 @@ sys.path.insert(0, str(_ROOT / "src"))
 
 from raku_rag.domain.models import ACLGrant, IdentityClaims, ScopeType, SubjectType  # noqa: E402
 from raku_rag.eval import EvaluationRunner, EvaluationSet  # noqa: E402
-from raku_rag.manufacturing.wiring import (  # noqa: E402
-    build_manufacturing_answer_service,
-)
 from raku_rag.manufacturing.drafts.review import InvalidTransitionError  # noqa: E402
 from raku_rag.persistence.evaluation_runs import (  # noqa: E402
     InMemoryEvaluationRunRepository,
@@ -60,6 +58,7 @@ from raku_rag.production import (  # noqa: E402
     build_manufacturing_system_for_base,
 )
 from raku_rag.services.answer_format import answer_format_metadata  # noqa: E402
+from raku_rag.services.datasource_sync import build_sync_documents  # noqa: E402
 from raku_rag.providers.connectors import default_connector_from_env  # noqa: E402
 from workers.ingest.provider_policy import (  # noqa: E402
     ProviderPolicy,
@@ -611,6 +610,23 @@ def _assert_demo_reset_allowed(dsn: str) -> None:
     )
 
 
+# P4-4 / AF-9 — shared-secret gate for the internal API boundary. The answer-service used to blindly
+# trust the loopback request + its x-raku-* identity headers. When RAKU_INTERNAL_AUTH_SECRET is configured
+# (production), every /internal/* request must carry a matching X-Internal-Auth header (constant-time
+# compare); /healthz stays public. When the secret is UNSET (local dev / tests) the gate is a no-op so
+# nothing regresses. (Full mTLS on the deployed API<->answer-service hop is the deployment-topology half.)
+_INTERNAL_AUTH_SECRET = os.environ.get("RAKU_INTERNAL_AUTH_SECRET", "")
+
+
+def internal_auth_ok(secret: str, path: str, presented: str) -> bool:
+    """Pure decision for the internal-boundary shared-secret gate (unit-testable offline)."""
+    if not secret:
+        return True  # dev/test no-op: backward compatible
+    if path == "/healthz":
+        return True  # health is public
+    return hmac.compare_digest(presented or "", secret)
+
+
 def _claims(body: dict) -> IdentityClaims:
     return IdentityClaims(
         tenant_id=str(body["tenant_id"]),
@@ -877,12 +893,65 @@ def _ingest_response_json(job) -> dict:
     }
 
 
-def _mfg_metadata_from_body(body: dict, tenant_id: str, document_id: str):
-    """P1-1: build ManufacturingDocumentMetadata from the ingest request, or None if absent.
+def _sync_datasource_to_ingest(
+    system: ProductionSystem,
+    tenant_id: str,
+    source_id: str,
+    datasource: dict,
+    body: dict,
+) -> dict:
+    documents = build_sync_documents(source_id, datasource, body=body)
+    if not documents:
+        raise ValueError("datasource did not produce any documents")
+    collection_id = str(body.get("collection_id") or datasource.get("collection_id") or "manuals")
+    applied_approval_status = _approval_from_datasource_policy(datasource)[0]
+    runs: list[dict] = []
+    for document in documents:
+        mfg_meta = _mfg_metadata_for_sync(body, datasource, tenant_id, document.document_id)
+        run = system.ingest_document(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document.document_id,
+            document_ref=document.document_ref,
+            raw=document.raw,
+            content_type=document.content_type,
+            manufacturing_metadata=mfg_meta,
+        )
+        runs.append(_ingest_response_json(run))
+
+    failed = [run for run in runs if run.get("status") == "failed"]
+    if len(failed) == len(runs):
+        status = "failed"
+    elif failed:
+        status = "partially_succeeded"
+    else:
+        status = "succeeded"
+    first = runs[0]
+    return {
+        "source_id": source_id,
+        "collection_id": collection_id,
+        "status": status,
+        "ingestion_run_id": first["ingestion_run_id"],
+        "status_url": first["status_url"],
+        "observed_count": len(documents),
+        "changed_count": len(runs),
+        "failed_count": len(failed),
+        # Which trust policy the saved datasource applied to EVERY synced file (Step 0/1): a
+        # 'review_required' source lands its files in pending_review for the human review queue; a
+        # 'trusted' source stamps them approved (source-of-truth) so they are immediately citable.
+        "approval_policy": _datasource_approval_policy(datasource),
+        "applied_approval_status": applied_approval_status,
+        "runs": runs,
+    }
+
+
+def _mfg_raw_from_body(body: dict) -> dict | None:
+    """The raw manufacturing-metadata mapping carried by an ingest request, or None if absent.
 
     Accepts either a single ``manufacturing`` object (the to_mapping()/from_mapping() shape) or the
-    contract's split ``manufacturing_metadata`` + ``approval`` blocks (mfg-openapi.md). tenant_id and
-    document_id are taken from the authenticated principal / request, never from the metadata block.
+    contract's split ``manufacturing_metadata`` + ``approval`` blocks (mfg-openapi.md). Does NOT inject
+    tenant_id/document_id — those are the caller's (authenticated) responsibility.
     """
     raw = body.get("manufacturing")
     if raw is None:
@@ -896,8 +965,75 @@ def _mfg_metadata_from_body(body: dict, tenant_id: str, document_id: str):
             raw["document_kind"] = raw.pop("document_type")
     if not isinstance(raw, dict):
         return None
+    return raw
+
+
+def _mfg_metadata_from_body(body: dict, tenant_id: str, document_id: str):
+    """P1-1: build ManufacturingDocumentMetadata from the ingest request, or None if absent.
+
+    tenant_id and document_id are taken from the authenticated principal / request, never from the
+    metadata block. Used by the single-document ``/internal/ingest`` boundary, where the caller
+    explicitly chose the approval state for ONE document (1 reviewer, 1 doc).
+    """
+    raw = _mfg_raw_from_body(body)
+    if raw is None:
+        return None
     from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
 
+    return ManufacturingDocumentMetadata.from_mapping(
+        {**raw, "tenant_id": tenant_id, "document_id": document_id}
+    )
+
+
+def _datasource_approval_policy(datasource: dict) -> str:
+    """The saved datasource's trust policy: 'trusted' or (default) 'review_required'.
+
+    A datasource is review-required unless an operator EXPLICITLY marked it trusted (an audited
+    ``data_source_changed`` event at upsert). Anything unrecognised falls back to review_required
+    (fail-safe): an unknown/garbled policy must never grant auto-approval.
+    """
+    config = datasource.get("config") or {}
+    policy = str(config.get("approval_policy") or "review_required").strip().lower()
+    return "trusted" if policy == "trusted" else "review_required"
+
+
+def _approval_from_datasource_policy(datasource: dict) -> tuple[str, str, str | None]:
+    """Derive (approval_status, approval_source, effective_date) for EVERY file of a sync from the
+    saved datasource trust policy — NEVER from the (forgeable, per-request) sync body (Step 0 safety).
+
+    - 'trusted'        -> ('approved', 'imported', effective_date): the operator asserted the source
+                          is the system of record (FR-MFG-004a). effective_date defaults to today so
+                          the doc is approved+effective and immediately citable for high-risk answers.
+    - 'review_required'-> ('pending_review', 'workflow', None): each file enters the human review
+                          queue. pending_review is usable as a non-primary / non-high-risk basis but
+                          is NEVER an approved+effective citation, so a high-risk answer stays blocked
+                          (APPROVED_CITATION_MISSING) until a human approves it.
+    """
+    if _datasource_approval_policy(datasource) == "trusted":
+        config = datasource.get("config") or {}
+        eff = config.get("approval_effective_date") or _now()[:10]
+        return ("approved", "imported", str(eff))
+    return ("pending_review", "workflow", None)
+
+
+def _mfg_metadata_for_sync(body: dict, datasource: dict, tenant_id: str, document_id: str):
+    """Sync-time manufacturing metadata for ONE synced file.
+
+    NON-approval fields (equipment, safety_category, …) may still come from the sync body, but the
+    approval triplet (approval_status / approval_source / effective_date) is ALWAYS overridden by the
+    saved datasource trust policy — the body can never self-grant 'approved' for a connector sync.
+
+    Always returns metadata (never None): every synced file carries an EXPLICIT approval_status
+    (pending_review at minimum), closing the 'absent metadata == usable primary' gap (gate.py
+    ``_usable_primary(None) is True``).
+    """
+    from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
+
+    raw = dict(_mfg_raw_from_body(body) or {})
+    status, source, eff = _approval_from_datasource_policy(datasource)
+    raw["approval_status"] = status
+    raw["approval_source"] = source
+    raw["effective_date"] = eff
     return ManufacturingDocumentMetadata.from_mapping(
         {**raw, "tenant_id": tenant_id, "document_id": document_id}
     )
@@ -961,10 +1097,21 @@ def make_handler(system: ProductionSystem):
                 raise KeyError("x-raku-tenant-id")
             return tenant_id
 
+        def _internal_auth_ok(self, path: str) -> bool:
+            """P4-4 — enforce the internal-boundary shared secret; 401 + False on mismatch."""
+            if internal_auth_ok(
+                _INTERNAL_AUTH_SECRET, path, self.headers.get("X-Internal-Auth", "")
+            ):
+                return True
+            self._send(401, {"error": "internal_auth_required"})
+            return False
+
         def do_GET(self) -> None:  # noqa: N802
             try:
                 parsed = urlparse(self.path)
                 path = parsed.path
+                if not self._internal_auth_ok(path):
+                    return
                 parts = [unquote(p) for p in path.split("/") if p]
                 if path == "/healthz":
                     self._send(200, {"status": "ok", "backend": "production-system"})
@@ -1279,8 +1426,10 @@ def make_handler(system: ProductionSystem):
 
         def do_POST(self) -> None:  # noqa: N802
             try:
-                body = self._body()
                 path = urlparse(self.path).path
+                if not self._internal_auth_ok(path):
+                    return
+                body = self._body()
                 parts = [unquote(p) for p in path.split("/") if p]
                 if path == "/internal/answer":
                     principal = _claims(body)
@@ -1288,19 +1437,24 @@ def make_handler(system: ProductionSystem):
                     collection_id = body.get("collection_id")
                     self._send(200, _answer_json(system.answer(principal, query, collection_id)))
                 elif path == "/internal/manufacturing/answer":
-                    # P1-1: the manufacturing safety overlay (high-risk gate, approved+effective
+                    # P2-1: the manufacturing safety overlay (high-risk gate, approved+effective
                     # evidence requirement, draft/obsolete never primary) on the deployed answer path.
+                    # Route through ``manufacturing_system.answer`` (NOT the audit-less
+                    # ``build_manufacturing_answer_service`` overlay): identical safety behaviour over the
+                    # same Postgres base, but it ALSO records the high-risk classification + safety
+                    # decision + citation access to the tamper-evident hash-chain audit (parity with the
+                    # drafts/approval routes). Previously this handler discarded the decision (`*_`) and
+                    # wrote no audit row for a deployed safety-gate answer (AF-6 / FR-MFG-021).
                     principal = _claims(body)
                     query = str(body.get("query") or "")
                     collection_id = body.get("collection_id")
-                    service = build_manufacturing_answer_service(system)
-                    profile = system.profiles.resolve(collection_id)
-                    mfg_ans, *_ = service.answer(
+                    mfg_ans = manufacturing_system.answer(
                         principal,
                         query,
-                        profile,
+                        collection_id,
                         intent_hint=body.get("intent_hint"),
                         manufacturing_filters=body.get("manufacturing_filters"),
+                        factory_id=body.get("factory_id"),
                     )
                     self._send(200, _manufacturing_answer_json(mfg_ans))
                 elif (
@@ -1705,6 +1859,27 @@ def make_handler(system: ProductionSystem):
                             202 if retried.status in {"queued", "running", "succeeded"} else 200,
                             _ingest_response_json(retried),
                         )
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "sources"]
+                    and parts[3] == "sync"
+                ):
+                    tenant_id = self._tenant_header()
+                    source_id = parts[2]
+                    datasource = admin_settings.get_resource(tenant_id, "datasources", source_id)
+                    if datasource is None:
+                        self._send(404, {"error": "datasource not found"})
+                        return
+                    self._send(
+                        202,
+                        _sync_datasource_to_ingest(
+                            system,
+                            tenant_id,
+                            source_id,
+                            datasource,
+                            body,
+                        ),
+                    )
                 elif (
                     len(parts) == 5
                     and parts[:3] == ["internal", "admin", "provider-policies"]

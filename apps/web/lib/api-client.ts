@@ -1,4 +1,5 @@
 import type {
+  AdminDataSource,
   AnswerRequest,
   AnswerResponse,
   AssignReviewerRequest,
@@ -214,6 +215,41 @@ export async function manufacturingSourceSyncStatus(
 ): Promise<ManufacturingSourceSyncStatus> {
   return mfgGet<ManufacturingSourceSyncStatus>(
     `sources/${encodeURIComponent(sourceId)}/sync-status`,
+    userToken,
+  );
+}
+
+export interface AdminSourceSyncResponse {
+  source_id: string;
+  collection_id: string;
+  status: string;
+  ingestion_run_id: string;
+  status_url: string;
+  observed_count: number;
+  changed_count: number;
+  failed_count: number;
+  runs: IngestResponse[];
+}
+
+/** List the tenant's configured datasources (GET /admin/datasources). */
+export async function adminDataSources(
+  userToken: string,
+  collectionId?: string,
+): Promise<AdminDataSource[]> {
+  const path = collectionId
+    ? `/admin/datasources?collection_id=${encodeURIComponent(collectionId)}`
+    : "/admin/datasources";
+  return apiGetJson<AdminDataSource[]>(path, userToken);
+}
+
+export async function adminSourceSync(
+  sourceId: string,
+  body: Record<string, unknown>,
+  userToken: string,
+): Promise<AdminSourceSyncResponse> {
+  return apiPostJson<AdminSourceSyncResponse>(
+    `/admin/sources/${encodeURIComponent(sourceId)}/sync`,
+    body,
     userToken,
   );
 }

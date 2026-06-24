@@ -30,6 +30,11 @@ class Settings:
     embedding_provider: str = "hashing"
     embedding_dim: int = 256
     aws_region: str = "us-east-1"
+    # P1 production profile: "deterministic" (default — Tier-A fast loop, in-memory/extractive stack)
+    # vs "production" (settings-selected real adapters; fails closed when a real adapter is unconfigured).
+    runtime_profile: str = "deterministic"
+    bedrock_claude_model_id: str = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    langfuse_enabled: bool = False
     # Observability defaults (OD-008 / ADR-010 / ADR-015): raw retrieved context and raw user
     # query are NOT stored by default. Allowed: "disabled" | "redacted" | "full_opt_in".
     logging_raw_retrieved_context_storage: str = "disabled"
@@ -116,6 +121,11 @@ def settings_from_env(env: dict | None = None) -> Settings:
         embedding_provider=_get("RAKU_EMBEDDING_PROVIDER", Settings.embedding_provider),
         embedding_dim=int(_parse("RAKU_EMBEDDING_DIM", Settings.embedding_dim, int)),
         aws_region=_get("AWS_DEFAULT_REGION", Settings.aws_region),
+        runtime_profile=_get("RAKU_RUNTIME_PROFILE", Settings.runtime_profile),
+        bedrock_claude_model_id=_get(
+            "RAKU_BEDROCK_CLAUDE_MODEL_ID", Settings.bedrock_claude_model_id
+        ),
+        langfuse_enabled=_bool("LANGFUSE_ENABLED", Settings.langfuse_enabled),
         logging_raw_retrieved_context_storage=_get("RAKU_LOG_RAW_RETRIEVED_CONTEXT", "disabled"),
         logging_raw_user_query_storage=_get("RAKU_LOG_RAW_USER_QUERY", "disabled"),
         telemetry_export_enabled=_bool(

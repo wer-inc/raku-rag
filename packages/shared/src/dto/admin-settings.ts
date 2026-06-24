@@ -3,7 +3,14 @@ import type { ProviderPolicy } from "../policy/provider-policy.js";
 import type { QueryProfile } from "../policy/query-profile.js";
 import type { RetrievalProfile } from "../policy/retrieval-profile.js";
 
-export type DataSourceType = "upload" | "object_storage" | "slack" | "confluence";
+export type DataSourceType =
+  | "upload"
+  | "object_storage"
+  | "slack"
+  | "confluence"
+  | "database"
+  | "notion"
+  | "box";
 export type AdminStatus = "active" | "draft" | "archived";
 
 export interface AdminDataSource {

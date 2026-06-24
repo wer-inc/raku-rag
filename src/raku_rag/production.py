@@ -31,9 +31,15 @@ from raku_rag.persistence.postgres import (
 )
 from raku_rag.providers.chunkers import SentenceChunker
 from raku_rag.providers.embeddings import embedding_provider_from_settings
-from raku_rag.providers.llms import ExtractiveLLMProvider
-from raku_rag.providers.parsers import TextParser
-from raku_rag.providers.rerankers import ScoreOrderReranker
+from raku_rag.providers.guardrails import guardrail_from_settings
+from raku_rag.providers.llms import llm_provider_from_settings
+from raku_rag.providers.parsers import (
+    CompositeParser,
+    DocxParser,
+    SpreadsheetParser,
+    TextParser,
+)
+from raku_rag.providers.rerankers import reranker_from_settings
 from raku_rag.providers.vlms import ExtractiveVLMProvider
 from raku_rag.services.answer import AnswerService
 from raku_rag.services.assets import AssetService
@@ -76,10 +82,18 @@ class ProductionSystem(MvpSystem):
 
         # Reused, unchanged from MvpSystem.
         self.embedder = embedding_provider_from_settings(self.settings)
-        self.parser = TextParser()
+        # Upload-driven ingestion (goal.md Priority #2) accepts text/markdown/html + DOCX (Word)
+        # + XLSX/CSV (Excel) — PDF needs an optional pypdf parser (not installed here).
+        self.parser = CompositeParser([TextParser(), DocxParser(), SpreadsheetParser()])
         self.chunker = SentenceChunker()
-        self.reranker = ScoreOrderReranker()
-        self.llm = ExtractiveLLMProvider()
+        # P1-1/P1-3/P1-4: select generator + reranker + output guardrail by runtime profile. The
+        # deterministic default keeps Tier-A fast and the deployed default behaviour unchanged;
+        # production selects the real Bedrock adapters (fail-closed for generation/guardrail,
+        # fail-safe-to-score-order for rerank per FR-030). guardrail is None under deterministic (the
+        # stdlib PromptInjectionGuard still runs in the answer flow).
+        self.reranker = reranker_from_settings(self.settings)
+        self.llm = llm_provider_from_settings(self.settings)
+        self.guardrail = guardrail_from_settings(self.settings)
         self.vlm = ExtractiveVLMProvider()
         self.cost = CostService()
         self.telemetry_exporter = exporter_from_settings(self.settings)

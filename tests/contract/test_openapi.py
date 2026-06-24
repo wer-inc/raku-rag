@@ -153,7 +153,12 @@ class OpenApiContractTest(unittest.TestCase):
         self.assertTrue(expected_paths.issubset(set(self.doc["paths"])))
 
         schemas = self.doc["components"]["schemas"]
-        self.assertIn("object_storage", schemas["AdminDataSource"]["properties"]["type"]["enum"])
+        datasource_type_enum = schemas["AdminDataSource"]["properties"]["type"]["enum"]
+        upsert_type_enum = schemas["DataSourceUpsertRequest"]["properties"]["type"]["enum"]
+        for datasource_type in ("object_storage", "confluence", "database", "notion", "box"):
+            with self.subTest(datasource_type=datasource_type):
+                self.assertIn(datasource_type, datasource_type_enum)
+                self.assertIn(datasource_type, upsert_type_enum)
         self.assertIn("captioning_enabled", schemas["QueryProfileSettings"]["properties"])
         for field in (
             "max_context_tokens",

@@ -85,6 +85,22 @@ describe("admin ingestion status facade (e2e)", () => {
         );
         return;
       }
+      if (req.method === "POST" && req.url === "/internal/sources/upload/sync") {
+        res.end(
+          JSON.stringify({
+            source_id: "upload",
+            collection_id: "manuals",
+            status: "succeeded",
+            ingestion_run_id: "ing_sync",
+            status_url: "/v1/admin/ingestion-runs/ing_sync",
+            observed_count: 1,
+            changed_count: 1,
+            failed_count: 0,
+            runs: [],
+          }),
+        );
+        return;
+      }
       if (req.method === "POST" && req.url === "/internal/admin/collections/manuals/reindex") {
         res.end(
           JSON.stringify({
@@ -235,6 +251,18 @@ describe("admin ingestion status facade (e2e)", () => {
     expect(res.status).toBe(202);
     expect(res.body.ingestion_run_id).toBe("ing_retry");
     expect(seen[seen.length - 1].tenant).toBe("tenant_admin");
+  });
+
+  it("POST /v1/admin/sources/:id/sync forwards datasource sync requests", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/v1/admin/sources/upload/sync")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", token)
+      .send({ collection_id: "manuals" });
+
+    expect(res.status).toBe(202);
+    expect(res.body.ingestion_run_id).toBe("ing_sync");
+    expect(seen[seen.length - 1].url).toBe("/internal/sources/upload/sync");
   });
 
   it("POST /v1/admin/collections/:id/reindex creates a reindex plan", async () => {

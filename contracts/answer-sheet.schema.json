@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raku-rag/contracts/answer-sheet.schema.json",
+  "title": "Manufacturing Answer Workspace — Image Hazard AnswerSheet (015, frozen v0)",
+  "description": "Frozen minimal contract for the image-hazard 質問回答票 (ADR-015). Response root is AnswerSheet; request is $defs/AnswerSheetRequest. Do not extend without a new ADR — the freeze is the point.",
+  "$ref": "#/$defs/AnswerSheet",
+  "$defs": {
+    "Verdict": {
+      "type": "string",
+      "enum": ["OK", "PARTIAL", "NG", "NEEDS_CHECK"],
+      "description": "OK / 一部OK(PARTIAL) / NG / 要確認(NEEDS_CHECK)."
+    },
+    "ManufacturingFilters": {
+      "type": "object",
+      "description": "Optional scoping (equipment/process/factory/department). Open-ended by design.",
+      "additionalProperties": true
+    },
+    "LegalCitation": {
+      "type": "object",
+      "description": "Retrieval-derived, traceable provenance for a legal basis. Reuses the 002 Citation provenance vocabulary so the new sheet stays consistent with existing citations.",
+      "additionalProperties": false,
+      "required": ["document_id", "retrieval_score"],
+      "properties": {
+        "document_id": { "type": "string", "minLength": 1 },
+        "chunk_id": { "type": ["string", "null"] },
+        "source_id": { "type": ["string", "null"] },
+        "version": { "type": ["integer", "null"] },
+        "retrieval_score": { "type": "number" },
+        "approval_status": { "type": ["string", "null"] },
+        "effective_date": { "type": ["string", "null"] },
+        "approval_source": { "type": ["string", "null"] }
+      }
+    },
+    "LegalBasis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["law", "article", "citation"],
+      "properties": {
+        "law": { "type": "string", "minLength": 1, "description": "規程/法令名" },
+        "article": { "type": "string", "description": "条/項" },
+        "citation": { "$ref": "#/$defs/LegalCitation" }
+      }
+    },
+    "EvidenceRegion": {
+      "type": "object",
+      "description": "Optional spatial grounding on the source image. Reuses 001 BoundingBox normalized coords (0..1).",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "minimum": 0, "maximum": 1 },
+        "height": { "type": "number", "minimum": 0, "maximum": 1 },
+        "page_number": { "type": ["integer", "null"] },
+        "region_id": { "type": ["string", "null"] }
+      }
+    },
+    "AnswerSheetItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hazard", "improvement", "legal_basis", "verdict"],
+      "properties": {
+        "hazard": { "type": "string", "minLength": 1, "description": "危険指摘 (どこが/何が危険か)" },
+        "improvement": { "type": "string", "minLength": 1, "description": "改善策 / すべきこと" },
+        "legal_basis": {
+          "type": "array",
+          "description": "Retrieved approved+effective regulation citations. A high-risk item with an empty legal_basis must not be OK/PARTIAL — it is NG or NEEDS_CHECK.",
+          "items": { "$ref": "#/$defs/LegalBasis" }
+        },
+        "verdict": { "$ref": "#/$defs/Verdict" },
+        "evidence_region": { "$ref": "#/$defs/EvidenceRegion" }
+      }
+    },
+    "AnswerSheetRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image_ref", "collection_id"],
+      "properties": {
+        "image_ref": { "type": "string", "minLength": 1, "description": "Storage/asset ref for the uploaded image (browser never sends tenant/identity — that comes from the signed token)." },
+        "collection_id": { "type": "string", "minLength": 1 },
+        "manufacturing_filters": { "$ref": "#/$defs/ManufacturingFilters" },
+        "intent_hint": { "type": "string" }
+      }
+    },
+    "AnswerSheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "overall_verdict", "trace_id"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "description": "Per-hazard findings. May be empty when no hazard is found (then overall_verdict is OK or NEEDS_CHECK).",
+          "items": { "$ref": "#/$defs/AnswerSheetItem" }
+        },
+        "overall_verdict": { "$ref": "#/$defs/Verdict" },
+        "trace_id": { "type": "string", "minLength": 1, "description": "Langfuse/observability trace id for this evaluation." }
+      }
+    }
+  }
+}

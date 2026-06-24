@@ -25,10 +25,10 @@ sections each expose an already-implemented backend capability:
 - **Operations**: a read-only knowledge-ops view — unanswered/low-rating/frequent/obsolete/
   knowledge-gap dashboard, safety-telemetry (high-risk + safety-gate block breakdown), the PoC KPI
   set, and governance status.
-- **Sources**: browse the knowledge base with approval/freshness state, search past trouble-cases
-  (shown as candidates/reference), and inspect source sync-status + ingestion-run status.
-- **Reviews**: the human review loop — list/inspect AI-authored drafts, assign and review/decide
-  them, and set document approval state. AI outputs stay `draft`; a human decides.
+- **Sources**: search past trouble-cases (shown as candidates/reference), inspect source sync-status,
+  and look up ingestion-run status with approval/freshness labels where the backend returns them.
+- **Reviews**: the human review loop — open or create AI-authored drafts by artifact id, assign and
+  review/decide them, and set document approval state. AI outputs stay `draft`; a human decides.
 
 This is intentionally NOT a full DMS / e-signature / arbitrary-rollback console (out of scope per
 `002`). It is the smallest navigable surface that lets a field user, a reviewer, and an ops owner
@@ -94,13 +94,14 @@ payloads defensively (empty/zero states included).
 
 ---
 
-### User Story 3 - Browse sources and past cases (Sources) (Priority: P2)
+### User Story 3 - Search sources and past cases (Sources) (Priority: P2)
 
-As a field user or reviewer, I can browse the knowledge base, see each source's approval and freshness
-state, search prior trouble-cases as reference candidates, and check a source's sync / ingestion-run
-status.
+As a field user or reviewer, I can search prior trouble-cases as reference candidates and check a
+known source's sync / ingestion-run status, including approval and freshness labels when the backend
+returns them.
 
-**Why this priority**: Trust in an answer requires inspecting the underlying sources and their state.
+**Why this priority**: Trust in an answer requires inspecting the underlying source state without
+inventing a broader source-list endpoint.
 
 **Independent Test**: Web build renders source/approval/freshness labels and the trouble-case results
 list; missing optional fields degrade gracefully.
@@ -109,15 +110,15 @@ list; missing optional fields degrade gracefully.
 
 1. **Given** a trouble-case query, **When** I search, **Then** results render as **candidates /
    reference** (never as an approved instruction), matching the backend's past-case semantics.
-2. **Given** a source id, **When** I open its sync-status, **Then** the latest ingestion-run state is
-   shown; an obsolete/draft source is labeled reference-only.
+2. **Given** a source id or ingestion-run id, **When** I look it up, **Then** the latest known state is
+   shown; an obsolete/draft source is labeled reference-only when that approval state is present.
 
 ---
 
 ### User Story 4 - Run the human review loop (Reviews) (Priority: P2)
 
-As a reviewer, I can list AI-authored drafts, open one, assign it, and record a review decision, and I
-can set a document's approval state — all as explicit human actions.
+As a reviewer, I can open or create an AI-authored draft, assign it, record a review decision, and set
+a document's approval state — all as explicit human actions.
 
 **Why this priority**: AI outputs are always `draft`; the product's safety value is the human deciding.
 The backend enforces this; the UI must make it doable.
@@ -152,9 +153,10 @@ state machine and disables actions the server reports as unauthorized.
   governance-status payloads from `/v1/manufacturing/{dashboard,safety-telemetry,kpi,governance/status}`
   through shared DTOs, including zero/empty states.
 - **FR-003**: The Sources view MUST surface trouble-case search results as candidates/reference and
-  source sync-status / ingestion-run status, with approval/freshness labels.
-- **FR-004**: The Reviews view MUST list/inspect drafts and initiate assign / review / document-approval
-  mutations as explicit human actions, labeling AI outputs as `draft` and never as approved.
+  source sync-status / ingestion-run lookup results, with approval/freshness labels when provided.
+- **FR-004**: The Reviews view MUST open/inspect or create drafts and initiate assign / review /
+  document-approval mutations as explicit human actions, labeling AI outputs as `draft` and never as
+  approved.
 - **FR-005**: All requests MUST authenticate via the signed dev-token through the API facade; the
   browser MUST NOT add tenant/user identity to request bodies, and MUST NOT widen tenant scope.
 - **FR-006**: The UI MUST NOT change any safety decision: it renders backend safety/approval/governance

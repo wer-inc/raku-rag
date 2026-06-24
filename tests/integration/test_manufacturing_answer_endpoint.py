@@ -19,6 +19,10 @@ from raku_rag.manufacturing.domain.metadata import (
     ManufacturingDocumentMetadata,
 )
 from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY
+# Build the answer service from the wiring module directly: the deployed answer-service route now
+# goes through the AUDITED manufacturing_system.answer path (FR-MFG-021) and no longer imports the
+# build_manufacturing_answer_service overlay, so this serialization test sources it from wiring.
+from raku_rag.manufacturing.wiring import build_manufacturing_answer_service
 
 ROOT = Path(__file__).resolve().parents[2]
 T = "tenant_mfg"
@@ -66,7 +70,7 @@ class TestManufacturingAnswerEndpoint(unittest.TestCase):
         )
 
     def _answer_json(self, query):
-        service = self.srv.build_manufacturing_answer_service(self.sys)
+        service = build_manufacturing_answer_service(self.sys)
         profile = self.sys.profiles.resolve("c")
         ans, *_ = service.answer(self.op, query, profile)
         return self.srv._manufacturing_answer_json(ans)

@@ -81,5 +81,76 @@ class TestMfgMetadataFromBody(unittest.TestCase):
         self.assertEqual(meta.document_id, "d1")
 
 
+class TestSyncApprovalPolicy(unittest.TestCase):
+    """Step 0/1 — a datasource sync derives EVERY file's approval state from the saved datasource
+    trust policy, never from the (forgeable) sync request body."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = _load_server()
+
+    def test_default_datasource_is_review_required(self) -> None:
+        ds = {"config": {"source_type": "s3"}}
+        self.assertEqual(self.server._datasource_approval_policy(ds), "review_required")
+        self.assertEqual(
+            self.server._approval_from_datasource_policy(ds),
+            ("pending_review", "workflow", None),
+        )
+
+    def test_trusted_datasource_is_approved_imported_effective(self) -> None:
+        ds = {"config": {"approval_policy": "trusted"}}
+        status, source, eff = self.server._approval_from_datasource_policy(ds)
+        self.assertEqual(status, "approved")
+        self.assertEqual(source, "imported")
+        self.assertTrue(eff, "trusted source must carry an effective_date so it is approved+effective")
+
+    def test_trusted_datasource_honors_explicit_effective_date(self) -> None:
+        ds = {"config": {"approval_policy": "trusted", "approval_effective_date": "2026-01-01"}}
+        self.assertEqual(
+            self.server._approval_from_datasource_policy(ds),
+            ("approved", "imported", "2026-01-01"),
+        )
+
+    def test_unknown_policy_fails_safe_to_review_required(self) -> None:
+        ds = {"config": {"approval_policy": "YOLO"}}
+        self.assertEqual(self.server._datasource_approval_policy(ds), "review_required")
+
+    def test_body_cannot_self_grant_approved_on_review_required_source(self) -> None:
+        # The sync body explicitly asks for approved — it MUST be overridden to pending_review, while
+        # non-approval fields (safety_category) are preserved.
+        ds = {"config": {"source_type": "s3"}}
+        meta = self.server._mfg_metadata_for_sync(
+            {"manufacturing": {"approval_status": "approved", "safety_category": "lockout_tagout"}},
+            ds,
+            "t1",
+            "d1",
+        )
+        self.assertEqual(meta.approval_status, ApprovalStatus.PENDING_REVIEW)
+        self.assertIsNone(meta.effective_date)
+        self.assertEqual(meta.safety_category, "lockout_tagout")
+        self.assertEqual(meta.tenant_id, "t1")
+        self.assertEqual(meta.document_id, "d1")
+
+    def test_trusted_source_stamps_approved_and_keeps_body_nonapproval_fields(self) -> None:
+        ds = {"config": {"approval_policy": "trusted"}}
+        meta = self.server._mfg_metadata_for_sync(
+            {"manufacturing": {"safety_category": "lockout_tagout"}},
+            ds,
+            "t1",
+            "d2",
+        )
+        self.assertEqual(meta.approval_status, ApprovalStatus.APPROVED)
+        self.assertTrue(meta.effective_date)
+        self.assertEqual(meta.safety_category, "lockout_tagout")
+
+    def test_absent_body_block_still_yields_explicit_pending_review(self) -> None:
+        # No manufacturing block at all: a synced file must STILL carry an explicit pending_review
+        # (never None) so it is not a silently-usable primary basis (gate _usable_primary(None) gap).
+        ds = {"config": {"source_type": "s3"}}
+        meta = self.server._mfg_metadata_for_sync({}, ds, "t1", "d3")
+        self.assertEqual(meta.approval_status, ApprovalStatus.PENDING_REVIEW)
+        self.assertEqual(meta.approval_source.value, "workflow")
+
+
 if __name__ == "__main__":
     unittest.main()
