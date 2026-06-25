@@ -1,4 +1,10 @@
 <!-- SPECKIT START -->
+> Current active line of work (2026-06-25): **020-prod-readiness** — the live-verified `/goal` prod
+> loop (ledger SSOT at `specs/prod-readiness/ledger.json`), built on the implemented 002 solution
+> layer below. The full stack is also deployed on AWS (LIVE & billing); see "Beyond the 002/015
+> baseline" below the SPECKIT block. (This managed block is hand-curated — do NOT run
+> `update-agent-context.sh`, which clobbers it with a 3-line plan-path stub.)
+
 ## Active Feature: 002-manufacturing-field-knowledge-rag (Solution Layer — implemented; T001–T072 checked + 20-item design-gap backlog open; committed, gate green)
 
 Manufacturing Field Knowledge RAG built **on top of** the 001 base platform (do NOT redefine base
@@ -59,3 +65,25 @@ no `main`/`master`. Spec Kit workflow: feature work lives on numbered `NNN-<slug
 implemented stack: RAG core + manufacturing safety overlay + the answer-workspace **frontend**
 (`apps/web`, goal.md flows) on the live `web → NestJS API → Python answer-service → Postgres` path.
 (Earlier numbered branches 003–014 are already merged into the 002 line that `develop` descends from.)
+Current active line of work: **020-prod-readiness** (the live-verified `/goal` prod loop; ledger SSOT
+at `specs/prod-readiness/ledger.json`).
+
+## Beyond the 002/015 baseline (already landed on `develop`)
+
+The SPECKIT block above describes the 002 solution layer; the following also ships on `develop` and
+is NOT reflected there:
+- **AWS production deploy (LIVE & billing as of 2026-06-25).** CDK stack under `infra/cdk/`
+  (`minimalSpec` low-cost profile: Aurora 1-instance, small Fargate, Langfuse off; `aws-nextjs`
+  same-origin web+API behind one ALB, optional ACM TLS). Deploy is via **GitHub Actions OIDC** (no
+  local Docker) — see `infra/cdk/DEPLOY.md` / `DEPLOY-CI.md`. Post-deploy migrate+seed runs in-VPC as
+  an ECS RunTask.
+- **Embedding providers**: OpenAI `text-embedding-3-small @256` is wired as an **opt-in** alternative
+  to the default offline hashing embedder (#31).
+- **Datasource connectors** (end-to-end frontend↔API↔answer-service): MySQL / Confluence / Notion /
+  Box / S3 / URL / kintone, via `src/raku_rag/services/datasource_sync.py`. SSRF hardening
+  (IP-pinning, allowlists, auth-strip) and a config-driven trust/approval policy gate apply.
+- **Japanese-aware retrieval**: CJK-bigram tokenizer (recall@k 0.80 → 1.0).
+- **Live quality & safety scorecard** surfaced on the 品質・KPI screen, with the eval harness wired to
+  the running stack (`scripts/demo/quality_scorecard.sh`).
+- **Sellable PoC demo package**: `scripts/demo/` (curated JP KB, `demo_up.sh` one-command boot,
+  `DEMO.md` runbook).
