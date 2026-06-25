@@ -8,6 +8,7 @@ deterministic. Production swaps in Anthropic/OpenAI-compatible providers behind 
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Callable, Sequence
 
@@ -95,21 +96,73 @@ class BedrockClaudeLLMProvider(LLMProvider):
         return self._invoker(model_id=self.model, prompt=prompt, max_tokens=self._max_tokens)
 
 
-def llm_provider_from_settings(settings, *, invoker: BedrockInvoker | None = None) -> LLMProvider:
-    """Select the LLM generator by runtime profile (P1-1). Mirrors ``embedding_provider_from_settings``.
+_DEFAULT_BEDROCK_CLAUDE_MODEL_ID = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
-    deterministic (default) -> ``ExtractiveLLMProvider`` (Tier-A fast loop, no external call).
-    production              -> ``BedrockClaudeLLMProvider`` (real Bedrock Claude; ``invoker`` injected
-                               by the live wiring / a mock in tests; absent ⇒ fail-closed at generate()).
+
+def build_bedrock_claude_invoker(
+    *, region_name: str = "us-east-1", client: object | None = None
+) -> BedrockInvoker:
+    """Bedrock InvokeModel round-trip for Claude (Anthropic Messages API on Bedrock).
+
+    boto3 is created lazily so importing this module never needs AWS deps; tests inject a client. The
+    request body uses the Bedrock ``anthropic_version`` with NO thinking/sampling params, so the same
+    shape works across Claude 3.5/4.x Bedrock model ids (newer models 400 on temperature/budget_tokens).
+    Returns the concatenated text blocks of the response.
     """
+    state: dict[str, object | None] = {"client": client}
+
+    def _invoke(*, model_id: str, prompt: str, max_tokens: int) -> str:
+        if state["client"] is None:
+            import boto3  # type: ignore
+
+            state["client"] = boto3.client("bedrock-runtime", region_name=region_name)
+        body = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        response = state["client"].invoke_model(  # type: ignore[attr-defined]
+            modelId=model_id,
+            body=json.dumps(body).encode("utf-8"),
+            accept="application/json",
+            contentType="application/json",
+        )
+        payload = json.loads(response["body"].read().decode("utf-8"))
+        blocks = payload.get("content") or []
+        return "".join(
+            b.get("text", "") for b in blocks if isinstance(b, dict) and b.get("type") == "text"
+        )
+
+    return _invoke
+
+
+def llm_provider_from_settings(settings, *, invoker: BedrockInvoker | None = None) -> LLMProvider:
+    """Select the LLM generator (P1-1). Mirrors ``embedding_provider_from_settings``.
+
+    An explicit ``llm_provider`` (``RAKU_LLM_PROVIDER=bedrock_claude``) selects real Bedrock Claude
+    independently of ``runtime_profile`` — so the answer text can come from Claude WITHOUT flipping the
+    whole profile to production (which would also fail-close the guardrail + reranker). When unset:
+    deterministic (default) -> ``ExtractiveLLMProvider``; production -> ``BedrockClaudeLLMProvider``.
+    A default boto3 invoker is built when none is injected (tests inject a mock).
+    """
+    region = str(getattr(settings, "aws_region", "us-east-1") or "us-east-1")
+    model_id = str(
+        getattr(settings, "bedrock_claude_model_id", "") or _DEFAULT_BEDROCK_CLAUDE_MODEL_ID
+    )
+    llm_name = str(getattr(settings, "llm_provider", "") or "").strip().lower().replace("-", "_")
+    if llm_name in {"bedrock_claude", "claude_bedrock", "bedrock_claude_sonnet"}:
+        return BedrockClaudeLLMProvider(
+            model_id=model_id,
+            invoker=invoker or build_bedrock_claude_invoker(region_name=region),
+        )
+
     profile = str(getattr(settings, "runtime_profile", "deterministic") or "deterministic")
     profile = profile.strip().lower()
     if profile in {"deterministic", "mvp", "offline", ""}:
         return ExtractiveLLMProvider()
     if profile == "production":
-        model_id = str(
-            getattr(settings, "bedrock_claude_model_id", "")
-            or "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
-        )
+        # Preserve the production contract: the invoker is injected by the live wiring; absent ⇒
+        # fail-closed at generate() (no silent default). The explicit `llm_provider=bedrock_claude`
+        # path above is what auto-builds a boto3 invoker.
         return BedrockClaudeLLMProvider(model_id=model_id, invoker=invoker)
     raise ValueError(f"unsupported runtime_profile: {profile!r}")

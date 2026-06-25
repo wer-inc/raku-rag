@@ -36,6 +36,10 @@ class Settings:
     # P1 production profile: "deterministic" (default — Tier-A fast loop, in-memory/extractive stack)
     # vs "production" (settings-selected real adapters; fails closed when a real adapter is unconfigured).
     runtime_profile: str = "deterministic"
+    # Answer-generation LLM override, independent of runtime_profile. "" = use the profile default
+    # (deterministic→extractive). "bedrock_claude" = real Bedrock Claude (needs Bedrock model access +
+    # IAM). Lets the answer text come from Claude without flipping guardrail/reranker to production.
+    llm_provider: str = ""
     bedrock_claude_model_id: str = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
     langfuse_enabled: bool = False
     # P1-5 Langfuse self-host edge (host/keys live at the composition edge; the SDK is a `prod` extra).
@@ -131,6 +135,7 @@ def settings_from_env(env: dict | None = None) -> Settings:
         openai_api_key=_get("OPENAI_API_KEY", Settings.openai_api_key),
         aws_region=_get("AWS_DEFAULT_REGION", Settings.aws_region),
         runtime_profile=_get("RAKU_RUNTIME_PROFILE", Settings.runtime_profile),
+        llm_provider=_get("RAKU_LLM_PROVIDER", Settings.llm_provider),
         bedrock_claude_model_id=_get(
             "RAKU_BEDROCK_CLAUDE_MODEL_ID", Settings.bedrock_claude_model_id
         ),
