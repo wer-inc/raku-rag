@@ -121,7 +121,7 @@ const OPENAPI_DOC = {
           source_id: { type: "string" },
           tenant_id: { type: "string" },
           collection_id: { type: "string" },
-          type: { type: "string", enum: ["upload", "object_storage", "slack", "confluence", "database", "notion", "box"] },
+          type: { type: "string", enum: ["upload", "object_storage", "slack", "confluence", "database", "notion", "box", "google_drive"] },
           config: { type: "object" },
           sync_schedule: { type: "string", nullable: true },
           last_synced_at: { type: "string", nullable: true },
@@ -135,7 +135,7 @@ const OPENAPI_DOC = {
         required: ["collection_id", "type"],
         properties: {
           collection_id: { type: "string" },
-          type: { type: "string", enum: ["upload", "object_storage", "slack", "confluence", "database", "notion", "box"] },
+          type: { type: "string", enum: ["upload", "object_storage", "slack", "confluence", "database", "notion", "box", "google_drive"] },
           config: { type: "object" },
           sync_schedule: { type: "string", nullable: true },
           status: { type: "string", enum: ["active", "draft", "archived"] },

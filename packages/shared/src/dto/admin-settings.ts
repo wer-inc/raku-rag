@@ -10,7 +10,8 @@ export type DataSourceType =
   | "confluence"
   | "database"
   | "notion"
-  | "box";
+  | "box"
+  | "google_drive";
 export type AdminStatus = "active" | "draft" | "archived";
 
 export interface AdminDataSource {
