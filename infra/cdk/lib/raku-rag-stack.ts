@@ -50,6 +50,23 @@ export class RakuRagStack extends cdk.Stack {
     const minimalSpec =
       minimalSpecCtx === "true" || (minimalSpecCtx !== "false" && !isProd);
     const deployLangfuse = !minimalSpec;
+    // Embedding provider — default is the offline hashing embedder (vector(256), zero cost). Pass
+    // `--context embeddingProvider=openai` to switch the answer-service + worker to OpenAI
+    // text-embedding-3-small at 256 dims (Matryoshka `dimensions`), which fits the existing
+    // vector(256) schema with NO migration. Requires a Secrets Manager secret named
+    // `raku-rag/openai-api-key` (the plaintext API key) created BEFORE deploy; re-seed after switching
+    // so chunks are re-embedded with the new provider.
+    const useOpenAiEmbeddings =
+      String(this.node.tryGetContext("embeddingProvider") ?? "hashing") === "openai";
+    const openAiSecret = useOpenAiEmbeddings
+      ? secretsmanager.Secret.fromSecretNameV2(this, "OpenAiApiKeySecret", "raku-rag/openai-api-key")
+      : undefined;
+    const embeddingEnvironment: Record<string, string> = useOpenAiEmbeddings
+      ? { RAKU_EMBEDDING_PROVIDER: "openai_text_embedding_3_small", RAKU_EMBEDDING_DIM: "256" }
+      : {};
+    const embeddingSecrets: Record<string, ecs.Secret> = openAiSecret
+      ? { OPENAI_API_KEY: ecs.Secret.fromSecretsManager(openAiSecret) }
+      : {};
     // Frontend hosting shape (resolved early — it decides who owns the public ALB):
     //  - external-vercel (default): the NestJS API owns the public ALB; web is hosted off-AWS (Vercel).
     //  - aws-nextjs: the Next.js web owns the public ALB and is the default target; the API is attached
@@ -527,6 +544,7 @@ export class RakuRagStack extends cdk.Stack {
     ingestionQueue.grantConsumeMessages(workerTask.taskRole);
     deadLetterQueue.grantSendMessages(workerTask.taskRole);
     database.secret?.grantRead(workerTask.taskRole);
+    openAiSecret?.grantRead(workerTask.taskRole);
 
     this.grantBedrockInvoke(workerTask.taskRole);
     workerTask.addContainer("PythonIngestWorkerContainer", {
@@ -539,6 +557,7 @@ export class RakuRagStack extends cdk.Stack {
         logRetention: logs.RetentionDays.ONE_MONTH
       }),
       environment: {
+        ...embeddingEnvironment,
         STAGE_NAME: props.stageName,
         RAKU_WORKER_BACKEND: "postgres",
         DOCUMENT_BUCKET: documentBucket.bucketName,
@@ -551,6 +570,7 @@ export class RakuRagStack extends cdk.Stack {
         PGVECTOR_EXTENSION_SQL: pgvectorExtensionSql
       },
       secrets: {
+        ...embeddingSecrets,
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password")
       }
     });
@@ -590,6 +610,7 @@ export class RakuRagStack extends cdk.Stack {
     this.attachRuntimePolicies(answerTask.taskRole, documentBucket, dataKey);
     this.grantBedrockInvoke(answerTask.taskRole);
     internalAuthSecret.grantRead(answerTask.taskRole);
+    openAiSecret?.grantRead(answerTask.taskRole);
     database.secret?.grantRead(answerTask.taskRole);
 
     const answerContainer = answerTask.addContainer("AnswerServiceContainer", {
@@ -602,6 +623,7 @@ export class RakuRagStack extends cdk.Stack {
         logRetention: logs.RetentionDays.ONE_MONTH
       }),
       environment: {
+        ...embeddingEnvironment,
         STAGE_NAME: props.stageName,
         // Listen on all interfaces so the internal ALB health check reaches the task ENI (the default
         // 127.0.0.1 bind is loopback-only → failed ELB health checks → ECS kills the task).
@@ -611,6 +633,7 @@ export class RakuRagStack extends cdk.Stack {
         DATABASE_NAME: "raku_rag"
       },
       secrets: {
+        ...embeddingSecrets,
         RAKU_INTERNAL_AUTH_SECRET: ecs.Secret.fromSecretsManager(internalAuthSecret, "secret"),
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password")
       }

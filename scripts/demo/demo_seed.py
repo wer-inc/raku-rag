@@ -130,6 +130,44 @@ def ingest(doc: dict) -> tuple[str, object]:
         return "ERROR", str(exc)[:160]
 
 
+# The demo identities the dev-token issuer (apps/web/app/api/dev-token/route.ts) recognizes. ACL is
+# deny-by-default, so WITHOUT a grant every ingested doc is invisible and search/answer return empty —
+# this is what made the seeded KB look empty even after ingestion succeeded. Grant each demo user READ
+# on the demo collection so any demo login can retrieve. (Persisted in acl_grants; idempotent.)
+DEMO_USERS = ["alice", "misaki", "bob", "carol", "dave"]
+
+
+def grant_demo_acl() -> tuple[str, object]:
+    """PUT /internal/admin/acl — collection-scoped READ grant for each demo user (deny-by-default)."""
+    grants = [
+        {
+            "scope_type": "collection",
+            "scope_id": COLLECTION,
+            "subject_type": "user",
+            "subject_id": user,
+        }
+        for user in DEMO_USERS
+    ]
+    headers = {"content-type": "application/json", "x-raku-tenant-id": TENANT, "x-raku-user-id": "alice"}
+    if INTERNAL_AUTH:
+        headers["X-Internal-Auth"] = INTERNAL_AUTH
+    req = urllib.request.Request(
+        AS_URL + "/internal/admin/acl",
+        data=json.dumps({"grants": grants, "reason": "demo seed: collection read for demo users"}).encode(
+            "utf-8"
+        ),
+        headers=headers,
+        method="PUT",
+    )
+    try:
+        res = json.load(urllib.request.urlopen(req, timeout=30))
+        return "granted", len(res.get("grants", []))
+    except urllib.error.HTTPError as exc:
+        return "ERROR", exc.read().decode("utf-8", "replace")[:160]
+    except Exception as exc:  # noqa: BLE001
+        return "ERROR", str(exc)[:160]
+
+
 def main() -> None:
     ok = 0
     print(f"[demo-seed] ingesting {len(DOCS)} documents into {TENANT}/{COLLECTION} via {AS_URL}")
@@ -138,6 +176,9 @@ def main() -> None:
         if status == "succeeded":
             ok += 1
         print(f"  {status:10} {doc['document_id']:22} {doc['approval_status']:14} chunks={chunks}")
+    # Without this grant, deny-by-default ACL hides every doc from search/answer (empty KB symptom).
+    acl_status, acl_info = grant_demo_acl()
+    print(f"[demo-seed] acl grant ({', '.join(DEMO_USERS)} -> read {COLLECTION}): {acl_status} {acl_info}")
     print(f"[demo-seed] done: {ok}/{len(DOCS)} succeeded")
 
 

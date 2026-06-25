@@ -80,6 +80,22 @@ def embedding_provider_from_settings(settings) -> EmbeddingProvider:
 
         region = str(getattr(settings, "aws_region", "us-east-1") or "us-east-1")
         return CohereEmbedMultilingualV3Provider(region_name=region)  # type: ignore[return-value]
+    if provider_name in {
+        "openai_text_embedding_3_small",
+        "openai_text_embedding_3_large",
+        "text_embedding_3_small",
+        "text_embedding_3_large",
+    }:
+        # Matryoshka `dimensions` lets text-embedding-3 emit `dim`-wide vectors, so dim=256 fits the
+        # existing vector(256) chunks column with NO schema migration. The API key comes from
+        # settings/OPENAI_API_KEY; the provider reads env when not injected.
+        import os
+
+        from workers.ingest.providers.embeddings.openai_embed3 import OpenAIEmbedding3Provider
+
+        model = "text-embedding-3-large" if "large" in provider_name else "text-embedding-3-small"
+        api_key = str(getattr(settings, "openai_api_key", "") or os.environ.get("OPENAI_API_KEY", ""))
+        return OpenAIEmbedding3Provider(model=model, dimensions=dim, api_key=api_key)  # type: ignore[return-value]
     raise ValueError(f"unsupported embedding_provider: {provider_name!r}")
 
 
