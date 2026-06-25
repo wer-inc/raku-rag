@@ -6,7 +6,6 @@ import type { RetrievalProfile } from "../policy/retrieval-profile.js";
 export type DataSourceType =
   | "upload"
   | "object_storage"
-  | "slack"
   | "confluence"
   | "database"
   | "notion"
@@ -32,6 +31,7 @@ export interface DataSourceUpsertRequest {
   collection_id: string;
   type: DataSourceType;
   config?: Record<string, unknown>;
+  credentials?: Record<string, unknown>;
   sync_schedule?: string | null;
   status?: AdminStatus;
   reason?: string;

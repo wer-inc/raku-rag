@@ -46,6 +46,11 @@ from raku_rag.manufacturing.drafts.review import InvalidTransitionError  # noqa:
 from raku_rag.persistence.evaluation_runs import (  # noqa: E402
     InMemoryEvaluationRunRepository,
 )
+from raku_rag.persistence.datasources import (  # noqa: E402
+    InMemoryDataSourceRepository,
+    PostgresDataSourceRepository,
+)
+from raku_rag.services.source_sync import SourceSyncService  # noqa: E402
 from raku_rag.industry import (  # noqa: E402
     IndustryApiService,
     InvestmentApiService,
@@ -67,6 +72,8 @@ from raku_rag.persistence.oauth_connection import (  # noqa: E402
 from raku_rag.persistence.secret_store import secret_store_from_settings  # noqa: E402
 from raku_rag.services import oauth_token_resolver  # noqa: E402
 from raku_rag.providers.connectors import default_connector_from_env  # noqa: E402
+from raku_rag.workers.ingestion import IngestionRunStore  # noqa: E402
+from raku_rag.workers.queue.sqs import SqsTaskQueue  # noqa: E402
 from workers.ingest.provider_policy import (  # noqa: E402
     ProviderPolicy,
     ProviderPolicyEnforcer,
@@ -118,8 +125,9 @@ class _AdminSettingsStore:
     _opt_in_policy_keys = {"customer_opt_in_required", "customer_opt_in_status"}
     _model_policy_keys = {"embedding_provider", "llm_provider", "llm_model"}
 
-    def __init__(self, system: ProductionSystem) -> None:
+    def __init__(self, system: ProductionSystem, *, datasource_repo: object | None = None) -> None:
         self._system = system
+        self._datasource_repo = datasource_repo
         self._items: dict[str, dict[str, dict[str, dict]]] = {name: {} for name in self._id_fields}
         self._acl: dict[str, dict[str, dict]] = {}
         self._budgets: dict[str, dict[str, dict]] = {}
@@ -316,6 +324,8 @@ class _AdminSettingsStore:
     def list_resource(
         self, tenant_id: str, resource: str, *, collection_id: str = ""
     ) -> list[dict]:
+        if resource == "datasources" and self._datasource_repo is not None:
+            return self._datasource_repo.list(tenant_id, collection_id=collection_id)
         self._ensure_default(tenant_id, resource)
         items = list(self._bucket(resource, tenant_id).values())
         if collection_id:
@@ -323,6 +333,8 @@ class _AdminSettingsStore:
         return [copy.deepcopy(item) for item in items]
 
     def get_resource(self, tenant_id: str, resource: str, item_id: str) -> dict | None:
+        if resource == "datasources" and self._datasource_repo is not None:
+            return self._datasource_repo.get(tenant_id, item_id)
         self._ensure_default(tenant_id, resource)
         item = self._bucket(resource, tenant_id).get(item_id)
         return copy.deepcopy(item) if item else None
@@ -331,6 +343,18 @@ class _AdminSettingsStore:
         self, tenant_id: str, resource: str, item_id: str, body: dict, *, actor: str
     ) -> dict:
         id_field = self._id_fields[resource]
+        if resource == "datasources" and self._datasource_repo is not None:
+            existing = self._datasource_repo.get(tenant_id, item_id)
+            before = self._audit_snapshot(existing)
+            item = self._datasource_repo.upsert(tenant_id, item_id, body, actor=actor)
+            after = self._audit_snapshot(item)
+            event = self._audit_event(
+                tenant_id, resource, item_id, body, actor, before=before, after=after
+            )
+            result = copy.deepcopy(item)
+            result["audit_events"] = [event]
+            result["provider_config_audit_event_id"] = event["provider_config_audit_event_id"]
+            return result
         existing = self.get_resource(tenant_id, resource, item_id)
         before = self._audit_snapshot(existing)
         item = (
@@ -1153,15 +1177,38 @@ def _reindex_response_json(plan) -> dict:
     }
 
 
+def _datasource_repository_for(system: ProductionSystem, secret_store):
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return PostgresDataSourceRepository(conn, secret_store)
+    return InMemoryDataSourceRepository(secret_store)
+
+
+def _source_sync_queue_from_env():
+    queue_url = os.environ.get("INGESTION_QUEUE_URL") or os.environ.get("SQS_QUEUE_URL")
+    if not queue_url:
+        return None
+    return SqsTaskQueue(queue_url, dead_letter_queue_url=os.environ.get("SQS_DLQ_URL", ""))
+
+
 def make_handler(system: ProductionSystem):
     connector = default_connector_from_env()
-    admin_settings = _AdminSettingsStore(system)
-    eval_feedback = _EvalFeedbackStore(system)
-    # Connector OAuth (021-gdrive): per-tenant refresh-token SecretStore (profile-selected) + an
-    # in-memory connection store (runtime source of truth; Postgres 0012 is forward-looking).
-    _oauth_settings = settings_from_env()
-    secret_store = secret_store_from_settings(_oauth_settings)
+    runtime_settings = settings_from_env()
+    secret_store = secret_store_from_settings(runtime_settings)
     oauth_connections = InMemoryOAuthConnectionStore()
+    datasource_repo = _datasource_repository_for(system, secret_store)
+    source_sync_queue = _source_sync_queue_from_env()
+    runs = getattr(system, "ingestion_runs", IngestionRunStore())
+    source_sync_service = SourceSyncService(
+        system=system,
+        runs=runs,
+        datasource_repo=datasource_repo,
+        secret_store=secret_store,
+        oauth_connections=oauth_connections,
+        oauth_secret_store=secret_store,
+    )
+    admin_settings = _AdminSettingsStore(system, datasource_repo=datasource_repo)
+    eval_feedback = _EvalFeedbackStore(system)
     manufacturing_system = build_manufacturing_system_for_base(system)
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()
@@ -2147,41 +2194,52 @@ def make_handler(system: ProductionSystem):
                 elif (
                     len(parts) == 4
                     and parts[:2] == ["internal", "sources"]
+                    and parts[3] in {"test", "test-connection"}
+                ):
+                    tenant_id = self._tenant_header()
+                    try:
+                        self._send(
+                            200,
+                            source_sync_service.test_connection(
+                                tenant_id=tenant_id,
+                                source_id=parts[2],
+                                body=body,
+                            ),
+                        )
+                    except KeyError:
+                        self._send(404, {"error": "datasource not found"})
+                    except Exception as exc:
+                        self._send(400, {"ok": False, "error": str(exc)})
+                elif (
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "sources"]
                     and parts[3] == "sync"
                 ):
                     tenant_id = self._tenant_header()
                     source_id = parts[2]
-                    datasource = admin_settings.get_resource(tenant_id, "datasources", source_id)
-                    if datasource is None:
+                    try:
+                        response, message, created = source_sync_service.request_source_sync(
+                            tenant_id=tenant_id,
+                            source_id=source_id,
+                            body=body,
+                            requested_by=self.headers.get("x-raku-user-id") or "",
+                        )
+                    except KeyError:
                         self._send(404, {"error": "datasource not found"})
                         return
-                    # 021-gdrive: a google_drive source mints a FRESH access token from its stored
-                    # refresh token and injects it into the sync body (no-op for other types).
-                    try:
-                        _inject_gdrive_access_token(
-                            tenant_id,
-                            source_id,
-                            datasource,
-                            body,
-                            secret_store=secret_store,
-                            oauth_connections=oauth_connections,
-                        )
-                    except oauth_token_resolver.OAuthConfigError as exc:
-                        self._send(502, {"error": str(exc)})
-                        return
-                    except (ValueError, oauth_token_resolver.RefreshTokenExpiredError) as exc:
-                        self._send(400, {"error": str(exc)})
-                        return
-                    self._send(
-                        202,
-                        _sync_datasource_to_ingest(
-                            system,
-                            tenant_id,
-                            source_id,
-                            datasource,
-                            body,
-                        ),
-                    )
+                    if source_sync_queue is not None:
+                        if created:
+                            message_id = source_sync_queue.enqueue_message(message.to_dict())
+                            run = runs.get_for_tenant(tenant_id, response["sync_run_id"])
+                            if run is not None:
+                                runs.mark_message_id(run, message_id)
+                            response["sqs_message_id"] = message_id
+                        response["queued"] = True
+                        self._send(202, response)
+                    else:
+                        executed = source_sync_service.execute_source_sync(message)
+                        executed["queued"] = False
+                        self._send(202, executed)
                 elif (
                     len(parts) == 5
                     and parts[:3] == ["internal", "admin", "provider-policies"]

@@ -89,6 +89,18 @@ class SchemaLockMigrationSqlTest(unittest.TestCase):
             with self.subTest(column=column):
                 self.assertIn(f"DROP COLUMN IF EXISTS {column}", down)
 
+    def test_datasource_sync_runtime_is_tenant_scoped(self) -> None:
+        datasource_sync = (MIGRATIONS / "0013_datasource_sync_runtime.sql").read_text(
+            encoding="utf-8"
+        )
+        datasource_sync_down = (MIGRATIONS / "0013_datasource_sync_runtime.down.sql").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("PRIMARY KEY (tenant_id, source_id)", datasource_sync)
+        self.assertIn("idx_data_sources_tenant_collection_status", datasource_sync)
+        self.assertIn("partially_succeeded", datasource_sync)
+        self.assertIn("source_sync_states_status_check", datasource_sync_down)
+
     def test_evaluation_run_version_registry_has_down_migration(self) -> None:
         down = (MIGRATIONS / "0011_eval_version_registry.down.sql").read_text(encoding="utf-8")
         self.assertIn("DROP COLUMN IF EXISTS version_registry", down)

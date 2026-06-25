@@ -75,6 +75,49 @@ class IngestionJobMessage:
         )
 
 
+@dataclass(frozen=True)
+class SourceSyncJobMessage:
+    idempotency_key: str
+    tenant_id: str
+    collection_id: str
+    source_id: str
+    sync_run_id: str
+    scope: dict = field(default_factory=dict)
+    requested_by: str = ""
+    force: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "job_type": "source_sync",
+            "idempotency_key": self.idempotency_key,
+            "tenant_id": self.tenant_id,
+            "collection_id": self.collection_id,
+            "source_id": self.source_id,
+            "sync_run_id": self.sync_run_id,
+            "scope": dict(self.scope),
+            "requested_by": self.requested_by,
+            "force": self.force,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SourceSyncJobMessage":
+        required = ("idempotency_key", "tenant_id", "collection_id", "source_id", "sync_run_id")
+        missing = [k for k in required if not data.get(k)]
+        if missing:
+            raise ValueError(f"missing source sync message fields: {', '.join(missing)}")
+        scope = data.get("scope") if isinstance(data.get("scope"), dict) else {}
+        return cls(
+            idempotency_key=str(data["idempotency_key"]),
+            tenant_id=str(data["tenant_id"]),
+            collection_id=str(data["collection_id"]),
+            source_id=str(data["source_id"]),
+            sync_run_id=str(data["sync_run_id"]),
+            scope=dict(scope),
+            requested_by=str(data.get("requested_by") or ""),
+            force=bool(data.get("force")),
+        )
+
+
 @dataclass
 class IngestionRun:
     ingestion_run_id: str
@@ -304,6 +347,33 @@ class IngestionRunStore:
             run,
             JobStatus.SUCCEEDED.value,
             chunk_count=chunk_count,
+            content_checksum=content_checksum,
+            parser_version=parser_version,
+            chunking_config_version=chunking_config_version,
+            embedding_model_version=embedding_model_version,
+        )
+
+    def mark_partially_succeeded(
+        self,
+        run: IngestionRun,
+        *,
+        reason: str,
+        chunk_count: int,
+        content_checksum: str = "",
+        parser_version: str = "",
+        chunking_config_version: str = "",
+        embedding_model_version: str = "",
+    ) -> None:
+        run.status = "partially_succeeded"
+        run.failure_reason = reason
+        run.chunk_count = chunk_count
+        run.finished_at = _now()
+        run.updated_at = run.finished_at
+        self._mark_state(
+            run,
+            "partially_succeeded",
+            chunk_count=chunk_count,
+            failure_reason=reason,
             content_checksum=content_checksum,
             parser_version=parser_version,
             chunking_config_version=chunking_config_version,
@@ -692,12 +762,14 @@ class IngestionWorker:
         ingestion: IngestionService,
         runs: IngestionRunStore,
         executor: IngestionExecutor | None = None,
+        source_sync_service: object | None = None,
     ) -> None:
         self.queue = queue
         self.connector = connector
         self.ingestion = ingestion
         self.executor = executor or IngestionExecutor(ingestion)
         self.runs = runs
+        self.source_sync_service = source_sync_service
         self.stats = IngestionWorkerStats()
 
     def enqueue(self, message: IngestionJobMessage) -> IngestionRun:
@@ -712,6 +784,8 @@ class IngestionWorker:
         if not envelopes:
             return False
         envelope = envelopes[0]
+        if envelope.body.get("job_type") == "source_sync":
+            return self._process_source_sync(envelope)
         try:
             message = IngestionJobMessage.from_dict(envelope.body)
         except Exception as exc:
@@ -755,6 +829,31 @@ class IngestionWorker:
         except Exception as exc:
             self._fail(envelope, run, str(exc))
         return True
+
+
+    def _process_source_sync(self, envelope: QueueEnvelope) -> bool:
+        if self.source_sync_service is None:
+            self.queue.fail(envelope, "source sync service is not configured")
+            self.stats.failed += 1
+            return True
+        try:
+            message = SourceSyncJobMessage.from_dict(envelope.body)
+        except Exception as exc:
+            self.queue.fail(envelope, str(exc))
+            self.stats.failed += 1
+            return True
+        try:
+            execute = getattr(self.source_sync_service, "execute_source_sync")
+            execute(message)
+            self.queue.ack(envelope)
+            self.stats.processed += 1
+        except Exception as exc:
+            moved_to_dlq = self.queue.fail(envelope, str(exc))
+            self.stats.failed += 1
+            if moved_to_dlq:
+                self.stats.dead_lettered += 1
+        return True
+
 
     def drain(self, *, max_messages: int = 100) -> IngestionWorkerStats:
         for _ in range(max_messages):

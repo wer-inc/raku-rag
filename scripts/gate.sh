@@ -120,7 +120,12 @@ SQL
     infra/db/migrations/postgres/0004_real_estate_domain.sql \
     infra/db/migrations/postgres/0005_investment_domain.sql \
     infra/db/migrations/postgres/0006_manufacturing_domain.sql \
-    infra/db/migrations/postgres/0009_mfg_audit_payload.sql
+    infra/db/migrations/postgres/0007_eval_run_persistence.sql \
+    infra/db/migrations/postgres/0008_lexical_retrieval_index.sql \
+    infra/db/migrations/postgres/0009_mfg_audit_payload.sql \
+    infra/db/migrations/postgres/0010_mfg_data_use_policy.sql \
+    infra/db/migrations/postgres/0011_eval_version_registry.sql \
+    infra/db/migrations/postgres/0013_datasource_sync_runtime.sql
   do
     "${compose[@]}" exec -T postgres psql -U "$user" -d "$gate_db" -v ON_ERROR_STOP=1 < "$migration"
   done

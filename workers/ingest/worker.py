@@ -33,7 +33,13 @@ from raku_rag.providers.mock import (  # noqa: E402
     MockLLMProvider,
     MockRerankProvider,
 )
+from raku_rag.persistence.datasources import (  # noqa: E402
+    InMemoryDataSourceRepository,
+    PostgresDataSourceRepository,
+)
+from raku_rag.persistence.secret_store import secret_store_from_settings  # noqa: E402
 from raku_rag.providers.task_queue import InMemoryMessageQueue  # noqa: E402
+from raku_rag.services.source_sync import SourceSyncService  # noqa: E402
 from raku_rag.workers.ingestion import IngestionRunStore, IngestionWorker  # noqa: E402
 from raku_rag.workers.queue.sqs import SqsTaskQueue  # noqa: E402
 
@@ -64,17 +70,21 @@ def smoke() -> int:
 
 def build_worker_from_env() -> IngestionWorker:
     backend = os.environ.get("RAKU_WORKER_BACKEND", "memory")
+    settings = settings_from_env()
+    secret_store = secret_store_from_settings(settings)
     if backend == "postgres":
         from raku_rag.persistence.postgres import PostgresIngestionRunStore
         from raku_rag.production import DEFAULT_DSN, ProductionSystem
 
         system = ProductionSystem(os.environ.get("POSTGRES_URL", DEFAULT_DSN))
         runs = PostgresIngestionRunStore(system._conn)
+        datasource_repo = PostgresDataSourceRepository(system._conn, secret_store)
     else:
         system = MvpSystem()
         runs = IngestionRunStore()
+        datasource_repo = InMemoryDataSourceRepository(secret_store)
 
-    queue_url = os.environ.get("SQS_QUEUE_URL")
+    queue_url = os.environ.get("SQS_QUEUE_URL") or os.environ.get("INGESTION_QUEUE_URL")
     queue = (
         SqsTaskQueue(
             queue_url,
@@ -83,11 +93,18 @@ def build_worker_from_env() -> IngestionWorker:
         if queue_url
         else InMemoryMessageQueue()
     )
+    source_sync_service = SourceSyncService(
+        system=system,
+        runs=runs,
+        datasource_repo=datasource_repo,
+        secret_store=secret_store,
+    )
     return IngestionWorker(
         queue=queue,
         connector=FileConnector(),
         ingestion=system.ingestion,
         runs=runs,
+        source_sync_service=source_sync_service,
     )
 
 

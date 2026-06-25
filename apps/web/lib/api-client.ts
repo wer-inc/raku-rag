@@ -321,6 +321,9 @@ export interface AdminSourceSyncResponse {
   collection_id: string;
   status: string;
   ingestion_run_id: string;
+  sync_run_id?: string;
+  queued?: boolean;
+  sqs_message_id?: string;
   status_url: string;
   observed_count: number;
   changed_count: number;
@@ -338,6 +341,19 @@ export async function adminDataSources(
     : "/admin/datasources";
   return apiGetJson<AdminDataSource[]>(path, userToken);
 }
+
+export async function adminSourceTestConnection(
+  sourceId: string,
+  body: Record<string, unknown>,
+  userToken: string,
+): Promise<Record<string, unknown>> {
+  return apiPostJson<Record<string, unknown>>(
+    "/admin/sources/" + encodeURIComponent(sourceId) + "/test-connection",
+    body,
+    userToken,
+  );
+}
+
 
 export async function adminSourceSync(
   sourceId: string,

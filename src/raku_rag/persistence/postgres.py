@@ -1013,6 +1013,42 @@ class PostgresIngestionRunStore:
             updated_at=latest.updated_at,
         )
 
+    def upsert_source_sync_state(self, state: SourceSyncState) -> SourceSyncState:
+        _use_tenant(self._conn, state.tenant_id)
+        _ensure_collection_parent(self._conn, state.tenant_id, state.collection_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO source_sync_states "
+                "(source_id, tenant_id, collection_id, status, last_manifest_checksum, "
+                "last_ingestion_run_id, observed_count, changed_count, deleted_count, skipped_count, "
+                "failed_count, last_synced_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, NULLIF(%s, '' )::timestamptz) "
+                "ON CONFLICT (tenant_id, source_id) DO UPDATE SET "
+                "collection_id=EXCLUDED.collection_id, status=EXCLUDED.status, "
+                "last_manifest_checksum=EXCLUDED.last_manifest_checksum, "
+                "last_ingestion_run_id=EXCLUDED.last_ingestion_run_id, "
+                "observed_count=EXCLUDED.observed_count, changed_count=EXCLUDED.changed_count, "
+                "deleted_count=EXCLUDED.deleted_count, skipped_count=EXCLUDED.skipped_count, "
+                "failed_count=EXCLUDED.failed_count, last_synced_at=EXCLUDED.last_synced_at, "
+                "updated_at=now()",
+                (
+                    state.source_id,
+                    state.tenant_id,
+                    state.collection_id,
+                    state.status,
+                    state.last_manifest_checksum,
+                    state.last_ingestion_run_id,
+                    state.observed_count,
+                    state.changed_count,
+                    state.deleted_count,
+                    state.skipped_count,
+                    state.failed_count,
+                    state.last_synced_at,
+                ),
+            )
+        refreshed = self.source_sync_state(state.tenant_id, state.source_id)
+        return refreshed or state
+
     def list_runs(
         self,
         tenant_id: str,
@@ -1071,6 +1107,29 @@ class PostgresIngestionRunStore:
             run,
             "succeeded",
             chunk_count=chunk_count,
+            content_checksum=content_checksum,
+            parser_version=parser_version,
+            chunking_config_version=chunking_config_version,
+            embedding_model_version=embedding_model_version,
+            finished=True,
+        )
+
+    def mark_partially_succeeded(
+        self,
+        run: IngestionRun,
+        *,
+        reason: str,
+        chunk_count: int,
+        content_checksum: str = "",
+        parser_version: str = "",
+        chunking_config_version: str = "",
+        embedding_model_version: str = "",
+    ) -> None:
+        self._mark(
+            run,
+            "partially_succeeded",
+            chunk_count=chunk_count,
+            reason=reason,
             content_checksum=content_checksum,
             parser_version=parser_version,
             chunking_config_version=chunking_config_version,

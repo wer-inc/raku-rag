@@ -105,8 +105,11 @@ const OPENAPI_DOC = {
         properties: {
           source_id: { type: "string" },
           collection_id: { type: "string" },
-          status: { type: "string", enum: ["succeeded", "failed", "partially_succeeded"] },
+          status: { type: "string", enum: ["queued", "syncing", "succeeded", "failed", "partially_succeeded"] },
           ingestion_run_id: { type: "string" },
+          sync_run_id: { type: "string" },
+          queued: { type: "boolean" },
+          sqs_message_id: { type: "string" },
           status_url: { type: "string" },
           observed_count: { type: "number" },
           changed_count: { type: "number" },
@@ -121,7 +124,7 @@ const OPENAPI_DOC = {
           source_id: { type: "string" },
           tenant_id: { type: "string" },
           collection_id: { type: "string" },
-          type: { type: "string", enum: ["upload", "object_storage", "slack", "confluence", "database", "notion", "box", "google_drive"] },
+          type: { type: "string", enum: ["upload", "object_storage", "confluence", "database", "notion", "box", "google_drive"] },
           config: { type: "object" },
           sync_schedule: { type: "string", nullable: true },
           last_synced_at: { type: "string", nullable: true },
@@ -135,8 +138,9 @@ const OPENAPI_DOC = {
         required: ["collection_id", "type"],
         properties: {
           collection_id: { type: "string" },
-          type: { type: "string", enum: ["upload", "object_storage", "slack", "confluence", "database", "notion", "box", "google_drive"] },
+          type: { type: "string", enum: ["upload", "object_storage", "confluence", "database", "notion", "box", "google_drive"] },
           config: { type: "object" },
+          credentials: { type: "object", description: "Write-only datasource credentials." },
           sync_schedule: { type: "string", nullable: true },
           status: { type: "string", enum: ["active", "draft", "archived"] },
           reason: { type: "string" },
@@ -639,7 +643,18 @@ const OPENAPI_DOC = {
         properties: {
           source_id: { type: "string" },
           collection_id: { type: "string" },
-          status: { type: "string", enum: ["idle", "queued", "observing", "syncing", "failed"] },
+          status: {
+            type: "string",
+            enum: [
+              "idle",
+              "queued",
+              "observing",
+              "syncing",
+              "succeeded",
+              "partially_succeeded",
+              "failed",
+            ],
+          },
           last_ingestion_run_id: { type: "string" },
           observed_count: { type: "number" },
           changed_count: { type: "number" },
@@ -1729,6 +1744,67 @@ const OPENAPI_DOC = {
             },
           },
           "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "404": { description: "Not found", content: { "application/json": {} } },
+          "502": {
+            description: "Ingestion service unavailable",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
+            },
+          },
+        },
+      },
+    },
+    "/admin/sources/{source_id}/test-connection": {
+      post: {
+        operationId: "testAdminSourceConnection",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          {
+            name: "source_id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  collection_id: { type: "string" },
+                  limit: { type: "number" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Datasource connection test result",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    ok: { type: "boolean" },
+                    source_id: { type: "string" },
+                    sample_count: { type: "number" },
+                    error: { type: "string" },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Connection test failed", content: { "application/json": {} } },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden", content: { "application/json": {} } },
           "404": { description: "Not found", content: { "application/json": {} } },
           "502": {
             description: "Ingestion service unavailable",

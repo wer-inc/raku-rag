@@ -35,6 +35,11 @@ as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/000
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0005_investment_domain.sql
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0006_manufacturing_domain.sql
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0007_eval_run_persistence.sql
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0008_lexical_retrieval_index.sql
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0009_mfg_audit_payload.sql
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0010_mfg_data_use_policy.sql
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0011_eval_version_registry.sql
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0013_datasource_sync_runtime.sql
 
 vector_version="$(as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -Atc \
   "SELECT extname || ':' || extversion FROM pg_extension WHERE extname = 'vector';")"
@@ -64,6 +69,26 @@ eval_run_columns="$(as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -Atc \
      AND column_name IN ('gate_result','baseline_comparison','probe_results','probes_executed');")"
 if [[ "$eval_run_columns" != "4" ]]; then
   echo "expected 4 evaluation_runs columns from 0007, found $eval_run_columns" >&2
+  exit 1
+fi
+
+datasource_pk_columns="$(as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -Atc \
+  "SELECT string_agg(a.attname, ',' ORDER BY a.attnum)
+   FROM pg_index i
+   JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+   WHERE i.indrelid = 'data_sources'::regclass AND i.indisprimary;")"
+if [[ "$datasource_pk_columns" != "tenant_id,source_id" ]]; then
+  echo "expected data_sources primary key tenant_id,source_id; found $datasource_pk_columns" >&2
+  exit 1
+fi
+
+source_sync_status_check="$(as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -Atc \
+  "SELECT pg_get_constraintdef(oid)
+   FROM pg_constraint
+   WHERE conrelid='source_sync_states'::regclass
+     AND conname='source_sync_states_status_check';")"
+if [[ "$source_sync_status_check" != *"partially_succeeded"* ]]; then
+  echo "expected source_sync_states status check to allow partially_succeeded" >&2
   exit 1
 fi
 
@@ -99,6 +124,16 @@ SELECT 1 / CASE WHEN count(*) = 0 THEN 1 ELSE 0 END AS tenant_b_cannot_see_doc
 RESET ROLE;
 SQL
 
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
+  -f infra/db/migrations/postgres/0013_datasource_sync_runtime.down.sql
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
+  -f infra/db/migrations/postgres/0011_eval_version_registry.down.sql
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
+  -f infra/db/migrations/postgres/0010_mfg_data_use_policy.down.sql
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
+  -f infra/db/migrations/postgres/0009_mfg_audit_payload.down.sql
+as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
+  -f infra/db/migrations/postgres/0008_lexical_retrieval_index.down.sql
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
   -f infra/db/migrations/postgres/0007_eval_run_persistence.down.sql
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \

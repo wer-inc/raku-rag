@@ -2702,6 +2702,15 @@ function AddSourceBody() {
     try {
       const datasourceId = sourceId.trim() || selectedSource;
       const token = await getSessionToken();
+      const credentialFieldIds = new Set(
+        selectedConfig.fields.filter((field) => field.type === "password").map((field) => field.id),
+      );
+      const credentials = Object.fromEntries(
+        Object.entries(configValues).filter(([key, value]) => credentialFieldIds.has(key) && value),
+      );
+      const safeConfigValues = Object.fromEntries(
+        Object.entries(configValues).filter(([key]) => !credentialFieldIds.has(key)),
+      );
       await apiPutJson(
         `/admin/datasources/${encodeURIComponent(datasourceId)}`,
         {
@@ -2720,8 +2729,9 @@ function AddSourceBody() {
             // sync request): 'trusted' => approved+imported; 'review_required' => pending_review.
             approval_policy: approvalPolicy,
             approval_effective_date: approvalPolicy === "trusted" ? effectiveDate || todayIso() : null,
-            ...configValues,
+            ...safeConfigValues,
           },
+          credentials,
           sync_schedule: configValues.sync_schedule || null,
           status: "active",
           reason: "configured_from_add_source_screen",
@@ -2881,7 +2891,7 @@ function AddSourceBody() {
 
       <Section title="データソース種別" note="3日以内の接続候補も、先に設定フォームを表示できるようにしています。">
         <div className="source-type-grid">
-          {ADD_SOURCE_TYPES.map((source) => (
+          {ADD_SOURCE_TYPES.filter((source) => source.readiness === "ready").map((source) => (
             <button
               key={source.id}
               type="button"

@@ -45,7 +45,14 @@ export type IngestionRunStatus =
   | "partially_succeeded"
   | "dead_letter";
 
-export type SourceSyncStatus = "idle" | "queued" | "observing" | "syncing" | "failed";
+export type SourceSyncStatus =
+  | "idle"
+  | "queued"
+  | "observing"
+  | "syncing"
+  | "succeeded"
+  | "partially_succeeded"
+  | "failed";
 
 export interface IngestJob {
   ingestion_run_id: string;
