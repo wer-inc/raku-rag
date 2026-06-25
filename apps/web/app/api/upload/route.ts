@@ -27,10 +27,11 @@ const EXT_CONTENT_TYPE: Record<string, string> = {
 };
 
 function enabled(): boolean {
-  if (process.env.NODE_ENV === "production") return false;
+  // Same demo gate as the dev-token issuer: honor an explicit RAKU_ENABLE_DEV_TOKEN_ISSUER=1 even in
+  // production (the AWS demo sets it), else default dev-only (off in production).
   const raw = process.env.RAKU_ENABLE_DEV_TOKEN_ISSUER;
   if (raw !== undefined) return raw === "1" || raw.toLowerCase() === "true";
-  return true;
+  return process.env.NODE_ENV !== "production";
 }
 
 export async function POST(req: Request) {
