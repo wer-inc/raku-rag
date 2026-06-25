@@ -1,18 +1,16 @@
-import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
-import os from "os";
 import path from "path";
 import { NextResponse } from "next/server";
 
-// Dev/PoC upload sink: the web server and the Python answer-service share this
-// machine's filesystem, so a file written here is readable by the answer-service
-// via a `file://` ref (default FileConnector). The Add Source screen uploads here,
-// then calls POST /v1/ingest with the returned ref. Disabled in production builds.
+// Upload sink: returns the uploaded bytes as an inline `data:` ref (RFC 2397). The answer-service's
+// DataUriConnector decodes it in-request, so ingestion works even though web and the Python
+// answer-service run as SEPARATE containers with no shared filesystem (a `file://` ref written here
+// would 500 on the answer-service — it can't see this container's disk). The Add Source screen
+// uploads here, then calls POST /v1/ingest with the returned ref. Disabled in production builds
+// unless the demo flag is set.
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const UPLOAD_DIR = process.env.RAKU_UPLOAD_DIR ?? path.join(os.tmpdir(), "raku-uploads");
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
 
 const EXT_CONTENT_TYPE: Record<string, string> = {
@@ -54,14 +52,12 @@ export async function POST(req: Request) {
   const ext = path.extname(safeName).toLowerCase();
   const contentType = EXT_CONTENT_TYPE[ext] ?? "text/plain";
 
-  await mkdir(UPLOAD_DIR, { recursive: true });
-  const id = randomUUID();
-  const target = path.join(UPLOAD_DIR, `${id}-${safeName}`);
   const buf = Buffer.from(await file.arrayBuffer());
-  await writeFile(target, buf);
+  // Inline the bytes as a base64 data: ref — container-boundary-safe (see file header).
+  const ref = `data:${contentType};base64,${buf.toString("base64")}`;
 
   return NextResponse.json({
-    ref: `file://${target}`,
+    ref,
     filename: safeName,
     size: buf.length,
     content_type: contentType,
