@@ -35,11 +35,18 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "/";
   // Least privilege until the session role is known (avoids an admin-nav / admin-screen flash on load).
   const [roles, setRoles] = useState<WorkspaceRole[] | null>(null);
+  // Mobile only: the sidebar is an off-canvas drawer; this toggles it. Desktop CSS ignores `nav-open`.
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     const uid = loadSessionUserId() ?? "misaki";
     setRoles(rolesForUser(uid));
   }, []);
+
+  // Close the drawer whenever the route changes so a nav tap doesn't leave it open over the new screen.
+  useEffect(() => {
+    setNavOpen(false);
+  }, [pathname]);
 
   if (AUTH_ROUTES.has(pathname)) {
     return <>{children}</>;
@@ -51,8 +58,32 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const allowed = decided && navAllowed(pathname, roles);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${navOpen ? " nav-open" : ""}`}>
+      {/* Mobile-only header: gives the drawer a launch point when the sidebar is off-canvas. */}
+      <header className="mobile-topbar">
+        <button
+          type="button"
+          className="mobile-nav-toggle"
+          aria-label="メニューを開く"
+          aria-expanded={navOpen}
+          onClick={() => setNavOpen(true)}
+        >
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path d="M4 6h16M4 12h16M4 18h16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
+        <span className="mobile-topbar-title">Raku RAG</span>
+      </header>
+
       <Sidebar />
+      {/* Scrim closes the drawer on outside tap; only interactive while open (CSS gates pointer events). */}
+      <button
+        type="button"
+        className="nav-scrim"
+        aria-label="メニューを閉じる"
+        tabIndex={navOpen ? 0 : -1}
+        onClick={() => setNavOpen(false)}
+      />
       <div className="app-main">
         {!decided ? (
           <p className="ops-empty" aria-busy="true">
