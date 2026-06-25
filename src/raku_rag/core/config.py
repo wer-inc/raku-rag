@@ -33,6 +33,13 @@ class Settings:
     # never logged. Only used when embedding_provider is an openai_text_embedding_3_* variant.
     openai_api_key: str = ""
     aws_region: str = "us-east-1"
+    # Google Drive connector OAuth (021-gdrive-oauth). client_id is public (also read by the API to
+    # build the consent URL); client_secret is read ONLY by the answer-service for code/refresh
+    # exchange and is never sent to the browser or logged. Empty unless the connector is configured.
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    # KMS CMK for envelope-encrypting per-tenant connector secrets in AWS Secrets Manager (prod).
+    secrets_manager_kms_key_id: str = ""
     # P1 production profile: "deterministic" (default — Tier-A fast loop, in-memory/extractive stack)
     # vs "production" (settings-selected real adapters; fails closed when a real adapter is unconfigured).
     runtime_profile: str = "deterministic"
@@ -134,6 +141,13 @@ def settings_from_env(env: dict | None = None) -> Settings:
         embedding_dim=int(_parse("RAKU_EMBEDDING_DIM", Settings.embedding_dim, int)),
         openai_api_key=_get("OPENAI_API_KEY", Settings.openai_api_key),
         aws_region=_get("AWS_DEFAULT_REGION", Settings.aws_region),
+        google_oauth_client_id=_get("GOOGLE_OAUTH_CLIENT_ID", Settings.google_oauth_client_id),
+        google_oauth_client_secret=_get(
+            "GOOGLE_OAUTH_CLIENT_SECRET", Settings.google_oauth_client_secret
+        ),
+        secrets_manager_kms_key_id=_get(
+            "AWS_SECRETS_MANAGER_KMS_KEY_ID", Settings.secrets_manager_kms_key_id
+        ),
         runtime_profile=_get("RAKU_RUNTIME_PROFILE", Settings.runtime_profile),
         llm_provider=_get("RAKU_LLM_PROVIDER", Settings.llm_provider),
         bedrock_claude_model_id=_get(
