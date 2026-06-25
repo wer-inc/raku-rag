@@ -1,5 +1,9 @@
 :root {
   color-scheme: light;
+  --bp-shell: 900px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
   --bg: #fafafa;
   --surface: #ffffff;
   --surface-muted: #f4f4fc;
@@ -8,6 +12,7 @@
   --line: #ececec;
   --accent: #5b5bd6;
   --accent-strong: #4747c8;
+  --accent-soft: #eeeefb;
   --danger: #b23a44;
   --warning: #9f6a14;
   --warning-bg: #fff7e6;
@@ -300,6 +305,7 @@ textarea {
   font-size: 26px;
   font-weight: 600;
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .metric-label {
@@ -553,6 +559,7 @@ textarea {
 
 .data-table-wrap {
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #ffffff;
@@ -561,6 +568,7 @@ textarea {
 
 .data-table {
   width: 100%;
+  min-width: 560px;
   border-collapse: collapse;
   background: var(--surface);
 }
@@ -1142,6 +1150,7 @@ textarea {
 
 .is-right {
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .mono {
@@ -1648,41 +1657,57 @@ button:disabled {
   background: #7e2626;
 }
 
-@media (max-width: 780px) {
-  .app-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .sidebar {
-    gap: 18px;
-    padding: 20px;
-  }
-
+@media (max-width: 900px) {
   .nav-item {
     overflow: hidden;
-    padding-inline: 8px;
+    padding-inline: var(--space-2);
     text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .workspace {
-    padding: 18px;
+    padding: var(--space-4);
   }
 
   .topbar,
   .composer-row,
-  .result-head {
+  .result-head,
+  .standalone-list-head,
+  .review-detail-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .standalone-list-tools {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .standalone-search {
+    flex: 1 1 100%;
+    width: auto;
+    min-width: 0;
   }
 
   .collection-field {
     min-width: 0;
   }
 
-  button {
+  .screen-actions > button,
+  .screen-actions > .button-link,
+  .topbar .screen-header-actions > button,
+  .form-grid > button,
+  .review-decide button,
+  .connector-oauth > button,
+  .draft-create-form > button,
+  .standalone-list-tools > button,
+  .standalone-list-tools > a {
     width: 100%;
+  }
+
+  .review-decide {
+    flex-direction: column;
   }
 
   .safety-fields div {
@@ -2633,23 +2658,6 @@ button,
   color: #18181b;
 }
 
-@media (max-width: 900px) {
-  .app-shell {
-    grid-template-columns: 1fr;
-    height: auto;
-  }
-
-  .sidebar {
-    height: auto;
-    overflow: visible;
-  }
-
-  .app-main {
-    height: auto;
-    overflow-y: visible;
-  }
-}
-
 /* ============================================================
    Priority #1 — grounded answer thread + citation viewer.
    ============================================================ */
@@ -3263,7 +3271,7 @@ button,
   font-size: 13.5px;
 }
 
-@media (max-width: 780px) {
+@media (max-width: 900px) {
   .source-type-card {
     grid-template-columns: 40px minmax(0, 1fr);
   }
@@ -3614,7 +3622,7 @@ button,
 }
 
 /* ============================================================
-   Responsive — mobile drawer sidebar (<= 780px).
+   Responsive — mobile drawer sidebar (<= var(--bp-shell)).
    On small screens the sidebar becomes a fixed off-canvas panel:
    a mobile top bar provides the hamburger, a scrim closes it, and
    the main content takes the full width. This block is placed last
@@ -3628,9 +3636,17 @@ button,
   display: none;
 }
 
-@media (max-width: 780px) {
+@media (max-width: 900px) {
   .app-shell {
+    display: grid;
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 100dvh;
+    height: 100dvh;
+  }
+
+  .app-shell.nav-open {
+    overflow: hidden;
   }
 
   .mobile-topbar {
@@ -3639,8 +3655,8 @@ button,
     z-index: 40;
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 10px 14px;
+    gap: var(--space-3);
+    padding: 10px var(--space-4);
     background: #ffffff;
     border-bottom: 1px solid var(--line);
   }
@@ -3649,8 +3665,9 @@ button,
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
     padding: 0;
     border: 1px solid var(--line);
     border-radius: 10px;
@@ -3659,12 +3676,17 @@ button,
     cursor: pointer;
   }
 
+  .mobile-nav-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
   .mobile-topbar-title {
     font-size: 15px;
     font-weight: 700;
   }
 
-  /* Off-canvas drawer. Base `.sidebar` keeps its colours/border; we add the positioning. */
+  /* Off-canvas drawer. Keep internal sidebar padding structure (padding: 0 on base). */
   .sidebar {
     position: fixed;
     top: 0;
@@ -3672,8 +3694,8 @@ button,
     bottom: 0;
     z-index: 60;
     width: min(82vw, 320px);
-    gap: 20px;
-    padding: 22px 20px;
+    height: 100dvh;
+    padding: 0;
     overflow-y: auto;
     box-shadow: 16px 0 40px rgba(0, 0, 0, 0.18);
     transform: translateX(-100%);
@@ -3708,16 +3730,24 @@ button,
 
   .app-main {
     min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .sidebar-foot-signout {
+    width: auto;
+    min-width: 0;
   }
 
   /* Tighter gutters so content isn't cramped against the viewport edges. */
   .workspace,
   .full-saas-workspace {
-    padding-inline: 16px;
+    padding-inline: var(--space-4);
   }
 
-  /* Wide data table: scroll it horizontally instead of crushing its 6 columns. */
-  .standalone-table-wrap {
+  /* Wide tables: scroll horizontally instead of crushing columns. */
+  .standalone-table-wrap,
+  .data-table-wrap {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
@@ -3725,6 +3755,15 @@ button,
   .standalone-table-head,
   .standalone-table-row {
     min-width: 640px;
+  }
+
+  .data-table {
+    min-width: 560px;
+  }
+
+  .data-table td.is-right,
+  .data-table th.is-right {
+    font-variant-numeric: tabular-nums;
   }
 }
 

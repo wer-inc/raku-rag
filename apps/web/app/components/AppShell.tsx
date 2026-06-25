@@ -64,7 +64,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <button
           type="button"
           className="mobile-nav-toggle"
-          aria-label="メニューを開く"
+          aria-label={navOpen ? "メニューを閉じる" : "メニューを開く"}
           aria-expanded={navOpen}
           onClick={() => setNavOpen(true)}
         >
