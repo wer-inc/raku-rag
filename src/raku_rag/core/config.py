@@ -29,6 +29,9 @@ class Settings:
     default_query_budget: float | None = None
     embedding_provider: str = "hashing"
     embedding_dim: int = 256
+    # OpenAI text-embedding-3 API key (empty unless the provider is selected). Read from OPENAI_API_KEY;
+    # never logged. Only used when embedding_provider is an openai_text_embedding_3_* variant.
+    openai_api_key: str = ""
     aws_region: str = "us-east-1"
     # P1 production profile: "deterministic" (default — Tier-A fast loop, in-memory/extractive stack)
     # vs "production" (settings-selected real adapters; fails closed when a real adapter is unconfigured).
@@ -125,6 +128,7 @@ def settings_from_env(env: dict | None = None) -> Settings:
         ),
         embedding_provider=_get("RAKU_EMBEDDING_PROVIDER", Settings.embedding_provider),
         embedding_dim=int(_parse("RAKU_EMBEDDING_DIM", Settings.embedding_dim, int)),
+        openai_api_key=_get("OPENAI_API_KEY", Settings.openai_api_key),
         aws_region=_get("AWS_DEFAULT_REGION", Settings.aws_region),
         runtime_profile=_get("RAKU_RUNTIME_PROFILE", Settings.runtime_profile),
         bedrock_claude_model_id=_get(
