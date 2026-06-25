@@ -1702,7 +1702,26 @@ def make_handler(system: ProductionSystem):
                     for field in ("collection_id", "source_id", "document_id", "document_ref"):
                         if not body.get(field):
                             raise KeyError(field)
-                    raw = connector.fetch(str(body["document_ref"]))
+                    try:
+                        raw = connector.fetch(str(body["document_ref"]))
+                    except Exception as fetch_exc:
+                        # A document_ref the connector can't resolve (e.g. a file:// path from another
+                        # container, or a bad data:/s3: ref) is a per-document INGEST failure, not a
+                        # server fault — return a graceful failed IngestResponse (status=failed +
+                        # failure_reason, chunk_count=0). The NestJS facade maps any non-2xx upstream to
+                        # 502, so this MUST stay 2xx for the client to see the real reason.
+                        self._send(
+                            200,
+                            {
+                                "ingestion_run_id": "",
+                                "document_id": str(body["document_id"]),
+                                "status": "failed",
+                                "status_url": "",
+                                "failure_reason": f"could not fetch document_ref: {fetch_exc}",
+                                "chunk_count": 0,
+                            },
+                        )
+                        return
                     mfg_meta = _mfg_metadata_from_body(
                         body, principal.tenant_id, str(body["document_id"])
                     )

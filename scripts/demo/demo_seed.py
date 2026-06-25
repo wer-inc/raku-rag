@@ -6,6 +6,7 @@ POST /internal/ingest (identity in body), with manufacturing approval metadata s
 the safety overlay (approved / draft / obsolete / pending_review) drives the demo.
 Idempotent: re-ingesting the same document_id overwrites.
 """
+import base64
 import json
 import os
 import urllib.error
@@ -20,8 +21,6 @@ AS_URL = os.environ.get("ANSWER_SERVICE_URL", "http://127.0.0.1:8088")
 INTERNAL_AUTH = os.environ.get("RAKU_INTERNAL_AUTH_SECRET", "")
 TENANT = os.environ.get("DEMO_TENANT", "demo")
 COLLECTION = os.environ.get("DEMO_COLLECTION", "manuals")
-UPLOAD_DIR = os.environ.get("RAKU_UPLOAD_DIR", "/tmp/raku-demo-seed")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 def _post(path: str, body: dict) -> tuple[str, object]:
@@ -85,9 +84,10 @@ def register_trouble_case(doc: dict) -> tuple[str, object]:
 def ingest(doc: dict) -> tuple[str, object]:
     if doc.get("trouble_case"):
         return register_trouble_case(doc)
-    path = os.path.join(UPLOAD_DIR, doc["document_id"] + ".txt")
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(doc["content"])
+    # Inline the content as a base64 data: ref. The seed runs in the migrate-seed container, a
+    # SEPARATE container from the answer-service, so a file:// ref written to local /tmp here is
+    # unreadable there (silent empty KB). data: refs carry the bytes in-request — no shared FS needed.
+    content_b64 = base64.b64encode(doc["content"].encode("utf-8")).decode("ascii")
     body = {
         "tenant_id": TENANT,
         "user_id": "alice",
@@ -96,7 +96,7 @@ def ingest(doc: dict) -> tuple[str, object]:
         "collection_id": COLLECTION,
         "source_id": doc.get("document_kind", "demo"),
         "document_id": doc["document_id"],
-        "document_ref": "file://" + path,
+        "document_ref": f"data:text/plain;base64,{content_b64}",
         "content_type": "text/plain",
         "manufacturing": {
             "approval_status": doc["approval_status"],

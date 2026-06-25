@@ -2,11 +2,51 @@
 
 from __future__ import annotations
 
+import base64
 import os
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
+from urllib.parse import unquote_to_bytes, urlparse
 
 from raku_rag.interfaces.base import Connector
+
+
+def _decode_data_uri(ref: str) -> bytes:
+    """Decode an RFC 2397 ``data:[<mediatype>][;base64],<data>`` URI to bytes.
+
+    Inline ``data:`` refs carry the document bytes in the ingest request itself, so ingestion works
+    across process/container boundaries with NO shared filesystem or object store — the case that
+    breaks ``file://`` when the uploader (web) and the answer-service run as separate containers.
+    """
+    if not ref.startswith("data:"):
+        raise ValueError("not a data: URI")
+    header, comma, data = ref[len("data:") :].partition(",")
+    if not comma:
+        raise ValueError("malformed data: URI (missing comma)")
+    if ";base64" in header:
+        # base64 may contain URL-unsafe chars only if percent-encoded; decode defensively.
+        return base64.b64decode(unquote_to_bytes(data))
+    return unquote_to_bytes(data)
+
+
+class DataUriConnector(Connector):
+    """Resolves inline ``data:`` refs itself; delegates every other ref to an inner connector.
+
+    Wrapping the env-selected connector (file/S3) means the Add-Source upload and the demo seed can
+    hand the answer-service document bytes inline (``data:`` ref) regardless of the backing store,
+    while ``s3://`` / ``file://`` refs still flow through to the inner connector unchanged.
+    """
+
+    def __init__(self, inner: Connector) -> None:
+        self.inner = inner
+
+    def fetch(self, ref: str) -> bytes:
+        if ref.startswith("data:"):
+            return _decode_data_uri(ref)
+        return self.inner.fetch(ref)
+
+    def __getattr__(self, name: str):
+        # Transparently expose inner-only members (e.g. S3Connector.list_refs, MemoryConnector.put).
+        return getattr(self.inner, name)
 
 
 class FileConnector(Connector):
@@ -124,5 +164,9 @@ class S3Connector(Connector):
 
 def default_connector_from_env() -> Connector:
     if os.environ.get("RAKU_INGEST_CONNECTOR") == "s3" or os.environ.get("S3_BUCKET"):
-        return S3Connector(bucket=os.environ.get("S3_BUCKET"))
-    return FileConnector()
+        inner: Connector = S3Connector(bucket=os.environ.get("S3_BUCKET"))
+    else:
+        inner = FileConnector()
+    # Always accept inline data: refs on top of the configured store, so an uploader in a different
+    # container than the answer-service can ingest without a shared filesystem / object store.
+    return DataUriConnector(inner)

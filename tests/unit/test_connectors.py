@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import base64
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from raku_rag.providers.connectors import FileConnector, S3Connector
+from raku_rag.providers.connectors import (
+    DataUriConnector,
+    FileConnector,
+    S3Connector,
+    default_connector_from_env,
+)
 
 
 class FakeS3Client:
@@ -76,6 +84,39 @@ class TestConnectors(unittest.TestCase):
             connector.list_refs(prefix="manuals/", limit=10),
             ["s3://docs/manuals/a.txt", "s3://docs/manuals/b.txt"],
         )
+
+
+class TestDataUriConnector(unittest.TestCase):
+    def test_decodes_base64_data_uri(self) -> None:
+        raw = "圧入トルク 12N·m".encode("utf-8")
+        ref = "data:text/plain;base64," + base64.b64encode(raw).decode("ascii")
+        connector = DataUriConnector(FileConnector())
+        self.assertEqual(connector.fetch(ref), raw)
+
+    def test_decodes_plain_percent_encoded_data_uri(self) -> None:
+        connector = DataUriConnector(FileConnector())
+        self.assertEqual(connector.fetch("data:text/plain,hello%20world"), b"hello world")
+
+    def test_delegates_non_data_refs_to_inner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "doc.txt"
+            path.write_bytes(b"hello file")
+            connector = DataUriConnector(FileConnector())
+            self.assertEqual(connector.fetch(f"file://{path}"), b"hello file")
+
+    def test_passthrough_inner_only_members(self) -> None:
+        # __getattr__ must expose inner-only attributes (e.g. S3Connector.list_refs).
+        client = FakeS3Client({("docs", "m/a.txt"): b"a"})
+        connector = DataUriConnector(S3Connector(bucket="docs", client=client))
+        self.assertEqual(connector.list_refs(prefix="m/", limit=5), ["s3://docs/m/a.txt"])
+
+    def test_default_connector_from_env_wraps_with_data_uri_support(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            connector = default_connector_from_env()
+        self.assertIsInstance(connector, DataUriConnector)
+        self.assertIsInstance(connector.inner, FileConnector)
+        ref = "data:text/plain;base64," + base64.b64encode(b"inline").decode("ascii")
+        self.assertEqual(connector.fetch(ref), b"inline")
 
 
 if __name__ == "__main__":
