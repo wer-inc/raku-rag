@@ -28,7 +28,7 @@ import hmac
 import json
 import os
 import sys
-from dataclasses import fields, is_dataclass
+from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -60,6 +60,12 @@ from raku_rag.production import (  # noqa: E402
 from raku_rag.core.config import settings_from_env  # noqa: E402
 from raku_rag.services.answer_format import answer_format_metadata  # noqa: E402
 from raku_rag.services.datasource_sync import build_sync_documents  # noqa: E402
+from raku_rag.persistence.oauth_connection import (  # noqa: E402
+    InMemoryOAuthConnectionStore,
+    build_connection,
+)
+from raku_rag.persistence.secret_store import secret_store_from_settings  # noqa: E402
+from raku_rag.services import oauth_token_resolver  # noqa: E402
 from raku_rag.providers.connectors import default_connector_from_env  # noqa: E402
 from workers.ingest.provider_policy import (  # noqa: E402
     ProviderPolicy,
@@ -947,6 +953,83 @@ def _sync_datasource_to_ingest(
     }
 
 
+def _oauth_google_callback(
+    tenant_id: str,
+    body: dict,
+    *,
+    secret_store,
+    oauth_connections,
+    env=None,
+    fetch_url=None,
+) -> dict:
+    """Exchange a Google auth code for tokens, persist the refresh token, record a connection.
+
+    tenant_id is the authenticated header identity (never the body). Returns
+    {connection_id, refresh_token_stored}. Raises ValueError (missing code),
+    OAuthConfigError (no client creds) or OAuthExchangeError (Google rejected / no refresh token).
+    """
+    code = str(body.get("code") or "")
+    redirect_uri = str(body.get("redirect_uri") or "")
+    if not code:
+        raise ValueError("missing field: code")
+    connection = build_connection(tenant_id=tenant_id, source_id="", provider="google_drive")
+    kwargs = {}
+    if env is not None:
+        kwargs["env"] = env
+    if fetch_url is not None:
+        kwargs["fetch_url"] = fetch_url
+    result = oauth_token_resolver.exchange_code(
+        code,
+        redirect_uri,
+        secret_store=secret_store,
+        tenant_id=tenant_id,
+        secret_ref=connection.refresh_token_secret_ref,
+        **kwargs,
+    )
+    stored = oauth_connections.upsert(replace(connection, scope=str(result.get("scope") or "")))
+    return {
+        "connection_id": stored.connection_id,
+        "refresh_token_stored": bool(result.get("refresh_token_stored")),
+    }
+
+
+def _inject_gdrive_access_token(
+    tenant_id: str,
+    source_id: str,
+    datasource: dict,
+    body: dict,
+    *,
+    secret_store,
+    oauth_connections,
+    env=None,
+    fetch_url=None,
+) -> None:
+    """For a google_drive datasource, mint a FRESH access token from the stored refresh token and
+    inject it into ``body['fresh_access_token']``. No-op for any other source type. A stale token in
+    the config is never used. Raises ValueError when no connection exists (reconnect required) or
+    RefreshTokenExpiredError/OAuthConfigError on refresh failure."""
+    cfg = datasource.get("config") or {}
+    src_type = str(cfg.get("source_type") or datasource.get("type") or "").lower()
+    if src_type != "google_drive":
+        return
+    conn_id = str(cfg.get("connection_id") or "")
+    connection = (
+        oauth_connections.get(tenant_id, conn_id)
+        if conn_id
+        else oauth_connections.get_by_source(tenant_id, source_id)
+    )
+    if connection is None:
+        raise ValueError("google_drive datasource is not connected (reconnect required)")
+    kwargs = {}
+    if env is not None:
+        kwargs["env"] = env
+    if fetch_url is not None:
+        kwargs["fetch_url"] = fetch_url
+    body["fresh_access_token"] = oauth_token_resolver.resolve_fresh_access_token(
+        connection, secret_store, **kwargs
+    )
+
+
 def _mfg_raw_from_body(body: dict) -> dict | None:
     """The raw manufacturing-metadata mapping carried by an ingest request, or None if absent.
 
@@ -1074,6 +1157,11 @@ def make_handler(system: ProductionSystem):
     connector = default_connector_from_env()
     admin_settings = _AdminSettingsStore(system)
     eval_feedback = _EvalFeedbackStore(system)
+    # Connector OAuth (021-gdrive): per-tenant refresh-token SecretStore (profile-selected) + an
+    # in-memory connection store (runtime source of truth; Postgres 0012 is forward-looking).
+    _oauth_settings = settings_from_env()
+    secret_store = secret_store_from_settings(_oauth_settings)
+    oauth_connections = InMemoryOAuthConnectionStore()
     manufacturing_system = build_manufacturing_system_for_base(system)
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()
@@ -2038,6 +2126,24 @@ def make_handler(system: ProductionSystem):
                             202 if retried.status in {"queued", "running", "succeeded"} else 200,
                             _ingest_response_json(retried),
                         )
+                elif parts == ["internal", "oauth", "google", "callback"]:
+                    # 021-gdrive: exchange the auth code, persist the refresh token, record a
+                    # connection. tenant is the header identity (NEVER the body).
+                    tenant_id = self._tenant_header()
+                    try:
+                        result = _oauth_google_callback(
+                            tenant_id,
+                            body,
+                            secret_store=secret_store,
+                            oauth_connections=oauth_connections,
+                        )
+                    except oauth_token_resolver.OAuthConfigError as exc:
+                        self._send(502, {"error": str(exc)})
+                        return
+                    except (ValueError, oauth_token_resolver.OAuthExchangeError) as exc:
+                        self._send(400, {"error": str(exc)})
+                        return
+                    self._send(200, result)
                 elif (
                     len(parts) == 4
                     and parts[:2] == ["internal", "sources"]
@@ -2048,6 +2154,23 @@ def make_handler(system: ProductionSystem):
                     datasource = admin_settings.get_resource(tenant_id, "datasources", source_id)
                     if datasource is None:
                         self._send(404, {"error": "datasource not found"})
+                        return
+                    # 021-gdrive: a google_drive source mints a FRESH access token from its stored
+                    # refresh token and injects it into the sync body (no-op for other types).
+                    try:
+                        _inject_gdrive_access_token(
+                            tenant_id,
+                            source_id,
+                            datasource,
+                            body,
+                            secret_store=secret_store,
+                            oauth_connections=oauth_connections,
+                        )
+                    except oauth_token_resolver.OAuthConfigError as exc:
+                        self._send(502, {"error": str(exc)})
+                        return
+                    except (ValueError, oauth_token_resolver.RefreshTokenExpiredError) as exc:
+                        self._send(400, {"error": str(exc)})
                         return
                     self._send(
                         202,
