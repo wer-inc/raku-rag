@@ -2242,9 +2242,13 @@ def main() -> None:
         seed(system)
         print(f"seeded demo tenant; ProductionSystem on {dsn}", flush=True)
 
-    httpd = HTTPServer(("127.0.0.1", args.port), make_handler(system))
+    # Bind host: default loopback for local/dev safety; in the container set ANSWER_SERVICE_HOST=0.0.0.0
+    # so the (SG/subnet-isolated) internal ALB health check can reach the task over its ENI — a
+    # 127.0.0.1 bind is unreachable from the load balancer and ECS kills the task on failed health checks.
+    host = os.environ.get("ANSWER_SERVICE_HOST", "127.0.0.1")
+    httpd = HTTPServer((host, args.port), make_handler(system))
     print(
-        f"answer-service listening on http://127.0.0.1:{args.port} (/internal/answer)", flush=True
+        f"answer-service listening on http://{host}:{args.port} (/internal/answer)", flush=True
     )
     try:
         httpd.serve_forever()

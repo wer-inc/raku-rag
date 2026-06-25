@@ -603,6 +603,9 @@ export class RakuRagStack extends cdk.Stack {
       }),
       environment: {
         STAGE_NAME: props.stageName,
+        // Listen on all interfaces so the internal ALB health check reaches the task ENI (the default
+        // 127.0.0.1 bind is loopback-only → failed ELB health checks → ECS kills the task).
+        ANSWER_SERVICE_HOST: "0.0.0.0",
         DATABASE_HOST: database.clusterEndpoint.hostname,
         DATABASE_PORT: database.clusterEndpoint.port.toString(),
         DATABASE_NAME: "raku_rag"
