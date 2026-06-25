@@ -67,6 +67,22 @@ export class RakuRagStack extends cdk.Stack {
     const embeddingSecrets: Record<string, ecs.Secret> = openAiSecret
       ? { OPENAI_API_KEY: ecs.Secret.fromSecretsManager(openAiSecret) }
       : {};
+    // Answer-generation LLM — default is the deterministic extractive generator. Pass
+    // `--context answerLlm=bedrock` to switch the answer-service to real Bedrock Claude (only the LLM;
+    // guardrail/reranker stay deterministic, so nothing fails closed). Requires Bedrock model access
+    // enabled in this account/region (IAM InvokeModel is already granted). Optionally override the
+    // model id with `--context bedrockClaudeModelId=<id>`.
+    const useBedrockAnswerLlm =
+      String(this.node.tryGetContext("answerLlm") ?? "extractive") === "bedrock";
+    const bedrockModelIdCtx = this.node.tryGetContext("bedrockClaudeModelId") as string | undefined;
+    const answerLlmEnvironment: Record<string, string> = useBedrockAnswerLlm
+      ? {
+          RAKU_LLM_PROVIDER: "bedrock_claude",
+          // boto3 needs an explicit region for the bedrock-runtime client / inference profile.
+          AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
+          ...(bedrockModelIdCtx ? { RAKU_BEDROCK_CLAUDE_MODEL_ID: bedrockModelIdCtx } : {})
+        }
+      : {};
     // Frontend hosting shape (resolved early — it decides who owns the public ALB):
     //  - external-vercel (default): the NestJS API owns the public ALB; web is hosted off-AWS (Vercel).
     //  - aws-nextjs: the Next.js web owns the public ALB and is the default target; the API is attached
@@ -624,6 +640,7 @@ export class RakuRagStack extends cdk.Stack {
       }),
       environment: {
         ...embeddingEnvironment,
+        ...answerLlmEnvironment,
         STAGE_NAME: props.stageName,
         // Listen on all interfaces so the internal ALB health check reaches the task ENI (the default
         // 127.0.0.1 bind is loopback-only → failed ELB health checks → ECS kills the task).
