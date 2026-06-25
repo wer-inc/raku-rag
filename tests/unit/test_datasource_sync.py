@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from raku_rag.services import datasource_sync as ds
 from raku_rag.services.datasource_sync import (
+    _GDRIVE_HOSTS,
     _assert_public_host,
     _host_allowed,
     _quote_ident,
@@ -525,6 +526,138 @@ class TestDatasourceSync(unittest.TestCase):
             _assert_public_host("https://evil.example/", allow_hosts=("atlassian.net",))
         # A public IP literal is allowed (no DNS needed, deterministic offline).
         _assert_public_host("http://8.8.8.8/")
+
+    def test_gdrive_exports_native_docs_and_downloads_binaries(self) -> None:
+        files = {
+            "files": [
+                {"id": "g1", "name": "Spec", "mimeType": "application/vnd.google-apps.document"},
+                {"id": "g2", "name": "Budget", "mimeType": "application/vnd.google-apps.spreadsheet"},
+                {"id": "g3", "name": "diagram.png", "mimeType": "image/png"},
+                {"id": "g4", "name": "readme.md", "mimeType": "text/markdown"},
+                {"id": "g5", "name": "sub", "mimeType": "application/vnd.google-apps.folder"},
+            ]
+        }
+        fetch = RecordingFetch(
+            [
+                (lambda u: "/drive/v3/files?" in u, (json.dumps(files).encode("utf-8"), "text/plain")),
+                (lambda u: "/export?" in u and "g1" in u, (b"<html>doc</html>", "text/plain")),
+                (lambda u: "/export?" in u and "g2" in u, (b"a,b,c", "text/plain")),
+                (lambda u: "g4?" in u and "alt=media" in u, (b"# readme", "text/plain")),
+            ]
+        )
+
+        docs = build_sync_documents(
+            "gd",
+            {"config": {"source_type": "google_drive", "folder_id": "FOLDER"}},
+            body={"fresh_access_token": "fresh-tok"},
+            limit=10,
+            fetch_url=fetch,
+        )
+
+        # native Docs->HTML, Sheets->CSV, the .md binary; .png skipped, folder skipped
+        self.assertEqual(
+            [d.document_ref for d in docs],
+            ["gdrive://FOLDER/Spec", "gdrive://FOLDER/Budget", "gdrive://FOLDER/readme.md"],
+        )
+        self.assertEqual(docs[0].content_type, "text/html")
+        self.assertEqual(docs[0].raw, b"<html>doc</html>")
+        self.assertEqual(docs[1].content_type, "text/csv")
+        self.assertEqual(docs[2].content_type, "text/markdown")
+        list_call = fetch.calls[0]
+        self.assertEqual(list_call["allow_hosts"], _GDRIVE_HOSTS)
+        self.assertEqual(list_call["headers"]["Authorization"], "Bearer fresh-tok")
+
+    def test_gdrive_token_comes_from_body_not_config(self) -> None:
+        files = {"files": [{"id": "g4", "name": "n.txt", "mimeType": "text/plain"}]}
+        fetch = RecordingFetch(
+            [
+                (lambda u: "/drive/v3/files?" in u, (json.dumps(files).encode("utf-8"), "text/plain")),
+                (lambda u: "alt=media" in u, (b"data", "text/plain")),
+            ]
+        )
+        build_sync_documents(
+            "gd",
+            # a stale token sitting in config must be ignored in favour of the injected fresh one
+            {"config": {"source_type": "google_drive", "access_token": "STALE", "folder_id": "F"}},
+            body={"fresh_access_token": "FRESH"},
+            limit=5,
+            fetch_url=fetch,
+        )
+        self.assertEqual(fetch.calls[0]["headers"]["Authorization"], "Bearer FRESH")
+
+    def test_gdrive_requires_oauth_token(self) -> None:
+        with self.assertRaises(ValueError):
+            build_sync_documents(
+                "gd",
+                {"config": {"source_type": "google_drive", "folder_id": "F"}},
+                body={},  # no fresh_access_token -> reconnect required
+                limit=5,
+                fetch_url=RecordingFetch([]),
+            )
+
+    def test_gdrive_follows_pagination(self) -> None:
+        page1 = {
+            "files": [{"id": "a", "name": "a.txt", "mimeType": "text/plain"}],
+            "nextPageToken": "TKN2",
+        }
+        page2 = {"files": [{"id": "b", "name": "b.txt", "mimeType": "text/plain"}]}
+
+        def list_route(u):
+            return "/drive/v3/files?" in u and "alt=media" not in u
+
+        fetch = RecordingFetch(
+            [
+                (lambda u: list_route(u) and "pageToken=TKN2" in u,
+                 (json.dumps(page2).encode("utf-8"), "text/plain")),
+                (lambda u: list_route(u),
+                 (json.dumps(page1).encode("utf-8"), "text/plain")),
+                (lambda u: "alt=media" in u, (b"x", "text/plain")),
+            ]
+        )
+        docs = build_sync_documents(
+            "gd",
+            {"config": {"source_type": "google_drive", "folder_id": "F"}},
+            body={"fresh_access_token": "t"},
+            limit=10,
+            fetch_url=fetch,
+        )
+        self.assertEqual([d.document_ref for d in docs], ["gdrive://F/a.txt", "gdrive://F/b.txt"])
+        self.assertTrue(any("pageToken=TKN2" in c["url"] for c in fetch.calls))
+
+    def test_gdrive_parses_folder_url(self) -> None:
+        files = {"files": [{"id": "a", "name": "a.txt", "mimeType": "text/plain"}]}
+        fetch = RecordingFetch(
+            [
+                (lambda u: "/drive/v3/files?" in u and "alt=media" not in u,
+                 (json.dumps(files).encode("utf-8"), "text/plain")),
+                (lambda u: "alt=media" in u, (b"x", "text/plain")),
+            ]
+        )
+        build_sync_documents(
+            "gd",
+            {"config": {
+                "source_type": "google_drive",
+                "folder_id": "https://drive.google.com/drive/folders/REALID?usp=sharing",
+            }},
+            body={"fresh_access_token": "t"},
+            limit=5,
+            fetch_url=fetch,
+        )
+        self.assertIn("%27REALID%27+in+parents", fetch.calls[0]["url"])
+
+    def test_gdrive_no_parseable_files_raises(self) -> None:
+        files = {"files": [{"id": "g3", "name": "x.png", "mimeType": "image/png"}]}
+        fetch = RecordingFetch(
+            [(lambda u: "/drive/v3/files?" in u, (json.dumps(files).encode("utf-8"), "text/plain"))]
+        )
+        with self.assertRaises(ValueError):
+            build_sync_documents(
+                "gd",
+                {"config": {"source_type": "google_drive", "folder_id": "F"}},
+                body={"fresh_access_token": "t"},
+                limit=5,
+                fetch_url=fetch,
+            )
 
     def test_unsupported_source_type_raises(self) -> None:
         with self.assertRaises(ValueError):

@@ -101,7 +101,19 @@ _KINTONE_HOSTS = ("cybozu.com", "kintone.com")
 _CONFLUENCE_HOSTS = ("atlassian.net",)
 _NOTION_HOSTS = ("api.notion.com",)
 _BOX_HOSTS = ("box.com", "boxcloud.com")
+# Drive download/export 302-redirect off googleapis.com to googleusercontent.com / docs.google.com,
+# and _fetch_url re-validates the allowlist on EVERY hop — all three hosts must be present or the
+# byte fetch is rejected. (_fetch_url drops Authorization across hosts; Drive's redirect is pre-signed.)
+_GDRIVE_HOSTS = ("googleapis.com", "googleusercontent.com", "docs.google.com")
 _NOTION_VERSION = "2022-06-28"
+# Google-native docs cannot be downloaded with alt=media; they must be exported. Map native mimeType
+# -> export mimeType (each is in _PARSEABLE_CONTENT_TYPES). text/html preserves Docs structure better
+# than text/plain. Other native types (folder/drawing/form) are skipped.
+_GDRIVE_EXPORT = {
+    "application/vnd.google-apps.document": "text/html",
+    "application/vnd.google-apps.spreadsheet": "text/csv",
+    "application/vnd.google-apps.presentation": "text/plain",
+}
 
 
 def _host_allowed(host: str, allow_hosts: tuple[str, ...]) -> bool:
@@ -218,6 +230,8 @@ def build_sync_documents(
         return _notion_documents(source_id, config, body, effective_limit, fetch_url or _fetch_url)
     if source_type == "box":
         return _box_documents(source_id, config, body, effective_limit, fetch_url or _fetch_url)
+    if source_type == "google_drive":
+        return _gdrive_documents(source_id, config, body, effective_limit, fetch_url or _fetch_url)
     raise ValueError(f"unsupported datasource source_type: {source_type or 'unknown'}")
 
 
@@ -664,6 +678,108 @@ def _box_documents(
             break
     if not docs:
         raise ValueError("Box datasource returned no parseable files")
+    return docs
+
+
+def _gdrive_folder_id(raw: str) -> str:
+    """Accept a bare folder id or a Drive folder URL; return the id (defaults to 'root')."""
+    raw = (raw or "").strip()
+    if not raw:
+        return "root"
+    if "drive.google.com" in raw and "/folders/" in raw:
+        tail = raw.split("/folders/", 1)[1]
+        return tail.split("?", 1)[0].split("/", 1)[0] or "root"
+    return raw
+
+
+def _gdrive_documents(
+    source_id: str,
+    config: Mapping[str, object],
+    body: Mapping[str, object],
+    limit: int,
+    fetch_url: FetchUrl,
+) -> list[SyncDocument]:
+    """Google Drive files in a folder via OAuth (Bearer). The access token is the FRESH token the
+    answer-service injected into ``body`` from the stored refresh token — never read from config.
+    Native Google docs are exported (Docs->HTML, Sheets->CSV, Slides->text); uploaded binaries are
+    downloaded via alt=media and gated on parseable extensions; content type is computed locally."""
+
+    token = str(body.get("fresh_access_token") or body.get("access_token") or "").strip()
+    if not token:
+        raise ValueError(
+            "Google Drive datasource requires an active OAuth connection (reconnect required)"
+        )
+    folder_id = _gdrive_folder_id(_str_value(body, config, ("folder_id", "folder", "target_folder")))
+    auth_header = {"Authorization": f"Bearer {token}"}
+    list_headers = {**auth_header, "Accept": "application/json"}
+    page_size = min(max(limit, 1) * 2, 1000)
+
+    docs: list[SyncDocument] = []
+    page_token = ""
+    for _page in range(50):  # hard cap on pages so a runaway listing cannot loop forever
+        params = {
+            "q": f"'{folder_id}' in parents and trashed = false",
+            "fields": "nextPageToken,files(id,name,mimeType)",
+            "pageSize": page_size,
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        raw, _ct = fetch_url(
+            f"https://www.googleapis.com/drive/v3/files?{urlencode(params)}",
+            headers=list_headers,
+            allow_hosts=_GDRIVE_HOSTS,
+        )
+        payload = json.loads(raw.decode("utf-8"))
+        if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+            message = payload["error"].get("message") or payload["error"]
+            raise ValueError(f"Google Drive API error: {message}")
+        for entry in _api_results(payload, "files", "Google Drive"):
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "")
+            file_id = str(entry.get("id") or "")
+            mime = str(entry.get("mimeType") or "")
+            if not name or not file_id:
+                continue
+            if mime in _GDRIVE_EXPORT:
+                export_mime = _GDRIVE_EXPORT[mime]
+                file_raw, _dl = fetch_url(
+                    f"https://www.googleapis.com/drive/v3/files/{file_id}/export?"
+                    + urlencode({"mimeType": export_mime}),
+                    headers=auth_header,
+                    allow_hosts=_GDRIVE_HOSTS,
+                )
+                content_type = export_mime
+            elif mime.startswith("application/vnd.google-apps"):
+                continue  # folders, drawings, forms — not ingestable
+            else:
+                if not name.lower().endswith(_PARSEABLE_EXTENSIONS):
+                    continue  # skip binaries the text/office parser cannot read (.pdf, images, …)
+                file_raw, _dl = fetch_url(
+                    f"https://www.googleapis.com/drive/v3/files/{file_id}?"
+                    + urlencode({"alt": "media", "supportsAllDrives": "true"}),
+                    headers=auth_header,
+                    allow_hosts=_GDRIVE_HOSTS,
+                )
+                content_type = _content_type_for_name(name)
+            ref = f"gdrive://{folder_id}/{name}"
+            docs.append(
+                SyncDocument(
+                    document_id=_document_id(source_id, ref),
+                    document_ref=ref,
+                    raw=file_raw,
+                    content_type=content_type,
+                )
+            )
+            if len(docs) >= limit:
+                break
+        page_token = payload.get("nextPageToken") if isinstance(payload, dict) else ""
+        if not page_token or len(docs) >= limit:
+            break
+    if not docs:
+        raise ValueError("Google Drive datasource returned no parseable files")
     return docs
 
 
