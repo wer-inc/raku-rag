@@ -230,7 +230,13 @@ def secret_store_from_settings(settings, *, env: dict | None = None) -> SecretSt
     if override == "memory":
         return InMemorySecretStore()
 
-    if getattr(settings, "runtime_profile", "deterministic") == "production":
+    # RAKU_SECRET_STORE=aws forces Secrets Manager independently of the runtime profile, so a
+    # deterministic-profile deploy (real embeddings/LLM off) still persists OAuth refresh tokens
+    # durably. Otherwise the production profile selects it; everything else stays in-memory.
+    use_secrets_manager = override in {"aws", "secretsmanager"} or (
+        getattr(settings, "runtime_profile", "deterministic") == "production"
+    )
+    if use_secrets_manager:
         return SecretsManagerSecretStore(
             region_name=getattr(settings, "aws_region", None),
             kms_key_id=getattr(settings, "secrets_manager_kms_key_id", "") or None,

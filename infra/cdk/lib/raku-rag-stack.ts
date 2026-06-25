@@ -185,6 +185,23 @@ export class RakuRagStack extends cdk.Stack {
       }
     });
 
+    // Google Drive connector OAuth client config (021-gdrive). Ships with PLACEHOLDER values; the
+    // operator populates client_id/client_secret/redirect_uri post-deploy (see DEPLOY.md + the
+    // GoogleOAuthConfigSecretName output) and restarts the API + answer-service tasks. client_secret
+    // is consumed ONLY by the answer-service; the API reads client_id (public) to build the consent URL.
+    const googleOAuthSecret = new secretsmanager.Secret(this, "GoogleOAuthConfigSecret", {
+      secretName: `${servicePrefix}/oauth/google`,
+      description: "Google Drive connector OAuth client (client_id/client_secret/redirect_uri)",
+      encryptionKey: dataKey,
+      secretObjectValue: {
+        client_id: cdk.SecretValue.unsafePlainText("REPLACE_ME"),
+        client_secret: cdk.SecretValue.unsafePlainText("REPLACE_ME"),
+        redirect_uri: cdk.SecretValue.unsafePlainText(
+          "https://REPLACE_ME/oauth/google/callback"
+        )
+      }
+    });
+
     const langfuseSecret = new secretsmanager.Secret(this, "LangfuseSecret", {
       secretName: `${servicePrefix}/langfuse`,
       description: "Langfuse auth and encryption secret material",
@@ -300,6 +317,9 @@ export class RakuRagStack extends cdk.Stack {
     appSecret.grantRead(apiTask.taskRole);
     internalAuthSecret.grantRead(apiTask.taskRole);
     database.secret?.grantRead(apiTask.taskRole);
+    // 021-gdrive: the API reads only client_id + redirect_uri (public) to build the consent URL; it
+    // never receives client_secret.
+    googleOAuthSecret.grantRead(apiTask.taskRole);
 
     const apiContainer = apiTask.addContainer("NestjsApiContainer", {
       image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "apps/api/Dockerfile" }),
@@ -324,7 +344,11 @@ export class RakuRagStack extends cdk.Stack {
         APPLICATION_SECRET: ecs.Secret.fromSecretsManager(appSecret),
         RAKU_TOKEN_SIGNING_SECRET: ecs.Secret.fromSecretsManager(appSecret, "jwtSigningSecret"),
         RAKU_INTERNAL_AUTH_SECRET: ecs.Secret.fromSecretsManager(internalAuthSecret, "secret"),
-        DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password")
+        DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password"),
+        // 021-gdrive: client_id (public) builds the consent URL; redirect_uri must match Google's
+        // registered callback. No client_secret here.
+        GOOGLE_OAUTH_CLIENT_ID: ecs.Secret.fromSecretsManager(googleOAuthSecret, "client_id"),
+        GOOGLE_OAUTH_REDIRECT_URI: ecs.Secret.fromSecretsManager(googleOAuthSecret, "redirect_uri")
       }
     });
     apiContainer.addPortMappings({ containerPort: 3000 });
@@ -628,6 +652,24 @@ export class RakuRagStack extends cdk.Stack {
     internalAuthSecret.grantRead(answerTask.taskRole);
     openAiSecret?.grantRead(answerTask.taskRole);
     database.secret?.grantRead(answerTask.taskRole);
+    // 021-gdrive: read the OAuth client config + manage per-tenant connector refresh-token secrets
+    // under the raku/${stage}/* prefix (SecretStore physical id = {prefix}/{tenant}/gdrive/{conn}).
+    // KMS Encrypt/Decrypt/GenerateDataKey on dataKey is already granted by attachRuntimePolicies.
+    googleOAuthSecret.grantRead(answerTask.taskRole);
+    answerTask.taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "secretsmanager:CreateSecret",
+          "secretsmanager:PutSecretValue",
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DeleteSecret",
+          "secretsmanager:TagResource"
+        ],
+        resources: [
+          `arn:aws:secretsmanager:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:secret:raku/${props.stageName}/*`
+        ]
+      })
+    );
 
     const answerContainer = answerTask.addContainer("AnswerServiceContainer", {
       image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "apps/answer-service/Dockerfile" }),
@@ -647,12 +689,20 @@ export class RakuRagStack extends cdk.Stack {
         ANSWER_SERVICE_HOST: "0.0.0.0",
         DATABASE_HOST: database.clusterEndpoint.hostname,
         DATABASE_PORT: database.clusterEndpoint.port.toString(),
-        DATABASE_NAME: "raku_rag"
+        DATABASE_NAME: "raku_rag",
+        // 021-gdrive: durably persist OAuth refresh tokens in Secrets Manager (KMS-encrypted by the
+        // stack CMK), independent of the runtime profile, under the per-tenant raku/${stage}/* prefix.
+        RAKU_SECRET_STORE: "aws",
+        RAKU_SECRETS_PREFIX: `raku/${props.stageName}`,
+        AWS_SECRETS_MANAGER_KMS_KEY_ID: dataKey.keyArn
       },
       secrets: {
         ...embeddingSecrets,
         RAKU_INTERNAL_AUTH_SECRET: ecs.Secret.fromSecretsManager(internalAuthSecret, "secret"),
-        DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password")
+        DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password"),
+        // client_secret is consumed ONLY here (code/refresh exchange); never sent to the API/browser.
+        GOOGLE_OAUTH_CLIENT_ID: ecs.Secret.fromSecretsManager(googleOAuthSecret, "client_id"),
+        GOOGLE_OAUTH_CLIENT_SECRET: ecs.Secret.fromSecretsManager(googleOAuthSecret, "client_secret")
       }
     });
     answerContainer.addPortMappings({ containerPort: 8088 });
@@ -934,6 +984,11 @@ export class RakuRagStack extends cdk.Stack {
     }
     new cdk.CfnOutput(this, "AnswerServiceInternalLoadBalancerDnsName", {
       value: answerService.loadBalancer.loadBalancerDnsName
+    });
+    // 021-gdrive: populate this secret with the real Google OAuth client_id/client_secret/redirect_uri
+    // post-deploy, then restart the API + answer-service tasks (see infra/cdk/DEPLOY.md).
+    new cdk.CfnOutput(this, "GoogleOAuthConfigSecretName", {
+      value: googleOAuthSecret.secretName
     });
     // Inputs for scripts/aws/migrate-seed.sh (one-off RunTask after deploy).
     new cdk.CfnOutput(this, "EcsClusterName", { value: cluster.clusterName });

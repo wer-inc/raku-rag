@@ -170,6 +170,17 @@ class FactoryTest(unittest.TestCase):
         except RuntimeError as exc:
             self.assertIn("boto3", str(exc))
 
+    def test_aws_override_selects_secrets_manager_regardless_of_profile(self) -> None:
+        # The deployed answer-service runs the deterministic profile but sets RAKU_SECRET_STORE=aws so
+        # OAuth refresh tokens still persist durably.
+        try:
+            store = secret_store_from_settings(
+                Settings(runtime_profile="deterministic"), env={"RAKU_SECRET_STORE": "aws"}
+            )
+            self.assertIsInstance(store, SecretsManagerSecretStore)
+        except RuntimeError as exc:
+            self.assertIn("boto3", str(exc))
+
 
 class ModuleImportIsStdlibOnlyTest(unittest.TestCase):
     def test_import_without_boto3(self) -> None:

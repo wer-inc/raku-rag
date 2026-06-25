@@ -100,6 +100,33 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)
 
+    def test_gdrive_oauth_secrets_and_grants_are_wired(self) -> None:
+        # 021-gdrive: a Google OAuth config secret (KMS-encrypted), per-tenant connector-secret grants
+        # scoped to the raku/${stage}/* prefix, the durable refresh-token store env, and the output the
+        # operator uses to populate credentials post-deploy.
+        for token in (
+            "GoogleOAuthConfigSecret",
+            "/oauth/google",
+            "encryptionKey: dataKey",
+            "GOOGLE_OAUTH_CLIENT_ID",
+            "GOOGLE_OAUTH_CLIENT_SECRET",
+            "GOOGLE_OAUTH_REDIRECT_URI",
+            "secretsmanager:CreateSecret",
+            "secret:raku/${props.stageName}/*",
+            'RAKU_SECRET_STORE: "aws"',
+            "AWS_SECRETS_MANAGER_KMS_KEY_ID",
+            "GoogleOAuthConfigSecretName",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.stack)
+        # the durable (forward-looking) connection table migration + its down ship together
+        self.assertTrue(
+            (ROOT / "infra/db/migrations/postgres/0012_data_source_oauth.sql").exists()
+        )
+        self.assertTrue(
+            (ROOT / "infra/db/migrations/postgres/0012_data_source_oauth.down.sql").exists()
+        )
+
     def test_minimal_spec_profile_is_wired(self) -> None:
         # The cost-minimised tier (single Aurora instance, small Fargate tasks, Langfuse off) must be
         # selectable independently of durability (isProd governs RETAIN/backups), via --context minimalSpec.

@@ -91,6 +91,35 @@ npx cdk deploy --context stage=sales --context frontendHosting=aws-nextjs --cont
 > web "/" と API "/healthz" のヘルスチェック通過・`/v1/*`到達・ブラウザのトークン発行→API検証を実機確認のこと。
 > web のサーバ側(SSR)から API を呼ぶ箇所がある場合、相対 `/v1` は解決しない（クライアント側fetch前提）。
 
+## Google Drive コネクタ OAuth（021-gdrive）— デプロイ後の手動設定
+
+スタックは `${stage}/oauth/google` という **プレースホルダの** Secrets Manager シークレット
+（出力 `GoogleOAuthConfigSecretName`）を作成します。実値はあなたが投入します（Claude/CDK では作成不可）。
+
+1. **Google Cloud で OAuth クライアント作成**：GCP コンソール → 対象プロジェクトで **Google Drive API** を有効化
+   → 「OAuth 同意画面」を構成（スコープ `https://www.googleapis.com/auth/drive.readonly`、テスト中は自分を
+   テストユーザに追加）→ **OAuth 2.0 クライアント ID（種別: ウェブアプリ）** を作成。
+2. **リダイレクト URI を登録**（`GOOGLE_OAUTH_REDIRECT_URI` と完全一致させる。コールバックは web 側）：
+   - ローカル: `http://localhost:3002/oauth/google/callback`
+   - デプロイ: `https://<web-origin or ALB ドメイン>/oauth/google/callback`
+3. **シークレットに実値を投入**してタスクを再起動：
+   ```bash
+   SECRET=$(aws cloudformation describe-stacks --stack-name <stack> \
+     --query "Stacks[0].Outputs[?OutputKey=='GoogleOAuthConfigSecretName'].OutputValue" --output text)
+   aws secretsmanager put-secret-value --secret-id "$SECRET" --secret-string \
+     '{"client_id":"...","client_secret":"...","redirect_uri":"https://<web-origin>/oauth/google/callback"}'
+   aws ecs update-service --cluster <cluster> --service <stack>-api      --force-new-deployment
+   aws ecs update-service --cluster <cluster> --service <stack>-answer   --force-new-deployment
+   ```
+4. **動作確認**（ライブ）：web で「Google で接続」→ 同意 → 接続済み表示 → データソース保存 → 同期。
+   - `client_secret` は **answer-service だけ** が読む（コード/リフレッシュ交換）。API は `client_id`/`redirect_uri`
+     （公開値）のみ。リフレッシュトークンは **Secrets Manager（CMK 暗号化）** の `raku/${stage}/<tenant>/gdrive/<conn>`
+     に保管され、設定・ログ・ブラウザには出ません。
+   - リフレッシュトークン保管は実行時オン（`RAKU_SECRET_STORE=aws`、runtime profile 非依存）。接続記録自体は
+     現状インメモリ（answer-service 再起動で要再接続）。Postgres 永続化（migration `0012_data_source_oauth`）は
+     **前方互換の置き場**で、本 PR では実行時の真実源にはしていません。
+   - 検証できたら `apps/web` の Google Drive の `readiness` を `three_days` → `ready` に上げてください。
+
 ## まだ残る穴（正直に）
 - **初回 cdk deploy は未実機検証**（この環境にAWS鍵・Docker無し→ `cdk synth` 緑まで）。最初のデプロイで
   Aurora の `raku_rag`→`SET ROLE raku_app` 権限、内部ALB到達、ヘルスチェックを実機確認してください。
