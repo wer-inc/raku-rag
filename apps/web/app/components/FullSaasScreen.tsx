@@ -2348,7 +2348,15 @@ type AddSourceConfig = {
   upload?: boolean;
   oauth?: string;
   fields: AddSourceField[];
-  dataSourceType: "upload" | "object_storage" | "slack" | "confluence" | "database" | "notion" | "box";
+  dataSourceType:
+    | "upload"
+    | "object_storage"
+    | "slack"
+    | "confluence"
+    | "database"
+    | "notion"
+    | "box"
+    | "google_drive";
   note: string;
 };
 
@@ -2465,11 +2473,10 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   googledrive: {
     oauth: "Google",
     fields: [
-      { id: "target_folder", label: "対象フォルダ / 共有ドライブ", placeholder: "フォルダ URL または ID" },
-      { id: "file_formats", label: "取込ファイル形式", placeholder: "PDF, DOCX, XLSX" },
+      { id: "folder_id", label: "対象フォルダ / 共有ドライブ", placeholder: "フォルダ URL または ID（未指定はマイドライブ直下）" },
     ],
-    dataSourceType: "object_storage",
-    note: "OAuth 前提のコネクタ設定を入力できます。認可フロー本体は次の実装対象です。",
+    dataSourceType: "google_drive",
+    note: "「Google で接続」で OAuth 認可（drive.readonly）を行うと、リフレッシュトークンをサーバ側のシークレットストアに保管し、同期時に短命アクセストークンを自動発行します。ネイティブ Google ドキュメントはエクスポート取込します。",
   },
   sharepoint: {
     oauth: "Microsoft",
@@ -2573,6 +2580,15 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+const GDRIVE_OAUTH_STATE_KEY = "raku.gdrive.oauth.state";
+const GDRIVE_OAUTH_MESSAGE_SOURCE = "raku-gdrive-oauth";
+
+function makeOAuthNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes); // CSPRNG, not Math.random — this nonce is the CSRF guard
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function AddSourceBody() {
   const [selectedSource, setSelectedSource] = useState<AddSourceTypeId>("file");
   const [mode, setMode] = useState<"file" | "text">("file");
@@ -2597,9 +2613,57 @@ function AddSourceBody() {
   const [configMessage, setConfigMessage] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<AdminSourceSyncResponse | null>(null);
+  // Google Drive OAuth connection (021-gdrive). connectionId is the only credential the form keeps;
+  // the refresh token lives server-side. saveDatasource gates on it for google_drive.
+  const [oauthStatus, setOauthStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
+  const [oauthConnectionId, setOauthConnectionId] = useState<string>("");
+  const [oauthError, setOauthError] = useState<string | null>(null);
 
   const selectedSourceDef = ADD_SOURCE_TYPES.find((source) => source.id === selectedSource) ?? ADD_SOURCE_TYPES[0];
   const selectedConfig = ADD_SOURCE_CONFIGS[selectedSource];
+  const needsOAuthConnection = selectedConfig.dataSourceType === "google_drive";
+
+  // Receive the connection result from the OAuth popup (apps/web/app/oauth/google/callback).
+  useEffect(() => {
+    function onMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data;
+      if (!data || data.source !== GDRIVE_OAUTH_MESSAGE_SOURCE) return;
+      if (data.ok && typeof data.connection_id === "string") {
+        setOauthConnectionId(data.connection_id);
+        setOauthStatus("connected");
+        setOauthError(null);
+      } else {
+        setOauthStatus("error");
+        setOauthError(typeof data.error === "string" ? data.error : "接続に失敗しました");
+      }
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  async function onConnectGoogle() {
+    setOauthError(null);
+    setOauthStatus("connecting");
+    try {
+      const nonce = makeOAuthNonce();
+      window.sessionStorage.setItem(GDRIVE_OAUTH_STATE_KEY, nonce);
+      const redirectUri = `${window.location.origin}/oauth/google/callback`;
+      const token = await getSessionToken();
+      const { authorization_url } = await apiGetJson<{ authorization_url: string }>(
+        `/oauth/google/authorize?state=${encodeURIComponent(nonce)}&redirect_uri=${encodeURIComponent(redirectUri)}`,
+        token,
+      );
+      const popup = window.open(authorization_url, "raku-gdrive-oauth", "width=520,height=640");
+      if (!popup) {
+        // Popups blocked: fall back to a full-page redirect (callback stashes the id in sessionStorage).
+        window.location.href = authorization_url;
+      }
+    } catch (err) {
+      setOauthStatus("error");
+      setOauthError(err instanceof Error ? err.message : "OAuth 接続の開始に失敗しました");
+    }
+  }
 
   function onSelectSource(sourceIdValue: AddSourceTypeId) {
     setSelectedSource(sourceIdValue);
@@ -2609,6 +2673,9 @@ function AddSourceBody() {
     setError(null);
     setResult(null);
     setSyncResult(null);
+    setOauthStatus("idle");
+    setOauthConnectionId("");
+    setOauthError(null);
   }
 
   function onConfigChange(fieldId: string, value: string) {
@@ -2624,6 +2691,10 @@ function AddSourceBody() {
 
   async function saveDatasource(): Promise<string | null> {
     if (selectedSource === "file" || configSaving || syncing) return null;
+    if (needsOAuthConnection && !oauthConnectionId) {
+      setError("先に「Google で接続」で OAuth 認可を完了してください。");
+      return null;
+    }
     setError(null);
     setConfigMessage(null);
     setSyncResult(null);
@@ -2637,9 +2708,14 @@ function AddSourceBody() {
           collection_id: collectionId.trim() || "manuals",
           type: selectedConfig.dataSourceType,
           config: {
-            source_type: selectedSource,
+            // Backend dispatch key. It matches the AddSourceTypeId for every connector EXCEPT
+            // google_drive (UI id 'googledrive' -> dispatch/type 'google_drive').
+            source_type: selectedSource === "googledrive" ? "google_drive" : selectedSource,
             display_name: selectedSourceDef.name,
             oauth_provider: selectedConfig.oauth ?? null,
+            // OAuth connection id (google_drive): sync resolves the refresh token by this id. The
+            // refresh token itself is never in the config — it lives in the server SecretStore.
+            ...(needsOAuthConnection ? { connection_id: oauthConnectionId } : {}),
             // Trust policy (server derives every synced file's approval state from this, not from the
             // sync request): 'trusted' => approved+imported; 'review_required' => pending_review.
             approval_policy: approvalPolicy,
@@ -2916,7 +2992,35 @@ function AddSourceBody() {
       ) : (
         <form className="connector-form" onSubmit={onSaveDatasource}>
           <Section title={`${selectedSourceDef.name} の接続設定`} note={selectedSourceDef.desc}>
-            {selectedConfig.oauth && (
+            {selectedConfig.oauth && needsOAuthConnection && (
+              <div className="connector-oauth">
+                <div>
+                  <strong>{selectedConfig.oauth} OAuth</strong>
+                  <span>
+                    {oauthStatus === "connected"
+                      ? `接続済み（connection: ${oauthConnectionId.slice(0, 8)}…）。設定を保存して同期できます。`
+                      : "「Google で接続」で drive.readonly を認可します。リフレッシュトークンはサーバ側に保管されます。"}
+                  </span>
+                  {oauthStatus === "error" && oauthError && (
+                    <span className="connector-oauth-error" style={{ color: "#c0392b" }}>
+                      接続エラー: {oauthError}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={onConnectGoogle}
+                  disabled={oauthStatus === "connecting"}
+                >
+                  {oauthStatus === "connecting"
+                    ? "接続中…"
+                    : oauthStatus === "connected"
+                      ? "再接続"
+                      : `${selectedConfig.oauth} で接続`}
+                </button>
+              </div>
+            )}
+            {selectedConfig.oauth && !needsOAuthConnection && (
               <div className="connector-oauth">
                 <div>
                   <strong>{selectedConfig.oauth} OAuth</strong>
