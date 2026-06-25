@@ -6,6 +6,12 @@ export const metadata = {
   description: "Industry knowledge assistant",
 };
 
+// Explicit so mobile browsers render at device width and the responsive CSS engages.
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ja">

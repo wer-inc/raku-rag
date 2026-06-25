@@ -3612,3 +3612,125 @@ button,
   border-color: #f3c0c5;
   background: #fdf3f4;
 }
+
+/* ============================================================
+   Responsive — mobile drawer sidebar (<= 780px).
+   On small screens the sidebar becomes a fixed off-canvas panel:
+   a mobile top bar provides the hamburger, a scrim closes it, and
+   the main content takes the full width. This block is placed last
+   so its source order wins over the base `.sidebar` declarations.
+   ============================================================ */
+.mobile-topbar {
+  display: none;
+}
+
+.nav-scrim {
+  display: none;
+}
+
+@media (max-width: 780px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .mobile-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: #ffffff;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .mobile-nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #ffffff;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .mobile-topbar-title {
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  /* Off-canvas drawer. Base `.sidebar` keeps its colours/border; we add the positioning. */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    width: min(82vw, 320px);
+    gap: 20px;
+    padding: 22px 20px;
+    overflow-y: auto;
+    box-shadow: 16px 0 40px rgba(0, 0, 0, 0.18);
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+  }
+
+  .app-shell.nav-open .sidebar {
+    transform: translateX(0);
+  }
+
+  .nav-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: block;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: rgba(15, 16, 24, 0.42);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease;
+    cursor: pointer;
+  }
+
+  .app-shell.nav-open .nav-scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .app-main {
+    min-width: 0;
+  }
+
+  /* Tighter gutters so content isn't cramped against the viewport edges. */
+  .workspace,
+  .full-saas-workspace {
+    padding-inline: 16px;
+  }
+
+  /* Wide data table: scroll it horizontally instead of crushing its 6 columns. */
+  .standalone-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .standalone-table-head,
+  .standalone-table-row {
+    min-width: 640px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .nav-scrim {
+    transition: none;
+  }
+}
