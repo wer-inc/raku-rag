@@ -28,6 +28,10 @@ COPY --from=build /repo/node_modules ./node_modules
 COPY --from=build /repo/package.json ./package.json
 COPY --from=build /repo/packages/shared ./packages/shared
 COPY --from=build /repo/apps/web ./apps/web
+# Dynamic routes (e.g. app/[...slug]) read specs/full-saas/screens.manifest.json at REQUEST time via
+# lib/standalone-screen.ts (process.cwd()/../../specs/full-saas/...). Static pages bake it in at build,
+# but the runtime image must also carry it or SSR 500s with ENOENT on those routes.
+COPY --from=build /repo/specs/full-saas ./specs/full-saas
 WORKDIR /repo/apps/web
 EXPOSE 3002
 CMD ["npm", "run", "start"]
