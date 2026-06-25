@@ -397,7 +397,8 @@ export class RakuRagStack extends cdk.Stack {
         protocol: elbv2.ApplicationProtocol.HTTP,
         targetType: elbv2.TargetType.IP,
         deregistrationDelay: cdk.Duration.seconds(10),
-        healthCheck: { path: "/healthz", healthyHttpCodes: "200-399" }
+        // NestJS serves health at /v1/health (URI versioning, defaultVersion "1"); there is no /healthz.
+        healthCheck: { path: "/v1/health", healthyHttpCodes: "200-399" }
       });
       apiSvc.attachToApplicationTargetGroup(apiTg);
       webService.listener.addAction("ApiRoute", {
@@ -438,7 +439,8 @@ export class RakuRagStack extends cdk.Stack {
         }
       );
       apiService.targetGroup.configureHealthCheck({
-        path: "/healthz",
+        // NestJS serves health at /v1/health (URI versioning, defaultVersion "1"); there is no /healthz.
+        path: "/v1/health",
         healthyHttpCodes: "200-399"
       });
       publicAlb = apiService.loadBalancer;
