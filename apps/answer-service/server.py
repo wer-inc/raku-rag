@@ -57,6 +57,7 @@ from raku_rag.production import (  # noqa: E402
     ProductionSystem,
     build_manufacturing_system_for_base,
 )
+from raku_rag.core.config import settings_from_env  # noqa: E402
 from raku_rag.services.answer_format import answer_format_metadata  # noqa: E402
 from raku_rag.services.datasource_sync import build_sync_documents  # noqa: E402
 from raku_rag.providers.connectors import default_connector_from_env  # noqa: E402
@@ -2256,7 +2257,10 @@ def main() -> None:
     dsn = os.environ.get("POSTGRES_URL", DEFAULT_DSN)
     if args.reset_demo_db:
         _assert_demo_reset_allowed(dsn)
-    system = ProductionSystem(dsn, reset=args.reset_demo_db)
+    # Read RAKU_* runtime knobs (embedding provider, llm provider, thresholds, …) from the environment.
+    # Without this ProductionSystem falls back to Settings() defaults and SILENTLY ignores every env
+    # override — e.g. RAKU_EMBEDDING_PROVIDER / RAKU_LLM_PROVIDER set by the deploy would do nothing.
+    system = ProductionSystem(dsn, settings=settings_from_env(), reset=args.reset_demo_db)
     if args.seed:
         seed(system)
         print(f"seeded demo tenant; ProductionSystem on {dsn}", flush=True)
