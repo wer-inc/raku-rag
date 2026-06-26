@@ -122,6 +122,7 @@ export class RakuRagStack extends cdk.Stack {
     }
     const publicBaseUrl = publicDomainName ? `https://${publicDomainName}` : "http://localhost:3002";
     const authMode = String(this.node.tryGetContext("authMode") ?? (isProd ? "cognito" : "dev"));
+    const manageCognitoGroups = String(this.node.tryGetContext("manageCognitoGroups") ?? "false").toLowerCase() === "true";
     const basicAuthUser = String(this.node.tryGetContext("basicAuthUser") ?? "").trim();
     const basicAuthRealm = String(this.node.tryGetContext("basicAuthRealm") ?? "Raku RAG").trim();
     const fargateSize = {
@@ -278,11 +279,15 @@ export class RakuRagStack extends cdk.Stack {
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy
     });
-    for (const groupName of ["field_user", "reviewer", "ops_owner", "tenant_admin", "platform_admin", "sales_demo"]) {
-      new cognito.CfnUserPoolGroup(this, `UserPoolGroup${groupName.replace(/(^|_)([a-z])/g, (_m, _p, c) => c.toUpperCase())}`, {
-        groupName,
-        userPoolId: userPool.userPoolId
-      });
+    // Existing sales stacks may already have these groups because users were created before CDK owned
+    // group lifecycle. Keep group creation opt-in so updates do not fail on pre-existing group names.
+    if (manageCognitoGroups) {
+      for (const groupName of ["field_user", "reviewer", "ops_owner", "tenant_admin", "platform_admin", "sales_demo"]) {
+        new cognito.CfnUserPoolGroup(this, `UserPoolGroup${groupName.replace(/(^|_)([a-z])/g, (_m, _p, c) => c.toUpperCase())}`, {
+          groupName,
+          userPoolId: userPool.userPoolId
+        });
+      }
     }
 
     const cognitoDomainPrefix = String(
