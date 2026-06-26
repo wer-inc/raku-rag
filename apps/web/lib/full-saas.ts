@@ -125,6 +125,7 @@ export const ALL_NAV_HREFS: string[] = [
 
 export function activeNavHref(pathname: string): string | null {
   if (ALL_NAV_HREFS.includes(pathname)) return pathname;
+  if (pathname.startsWith("/sources/")) return "/sources/list";
   let best: string | null = null;
   for (const href of ALL_NAV_HREFS) {
     if (href === "/") continue;
