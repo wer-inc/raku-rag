@@ -64,10 +64,10 @@ def main() -> None:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kakuto 確答AI — 承認済み社内文書から、根拠つきで答えるAIナレッジ基盤</title>
-<meta name="description" content="Kakuto（確答AI）は、承認済みの社内文書・図面・現場写真から、出典・版数・承認状態・有効期限つきで回答する製造現場向けAIナレッジ基盤です。">
-<meta property="og:title" content="Kakuto 確答AI — 現場の質問に、確かな回答を。">
-<meta property="og:description" content="承認済み文書に基づき、根拠・版数・有効期限つきで回答。高リスク質問は自動制御。">
+<title>Kakuto 確答AI — RAGに蓄積された知識から、設計書・見積もり・提案書を根拠つきで生成</title>
+<meta name="description" content="Kakuto（確答AI）は、RAGに蓄積された既存仕様・過去案件・技術方針・制約から、設計書、見積もり、提案書、実装タスク、差分影響分析をcitationつきでドラフト生成するAIナレッジ基盤です。">
+<meta property="og:title" content="Kakuto 確答AI — 設計書・見積もり・提案書を、根拠つきで生成。">
+<meta property="og:description" content="RAGに蓄積された既存仕様・過去案件・技術方針から、外部提出前レビューを前提に成果物ドラフトを生成します。">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#5b5bd6">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%235b5bd6'/><rect x='10' y='10' width='12' height='12' rx='3' fill='white'/></svg>">
@@ -118,6 +118,32 @@ WIRE_SCRIPT = """
     if (target) target.scrollIntoView({ behavior: "smooth" });
   }
 
+  function submitLead(form, event) {
+    if (event) event.preventDefault();
+    var c = cfg();
+    var emailInput = form.querySelector('input[name="email"]');
+    var companyInput = form.querySelector('input[name="company"]');
+    var nameInput = form.querySelector('input[name="name"]');
+    var addr = emailInput ? emailInput.value.trim() : "";
+    if (!addr) {
+      if (emailInput) emailInput.focus();
+      return false;
+    }
+    var email = c.contactEmail || "contact@kakuto.ai";
+    var subject = encodeURIComponent("Kakuto PoC相談・資料請求");
+    var body = encodeURIComponent(
+      "PoC相談・資料請求\\n\\n" +
+      "会社名: " + ((companyInput && companyInput.value.trim()) || "(未入力)") + "\\n" +
+      "お名前: " + ((nameInput && nameInput.value.trim()) || "(未入力)") + "\\n" +
+      "メール: " + addr + "\\n\\n" +
+      "相談内容: RAGに蓄積されたデータからの設計書・見積もり・提案書生成について"
+    );
+    window.location.href = "mailto:" + email + "?subject=" + subject + "&body=" + body;
+    return false;
+  }
+
+  window.kakutoSubmitLead = submitLead;
+
   document.addEventListener("DOMContentLoaded", function() {
     var c = cfg();
 
@@ -154,22 +180,10 @@ WIRE_SCRIPT = """
       }
     });
 
-    document.querySelectorAll("input[type=email]").forEach(function(input) {
-      var form = input.closest("form") || input.parentElement;
-      if (!form || form.dataset.kakutoBound) return;
-      form.dataset.kakutoBound = "1";
-      form.addEventListener("submit", function(e) {
-        e.preventDefault();
-        var addr = input.value.trim();
-        if (!addr) {
-          input.focus();
-          return;
-        }
-        var email = c.contactEmail || "contact@kakuto.ai";
-        var subject = encodeURIComponent("Kakuto 資料請求");
-        var body = encodeURIComponent("資料請求\\n\\nメール: " + addr);
-        window.location.href = "mailto:" + email + "?subject=" + subject + "&body=" + body;
-      });
+    document.addEventListener("submit", function(e) {
+      var form = e.target && e.target.closest ? e.target.closest("form[data-kakuto-lead-form]") : null;
+      if (!form) return;
+      submitLead(form, e);
     });
 
     document.querySelectorAll('a[href^="#"]').forEach(function(a) {

@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kakuto 確答AI — 承認済み社内文書から、根拠つきで答えるAIナレッジ基盤</title>
-<meta name="description" content="Kakuto（確答AI）は、承認済みの社内文書・図面・現場写真から、出典・版数・承認状態・有効期限つきで回答する製造現場向けAIナレッジ基盤です。">
-<meta property="og:title" content="Kakuto 確答AI — 現場の質問に、確かな回答を。">
-<meta property="og:description" content="承認済み文書に基づき、根拠・版数・有効期限つきで回答。高リスク質問は自動制御。">
+<title>Kakuto 確答AI — RAGに蓄積された知識から、設計書・見積もり・提案書を根拠つきで生成</title>
+<meta name="description" content="Kakuto（確答AI）は、RAGに蓄積された既存仕様・過去案件・技術方針・制約から、設計書、見積もり、提案書、実装タスク、差分影響分析をcitationつきでドラフト生成するAIナレッジ基盤です。">
+<meta property="og:title" content="Kakuto 確答AI — 設計書・見積もり・提案書を、根拠つきで生成。">
+<meta property="og:description" content="RAGに蓄積された既存仕様・過去案件・技術方針から、外部提出前レビューを前提に成果物ドラフトを生成します。">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#5b5bd6">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%235b5bd6'/><rect x='10' y='10' width='12' height='12' rx='3' fill='white'/></svg>">
@@ -4029,7 +4029,7 @@
   <a href="#pricing" style="display:block; text-decoration:none; background:#16161f;">
     <div style="max-width:1180px; margin:0 auto; padding:9px clamp(20px,5vw,64px); display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap;">
       <span style="font-size:11px; font-weight:800; letter-spacing:0.06em; color:#16161f; background:var(--accent,#5b5bd6); border-radius:5px; padding:2px 7px;">NEW</span>
-      <span style="font-size:13px; font-weight:600; color:#e6e6ee;">まずは1部門・6週間の有償PoCから。削減効果を検証できます</span>
+      <span style="font-size:13px; font-weight:600; color:#e6e6ee;">まずは6週間の有償PoCから。設計書・見積もり・提案書生成の効果を検証できます</span>
       <span style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6);">PoCを見る →</span>
     </div>
   </a>
@@ -4047,8 +4047,8 @@
       <nav data-navlinks="" style="display:flex; gap:24px; margin-left:18px; font-size:14px; font-weight:500;">
         <a href="#solution" style="color:#3a3a46; text-decoration:none;" style-hover="color:var(--accent,#5b5bd6);">仕組み</a>
         <a href="#product" style="color:#3a3a46; text-decoration:none;" style-hover="color:var(--accent,#5b5bd6);">画面</a>
-        <a href="#image" style="color:#3a3a46; text-decoration:none;" style-hover="color:var(--accent,#5b5bd6);">画像対応</a>
-        <a href="#who" style="color:#3a3a46; text-decoration:none;" style-hover="color:var(--accent,#5b5bd6);">導入部門</a>
+        <a href="#image" style="color:#3a3a46; text-decoration:none;" style-hover="color:var(--accent,#5b5bd6);">生成物</a>
+        <a href="#who" style="color:#3a3a46; text-decoration:none;" style-hover="color:var(--accent,#5b5bd6);">導入チーム</a>
         <a href="#security" style="color:#3a3a46; text-decoration:none;" style-hover="color:var(--accent,#5b5bd6);">セキュリティ</a>
         <a href="#pricing" style="color:#3a3a46; text-decoration:none;" style-hover="color:var(--accent,#5b5bd6);">料金</a>
         <a href="#faq" style="color:#3a3a46; text-decoration:none;" style-hover="color:var(--accent,#5b5bd6);">FAQ</a>
@@ -4072,25 +4072,25 @@
           </div>
 
           <sc-if value="{{ isGeneral }}" hint-placeholder-val="{{ true }}">
-            <h1 style="font-size:clamp(32px,4.8vw,54px); line-height:1.26; font-weight:900; letter-spacing:-0.02em; margin:0 0 20px; text-wrap:pretty;">現場の質問に、<br><span style="color:var(--accent,#5b5bd6);">文書・画像</span>から確かな回答を。</h1>
-            <p style="font-size:clamp(16px,1.7vw,19px); color:#54545f; margin:0 0 16px; max-width:520px; text-wrap:pretty;"><strong style="color:#16161d; font-weight:700;">Kakuto</strong> は、承認済みの社内文書に加え、<strong style="color:#16161d; font-weight:700;">図面・現場写真・検査表画像</strong>も活用できるAIナレッジ基盤です。手順書・規格書・トラブル事例・画像資料を横断し、出典・版数・承認状態・有効期限つきで回答します。</p>
+            <h1 style="font-size:clamp(32px,4.8vw,54px); line-height:1.26; font-weight:900; letter-spacing:-0.02em; margin:0 0 20px; text-wrap:pretty;">RAGの知識から、<br><span style="color:var(--accent,#5b5bd6);">設計書・見積もり・提案書</span>を根拠つきで。</h1>
+            <p style="font-size:clamp(16px,1.7vw,19px); color:#54545f; margin:0 0 16px; max-width:520px; text-wrap:pretty;"><strong style="color:#16161d; font-weight:700;">Kakuto</strong> は、既存仕様・過去案件・技術方針・制約・RAG構成をもとに、<strong style="color:#16161d; font-weight:700;">外部提出前レビューを前提にした成果物ドラフト</strong>を生成するAIナレッジ基盤です。根拠文書ごとの citation、assumption、差分影響を残します。</p>
           </sc-if>
           <sc-if value="{{ isMfg }}">
-            <h1 style="font-size:clamp(32px,4.8vw,54px); line-height:1.26; font-weight:900; letter-spacing:-0.02em; margin:0 0 20px; text-wrap:pretty;">製造現場の<span style="color:var(--accent,#5b5bd6);">“これ、どこに書いてある？”</span>に、確かな回答を。</h1>
-            <p style="font-size:clamp(16px,1.7vw,19px); color:#54545f; margin:0 0 16px; max-width:520px; text-wrap:pretty;"><strong style="color:#16161d; font-weight:700;">Kakuto</strong> は、手順書・規格書・品質基準・トラブル事例から、<strong style="color:#16161d; font-weight:700;">出典・版数・承認者・有効期限</strong>つきで回答します。</p>
+	            <h1 style="font-size:clamp(32px,4.8vw,54px); line-height:1.26; font-weight:900; letter-spacing:-0.02em; margin:0 0 20px; text-wrap:pretty;">過去案件の<span style="color:var(--accent,#5b5bd6);">“あの知見”</span>を、次の提案・設計へ。</h1>
+	            <p style="font-size:clamp(16px,1.7vw,19px); color:#54545f; margin:0 0 16px; max-width:520px; text-wrap:pretty;"><strong style="color:#16161d; font-weight:700;">Kakuto</strong> は、既存仕様・過去案件・技術方針から、<strong style="color:#16161d; font-weight:700;">citationとassumptionつき</strong>で成果物ドラフトを生成します。</p>
           </sc-if>
           <sc-if value="{{ isQuality }}">
-            <h1 style="font-size:clamp(32px,4.8vw,54px); line-height:1.26; font-weight:900; letter-spacing:-0.02em; margin:0 0 20px; text-wrap:pretty;">AI回答に、<span style="color:var(--accent,#5b5bd6);">根拠・承認・期限</span>を。監査に耐える確答基盤。</h1>
-            <p style="font-size:clamp(16px,1.7vw,19px); color:#54545f; margin:0 0 16px; max-width:520px; text-wrap:pretty;"><strong style="color:#16161d; font-weight:700;">Kakuto</strong> は回答ごとに引用ソース・承認状態・有効期限を表示。<strong style="color:#16161d; font-weight:700;">旧版・未承認文書は自動で制御</strong>します。</p>
+	            <h1 style="font-size:clamp(32px,4.8vw,54px); line-height:1.26; font-weight:900; letter-spacing:-0.02em; margin:0 0 20px; text-wrap:pretty;">生成物に、<span style="color:var(--accent,#5b5bd6);">根拠・仮定・レビュー</span>を。監査に耐える確答基盤。</h1>
+            <p style="font-size:clamp(16px,1.7vw,19px); color:#54545f; margin:0 0 16px; max-width:520px; text-wrap:pretty;"><strong style="color:#16161d; font-weight:700;">Kakuto</strong> は成果物ごとに引用ソース・assumption・レビュー状態を表示。<strong style="color:#16161d; font-weight:700;">根拠のない断定や未レビューの外部提出を防ぎます。</strong></p>
           </sc-if>
 
-          <p style="font-size:14px; color:#7a7a88; margin:0 0 26px; max-width:520px;">PDF・Word・Excelだけでなく、図面・現場写真・検査表画像にも対応。撮った1枚を、承認済み文書と照合して答えます。</p>
+          <p style="font-size:14px; color:#7a7a88; margin:0 0 26px; max-width:520px;">設計書、基本設計書、詳細設計書、見積もり、提案書、Spec Kit形式の実装タスク、差分影響分析まで。曖昧な仕様は assumption として分離します。</p>
 
           <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:30px;">
-            <span style="display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:#2a2a36; background:#fff; border:1px solid #e6e6ec; padding:8px 13px; border-radius:999px;"><span style="width:6px;height:6px;border-radius:50%;background:#1aa86b;"></span>承認済み文書のみ</span>
-            <span style="display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:#2a2a36; background:#fff; border:1px solid #e6e6ec; padding:8px 13px; border-radius:999px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--accent,#5b5bd6);"></span>出典・版数つき</span>
-            <span style="display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:#2a2a36; background:#fff; border:1px solid #e6e6ec; padding:8px 13px; border-radius:999px;"><span style="width:6px;height:6px;border-radius:50%;background:#e0922f;"></span>高リスク回答を制御</span>
-            <span style="display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:#2a2a36; background:#fff; border:1px solid #e6e6ec; padding:8px 13px; border-radius:999px;"><span style="width:6px;height:6px;border-radius:50%;background:#5a5a66;"></span>図面・写真対応</span>
+            <span style="display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:#2a2a36; background:#fff; border:1px solid #e6e6ec; padding:8px 13px; border-radius:999px;"><span style="width:6px;height:6px;border-radius:50%;background:#1aa86b;"></span>citation必須</span>
+            <span style="display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:#2a2a36; background:#fff; border:1px solid #e6e6ec; padding:8px 13px; border-radius:999px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--accent,#5b5bd6);"></span>assumption分離</span>
+            <span style="display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:#2a2a36; background:#fff; border:1px solid #e6e6ec; padding:8px 13px; border-radius:999px;"><span style="width:6px;height:6px;border-radius:50%;background:#e0922f;"></span>見積もりは根拠レンジ</span>
+            <span style="display:inline-flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:#2a2a36; background:#fff; border:1px solid #e6e6ec; padding:8px 13px; border-radius:999px;"><span style="width:6px;height:6px;border-radius:50%;background:#5a5a66;"></span>差分影響分析</span>
           </div>
 
           <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
@@ -4107,10 +4107,10 @@
               <span style="width:11px;height:11px;border-radius:50%;background:#e6e6ee;"></span>
               <span style="width:11px;height:11px;border-radius:50%;background:#e6e6ee;"></span>
               <span style="width:11px;height:11px;border-radius:50%;background:#e6e6ee;"></span>
-              <span style="margin-left:8px; font-size:12px; font-weight:600; color:#9a9aa6;">Kakuto · 質問する</span>
+              <span style="margin-left:8px; font-size:12px; font-weight:600; color:#9a9aa6;">Kakuto · 成果物を生成</span>
             </div>
             <div style="padding:22px;">
-              <div style="display:inline-block; font-size:13px; font-weight:700; color:#2a2a36; background:#f2f2f7; border-radius:10px; padding:10px 14px; margin-bottom:18px;">Q. SUS304 溶接部の応力除去焼鈍の保持温度と時間は？</div>
+	              <div style="display:inline-block; font-size:13px; font-weight:700; color:#2a2a36; background:#f2f2f7; border-radius:10px; padding:10px 14px; margin-bottom:18px;">Q. 新しい在庫連携要件をもとに、基本設計書と見積もりレンジを作成</div>
               <div style="display:flex; gap:9px; margin-bottom:16px;">
                 <span style="flex:none; width:26px; height:26px; border-radius:8px; background:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center;"><span style="width:9px;height:9px;border-radius:2px;background:#fff;"></span></span>
                 <div style="flex:1;">
@@ -4124,17 +4124,17 @@
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:11px;">
                   <div style="display:flex; align-items:center; gap:9px; min-width:0;">
                     <span style="flex:none; width:24px; height:24px; border-radius:6px; border:1px solid #e0e0e8; background:#fff; display:flex; align-items:center; justify-content:center; font-size:11px;">📄</span>
-                    <span style="font-size:13px; font-weight:700; color:#16161d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">WI-0457 溶接施工要領書</span>
+	                    <span style="font-size:13px; font-weight:700; color:#16161d; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">過去案件 WBS / API設計方針 / 既存DB定義</span>
                   </div>
                   <span style="flex:none; display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; color:#1aa86b; background:rgba(26,168,107,0.10); border-radius:999px; padding:4px 9px;"><span style="width:5px;height:5px;border-radius:50%;background:#1aa86b;"></span>承認済み</span>
                 </div>
                 <div style="display:flex; flex-wrap:wrap; gap:7px;">
-                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">Rev.C</span>
-                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">承認：品質保証部</span>
-                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">有効期限 2026-11-30</span>
+	                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">citation 12件</span>
+	                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">assumption 4件</span>
+	                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">見積もり根拠つき</span>
                 </div>
               </div>
-              <div style="display:flex; align-items:center; gap:8px; margin-top:12px; font-size:12px; color:#e0922f; font-weight:600;"><span style="width:6px;height:6px;border-radius:50%;background:#e0922f;"></span>高リスク作業のため、安全レビュー対象として記録されます</div>
+	              <div style="display:flex; align-items:center; gap:8px; margin-top:12px; font-size:12px; color:#e0922f; font-weight:600;"><span style="width:6px;height:6px;border-radius:50%;background:#e0922f;"></span>外部提出前レビューが必要なドラフトとして記録されます</div>
             </div>
           </div>
         </div>
@@ -4145,13 +4145,13 @@
   <!-- ===================== 導入ロゴ帯 ===================== -->
   <section style="padding:34px 0; background:#fff; border-bottom:1px solid #f0f0f4;">
     <div style="max-width:1180px; margin:0 auto; padding:0 clamp(20px,5vw,64px);">
-      <p style="text-align:center; font-size:13px; color:#9a9aa6; font-weight:600; margin:0 0 22px;">製造・建設・エネルギー領域の現場で活用が進んでいます</p>
+      <p style="text-align:center; font-size:13px; color:#9a9aa6; font-weight:600; margin:0 0 22px;">PoCで検証する主な生成物</p>
       <div style="display:flex; flex-wrap:wrap; gap:14px; justify-content:center; align-items:center;">
-        <div style="width:128px; height:42px; border:1px dashed #dcdce4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-family:ui-monospace,monospace; font-size:11px; color:#b0b0bc;">ロゴ</div>
-        <div style="width:128px; height:42px; border:1px dashed #dcdce4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-family:ui-monospace,monospace; font-size:11px; color:#b0b0bc;">ロゴ</div>
-        <div style="width:128px; height:42px; border:1px dashed #dcdce4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-family:ui-monospace,monospace; font-size:11px; color:#b0b0bc;">ロゴ</div>
-        <div style="width:128px; height:42px; border:1px dashed #dcdce4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-family:ui-monospace,monospace; font-size:11px; color:#b0b0bc;">ロゴ</div>
-        <div style="width:128px; height:42px; border:1px dashed #dcdce4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-family:ui-monospace,monospace; font-size:11px; color:#b0b0bc;">ロゴ</div>
+        <div style="width:128px; height:42px; border:1px solid #dcdce4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#5a5a66;">設計書</div>
+        <div style="width:128px; height:42px; border:1px solid #dcdce4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#5a5a66;">基本設計書</div>
+        <div style="width:128px; height:42px; border:1px solid #dcdce4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#5a5a66;">見積もり</div>
+        <div style="width:128px; height:42px; border:1px solid #dcdce4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#5a5a66;">提案書</div>
+        <div style="width:128px; height:42px; border:1px solid #dcdce4; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#5a5a66;">影響分析</div>
       </div>
     </div>
   </section>
@@ -4161,16 +4161,16 @@
     <div style="max-width:980px; margin:0 auto; padding:0 clamp(20px,5vw,64px);">
       <div style="max-width:760px; margin-bottom:44px;">
         <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">WHY KAKUTO</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">確答という発想</span></div>
-        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">社内文書を“探すもの”から、<br><span style="color:var(--accent,#5b5bd6);">現場で使える“確かな回答”</span>へ。</h2>
-        <p style="font-size:16px; color:#54545f; margin:0;">Kakuto は「もう一つログインするツール」ではありません。現場 → 品質保証・保全・情シスへの問い合わせを、AIが一次対応します。</p>
+        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">蓄積されたナレッジを、<br><span style="color:var(--accent,#5b5bd6);">レビュー可能な成果物ドラフト</span>へ。</h2>
+        <p style="font-size:16px; color:#54545f; margin:0;">Kakuto は「何でも答えるチャット」ではありません。過去案件・既存仕様・技術方針を再利用し、根拠つきで設計・見積・提案の初稿を作る基盤です。</p>
       </div>
 
       <div style="display:flex; flex-direction:column; gap:10px;">
         <div style="display:flex; align-items:center; gap:8px; padding:0 4px 6px; font-size:12px; font-weight:800; color:#9a9aa6; letter-spacing:0.04em;"><span style="flex:1 1 0;">今まで</span><span style="flex:none; width:28px;"></span><span style="flex:1 1 0; color:var(--accent,#5b5bd6);">Kakuto 導入後</span></div>
-        <div data-baline="" style="display:flex; align-items:center; gap:8px;"><div style="flex:1 1 0; background:#fff; border:1px solid #ececf1; border-radius:11px; padding:15px 18px; font-size:15px; color:#8a8a98;">手順書を探し回る</div><span data-arrow="" style="flex:none; width:28px; text-align:center; color:var(--accent,#5b5bd6); font-weight:900;">→</span><div style="flex:1 1 0; background:#fff; border:1px solid rgba(91,91,214,0.3); border-radius:11px; padding:15px 18px; font-size:15px; font-weight:700; color:#16161d;">AIが該当箇所を出典つきで提示</div></div>
-        <div data-baline="" style="display:flex; align-items:center; gap:8px;"><div style="flex:1 1 0; background:#fff; border:1px solid #ececf1; border-radius:11px; padding:15px 18px; font-size:15px; color:#8a8a98;">ベテランに聞く</div><span data-arrow="" style="flex:none; width:28px; text-align:center; color:var(--accent,#5b5bd6); font-weight:900;">→</span><div style="flex:1 1 0; background:#fff; border:1px solid rgba(91,91,214,0.3); border-radius:11px; padding:15px 18px; font-size:15px; font-weight:700; color:#16161d;">過去のトラブル事例から回答</div></div>
-        <div data-baline="" style="display:flex; align-items:center; gap:8px;"><div style="flex:1 1 0; background:#fff; border:1px solid #ececf1; border-radius:11px; padding:15px 18px; font-size:15px; color:#8a8a98;">回答の根拠があいまい</div><span data-arrow="" style="flex:none; width:28px; text-align:center; color:var(--accent,#5b5bd6); font-weight:900;">→</span><div style="flex:1 1 0; background:#fff; border:1px solid rgba(91,91,214,0.3); border-radius:11px; padding:15px 18px; font-size:15px; font-weight:700; color:#16161d;">出典・版数つきで根拠を提示</div></div>
-        <div data-baline="" style="display:flex; align-items:center; gap:8px;"><div style="flex:1 1 0; background:#fff; border:1px solid #ececf1; border-radius:11px; padding:15px 18px; font-size:15px; color:#8a8a98;">古い文書を参照してしまう</div><span data-arrow="" style="flex:none; width:28px; text-align:center; color:var(--accent,#5b5bd6); font-weight:900;">→</span><div style="flex:1 1 0; background:#fff; border:1px solid rgba(91,91,214,0.3); border-radius:11px; padding:15px 18px; font-size:15px; font-weight:700; color:#16161d;">有効期限・承認状態を表示</div></div>
+        <div data-baline="" style="display:flex; align-items:center; gap:8px;"><div style="flex:1 1 0; background:#fff; border:1px solid #ececf1; border-radius:11px; padding:15px 18px; font-size:15px; color:#8a8a98;">過去案件を探し回る</div><span data-arrow="" style="flex:none; width:28px; text-align:center; color:var(--accent,#5b5bd6); font-weight:900;">→</span><div style="flex:1 1 0; background:#fff; border:1px solid rgba(91,91,214,0.3); border-radius:11px; padding:15px 18px; font-size:15px; font-weight:700; color:#16161d;">類似案件と根拠を抽出</div></div>
+        <div data-baline="" style="display:flex; align-items:center; gap:8px;"><div style="flex:1 1 0; background:#fff; border:1px solid #ececf1; border-radius:11px; padding:15px 18px; font-size:15px; color:#8a8a98;">設計書をゼロから書く</div><span data-arrow="" style="flex:none; width:28px; text-align:center; color:var(--accent,#5b5bd6); font-weight:900;">→</span><div style="flex:1 1 0; background:#fff; border:1px solid rgba(91,91,214,0.3); border-radius:11px; padding:15px 18px; font-size:15px; font-weight:700; color:#16161d;">既存仕様からドラフト生成</div></div>
+        <div data-baline="" style="display:flex; align-items:center; gap:8px;"><div style="flex:1 1 0; background:#fff; border:1px solid #ececf1; border-radius:11px; padding:15px 18px; font-size:15px; color:#8a8a98;">見積もり根拠が属人化</div><span data-arrow="" style="flex:none; width:28px; text-align:center; color:var(--accent,#5b5bd6); font-weight:900;">→</span><div style="flex:1 1 0; background:#fff; border:1px solid rgba(91,91,214,0.3); border-radius:11px; padding:15px 18px; font-size:15px; font-weight:700; color:#16161d;">WBS・実績からレンジ提示</div></div>
+        <div data-baline="" style="display:flex; align-items:center; gap:8px;"><div style="flex:1 1 0; background:#fff; border:1px solid #ececf1; border-radius:11px; padding:15px 18px; font-size:15px; color:#8a8a98;">要件変更の影響が見えない</div><span data-arrow="" style="flex:none; width:28px; text-align:center; color:var(--accent,#5b5bd6); font-weight:900;">→</span><div style="flex:1 1 0; background:#fff; border:1px solid rgba(91,91,214,0.3); border-radius:11px; padding:15px 18px; font-size:15px; font-weight:700; color:#16161d;">設計・見積・タスク差分を抽出</div></div>
         <div data-baline="" style="display:flex; align-items:center; gap:8px;"><div style="flex:1 1 0; background:#fff; border:1px solid #ececf1; border-radius:11px; padding:15px 18px; font-size:15px; color:#8a8a98;">情シスがAI利用を不安視</div><span data-arrow="" style="flex:none; width:28px; text-align:center; color:var(--accent,#5b5bd6); font-weight:900;">→</span><div style="flex:1 1 0; background:#fff; border:1px solid rgba(91,91,214,0.3); border-radius:11px; padding:15px 18px; font-size:15px; font-weight:700; color:#16161d;">権限・ログ・レビューで統制</div></div>
       </div>
     </div>
@@ -4180,41 +4180,41 @@
   <section id="problem" style="padding:clamp(64px,9vw,116px) 0; background:#fff;">
     <div style="max-width:1180px; margin:0 auto; padding:0 clamp(20px,5vw,64px);">
       <div style="max-width:720px; margin-bottom:48px;">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">PROBLEM</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">よくある現場の声</span></div>
-        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">“どこに書いてある？”が、<br>現場の時間を奪っている。</h2>
-        <p style="font-size:16px; color:#54545f; margin:0;">社内には必要な情報があるのに、探す時間がかかり、最新版かどうかも分からない。その結果、確認・属人化・判断の遅れが発生します。</p>
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">PROBLEM</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">よくある提案・設計の悩み</span></div>
+        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">ナレッジはあるのに、<br>成果物づくりが毎回重い。</h2>
+        <p style="font-size:16px; color:#54545f; margin:0;">社内には仕様、過去案件、WBS、提案書、技術方針があるのに、探す・まとめる・根拠を確認する作業が属人化しています。</p>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px;">
         <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;">
-          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">最新版が分からない</div>
-          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「この手順書、最新版ですか？」</div>
+	          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">初稿作成が重い</div>
+	          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「設計書のたたき台に毎回時間がかかる」</div>
         </div>
         <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;">
-          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">ベテラン依存</div>
-          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「結局、詳しい人に聞いてしまう」</div>
+	          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">過去案件依存</div>
+	          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「似た案件を知っている人に聞いてしまう」</div>
         </div>
         <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;">
-          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">情報が散らばっている</div>
-          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「SharePoint・PDF・Excelを探し回る」</div>
+	          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">情報が散らばっている</div>
+	          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「仕様・議事録・見積もりが別々にある」</div>
         </div>
         <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;">
-          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">AIの回答が不安</div>
-          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「根拠がない回答は現場で使えない」</div>
+	          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">AIの生成が不安</div>
+	          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「根拠のない設計や数字は使えない」</div>
         </div>
         <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;">
-          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">監査に弱い</div>
-          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「どの文書を根拠にしたか追えない」</div>
+	          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">根拠確認に弱い</div>
+	          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「どの仕様・過去案件を根拠にしたか追えない」</div>
         </div>
         <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;">
-          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">古い文書が残る</div>
-          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「旧版・期限切れを参照してしまう」</div>
+	          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">変更影響が見えない</div>
+	          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「新要件で見積もりとタスクがどう変わる？」</div>
         </div>
         <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;">
-          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">画像資料が活用できない</div>
-          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「図面・紙の検査表・設備写真が検索対象外」</div>
+	          <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:10px;">タスク化でズレる</div>
+	          <div style="font-size:17px; font-weight:700; color:#16161d; line-height:1.5;">「spec と task の整合性を保ちたい」</div>
         </div>
       </div>
-      <p style="font-size:15px; color:#3a3a46; margin:28px 0 0; font-weight:600;">Kakuto は、社内文書をただ検索するだけではありません。<span style="color:var(--accent,#5b5bd6);">“業務で使ってよい回答”だけを、根拠つきで届けます。</span></p>
+	      <p style="font-size:15px; color:#3a3a46; margin:28px 0 0; font-weight:600;">Kakuto は、社内ナレッジをただ検索するだけではありません。<span style="color:var(--accent,#5b5bd6);">レビュー可能な成果物ドラフトを、根拠つきで作ります。</span></p>
     </div>
   </section>
 
@@ -4222,13 +4222,13 @@
   <section style="padding:clamp(60px,8vw,96px) 0; background:#16161f;">
     <div style="max-width:1080px; margin:0 auto; padding:0 clamp(20px,5vw,64px); text-align:center;">
       <div style="display:inline-flex; align-items:center; gap:10px; margin-bottom:18px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">PRINCIPLE</span></div>
-      <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; color:#fff; margin:0 0 14px; text-wrap:pretty;">答えてよいことだけ、確かに答える。</h2>
-      <p style="font-size:16px; color:#b6b6c4; margin:0 auto 40px; max-width:620px;">勝手に動くAIではなく、承認済み文書に基づいて答えるAIです。だから製造・品質・保全の現場でも安心して使えます。</p>
+	      <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; color:#fff; margin:0 0 14px; text-wrap:pretty;">根拠があるものだけ、成果物にする。</h2>
+	      <p style="font-size:16px; color:#b6b6c4; margin:0 auto 40px; max-width:620px;">勝手に確定するAIではなく、根拠・仮定・レビュー状態を分けて扱うAIです。だから設計、見積もり、提案の初稿に使えます。</p>
       <div style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; align-items:stretch;">
-        <div style="flex:1 1 200px; max-width:240px; background:#1d1d2a; border:1px solid #2a2a38; border-radius:14px; padding:24px 20px;"><div style="font-size:13px; font-weight:800; color:var(--accent,#5b5bd6); margin-bottom:10px;">STEP 1</div><div style="font-size:18px; font-weight:900; color:#fff;">答える</div><div style="font-size:13px; color:#9a9aa6; margin-top:6px;">承認済み文書を根拠に回答</div></div>
-        <div style="flex:1 1 200px; max-width:240px; background:#1d1d2a; border:1px solid #2a2a38; border-radius:14px; padding:24px 20px;"><div style="font-size:13px; font-weight:800; color:var(--accent,#5b5bd6); margin-bottom:10px;">STEP 2</div><div style="font-size:18px; font-weight:900; color:#fff;">根拠を出す</div><div style="font-size:13px; color:#9a9aa6; margin-top:6px;">出典・版数・有効期限を表示</div></div>
-        <div style="flex:1 1 200px; max-width:240px; background:#1d1d2a; border:1px solid #2a2a38; border-radius:14px; padding:24px 20px;"><div style="font-size:13px; font-weight:800; color:var(--accent,#5b5bd6); margin-bottom:10px;">STEP 3</div><div style="font-size:18px; font-weight:900; color:#fff;">危ない時は止まる</div><div style="font-size:13px; color:#9a9aa6; margin-top:6px;">高リスク・未承認はブロック</div></div>
-        <div style="flex:1 1 200px; max-width:240px; background:#1d1d2a; border:1px solid #2a2a38; border-radius:14px; padding:24px 20px;"><div style="font-size:13px; font-weight:800; color:var(--accent,#5b5bd6); margin-bottom:10px;">STEP 4</div><div style="font-size:18px; font-weight:900; color:#fff;">人に回す</div><div style="font-size:13px; color:#9a9aa6; margin-top:6px;">レビューキューで人手承認</div></div>
+	        <div style="flex:1 1 200px; max-width:240px; background:#1d1d2a; border:1px solid #2a2a38; border-radius:14px; padding:24px 20px;"><div style="font-size:13px; font-weight:800; color:var(--accent,#5b5bd6); margin-bottom:10px;">STEP 1</div><div style="font-size:18px; font-weight:900; color:#fff;">生成する</div><div style="font-size:13px; color:#9a9aa6; margin-top:6px;">RAGの知識からドラフト化</div></div>
+        <div style="flex:1 1 200px; max-width:240px; background:#1d1d2a; border:1px solid #2a2a38; border-radius:14px; padding:24px 20px;"><div style="font-size:13px; font-weight:800; color:var(--accent,#5b5bd6); margin-bottom:10px;">STEP 2</div><div style="font-size:18px; font-weight:900; color:#fff;">根拠を出す</div><div style="font-size:13px; color:#9a9aa6; margin-top:6px;">citation・版数・該当箇所を表示</div></div>
+        <div style="flex:1 1 200px; max-width:240px; background:#1d1d2a; border:1px solid #2a2a38; border-radius:14px; padding:24px 20px;"><div style="font-size:13px; font-weight:800; color:var(--accent,#5b5bd6); margin-bottom:10px;">STEP 3</div><div style="font-size:18px; font-weight:900; color:#fff;">仮定を分ける</div><div style="font-size:13px; color:#9a9aa6; margin-top:6px;">曖昧な仕様は assumption 扱い</div></div>
+        <div style="flex:1 1 200px; max-width:240px; background:#1d1d2a; border:1px solid #2a2a38; border-radius:14px; padding:24px 20px;"><div style="font-size:13px; font-weight:800; color:var(--accent,#5b5bd6); margin-bottom:10px;">STEP 4</div><div style="font-size:18px; font-weight:900; color:#fff;">レビューする</div><div style="font-size:13px; color:#9a9aa6; margin-top:6px;">外部提出前に人が確認</div></div>
       </div>
     </div>
   </section>
@@ -4238,28 +4238,28 @@
     <div style="max-width:1180px; margin:0 auto; padding:0 clamp(20px,5vw,64px);">
       <div style="max-width:720px; margin-bottom:48px;">
         <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">SOLUTION</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">Kakuto の仕組み</span></div>
-        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0; text-wrap:pretty;">Kakuto は、AI回答に“根拠”と“承認”を持たせます。</h2>
+        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0; text-wrap:pretty;">Kakuto は、生成物に“根拠”と“レビュー”を持たせます。</h2>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:24px;">
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:16px; padding:30px;">
           <div style="width:44px; height:44px; border-radius:12px; background:rgba(91,91,214,0.1); color:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:900; margin-bottom:20px;">01</div>
-          <h3 style="font-size:20px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">承認済みソースのみで回答</h3>
-          <p style="font-size:15px; color:#54545f; margin:0; line-height:1.75;">未承認・レビュー中・旧版・期限切れの文書を制御。現場に出してよい情報だけを根拠に回答します。</p>
+	          <h3 style="font-size:20px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">根拠データを限定</h3>
+	          <p style="font-size:15px; color:#54545f; margin:0; line-height:1.75;">PoCで合意した過去案件、仕様書、WBS、技術方針だけを参照。権限のない情報は成果物の根拠にしません。</p>
         </div>
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:16px; padding:30px;">
           <div style="width:44px; height:44px; border-radius:12px; background:rgba(91,91,214,0.1); color:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:900; margin-bottom:20px;">02</div>
-          <h3 style="font-size:20px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">出典・版数つき回答</h3>
-          <p style="font-size:15px; color:#54545f; margin:0; line-height:1.75;">回答ごとに文書名・Rev・承認部署・有効期限を表示。「AIがなぜそう答えたか」を確認できます。</p>
+	          <h3 style="font-size:20px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">citationつき生成</h3>
+	          <p style="font-size:15px; color:#54545f; margin:0; line-height:1.75;">設計判断、見積もり根拠、提案要素ごとに参照文書・版数・該当箇所を表示します。</p>
         </div>
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:16px; padding:30px;">
           <div style="width:44px; height:44px; border-radius:12px; background:rgba(91,91,214,0.1); color:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:900; margin-bottom:20px;">03</div>
-          <h3 style="font-size:20px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">高リスク回答を制御</h3>
-          <p style="font-size:15px; color:#54545f; margin:0; line-height:1.75;">安全・品質・保全・法務に関わる質問は、自動回答せずブロックまたはレビューキューへ。便利さと確認を両立します。</p>
+	          <h3 style="font-size:20px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">数字を勝手に決めない</h3>
+	          <p style="font-size:15px; color:#54545f; margin:0; line-height:1.75;">見積もりは過去案件・WBS・工数実績に基づくレンジとして提示。外部提出前レビューを必須にします。</p>
         </div>
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:16px; padding:30px;">
           <div style="width:44px; height:44px; border-radius:12px; background:rgba(91,91,214,0.1); color:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center; font-size:17px; font-weight:900; margin-bottom:20px;">04</div>
-          <h3 style="font-size:20px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">図面・写真・表画像も検索対象に</h3>
-          <p style="font-size:15px; color:#54545f; margin:0; line-height:1.75;">図面PDF・現場写真・検査表画像・設備ラベル・エラー画面も取り込み可能。画像内の情報をもとに、関連する承認済み文書と照合して回答します。</p>
+	          <h3 style="font-size:20px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">差分とタスクをつなぐ</h3>
+	          <p style="font-size:15px; color:#54545f; margin:0; line-height:1.75;">新要件が既存設計・見積もり・Spec Kitタスクに与える影響を抽出し、ズレを見つけやすくします。</p>
         </div>
       </div>
     </div>
@@ -4269,9 +4269,9 @@
   <section id="image" style="padding:clamp(64px,9vw,116px) 0; background:#fff;">
     <div style="max-width:1180px; margin:0 auto; padding:0 clamp(20px,5vw,64px);">
       <div style="max-width:760px; margin-bottom:48px;">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">MULTIMODAL</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">テキスト＋画像対応</span></div>
-        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">文書だけでなく、図面・写真も<span style="color:var(--accent,#5b5bd6);">“確答”</span>に。</h2>
-        <p style="font-size:16px; color:#54545f; margin:0;">Kakuto は、PDF・Word・Excelなどの文書に加え、図面PDF・現場写真・検査表画像・設備ラベル・エラー画面にも対応。画像内の文字や視覚情報をもとに、関連する承認済み文書と<strong style="color:#16161d; font-weight:700;">照合して</strong>回答します。画像だけで断定せず、必ず根拠文書と突き合わせます。</p>
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">ARTIFACTS</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">生成できるもの</span></div>
+        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">RAGにある知識を、<span style="color:var(--accent,#5b5bd6);">業務で使う成果物</span>へ。</h2>
+        <p style="font-size:16px; color:#54545f; margin:0;">Kakuto は、RAGに蓄積された既存仕様・過去案件・WBS・技術方針・制約・コード状況を参照し、レビュー前提のドラフトを生成します。根拠がない箇所は断定せず、assumption や要確認事項として分離します。</p>
       </div>
 
       <div data-altrow="" style="display:flex; gap:clamp(28px,4vw,56px); align-items:center; margin-bottom:clamp(44px,5vw,72px);">
@@ -4280,27 +4280,26 @@
           <div style="background:#fff; border:1px solid #e8e8ee; border-radius:16px; box-shadow:0 18px 44px -24px rgba(40,40,80,0.22); overflow:hidden;">
             <div style="display:flex; align-items:center; gap:7px; padding:12px 15px; border-bottom:1px solid #f0f0f4; background:#fafafc;"><span style="width:10px;height:10px;border-radius:50%;background:#e6e6ee;"></span><span style="width:10px;height:10px;border-radius:50%;background:#e6e6ee;"></span><span style="width:10px;height:10px;border-radius:50%;background:#e6e6ee;"></span><span style="margin-left:8px; font-size:12px; font-weight:600; color:#9a9aa6;">Kakuto · 画像から質問</span></div>
             <div style="padding:20px;">
-              <!-- user msg with image -->
+              <!-- user msg -->
               <div style="display:flex; flex-direction:column; align-items:flex-end; gap:8px; margin-bottom:18px;">
-                <div style="width:150px; height:96px; border-radius:10px; border:1px solid #e3e3ea; background:repeating-linear-gradient(45deg,#eef0f4,#eef0f4 8px,#e6e9ef 8px,#e6e9ef 16px); display:flex; align-items:center; justify-content:center; font-family:ui-monospace,monospace; font-size:10px; color:#9a9aa6;">操作盤の写真</div>
-                <div style="max-width:78%; font-size:13px; font-weight:600; color:#fff; background:var(--accent,#5b5bd6); border-radius:12px 12px 4px 12px; padding:10px 13px; line-height:1.55;">この警告灯が点いている場合の復旧手順を教えてください</div>
+                <div style="max-width:78%; font-size:13px; font-weight:600; color:#fff; background:var(--accent,#5b5bd6); border-radius:12px 12px 4px 12px; padding:10px 13px; line-height:1.55;">既存の在庫連携仕様と過去案件をもとに、基本設計書のドラフトを作ってください</div>
               </div>
               <!-- kakuto answer -->
               <div style="display:flex; gap:9px; margin-bottom:14px;">
                 <span style="flex:none; width:26px; height:26px; border-radius:8px; background:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center;"><span style="width:9px;height:9px;border-radius:2px;background:#fff;"></span></span>
-                <div style="flex:1; font-size:13px; color:#2a2a36; background:#f4f4f8; border-radius:4px 12px 12px 12px; padding:12px 14px; line-height:1.7;">画像内の警告表示を、<strong style="font-weight:700;">設備保全基準 M-112 Rev.B</strong> と照合しました。まず安全カバーの状態を確認し、主電源を落とさずに保全担当者へ連絡してください。高リスク作業のため、詳細手順は承認済み手順書をご確認ください。</div>
+	                <div style="flex:1; font-size:13px; color:#2a2a36; background:#f4f4f8; border-radius:4px 12px 12px 12px; padding:12px 14px; line-height:1.7;"><strong style="font-weight:700;">基本設計書ドラフト</strong>を生成しました。機能一覧、API、DB、権限、非機能要件を整理し、仕様が不足する項目は assumption として分離しています。</div>
               </div>
               <!-- citation card -->
               <div style="border:1px solid #e8e8ee; border-radius:12px; padding:13px 14px; background:#fbfbfd;">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
-                  <div style="display:flex; align-items:center; gap:9px; min-width:0;"><span style="flex:none; width:24px; height:24px; border-radius:6px; border:1px solid #e0e0e8; background:#fff; display:flex; align-items:center; justify-content:center; font-size:11px;">📄</span><span style="font-size:13px; font-weight:700; color:#16161d;">設備保全基準 M-112</span></div>
+	                  <div style="display:flex; align-items:center; gap:9px; min-width:0;"><span style="flex:none; width:24px; height:24px; border-radius:6px; border:1px solid #e0e0e8; background:#fff; display:flex; align-items:center; justify-content:center; font-size:11px;">📄</span><span style="font-size:13px; font-weight:700; color:#16161d;">既存仕様 / 過去案件 / WBS実績</span></div>
                   <span style="flex:none; display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700; color:#1aa86b; background:rgba(26,168,107,0.10); border-radius:999px; padding:4px 9px;"><span style="width:5px;height:5px;border-radius:50%;background:#1aa86b;"></span>承認済み</span>
                 </div>
                 <div style="display:flex; flex-wrap:wrap; gap:7px;">
-                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">Rev.B</span>
-                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">承認：保全部</span>
-                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">参照画像：操作盤写真</span>
-                  <span style="font-size:11px; font-weight:700; color:#e0922f; background:rgba(224,146,47,0.1); border:1px solid rgba(224,146,47,0.25); border-radius:6px; padding:4px 8px;">安全分類：高リスク</span>
+	                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">citation 18件</span>
+	                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">assumption 6件</span>
+	                  <span style="font-size:11px; font-weight:600; color:#5a5a66; background:#fff; border:1px solid #e8e8ee; border-radius:6px; padding:4px 8px;">差分影響 5件</span>
+	                  <span style="font-size:11px; font-weight:700; color:#e0922f; background:rgba(224,146,47,0.1); border:1px solid rgba(224,146,47,0.25); border-radius:6px; padding:4px 8px;">レビュー前ドラフト</span>
                 </div>
               </div>
             </div>
@@ -4309,16 +4308,16 @@
         <!-- 3 explanations -->
         <div style="flex:1 1 360px; min-width:0; display:flex; flex-direction:column; gap:20px;">
           <div style="display:flex; gap:14px;">
-            <span style="flex:none; width:38px; height:38px; border-radius:10px; background:rgba(91,91,214,0.1); color:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center; font-weight:900;">図</span>
-            <div><h3 style="font-size:17px; font-weight:900; margin:0 0 5px;">図面から探す</h3><p style="font-size:14px; color:#54545f; margin:0; line-height:1.7;">図面番号・部品番号・設備名をもとに、関連する手順書や保全記録を検索。</p></div>
+	            <span style="flex:none; width:38px; height:38px; border-radius:10px; background:rgba(91,91,214,0.1); color:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center; font-weight:900;">設</span>
+	            <div><h3 style="font-size:17px; font-weight:900; margin:0 0 5px;">設計書・基本設計書</h3><p style="font-size:14px; color:#54545f; margin:0; line-height:1.7;">機能一覧、画面/API/DB/権限、非機能要件を根拠つきで整理。</p></div>
           </div>
           <div style="display:flex; gap:14px;">
-            <span style="flex:none; width:38px; height:38px; border-radius:10px; background:rgba(91,91,214,0.1); color:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center; font-weight:900;">写</span>
-            <div><h3 style="font-size:17px; font-weight:900; margin:0 0 5px;">写真から探す</h3><p style="font-size:14px; color:#54545f; margin:0; line-height:1.7;">設備写真・銘板・警告灯・エラー画面から、関連する対応手順を提示。</p></div>
+	            <span style="flex:none; width:38px; height:38px; border-radius:10px; background:rgba(91,91,214,0.1); color:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center; font-weight:900;">見</span>
+	            <div><h3 style="font-size:17px; font-weight:900; margin:0 0 5px;">見積もり・提案書</h3><p style="font-size:14px; color:#54545f; margin:0; line-height:1.7;">過去案件、WBS、工数実績、顧客課題からレビュー用のたたき台を生成。</p></div>
           </div>
           <div style="display:flex; gap:14px;">
-            <span style="flex:none; width:38px; height:38px; border-radius:10px; background:rgba(91,91,214,0.1); color:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center; font-weight:900;">拠</span>
-            <div><h3 style="font-size:17px; font-weight:900; margin:0 0 5px;">画像も根拠として表示</h3><p style="font-size:14px; color:#54545f; margin:0; line-height:1.7;">回答に使った文書だけでなく、参照した画像・ページ・抽出箇所も確認できます。</p></div>
+	            <span style="flex:none; width:38px; height:38px; border-radius:10px; background:rgba(91,91,214,0.1); color:var(--accent,#5b5bd6); display:flex; align-items:center; justify-content:center; font-weight:900;">差</span>
+	            <div><h3 style="font-size:17px; font-weight:900; margin:0 0 5px;">タスク化・影響分析</h3><p style="font-size:14px; color:#54545f; margin:0; line-height:1.7;">Spec Kit の spec / plan / tasks へ変換し、要件変更の依存関係を可視化。</p></div>
           </div>
         </div>
       </div>
@@ -4329,26 +4328,26 @@
   <section id="product" style="padding:clamp(64px,9vw,116px) 0; background:#fff;">
     <div style="max-width:1180px; margin:0 auto; padding:0 clamp(20px,5vw,64px);">
       <div style="max-width:720px; margin-bottom:54px;">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">PRODUCT</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">画面</span></div>
-        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">質問すると、根拠つきで答える。<br>危ない時は、ちゃんと止まる。</h2>
-        <p style="font-size:16px; color:#54545f; margin:0;">質問から承認、監査まで。現場とガバナンスを1つの画面でつなぎます。</p>
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">PRODUCT</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">生成ワークフロー</span></div>
+        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">生成して終わりではなく、<br>根拠確認・レビュー・タスク化まで。</h2>
+        <p style="font-size:16px; color:#54545f; margin:0;">ドラフト生成、citation確認、assumption解消、外部提出前レビュー、Spec Kitタスク化までを1つの流れで扱います。</p>
       </div>
 
       <!-- row 1 -->
       <div data-altrow="" style="display:flex; gap:clamp(28px,4vw,56px); align-items:center; margin-bottom:clamp(40px,5vw,72px);">
         <div style="flex:1 1 360px; min-width:0;">
-          <h3 style="font-size:22px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">AI回答画面 — 現場の言葉でそのまま聞ける</h3>
-          <p style="font-size:15px; color:#54545f; margin:0 0 16px; line-height:1.75;">「成形機3号の樹脂替えパージ手順は？」のような現場の質問に、承認済み文書を根拠にAIが回答。安全分類「高リスク」も表示します。</p>
+          <h3 style="font-size:22px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">成果物生成 — 欲しい形式で初稿を作る</h3>
+          <p style="font-size:15px; color:#54545f; margin:0 0 16px; line-height:1.75;">「この要件を基本設計書と見積もりに落として」のように依頼すると、RAG内の仕様・過去案件・技術方針を参照してドラフトを生成します。</p>
           <div style="display:flex; flex-direction:column; gap:8px; font-size:14px; color:#3a3a46;">
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>自然文・略語・型番での検索に対応</div>
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>権限に応じて見られる文書だけを参照</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>設計書・提案書・見積もりなど形式を選択</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>権限に応じて見られる文書だけを参照</div>
           </div>
         </div>
         <div style="flex:1 1 440px; min-width:0;">
           <div style="background:#fff; border:1px solid #e8e8ee; border-radius:16px; box-shadow:0 18px 44px -24px rgba(40,40,80,0.22); overflow:hidden;">
             <div style="display:flex; align-items:center; gap:7px; padding:12px 15px; border-bottom:1px solid #f0f0f4; background:#fafafc;"><span style="width:10px;height:10px;border-radius:50%;background:#e6e6ee;"></span><span style="width:10px;height:10px;border-radius:50%;background:#e6e6ee;"></span><span style="width:10px;height:10px;border-radius:50%;background:#e6e6ee;"></span></div>
             <div style="aspect-ratio:16/10; background:repeating-linear-gradient(45deg,#f1f1f6,#f1f1f6 11px,#eaeaf1 11px,#eaeaf1 22px); display:flex; align-items:center; justify-content:center;">
-              <span style="font-family:ui-monospace,'SF Mono',monospace; font-size:12px; color:#8a8a98; background:#fff; padding:7px 13px; border-radius:7px; border:1px solid #e3e3ea;">AI回答画面のスクリーンショット</span>
+	              <span style="font-family:ui-monospace,'SF Mono',monospace; font-size:12px; color:#8a8a98; background:#fff; padding:7px 13px; border-radius:7px; border:1px solid #e3e3ea;">成果物生成画面のイメージ</span>
             </div>
           </div>
         </div>
@@ -4357,18 +4356,18 @@
       <!-- row 2 (reversed) -->
       <div data-altrow="" style="display:flex; flex-direction:row-reverse; gap:clamp(28px,4vw,56px); align-items:center; margin-bottom:clamp(48px,6vw,80px);">
         <div style="flex:1 1 360px; min-width:0;">
-          <h3 style="font-size:22px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">引用ソースカード — 根拠が一目で分かる</h3>
-          <p style="font-size:15px; color:#54545f; margin:0 0 16px; line-height:1.75;">回答ごとに文書名・Rev・承認部署・承認日・有効期限を表示。旧版や期限切れは自動でフラグが立ち、現場に誤った情報が出るのを防ぎます。</p>
+          <h3 style="font-size:22px; font-weight:900; margin:0 0 12px; letter-spacing:-0.01em;">引用ソースカード — 根拠と曖昧さが一目で分かる</h3>
+          <p style="font-size:15px; color:#54545f; margin:0 0 16px; line-height:1.75;">成果物ごとに参照文書、版数、該当箇所、assumption、要確認事項を表示。根拠の薄い数字や仕様はそのまま確定扱いにしません。</p>
           <div style="display:flex; flex-direction:column; gap:8px; font-size:14px; color:#3a3a46;">
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>承認済み / 旧版 / 期限切れ を明示</div>
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>原本文書へワンクリックで遷移</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>citation / assumption / reviewer note を明示</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>根拠文書へワンクリックで遷移</div>
           </div>
         </div>
         <div style="flex:1 1 440px; min-width:0;">
           <div style="background:#fff; border:1px solid #e8e8ee; border-radius:16px; box-shadow:0 18px 44px -24px rgba(40,40,80,0.22); overflow:hidden;">
             <div style="display:flex; align-items:center; gap:7px; padding:12px 15px; border-bottom:1px solid #f0f0f4; background:#fafafc;"><span style="width:10px;height:10px;border-radius:50%;background:#e6e6ee;"></span><span style="width:10px;height:10px;border-radius:50%;background:#e6e6ee;"></span><span style="width:10px;height:10px;border-radius:50%;background:#e6e6ee;"></span></div>
             <div style="aspect-ratio:16/10; background:repeating-linear-gradient(45deg,#f1f1f6,#f1f1f6 11px,#eaeaf1 11px,#eaeaf1 22px); display:flex; align-items:center; justify-content:center;">
-              <span style="font-family:ui-monospace,'SF Mono',monospace; font-size:12px; color:#8a8a98; background:#fff; padding:7px 13px; border-radius:7px; border:1px solid #e3e3ea;">引用ソースカードのスクリーンショット</span>
+	              <span style="font-family:ui-monospace,'SF Mono',monospace; font-size:12px; color:#8a8a98; background:#fff; padding:7px 13px; border-radius:7px; border:1px solid #e3e3ea;">citationレビュー画面のイメージ</span>
             </div>
           </div>
         </div>
@@ -4388,14 +4387,14 @@
             <div style="aspect-ratio:4/3; background:repeating-linear-gradient(45deg,#f1f1f6,#f1f1f6 10px,#eaeaf1 10px,#eaeaf1 20px); display:flex; align-items:center; justify-content:center;"><span style="font-family:ui-monospace,monospace; font-size:11px; color:#8a8a98; background:#fff; padding:6px 11px; border-radius:6px; border:1px solid #e3e3ea;">文書管理・取り込み</span></div>
           </div>
           <h4 style="font-size:16px; font-weight:800; margin:0 0 6px;">文書管理・取り込み</h4>
-          <p style="font-size:14px; color:#6c6c7a; margin:0; line-height:1.7;">SharePoint・Notion・S3・PDF・Word・Excel・CADを接続。</p>
+          <p style="font-size:14px; color:#6c6c7a; margin:0; line-height:1.7;">SharePoint・Notion・S3・PDF・Word・Excelなどを接続。CADや画像はPoC範囲で個別検証。</p>
         </div>
         <div>
           <div style="background:#fff; border:1px solid #e8e8ee; border-radius:14px; overflow:hidden; margin-bottom:14px;">
             <div style="aspect-ratio:4/3; background:repeating-linear-gradient(45deg,#f1f1f6,#f1f1f6 10px,#eaeaf1 10px,#eaeaf1 20px); display:flex; align-items:center; justify-content:center;"><span style="font-family:ui-monospace,monospace; font-size:11px; color:#8a8a98; background:#fff; padding:6px 11px; border-radius:6px; border:1px solid #e3e3ea;">監査ログ・KPI</span></div>
           </div>
           <h4 style="font-size:16px; font-weight:800; margin:0 0 6px;">監査ログ・品質KPI</h4>
-          <p style="font-size:14px; color:#6c6c7a; margin:0; line-height:1.7;">回答・承認・参照を記録。安全テレメトリも可視化。</p>
+          <p style="font-size:14px; color:#6c6c7a; margin:0; line-height:1.7;">生成・参照・レビューを記録。citation率やassumption残数も可視化。</p>
         </div>
       </div>
     </div>
@@ -4405,44 +4404,44 @@
   <section id="usecase" style="padding:clamp(64px,9vw,116px) 0; background:#f7f7fb; border-top:1px solid #f0f0f4; border-bottom:1px solid #f0f0f4;">
     <div style="max-width:1180px; margin:0 auto; padding:0 clamp(20px,5vw,64px);">
       <div style="max-width:720px; margin-bottom:48px;">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">USE CASES</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">製造業での活用例</span></div>
-        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0; text-wrap:pretty;">製造現場・品質保証・保全の<br>“確認業務”を減らします。</h2>
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">USE CASES</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">成果物生成の活用例</span></div>
+        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0; text-wrap:pretty;">設計・見積・提案・タスク化の<br>初稿作成を速くします。</h2>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px;">
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:14px; padding:24px;">
-          <div style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;">現場手順の確認</div>
-          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「この設備の立ち上げ手順は？」</div>
+	          <div style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;">設計書</div>
+	          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「既存仕様と過去案件をもとに設計書ドラフトを作って」</div>
         </div>
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:14px; padding:24px;">
-          <div style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;">品質・規格の確認</div>
-          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「この検査基準の最新版は？」</div>
+	          <div style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;">基本設計書</div>
+	          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「機能一覧、画面/API/DB/権限/非機能要件を整理して」</div>
         </div>
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:14px; padding:24px;">
-          <div style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;">トラブル対応</div>
-          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「過去に同じ不具合はあった？」</div>
+	          <div style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;">詳細設計書</div>
+	          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「実装状況と同期して処理フロー・例外処理を作って」</div>
         </div>
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:14px; padding:24px;">
-          <div style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;">保全・安全</div>
-          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「非常停止シーケンスの解除手順は？」</div>
+	          <div style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;">見積もり</div>
+	          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「類似案件とWBS実績から工数レンジを出して」</div>
         </div>
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:14px; padding:24px;">
-          <div style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;">技術伝承</div>
-          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「ベテランが知る過去事例を検索したい」</div>
+	          <div style="font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;">提案書</div>
+	          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「顧客課題と既存ソリューションから提案構成を作って」</div>
         </div>
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:14px; padding:24px;">
-          <div style="display:flex; align-items:center; gap:7px; font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;"><span style="font-size:11px; font-weight:800; color:#fff; background:var(--accent,#5b5bd6); border-radius:5px; padding:1px 6px;">画像</span>設備写真から手順確認</div>
-          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「この警告灯の意味と対応手順は？」</div>
+	          <div style="display:flex; align-items:center; gap:7px; font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;"><span style="font-size:11px; font-weight:800; color:#fff; background:var(--accent,#5b5bd6); border-radius:5px; padding:1px 6px;">Spec</span>実装タスク</div>
+	          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「Spec Kit の spec / plan / tasks に変換して」</div>
         </div>
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:14px; padding:24px;">
-          <div style="display:flex; align-items:center; gap:7px; font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;"><span style="font-size:11px; font-weight:800; color:#fff; background:var(--accent,#5b5bd6); border-radius:5px; padding:1px 6px;">画像</span>検査表画像から基準確認</div>
-          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「この検査項目の判定基準は？」</div>
+	          <div style="display:flex; align-items:center; gap:7px; font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;"><span style="font-size:11px; font-weight:800; color:#fff; background:var(--accent,#5b5bd6); border-radius:5px; padding:1px 6px;">差分</span>影響分析</div>
+	          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「この新要件が設計・見積・タスクに与える影響は？」</div>
         </div>
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:14px; padding:24px;">
-          <div style="display:flex; align-items:center; gap:7px; font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;"><span style="font-size:11px; font-weight:800; color:#fff; background:var(--accent,#5b5bd6); border-radius:5px; padding:1px 6px;">画像</span>エラー画面から復旧手順</div>
-          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「このエラーコードの対応方法は？」</div>
+	          <div style="display:flex; align-items:center; gap:7px; font-size:13px; font-weight:700; color:var(--accent,#5b5bd6); margin-bottom:10px;"><span style="font-size:11px; font-weight:800; color:#fff; background:var(--accent,#5b5bd6); border-radius:5px; padding:1px 6px;">QA</span>根拠確認</div>
+	          <div style="font-family:ui-monospace,monospace; font-size:14px; color:#16161d; background:#f6f6fa; border-radius:9px; padding:12px 14px; line-height:1.6;">「この仕様判断の根拠文書と未確定事項を出して」</div>
         </div>
       </div>
-      <p style="font-size:14px; color:#8a8a98; margin:24px 0 0;">建設・エネルギー・医療機器など、文書ベースの現場業務にも対応します。</p>
+	      <p style="font-size:14px; color:#8a8a98; margin:24px 0 0;">数字や外部提出物はAI単体で確定させず、人間レビューと根拠確認を前提にします。</p>
     </div>
   </section>
 
@@ -4450,18 +4449,18 @@
   <section id="who" style="padding:clamp(64px,9vw,116px) 0; background:#fff;">
     <div style="max-width:1180px; margin:0 auto; padding:0 clamp(20px,5vw,64px);">
       <div style="max-width:720px; margin-bottom:48px;">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">FOR</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">導入部門</span></div>
-        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">情シスだけの導入ツールではありません。</h2>
-        <p style="font-size:16px; color:#54545f; margin:0;">問い合わせ・確認業務に困っている部門ほど、価値が出ます。</p>
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">FOR</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">導入チーム</span></div>
+        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">提案・設計・見積もりが属人化しているチームへ。</h2>
+        <p style="font-size:16px; color:#54545f; margin:0;">過去案件を探す時間、設計書の初稿作成、見積もり根拠の確認に時間がかかるチームほど価値が出ます。</p>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:16px;">
-        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">品質保証部</div><div style="font-size:14px; color:#54545f; line-height:1.7;">監査に耐える、出典付きAI回答</div></div>
-        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">生産技術</div><div style="font-size:14px; color:#54545f; line-height:1.7;">現場からの問い合わせを削減</div></div>
-        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">保全部門</div><div style="font-size:14px; color:#54545f; line-height:1.7;">トラブル対応・過去事例検索</div></div>
-        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">DX推進</div><div style="font-size:14px; color:#54545f; line-height:1.7;">生成AIを業務に定着させる基盤</div></div>
-        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">情シス</div><div style="font-size:14px; color:#54545f; line-height:1.7;">権限・ログ・承認つきで安全に</div></div>
-        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">工場長</div><div style="font-size:14px; color:#54545f; line-height:1.7;">ベテラン依存を減らす</div></div>
-        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">経営層</div><div style="font-size:14px; color:#54545f; line-height:1.7;">技術伝承・属人化・教育コスト解消</div></div>
+        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">PM / PdM</div><div style="font-size:14px; color:#54545f; line-height:1.7;">要件を spec / plan / tasks に整理</div></div>
+        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">プリセールス</div><div style="font-size:14px; color:#54545f; line-height:1.7;">提案書・見積もりの初稿を高速化</div></div>
+        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">設計 / 開発リード</div><div style="font-size:14px; color:#54545f; line-height:1.7;">基本設計・詳細設計の抜け漏れ確認</div></div>
+        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">PMO</div><div style="font-size:14px; color:#54545f; line-height:1.7;">WBS・工数実績・変更影響を管理</div></div>
+        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">情シス / セキュリティ</div><div style="font-size:14px; color:#54545f; line-height:1.7;">権限・ログ・承認つきで安全に</div></div>
+        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">ナレッジ管理</div><div style="font-size:14px; color:#54545f; line-height:1.7;">過去案件と技術方針を再利用可能に</div></div>
+        <div style="background:#fafafc; border:1px solid #eeeef3; border-radius:14px; padding:22px;"><div style="font-size:16px; font-weight:900; margin-bottom:8px;">経営層</div><div style="font-size:14px; color:#54545f; line-height:1.7;">提案品質・見積精度・属人化を改善</div></div>
       </div>
     </div>
   </section>
@@ -4472,14 +4471,14 @@
       <div style="max-width:720px; margin-bottom:48px;">
         <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">GOVERNANCE</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">セキュリティ・ガバナンス</span></div>
         <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">生成AIを、社内ルールの中で使う。</h2>
-        <p style="font-size:16px; color:#54545f; margin:0;">Kakuto は便利なAIチャットではなく、社内文書・権限・承認フロー・監査ログを組み合わせたAI回答基盤です。</p>
+        <p style="font-size:16px; color:#54545f; margin:0;">Kakuto は便利なAIチャットではなく、社内文書・権限・承認フロー・監査ログを組み合わせた成果物生成基盤です。</p>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px;">
         <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">権限管理</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">部署・役割ごとに参照を制御</div></div></div>
-        <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">承認フロー</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">回答・文書を公開前にレビュー</div></div></div>
-        <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">監査ログ</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">誰がいつ何を質問したか記録</div></div></div>
+        <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">承認フロー</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">成果物を外部提出前にレビュー</div></div></div>
+        <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">監査ログ</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">誰がいつ何を生成・参照したか記録</div></div></div>
         <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">旧版管理</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">置換済み・期限切れ文書を制御</div></div></div>
-        <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">安全分類</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">高リスク回答をブロック/レビュー</div></div></div>
+        <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">リスク分類</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">外部提出物・見積もりをレビュー必須に</div></div></div>
         <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">SSO・ID連携</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">既存のID基盤と連携</div></div></div>
         <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">データ接続</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">SharePoint・Notion・S3 など</div></div></div>
         <div style="background:#fff; border:1px solid #eeeef3; border-radius:12px; padding:18px 20px; display:flex; gap:11px; align-items:flex-start;"><span style="flex:none; width:8px; height:8px; border-radius:2px; background:var(--accent,#5b5bd6); margin-top:7px;"></span><div><div style="font-size:15px; font-weight:700;">ログ・プライバシー設定</div><div style="font-size:13px; color:#8a8a98; margin-top:3px;">保持・匿名化を制御</div></div></div>
@@ -4492,23 +4491,23 @@
     <div style="max-width:1180px; margin:0 auto; padding:0 clamp(20px,5vw,64px);">
       <div style="max-width:720px; margin-bottom:48px;">
         <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">FLOW</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">導入の流れ</span></div>
-        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0; text-wrap:pretty;">まずは1部門・6週間で、効果を検証。</h2>
+        <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0; text-wrap:pretty;">まずは6週間で、生成物の品質と工数削減を検証。</h2>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:24px;">
         <div style="background:#fafafc; border:1px solid #e8e8ee; border-radius:16px; padding:30px; position:relative;">
           <div style="font-size:40px; font-weight:900; color:rgba(91,91,214,0.16); line-height:1; margin-bottom:14px;">1</div>
-          <h3 style="font-size:19px; font-weight:900; margin:0 0 10px;">文書を接続</h3>
-          <p style="font-size:14px; color:#54545f; margin:0; line-height:1.75;">SharePoint・Notion・S3・PDF・Word・Excelなど、既存の文書を接続します。</p>
+	          <h3 style="font-size:19px; font-weight:900; margin:0 0 10px;">対象データを選ぶ</h3>
+	          <p style="font-size:14px; color:#54545f; margin:0; line-height:1.75;">過去案件、仕様書、WBS、見積もり、提案書、コード情報など、PoCで使う根拠データを絞ります。</p>
         </div>
         <div style="background:#fafafc; border:1px solid #e8e8ee; border-radius:16px; padding:30px;">
           <div style="font-size:40px; font-weight:900; color:rgba(91,91,214,0.16); line-height:1; margin-bottom:14px;">2</div>
-          <h3 style="font-size:19px; font-weight:900; margin:0 0 10px;">承認ルールを設定</h3>
-          <p style="font-size:14px; color:#54545f; margin:0; line-height:1.75;">文書種別・部署・リスク分類ごとに、回答に使ってよい文書を定義します。</p>
+	          <h3 style="font-size:19px; font-weight:900; margin:0 0 10px;">生成テンプレートを決める</h3>
+	          <p style="font-size:14px; color:#54545f; margin:0; line-height:1.75;">設計書、見積もり、提案書、Spec Kitタスクなど、出力形式とレビュー条件を定義します。</p>
         </div>
         <div style="background:#fafafc; border:1px solid #e8e8ee; border-radius:16px; padding:30px;">
           <div style="font-size:40px; font-weight:900; color:rgba(91,91,214,0.16); line-height:1; margin-bottom:14px;">3</div>
-          <h3 style="font-size:19px; font-weight:900; margin:0 0 10px;">現場で質問開始</h3>
-          <p style="font-size:14px; color:#54545f; margin:0; line-height:1.75;">回答精度、問い合わせ削減、検索時間削減をレポートします。</p>
+	          <h3 style="font-size:19px; font-weight:900; margin:0 0 10px;">PoCで品質を測る</h3>
+	          <p style="font-size:14px; color:#54545f; margin:0; line-height:1.75;">citation率、assumption残数、レビュー時間、初稿作成時間、見積もり根拠の納得感をレポートします。</p>
         </div>
       </div>
     </div>
@@ -4520,30 +4519,30 @@
       <div style="max-width:760px; margin-bottom:48px;">
         <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;"><span style="width:24px; height:2px; background:var(--accent,#5b5bd6);"></span><span style="font-size:12px; font-weight:800; letter-spacing:0.14em; color:var(--accent,#5b5bd6);">PRICING</span><span style="font-size:13px; font-weight:700; color:#9a9aa6;">料金・導入</span></div>
         <h2 style="font-size:clamp(26px,3.4vw,40px); line-height:1.35; font-weight:900; letter-spacing:-0.02em; margin:0 0 14px; text-wrap:pretty;">スモールスタートから、全社展開まで。</h2>
-        <p style="font-size:16px; color:#54545f; margin:0;">まずは6週間のPoCで削減効果を検証。1ユーザー席数だけでなく、利用部門・データソース・回答量に応じてお見積りします。</p>
+        <p style="font-size:16px; color:#54545f; margin:0;">まずは6週間のPoCで、対象生成物・根拠データ・レビュー基準を絞って効果を検証します。利用部門、データソース、生成量に応じてお見積りします。</p>
       </div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(248px,1fr)); gap:20px; align-items:stretch;">
         <!-- PoC -->
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:18px; padding:30px; display:flex; flex-direction:column;">
           <div style="font-size:13px; font-weight:800; color:#9a9aa6; letter-spacing:0.04em; margin-bottom:14px;">PoC（6週間）</div>
           <div style="display:flex; align-items:baseline; gap:4px; margin-bottom:6px;"><span style="font-size:30px; font-weight:900; letter-spacing:-0.02em;">50万円</span><span style="font-size:15px; color:#8a8a98; font-weight:700;">〜</span></div>
-          <p style="font-size:13px; color:#8a8a98; margin:0 0 22px;">1部門・6週間で効果検証。</p>
+	          <p style="font-size:13px; color:#8a8a98; margin:0 0 22px;">1チーム・6週間で効果検証。</p>
           <div style="display:flex; flex-direction:column; gap:10px; font-size:14px; color:#3a3a46; flex:1;">
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>文書500〜2,000件</div>
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>よくある質問50〜100件</div>
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>精度評価・削減効果レポート</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>生成物2〜3種類を検証</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>過去案件・仕様書・WBSを接続</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>citation率・削減効果レポート</div>
           </div>
         </div>
         <!-- Starter -->
         <div style="background:#fff; border:1px solid #e8e8ee; border-radius:18px; padding:30px; display:flex; flex-direction:column;">
           <div style="font-size:13px; font-weight:800; color:#9a9aa6; letter-spacing:0.04em; margin-bottom:14px;">Starter</div>
           <div style="display:flex; align-items:baseline; gap:4px; margin-bottom:6px;"><span style="font-size:14px; color:#8a8a98; font-weight:700;">月額</span><span style="font-size:30px; font-weight:900; letter-spacing:-0.02em;">12万円</span><span style="font-size:15px; color:#8a8a98; font-weight:700;">〜</span></div>
-          <p style="font-size:13px; color:#8a8a98; margin:0 0 22px;">小規模部門向け。</p>
+	          <p style="font-size:13px; color:#8a8a98; margin:0 0 22px;">小規模チーム向け。</p>
           <div style="display:flex; flex-direction:column; gap:10px; font-size:14px; color:#3a3a46; flex:1;">
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>1部門での運用</div>
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>出典・版数つき回答</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>1チームでの運用</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>citationつきドラフト生成</div>
             <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>主要データソース接続</div>
-            <div style="display:flex; gap:9px; color:#9a9aa6;"><span style="font-weight:900;">–</span>PDF・Word・Excel中心</div>
+	            <div style="display:flex; gap:9px; color:#9a9aa6;"><span style="font-weight:900;">–</span>設計書・提案書など限定運用</div>
           </div>
         </div>
         <!-- Business (おすすめ) -->
@@ -4551,12 +4550,12 @@
           <span style="position:absolute; top:-13px; left:30px; font-size:12px; font-weight:800; color:#fff; background:var(--accent,#5b5bd6); border-radius:999px; padding:5px 13px;">おすすめ</span>
           <div style="font-size:13px; font-weight:800; color:var(--accent,#5b5bd6); letter-spacing:0.04em; margin-bottom:14px;">Business</div>
           <div style="display:flex; align-items:baseline; gap:4px; margin-bottom:6px;"><span style="font-size:14px; color:#8a8a98; font-weight:700;">月額</span><span style="font-size:30px; font-weight:900; letter-spacing:-0.02em;">35万円</span><span style="font-size:15px; color:#8a8a98; font-weight:700;">〜</span></div>
-          <p style="font-size:13px; color:#8a8a98; margin:0 0 22px;">承認・レビュー・監査まで対応。</p>
+	          <p style="font-size:13px; color:#8a8a98; margin:0 0 22px;">承認・レビュー・監査まで対応。</p>
           <div style="display:flex; flex-direction:column; gap:10px; font-size:14px; color:#3a3a46; flex:1;">
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>承認フロー・レビューキュー</div>
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>監査ログ・安全分類</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>承認フロー・レビューキュー</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>監査ログ・リスク分類</div>
             <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>複数部門・複数ソース対応</div>
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>図面PDF・画像OCR対応</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>見積もり・影響分析テンプレート</div>
             <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>運用支援・効果レポート</div>
           </div>
         </div>
@@ -4568,13 +4567,13 @@
           <div style="display:flex; flex-direction:column; gap:10px; font-size:14px; color:#3a3a46; flex:1;">
             <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>専用環境 / プライベート構成</div>
             <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>SSO・監査・保管要件への対応</div>
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>全社展開の運用設計</div>
-            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>現場写真・CAD・業界固有の画像解析</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>全社展開の運用設計</div>
+	            <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>CAD・画像・業界固有データは個別検証</div>
             <div style="display:flex; gap:9px;"><span style="color:var(--accent,#5b5bd6); font-weight:900;">✓</span>SIer・パートナー連携</div>
           </div>
         </div>
       </div>
-      <p style="font-size:13px; color:#9a9aa6; margin:24px 0 0;">※ 価格は目安です。既存の文書量、接続データソース、利用部門数、セキュリティ要件に応じてお見積りします。図面PDF・画像OCRは Business 以上、現場写真の本格活用・CAD連携・業界固有の画像解析は Enterprise（個別見積り）で対応します。</p>
+	      <p style="font-size:13px; color:#9a9aa6; margin:24px 0 0;">※ 価格は目安です。既存の文書量、接続データソース、利用部門数、生成対象、セキュリティ要件に応じてお見積りします。CAD・画像・業界固有データの活用はPoC範囲を合意したうえで個別検証します。</p>
     </div>
   </section>
 
@@ -4588,10 +4587,10 @@
       <div style="display:flex; flex-direction:column; gap:12px;">
         <div style="border:1px solid #e8e8ee; border-radius:14px; overflow:hidden; background:#fafafc;">
           <button onclick="{{ toggle0 }}" style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 22px; background:none; border:none; cursor:pointer; text-align:left; font-family:inherit;">
-            <span style="font-size:16px; font-weight:700; color:#16161d;">他の社内AIチャットやRAGと何が違いますか？</span>
+	            <span style="font-size:16px; font-weight:700; color:#16161d;">他の社内AIチャットやRAGと何が違いますか？</span>
             <span data-chev="" style="flex:none; font-size:14px; color:var(--accent,#5b5bd6); font-weight:900; transform:rotate({{ rot0 }}deg);">＋</span>
           </button>
-          <sc-if value="{{ open0 }}"><div style="padding:0 22px 20px; font-size:15px; color:#54545f; line-height:1.8;">Kakuto は「何でも答えるAIチャット」ではなく、承認済み文書だけを根拠に答える確答AIです。出典・版数・有効期限の表示、旧版・未承認の制御、高リスク回答のレビューまで備えた“回答の運用管理”が中心です。</div></sc-if>
+	          <sc-if value="{{ open0 }}"><div style="padding:0 22px 20px; font-size:15px; color:#54545f; line-height:1.8;">Kakuto は「何でも答えるAIチャット」ではなく、RAGに蓄積された既存仕様・過去案件・技術方針を根拠に、設計書・見積もり・提案書・実装タスクなどの成果物ドラフトを作る基盤です。citation、assumption、レビュー状態の管理を重視します。</div></sc-if>
         </div>
         <div style="border:1px solid #e8e8ee; border-radius:14px; overflow:hidden; background:#fafafc;">
           <button onclick="{{ toggle1 }}" style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 22px; background:none; border:none; cursor:pointer; text-align:left; font-family:inherit;">
@@ -4605,28 +4604,28 @@
             <span style="font-size:16px; font-weight:700; color:#16161d;">既存の文書管理を入れ替える必要はありますか？</span>
             <span data-chev="" style="flex:none; font-size:14px; color:var(--accent,#5b5bd6); font-weight:900; transform:rotate({{ rot2 }}deg);">＋</span>
           </button>
-          <sc-if value="{{ open2 }}"><div style="padding:0 22px 20px; font-size:15px; color:#54545f; line-height:1.8;">いいえ。既存のSharePointやNotion、ファイルサーバなどに接続して利用します。文書の置き場所を変える必要はありません。</div></sc-if>
+	          <sc-if value="{{ open2 }}"><div style="padding:0 22px 20px; font-size:15px; color:#54545f; line-height:1.8;">いいえ。既存のSharePointやNotion、ファイルサーバ、S3などに接続して利用します。PoCでは過去案件、仕様書、WBS、提案書など対象データを絞って始めます。</div></sc-if>
         </div>
         <div style="border:1px solid #e8e8ee; border-radius:14px; overflow:hidden; background:#fafafc;">
           <button onclick="{{ toggle3 }}" style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 22px; background:none; border:none; cursor:pointer; text-align:left; font-family:inherit;">
             <span style="font-size:16px; font-weight:700; color:#16161d;">機密文書はどのように扱われますか？</span>
             <span data-chev="" style="flex:none; font-size:14px; color:var(--accent,#5b5bd6); font-weight:900; transform:rotate({{ rot3 }}deg);">＋</span>
           </button>
-          <sc-if value="{{ open3 }}"><div style="padding:0 22px 20px; font-size:15px; color:#54545f; line-height:1.8;">ロール・権限・文書ごとのアクセス制御に従い、見てよい人にだけ回答します。権限のない文書は検索対象にも回答の根拠にもなりません。</div></sc-if>
+	          <sc-if value="{{ open3 }}"><div style="padding:0 22px 20px; font-size:15px; color:#54545f; line-height:1.8;">ロール・権限・文書ごとのアクセス制御に従い、見てよい人にだけ根拠データを参照させます。権限のない文書は検索対象にも成果物の根拠にもなりません。</div></sc-if>
         </div>
         <div style="border:1px solid #e8e8ee; border-radius:14px; overflow:hidden; background:#fafafc;">
           <button onclick="{{ toggle4 }}" style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 22px; background:none; border:none; cursor:pointer; text-align:left; font-family:inherit;">
-            <span style="font-size:16px; font-weight:700; color:#16161d;">回答が誤っていないか、どう担保しますか？</span>
+	            <span style="font-size:16px; font-weight:700; color:#16161d;">生成物が誤っていないか、どう担保しますか？</span>
             <span data-chev="" style="flex:none; font-size:14px; color:var(--accent,#5b5bd6); font-weight:900; transform:rotate({{ rot4 }}deg);">＋</span>
           </button>
-          <sc-if value="{{ open4 }}"><div style="padding:0 22px 20px; font-size:15px; color:#54545f; line-height:1.8;">承認済みソースのみを根拠に回答し、必ず出典・版数・有効期限を表示します。高リスクな質問はレビューキューに回し、人手承認やブロックを挟めます。</div></sc-if>
+	          <sc-if value="{{ open4 }}"><div style="padding:0 22px 20px; font-size:15px; color:#54545f; line-height:1.8;">根拠文書ごとの citation を必須にし、仕様が曖昧な箇所は assumption として分離します。見積もりはLLM単体で数字を確定させず、過去案件・WBS・工数実績からレンジを提示し、外部提出前レビューを必須にします。</div></sc-if>
         </div>
         <div style="border:1px solid #e8e8ee; border-radius:14px; overflow:hidden; background:#fafafc;">
           <button onclick="{{ toggle5 }}" style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 22px; background:none; border:none; cursor:pointer; text-align:left; font-family:inherit;">
             <span style="font-size:16px; font-weight:700; color:#16161d;">どのくらいの規模から始められますか？</span>
             <span data-chev="" style="flex:none; font-size:14px; color:var(--accent,#5b5bd6); font-weight:900; transform:rotate({{ rot5 }}deg);">＋</span>
           </button>
-          <sc-if value="{{ open5 }}"><div style="padding:0 22px 20px; font-size:15px; color:#54545f; line-height:1.8;">1部門・小規模からスモールスタートできます。PoCで効果を確認しながら、対象部門や文書を段階的に広げられます。</div></sc-if>
+	          <sc-if value="{{ open5 }}"><div style="padding:0 22px 20px; font-size:15px; color:#54545f; line-height:1.8;">1チーム・生成物2〜3種類からスモールスタートできます。PoCで効果を確認しながら、対象データ、生成テンプレート、レビュー基準を段階的に広げられます。</div></sc-if>
         </div>
       </div>
     </div>
@@ -4637,8 +4636,8 @@
     <div style="max-width:1180px; margin:0 auto; padding:0 clamp(20px,5vw,64px);">
       <div data-ctarow="" style="display:flex; gap:clamp(32px,5vw,64px); align-items:center;">
         <div style="flex:1 1 380px; min-width:0;">
-          <h2 style="font-size:clamp(26px,3.4vw,42px); line-height:1.3; font-weight:900; letter-spacing:-0.02em; color:#fff; margin:0 0 18px; text-wrap:pretty;">社内文書を、現場で使える<br>“確答”に。</h2>
-          <p style="font-size:16px; color:#b6b6c4; margin:0 0 28px;">まずは1部門から、Kakuto で現場の問い合わせ・検索・確認業務をどれだけ減らせるか検証しませんか。</p>
+	          <h2 style="font-size:clamp(26px,3.4vw,42px); line-height:1.3; font-weight:900; letter-spacing:-0.02em; color:#fff; margin:0 0 18px; text-wrap:pretty;">RAGの知識を、<br>レビュー可能な成果物に。</h2>
+	          <p style="font-size:16px; color:#b6b6c4; margin:0 0 28px;">まずは1チーム・6週間で、設計書・見積もり・提案書生成の効果を検証しませんか。</p>
           <div style="display:flex; flex-wrap:wrap; gap:12px;">
             <a href="#cta" style="font-size:15px; font-weight:700; color:#16161f; background:#fff; text-decoration:none; padding:14px 24px; border-radius:12px;" style-hover="filter:brightness(0.92);">無料デモを予約する</a>
             <a href="#cta" style="font-size:15px; font-weight:700; color:#fff; background:transparent; border:1px solid #3a3a48; text-decoration:none; padding:14px 24px; border-radius:12px;" style-hover="border-color:#6c6c80;">PoCについて相談する</a>
@@ -4646,15 +4645,15 @@
         </div>
         <!-- form card -->
         <div style="flex:1 1 380px; min-width:0; background:#fff; border-radius:18px; padding:clamp(24px,3vw,32px);">
-          <div style="font-size:18px; font-weight:900; margin-bottom:6px;">3分でわかる資料をダウンロード</div>
-          <p style="font-size:13px; color:#8a8a98; margin:0 0 20px;">PoC・導入のご相談も承ります。</p>
-          <div style="display:flex; flex-direction:column; gap:14px;">
-            <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:13px; font-weight:700; color:#3a3a46;">会社名</span><input type="text" placeholder="株式会社○○製作所" style="font-family:inherit; font-size:14px; padding:11px 13px; border:1px solid #dcdce4; border-radius:10px; outline:none; color:#16161d;" style-focus="border-color:var(--accent,#5b5bd6);"></label>
-            <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:13px; font-weight:700; color:#3a3a46;">お名前</span><input type="text" placeholder="山田 太郎" style="font-family:inherit; font-size:14px; padding:11px 13px; border:1px solid #dcdce4; border-radius:10px; outline:none; color:#16161d;" style-focus="border-color:var(--accent,#5b5bd6);"></label>
-            <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:13px; font-weight:700; color:#3a3a46;">メールアドレス</span><input type="email" placeholder="taro@example.co.jp" style="font-family:inherit; font-size:14px; padding:11px 13px; border:1px solid #dcdce4; border-radius:10px; outline:none; color:#16161d;" style-focus="border-color:var(--accent,#5b5bd6);"></label>
-            <button style="font-family:inherit; font-size:15px; font-weight:700; color:#fff; background:var(--accent,#5b5bd6); border:none; border-radius:12px; padding:14px; cursor:pointer; margin-top:4px;" style-hover="filter:brightness(0.93);">資料をダウンロード（無料）</button>
-            <p style="font-size:11px; color:#9a9aa6; margin:0; line-height:1.6;">ご入力いただいた情報は、資料送付およびご連絡の目的にのみ利用します。</p>
-          </div>
+	          <div style="font-size:18px; font-weight:900; margin-bottom:6px;">PoC相談・資料請求</div>
+	          <p style="font-size:13px; color:#8a8a98; margin:0 0 20px;">生成したい成果物や対象データが未整理でもご相談いただけます。</p>
+	          <form data-kakuto-lead-form="" onsubmit="return window.kakutoSubmitLead ? window.kakutoSubmitLead(this, event) : false;" style="display:flex; flex-direction:column; gap:14px;">
+	            <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:13px; font-weight:700; color:#3a3a46;">会社名</span><input name="company" type="text" placeholder="株式会社○○" autocomplete="organization" style="font-family:inherit; font-size:14px; padding:11px 13px; border:1px solid #dcdce4; border-radius:10px; outline:none; color:#16161d;" style-focus="border-color:var(--accent,#5b5bd6);"></label>
+	            <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:13px; font-weight:700; color:#3a3a46;">お名前</span><input name="name" type="text" placeholder="山田 太郎" autocomplete="name" style="font-family:inherit; font-size:14px; padding:11px 13px; border:1px solid #dcdce4; border-radius:10px; outline:none; color:#16161d;" style-focus="border-color:var(--accent,#5b5bd6);"></label>
+	            <label style="display:flex; flex-direction:column; gap:6px;"><span style="font-size:13px; font-weight:700; color:#3a3a46;">メールアドレス</span><input name="email" type="email" placeholder="taro@example.co.jp" autocomplete="email" required style="font-family:inherit; font-size:14px; padding:11px 13px; border:1px solid #dcdce4; border-radius:10px; outline:none; color:#16161d;" style-focus="border-color:var(--accent,#5b5bd6);"></label>
+	            <button type="submit" style="font-family:inherit; font-size:15px; font-weight:700; color:#fff; background:var(--accent,#5b5bd6); border:none; border-radius:12px; padding:14px; cursor:pointer; margin-top:4px;" style-hover="filter:brightness(0.93);">PoC資料を請求する</button>
+	            <p style="font-size:11px; color:#9a9aa6; margin:0; line-height:1.6;">ご入力いただいた情報は、資料送付およびご連絡の目的にのみ利用します。</p>
+	          </form>
         </div>
       </div>
     </div>
@@ -4669,7 +4668,7 @@
           <span style="font-weight:900; font-size:18px; color:#fff;">Kakuto</span>
           <span style="font-size:11px; font-weight:700; color:#7a7a8a; border:1px solid #2a2a38; border-radius:5px; padding:2px 6px;">確答AI</span>
         </div>
-        <p style="font-size:13px; color:#7a7a8a; margin:0; line-height:1.7;">承認済みの社内文書から、出典・版数・有効期限つきで確かな回答を出すAIナレッジ基盤。</p>
+        <p style="font-size:13px; color:#7a7a8a; margin:0; line-height:1.7;">RAGに蓄積された既存仕様・過去案件から、根拠つきで成果物ドラフトを生成するAIナレッジ基盤。</p>
       </div>
       <div style="display:flex; gap:clamp(32px,6vw,72px); flex-wrap:wrap;">
         <div style="display:flex; flex-direction:column; gap:10px;">
@@ -4680,7 +4679,7 @@
         </div>
         <div style="display:flex; flex-direction:column; gap:10px;">
           <div style="font-size:12px; font-weight:700; color:#9a9aa6; margin-bottom:4px;">導入</div>
-          <a href="#who" style="font-size:13px; color:#b6b6c4; text-decoration:none;" style-hover="color:#fff;">導入部門</a>
+          <a href="#who" style="font-size:13px; color:#b6b6c4; text-decoration:none;" style-hover="color:#fff;">導入チーム</a>
           <a href="#pricing" style="font-size:13px; color:#b6b6c4; text-decoration:none;" style-hover="color:#fff;">料金・PoC</a>
           <a href="#faq" style="font-size:13px; color:#b6b6c4; text-decoration:none;" style-hover="color:#fff;">FAQ</a>
           <a href="#cta" style="font-size:13px; color:#b6b6c4; text-decoration:none;" style-hover="color:#fff;">デモを予約</a>
@@ -4694,7 +4693,7 @@
   <sc-if value="{{ barVisible }}" hint-placeholder-val="{{ true }}">
   <div style="position:fixed; left:0; right:0; bottom:0; z-index:60; background:rgba(22,22,31,0.97); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); border-top:1px solid #2a2a38;">
     <div style="max-width:1180px; margin:0 auto; padding:11px clamp(14px,4vw,40px); display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-      <span style="flex:1 1 auto; min-width:150px; font-size:14px; font-weight:700; color:#fff;">承認済み文書から、確かな回答を。</span>
+      <span style="flex:1 1 auto; min-width:150px; font-size:14px; font-weight:700; color:#fff;">RAGの知識から、設計・見積・提案の初稿を。</span>
       <a href="#pricing" style="font-size:13px; font-weight:700; color:#fff; border:1px solid #3a3a48; text-decoration:none; padding:9px 16px; border-radius:10px;" style-hover="border-color:#6c6c80;">料金を見る</a>
       <a href="#cta" style="font-size:13px; font-weight:700; color:#fff; background:var(--accent,#5b5bd6); text-decoration:none; padding:10px 18px; border-radius:10px;" style-hover="filter:brightness(0.93);">デモを予約</a>
       <button onclick="{{ hideBar }}" aria-label="閉じる" style="flex:none; width:30px; height:30px; border-radius:8px; border:none; background:transparent; color:#8a8a98; font-size:16px; cursor:pointer;" style-hover="background:#2a2a38; color:#fff;">✕</button>
@@ -4749,6 +4748,32 @@ class Component extends DCLogic {
     if (target) target.scrollIntoView({ behavior: "smooth" });
   }
 
+  function submitLead(form, event) {
+    if (event) event.preventDefault();
+    var c = cfg();
+    var emailInput = form.querySelector('input[name="email"]');
+    var companyInput = form.querySelector('input[name="company"]');
+    var nameInput = form.querySelector('input[name="name"]');
+    var addr = emailInput ? emailInput.value.trim() : "";
+    if (!addr) {
+      if (emailInput) emailInput.focus();
+      return false;
+    }
+    var email = c.contactEmail || "contact@kakuto.ai";
+    var subject = encodeURIComponent("Kakuto PoC相談・資料請求");
+    var body = encodeURIComponent(
+      "PoC相談・資料請求\n\n" +
+      "会社名: " + ((companyInput && companyInput.value.trim()) || "(未入力)") + "\n" +
+      "お名前: " + ((nameInput && nameInput.value.trim()) || "(未入力)") + "\n" +
+      "メール: " + addr + "\n\n" +
+      "相談内容: RAGに蓄積されたデータからの設計書・見積もり・提案書生成について"
+    );
+    window.location.href = "mailto:" + email + "?subject=" + subject + "&body=" + body;
+    return false;
+  }
+
+  window.kakutoSubmitLead = submitLead;
+
   document.addEventListener("DOMContentLoaded", function() {
     var c = cfg();
 
@@ -4785,22 +4810,10 @@ class Component extends DCLogic {
       }
     });
 
-    document.querySelectorAll("input[type=email]").forEach(function(input) {
-      var form = input.closest("form") || input.parentElement;
-      if (!form || form.dataset.kakutoBound) return;
-      form.dataset.kakutoBound = "1";
-      form.addEventListener("submit", function(e) {
-        e.preventDefault();
-        var addr = input.value.trim();
-        if (!addr) {
-          input.focus();
-          return;
-        }
-        var email = c.contactEmail || "contact@kakuto.ai";
-        var subject = encodeURIComponent("Kakuto 資料請求");
-        var body = encodeURIComponent("資料請求\n\nメール: " + addr);
-        window.location.href = "mailto:" + email + "?subject=" + subject + "&body=" + body;
-      });
+    document.addEventListener("submit", function(e) {
+      var form = e.target && e.target.closest ? e.target.closest("form[data-kakuto-lead-form]") : null;
+      if (!form) return;
+      submitLead(form, e);
     });
 
     document.querySelectorAll('a[href^="#"]').forEach(function(a) {
