@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "title": "Paid Pilot Readiness Gate",
+  "readiness_label": "paid-pilot-ready",
+  "status_policy": {
+    "ledger_live": ["verified"],
+    "ledger_human": ["signed"],
+    "evidence_verified": ["verified", "signed"],
+    "evidence_signed": ["signed"]
+  },
+  "requirements": [
+    {
+      "id": "PILOT-LOCAL-GATES",
+      "kind": "evidence_file",
+      "title": "Local and CI hard gates are green on the release commit",
+      "evidence_file": "docs/production-readiness/evidence/local-gates.md",
+      "accepted_statuses": ["verified"]
+    },
+    {
+      "id": "PILOT-REAL-GENERATION",
+      "kind": "ledger_unit",
+      "ledger_unit": "P1-2",
+      "title": "Real Bedrock Claude generation is verified in the production answer path",
+      "accepted_statuses": ["verified"]
+    },
+    {
+      "id": "PILOT-REAL-RERANK",
+      "kind": "ledger_unit",
+      "ledger_unit": "P1-3",
+      "title": "Real Bedrock rerank is verified in the production retrieval path",
+      "accepted_statuses": ["verified"]
+    },
+    {
+      "id": "PILOT-OUTPUT-GUARDRAIL",
+      "kind": "ledger_unit",
+      "ledger_unit": "P1-4",
+      "title": "Bedrock Guardrails output screening is verified live",
+      "accepted_statuses": ["verified"]
+    },
+    {
+      "id": "PILOT-LANGFUSE",
+      "kind": "ledger_unit",
+      "ledger_unit": "P1-5",
+      "title": "Langfuse traces are verified live and sanitized",
+      "accepted_statuses": ["verified"]
+    },
+    {
+      "id": "PILOT-IMAGES",
+      "kind": "ledger_unit",
+      "ledger_unit": "P4-1",
+      "title": "Real API, web, and answer-service container images are built and runnable",
+      "accepted_statuses": ["verified"]
+    },
+    {
+      "id": "PILOT-STAGING-DEPLOY",
+      "kind": "ledger_unit",
+      "ledger_unit": "P4-2",
+      "title": "Pilot/staging stack is deployed with explicit human approval",
+      "accepted_statuses": ["signed"]
+    },
+    {
+      "id": "PILOT-INTERNAL-TRUST",
+      "kind": "ledger_unit",
+      "ledger_unit": "P4-4",
+      "title": "API to answer-service internal trust boundary is verified on the deployed topology",
+      "accepted_statuses": ["verified"]
+    },
+    {
+      "id": "PILOT-LIVE-SMOKE",
+      "kind": "ledger_unit",
+      "ledger_unit": "P4-5",
+      "title": "Deployed production smoke passes without skips",
+      "accepted_statuses": ["verified"]
+    },
+    {
+      "id": "PILOT-ROLLBACK-RESTORE",
+      "kind": "ledger_unit",
+      "ledger_unit": "P4-6",
+      "title": "Rollback and backup/restore drills are witnessed and signed",
+      "accepted_statuses": ["signed"]
+    },
+    {
+      "id": "PILOT-REAL-LLM-EVAL",
+      "kind": "ledger_unit",
+      "ledger_unit": "P5-3",
+      "title": "Real LLM eval thresholds pass with billed-provider approval",
+      "accepted_statuses": ["signed"]
+    },
+    {
+      "id": "PILOT-PROD-UI",
+      "kind": "ledger_unit",
+      "ledger_unit": "UI-1",
+      "title": "Customer-facing UI targets production API and signed auth",
+      "accepted_statuses": ["verified"]
+    },
+    {
+      "id": "PILOT-SME-SAFETY",
+      "kind": "evidence_file",
+      "title": "SME safety corpus review is signed",
+      "evidence_file": "docs/production-readiness/evidence/sme-safety-signoff.md",
+      "accepted_statuses": ["signed"]
+    },
+    {
+      "id": "PILOT-SPEND-APPROVAL",
+      "kind": "evidence_file",
+      "title": "Bedrock/OpenAI paid-provider spend is approved for the pilot",
+      "evidence_file": "docs/production-readiness/evidence/provider-spend-approval.md",
+      "accepted_statuses": ["signed"]
+    },
+    {
+      "id": "PILOT-SCOPE-APPROVAL",
+      "kind": "evidence_file",
+      "title": "Pilot customer scope and operating limits are approved",
+      "evidence_file": "docs/production-readiness/evidence/pilot-scope-approval.md",
+      "accepted_statuses": ["signed"]
+    }
+  ]
+}

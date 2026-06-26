@@ -9,6 +9,15 @@ expected to pass before this sheet is used; the latest local reconciliation is r
 
 Run on a host with Docker + a pgvector Postgres + AWS creds. Each step is a release-gate; a RED stops GO.
 
+For a paid pilot, first run the narrower CTO gate:
+
+```bash
+python3 scripts/pilot_readiness_status.py --fail-on-not-ready
+```
+
+If this reports `NOT READY`, do not sell the environment as pilot-ready. Complete the blocked
+ledger units or evidence files shown in the report.
+
 ---
 
 ## 0. Commit / PR hygiene
