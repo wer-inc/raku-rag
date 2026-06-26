@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 // answer-service run as SEPARATE containers with no shared filesystem (a `file://` ref written here
 // would 500 on the answer-service — it can't see this container's disk). The Add Source screen
 // uploads here, then calls POST /v1/ingest with the returned ref. Disabled in production builds
-// unless the demo flag is set.
+// unless RAKU_ENABLE_UPLOAD_SINK is enabled.
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,8 +25,11 @@ const EXT_CONTENT_TYPE: Record<string, string> = {
 };
 
 function enabled(): boolean {
-  // Same demo gate as the dev-token issuer: honor an explicit RAKU_ENABLE_DEV_TOKEN_ISSUER=1 even in
-  // production (the AWS demo sets it), else default dev-only (off in production).
+  const uploadSink = process.env.RAKU_ENABLE_UPLOAD_SINK;
+  if (uploadSink !== undefined) return uploadSink === "1" || uploadSink.toLowerCase() === "true";
+
+  // Backward compatibility with earlier demo deployments that tied the upload sink to the dev-token
+  // issuer. New production deployments should set RAKU_ENABLE_UPLOAD_SINK explicitly.
   const raw = process.env.RAKU_ENABLE_DEV_TOKEN_ISSUER;
   if (raw !== undefined) return raw === "1" || raw.toLowerCase() === "true";
   return process.env.NODE_ENV !== "production";
@@ -34,7 +37,7 @@ function enabled(): boolean {
 
 export async function POST(req: Request) {
   if (!enabled()) {
-    return NextResponse.json({ error: "local upload sink disabled" }, { status: 403 });
+    return NextResponse.json({ error: "upload sink disabled" }, { status: 403 });
   }
   const form = await req.formData().catch(() => null);
   const file = form?.get("file");

@@ -477,6 +477,10 @@ export class RakuRagStack extends cdk.Stack {
           WEB_PORT: "3002",
           RAKU_AUTH_MODE: authMode,
           RAKU_ENABLE_DEV_TOKEN_ISSUER: authMode === "dev" ? "1" : "0",
+          // The AWS-hosted demo protects the web entrypoint with HTTP Basic auth, then Cognito for
+          // app identity. Keep the local upload sink available there so /sources/new can hand inline
+          // data: refs to the answer-service across container boundaries.
+          RAKU_ENABLE_UPLOAD_SINK: basicAuthUser || authMode === "dev" ? "1" : "0",
           COGNITO_DOMAIN: cognitoHostedUiDomain,
           COGNITO_ISSUER: cognitoIssuer,
           COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
