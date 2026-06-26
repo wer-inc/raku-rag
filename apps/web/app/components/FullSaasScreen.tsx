@@ -128,12 +128,18 @@ const MOCK_BILLING = {
 };
 
 function isAuthError(error: unknown): boolean {
-  return error instanceof Error && /session|token|auth/i.test(error.message);
+  return error instanceof Error && /401|unauthorized|session|token|auth|jwt|cognito/i.test(error.message);
 }
 
 async function runWithToken<T>(loader: (token: string) => Promise<T>): Promise<T> {
   const token = await getSessionToken();
   return loader(token);
+}
+
+function redirectToLoginAfterAuthError(): void {
+  if (typeof window === "undefined") return;
+  const returnTo = `${window.location.pathname}${window.location.search}`;
+  window.location.assign(`/login?return_to=${encodeURIComponent(returnTo || "/home")}`);
 }
 
 const SYNC_POLL_MS = 5000;
@@ -178,7 +184,10 @@ function useLoad<T>(
         if (active) setState({ state: "ready", data });
       })
       .catch((err) => {
-        if (isAuthError(err)) clearSessionToken();
+        if (isAuthError(err)) {
+          clearSessionToken();
+          redirectToLoginAfterAuthError();
+        }
         if (active) setState({ state: "error", error: formatLoadError(err) });
       });
     return () => {
