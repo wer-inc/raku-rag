@@ -122,6 +122,8 @@ export class RakuRagStack extends cdk.Stack {
     }
     const publicBaseUrl = publicDomainName ? `https://${publicDomainName}` : "http://localhost:3002";
     const authMode = String(this.node.tryGetContext("authMode") ?? (isProd ? "cognito" : "dev"));
+    const basicAuthUser = String(this.node.tryGetContext("basicAuthUser") ?? "").trim();
+    const basicAuthRealm = String(this.node.tryGetContext("basicAuthRealm") ?? "Raku RAG").trim();
     const fargateSize = {
       api: minimalSpec ? { cpu: 512, memoryLimitMiB: 1024 } : { cpu: 1024, memoryLimitMiB: 2048 },
       worker: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 512, memoryLimitMiB: 1024 },
@@ -222,6 +224,19 @@ export class RakuRagStack extends cdk.Stack {
       }
     });
 
+    const webBasicAuthSecret = basicAuthUser
+      ? new secretsmanager.Secret(this, "WebBasicAuthSecret", {
+          secretName: `${servicePrefix}/web-basic-auth`,
+          description: "Optional HTTP Basic authentication password for the AWS-hosted web app",
+          encryptionKey: dataKey,
+          generateSecretString: {
+            secretStringTemplate: JSON.stringify({ username: basicAuthUser }),
+            generateStringKey: "password",
+            excludePunctuation: true
+          }
+        })
+      : undefined;
+
     // Google Drive connector OAuth client config (021-gdrive). Ships with PLACEHOLDER values; the
     // operator populates client_id/client_secret/redirect_uri post-deploy (see DEPLOY.md + the
     // GoogleOAuthConfigSecretName output) and restarts the API + answer-service tasks. client_secret
@@ -263,6 +278,12 @@ export class RakuRagStack extends cdk.Stack {
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy
     });
+    for (const groupName of ["field_user", "reviewer", "ops_owner", "tenant_admin", "platform_admin", "sales_demo"]) {
+      new cognito.CfnUserPoolGroup(this, `UserPoolGroup${groupName.replace(/(^|_)([a-z])/g, (_m, _p, c) => c.toUpperCase())}`, {
+        groupName,
+        userPoolId: userPool.userPoolId
+      });
+    }
 
     const cognitoDomainPrefix = String(
       this.node.tryGetContext("cognitoDomainPrefix") ?? `${servicePrefix}-${cdk.Stack.of(this).region}`
@@ -429,6 +450,7 @@ export class RakuRagStack extends cdk.Stack {
         }
       });
       appSecret.grantRead(webTask.taskRole);
+      webBasicAuthSecret?.grantRead(webTask.taskRole);
       const webContainer = webTask.addContainer("AwsNextjsContainer", {
         // Real web image; NEXT_PUBLIC_API_BASE is baked at BUILD time (Next inlines it), and because web
         // and API are same-origin the browser calls the relative "/v1" — no domain needed at build.
@@ -454,11 +476,22 @@ export class RakuRagStack extends cdk.Stack {
           COGNITO_ISSUER: cognitoIssuer,
           COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
           COGNITO_USER_POOL_ID: userPool.userPoolId,
-          COGNITO_USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId
+          COGNITO_USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId,
+          ...(basicAuthUser
+            ? {
+                RAKU_BASIC_AUTH_REALM: basicAuthRealm || "Raku RAG",
+                RAKU_BASIC_AUTH_USER: basicAuthUser
+              }
+            : {})
         },
         secrets: {
           // MUST match the API's signing secret so issued tokens validate at the API.
-          RAKU_TOKEN_SIGNING_SECRET: ecs.Secret.fromSecretsManager(appSecret, "jwtSigningSecret")
+          RAKU_TOKEN_SIGNING_SECRET: ecs.Secret.fromSecretsManager(appSecret, "jwtSigningSecret"),
+          ...(webBasicAuthSecret
+            ? {
+                RAKU_BASIC_AUTH_PASSWORD: ecs.Secret.fromSecretsManager(webBasicAuthSecret, "password")
+              }
+            : {})
         }
       });
       webContainer.addPortMappings({ containerPort: 3002 });
@@ -1093,9 +1126,17 @@ export class RakuRagStack extends cdk.Stack {
     new cdk.CfnOutput(this, "CognitoUserPoolId", {
       value: userPool.userPoolId
     });
+    new cdk.CfnOutput(this, "CognitoUserPoolClientId", {
+      value: userPoolClient.userPoolClientId
+    });
     new cdk.CfnOutput(this, "CognitoHostedUiDomain", {
       value: cognitoHostedUiDomain
     });
+    if (webBasicAuthSecret) {
+      new cdk.CfnOutput(this, "WebBasicAuthSecretName", {
+        value: webBasicAuthSecret.secretName
+      });
+    }
     new cdk.CfnOutput(this, "CloudWatchDashboardName", {
       value: dashboard.dashboardName
     });

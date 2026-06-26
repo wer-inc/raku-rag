@@ -26,6 +26,20 @@ on:
         type: string
         required: false
         default: ""
+      auth_mode:
+        description: Application authentication mode
+        type: choice
+        options: [dev, cognito]
+        default: dev
+      basic_auth:
+        description: Enable HTTP Basic auth in front of the AWS-hosted web app
+        type: boolean
+        default: false
+      basic_auth_user:
+        description: Basic auth username when basic_auth is enabled
+        type: string
+        required: false
+        default: raku
       run_migrate_seed:
         description: After deploy, apply schema migrations + seed the demo KB
         type: boolean
@@ -61,6 +75,9 @@ jobs:
       STAGE: ${{ inputs.stage }}
       FRONTEND: ${{ inputs.frontend }}
       DOMAIN_NAME: ${{ inputs.domain_name }}
+      AUTH_MODE: ${{ inputs.auth_mode }}
+      BASIC_AUTH: ${{ inputs.basic_auth }}
+      BASIC_AUTH_USER: ${{ inputs.basic_auth_user }}
       EMBEDDING_PROVIDER: ${{ inputs.embedding_provider }}
       ANSWER_LLM: ${{ inputs.answer_llm }}
       ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
@@ -86,7 +103,11 @@ jobs:
             echo "::error::domain_name must be a hostname ([A-Za-z0-9.-]) or blank."
             exit 1
           fi
-          echo "stage=${STAGE} frontend=${FRONTEND} domain='${DOMAIN_NAME}' region=${AWS_REGION}"
+          if [ "${BASIC_AUTH}" = "true" ] && ! printf '%s\n' "${BASIC_AUTH_USER}" | grep -qE '^[A-Za-z0-9._@+-]{1,128}$'; then
+            echo "::error::basic_auth_user must be 1-128 chars: A-Za-z0-9._@+-"
+            exit 1
+          fi
+          echo "stage=${STAGE} frontend=${FRONTEND} auth=${AUTH_MODE} domain='${DOMAIN_NAME}' region=${AWS_REGION}"
 
       - name: Install + build CDK app
         working-directory: infra/cdk
@@ -96,8 +117,9 @@ jobs:
         working-directory: infra/cdk
         run: |
           set -euo pipefail
-          CTX="--context stage=${STAGE} --context frontendHosting=${FRONTEND}"
+          CTX="--context stage=${STAGE} --context frontendHosting=${FRONTEND} --context authMode=${AUTH_MODE}"
           if [ -n "${DOMAIN_NAME}" ]; then CTX="${CTX} --context domainName=${DOMAIN_NAME}"; fi
+          if [ "${BASIC_AUTH}" = "true" ]; then CTX="${CTX} --context basicAuthUser=${BASIC_AUTH_USER}"; fi
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
           if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
           npx cdk synth ${CTX} --quiet
@@ -117,8 +139,9 @@ jobs:
         # already bootstrapped.
         run: |
           set -euo pipefail
-          CTX="--context stage=${STAGE} --context frontendHosting=${FRONTEND}"
+          CTX="--context stage=${STAGE} --context frontendHosting=${FRONTEND} --context authMode=${AUTH_MODE}"
           if [ -n "${DOMAIN_NAME}" ]; then CTX="${CTX} --context domainName=${DOMAIN_NAME}"; fi
+          if [ "${BASIC_AUTH}" = "true" ]; then CTX="${CTX} --context basicAuthUser=${BASIC_AUTH_USER}"; fi
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
           if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
           npx cdk deploy --require-approval never ${CTX}

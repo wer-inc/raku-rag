@@ -1,0 +1,5 @@
+user_id,display_name,role,department,acl_tags
+sales-demo@example.com,営業デモ,tenant_admin,営業,"quality,maintenance,line-a3,line-b1"
+misaki@toyoseiki.co.jp,田中 美咲,reviewer,品質保証,"quality,line-b1"
+ops@toyoseiki.co.jp,設備保全,ops_owner,設備保全,"maintenance,line-a3,line-c2"
+field@toyoseiki.co.jp,現場ユーザー,field_user,製造,"line-a3"

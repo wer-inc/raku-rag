@@ -7,7 +7,9 @@ function first(...values: Array<string | undefined>): string {
 }
 
 export async function GET() {
-  const authMode = first(process.env.RAKU_AUTH_MODE, process.env.NEXT_PUBLIC_RAKU_AUTH_MODE);
+  const authMode = first(process.env.RAKU_AUTH_MODE, process.env.NEXT_PUBLIC_RAKU_AUTH_MODE)
+    .trim()
+    .toLowerCase();
   if (authMode !== "cognito") {
     return NextResponse.json({
       auth_mode: authMode,

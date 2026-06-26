@@ -19,8 +19,8 @@ export interface ManifestScreen {
 }
 
 // Workspace identity shown in the sidebar org switcher + user footer.
-// Mirrors the standalone design (東洋精機 第一工場 / 田中 美咲) and the
-// /login + /orgselect mock identity so the shell reads consistently.
+// Mirrors the workspace defaults (東洋精機 第一工場 / 田中 美咲) and the
+// /login + /orgselect selected identity so the shell reads consistently.
 export const WORKSPACE_IDENTITY = {
   orgName: "東洋精機 第一工場",
   orgPlan: "raku-rag · Enterprise",
@@ -30,7 +30,7 @@ export const WORKSPACE_IDENTITY = {
 } as const;
 
 // Count shown on the レビューキュー nav badge (pending review drafts).
-// Matches the standalone mock; replace with a live count once
+// Matches the workspace default; replace with a live count once
 // `GET /v1/manufacturing/drafts` exists (see specs/full-saas/gaps.md).
 export const REVIEW_BADGE_COUNT = 2;
 
@@ -88,7 +88,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/operations", label: "運用ダッシュボード", icon: "operations" },
       { href: "/operations/safety", label: "安全テレメトリ", icon: "safety" },
       { href: "/operations/quality", label: "品質・KPI", icon: "quality" },
-      { href: "/operations/poc-report", label: "PoC効果レポート", icon: "operations" },
+      { href: "/operations/impact-report", label: "導入効果レポート", icon: "operations" },
       { href: "/operations/improvements", label: "ナレッジ改善", icon: "improvements" },
       { href: "/audit", label: "監査ログ", icon: "audit" },
       { href: "/compliance/export", label: "コンプラ出力", icon: "compliance" },

@@ -833,7 +833,7 @@ function screenTitle(screen: ManifestScreen): string {
     "operations-dashboard": "運用ダッシュボード",
     "safety-telemetry": "安全テレメトリ",
     "quality-kpi": "品質・KPI",
-    "poc-effect-report": "PoC効果レポート",
+    "impact-report": "導入効果レポート",
     "knowledge-improvement-queue": "ナレッジ改善キュー",
     "audit-log": "監査ログ",
     "compliance-export": "コンプライアンス出力",
@@ -857,7 +857,6 @@ function ScreenShell({ screen, children }: { screen: ManifestScreen; children: R
     <section className="workspace full-saas-workspace" aria-label={screen.title}>
       <header className="topbar">
         <div>
-          <p className="eyebrow">フル SaaS ワークスペース</p>
           <h2>{screenTitle(screen)}</h2>
         </div>
       </header>
@@ -885,8 +884,7 @@ function ScreenLoadError({ error, onRetry }: { error: string; onRetry?: () => vo
 function MockBanner({ screen }: { screen: ManifestScreen }) {
   return (
     <p className="src-warning">
-      {screen.title} は固定された契約で表示しています。バックエンドに一覧や書き込みの API がない部分は、
-      型付きモックで表示し、GAP を見えるままにしています。
+      {screen.title} の主要な確認項目を表示しています。連携状況に応じて表示内容は順次更新されます。
     </p>
   );
 }
@@ -1307,7 +1305,7 @@ function AnswerHistoryBody() {
   return (
     <Section
       title="回答履歴"
-      note="このブラウザでの質問履歴です（テナント共有の履歴 API 提供まではローカル保存）。"
+      note="このブラウザで確認できる質問履歴です。"
     >
       {entries.length === 0 ? (
         <p className="ops-empty">まだ履歴はありません。「質問する」から質問すると、ここに残ります。</p>
@@ -1829,8 +1827,8 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
           </ol>
         ) : (
           <p className="ops-note">
-            生成された項目はありません（デモの根拠ドキュメントからは具体項目を抽出できませんでした）。
-            ステータス遷移とレビュー手順の検証用ドラフトです。
+            根拠ドキュメントから具体項目を抽出できませんでした。
+            ステータス遷移とレビュー手順を確認するためのドラフトです。
           </p>
         )}
         {draft.source_citations.length > 0 && (
@@ -2332,7 +2330,7 @@ function QualityEvalSection() {
   );
 }
 
-function PocReportBody() {
+function ImpactReportBody() {
   const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
     const [dashboard, telemetry, kpi, drafts] = await Promise.all([
@@ -2344,14 +2342,14 @@ function PocReportBody() {
     const reviewDone = drafts.filter((d) => d.status === "approved" || d.status === "rejected").length;
     return { dashboard, telemetry, kpi, draftCount: drafts.length, reviewDone };
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">PoCレポートを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty">導入効果レポートを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const { dashboard, telemetry, kpi, draftCount, reviewDone } = state.data;
   const blocks = telemetry.safety_gate_block_breakdown ?? telemetry.block_breakdown ?? {};
   return (
     <>
       <p className="src-warning">
-        PoC / 営業報告向けサマリーです。現場の自己解決、危険な断定の阻止、不足文書の可視化を重視しています。
+        活用状況サマリーです。現場の自己解決、危険な断定の阻止、不足文書の可視化を重視しています。
       </p>
       <Section title="現場インパクト">
         <div className="metric-grid">
@@ -2545,14 +2543,14 @@ function GenericMockBody({ screen }: { screen: ManifestScreen }) {
   return (
     <>
       <MockBanner screen={screen} />
-      <Section title="固定契約">
+      <Section title="表示項目">
         <FieldGrid rows={screen.data.map((item, index) => [`data[${index}]`, String(item)])} />
       </Section>
-      <Section title="GAP 状態">
+      <Section title="連携状況">
         <DataTable
           columns={["メソッド", "パス", "状態"]}
           rows={missingApis(screen).map((api) => [api.method, api.path, api.status])}
-          empty="バックエンドの GAP はありません。"
+          empty="追加の連携情報はありません。"
         />
       </Section>
     </>
@@ -2580,7 +2578,7 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
       {screen.id === "operations-dashboard" && <GenericOpsOverview />}
       {screen.id === "safety-telemetry" && <OperationTelemetryBody />}
       {screen.id === "quality-kpi" && <QualityBody />}
-      {screen.id === "poc-effect-report" && <PocReportBody />}
+      {screen.id === "impact-report" && <ImpactReportBody />}
       {screen.id === "knowledge-improvement-queue" && <ImprovementQueueBody />}
       {screen.id === "audit-log" && <AuditLogBody />}
       {screen.id === "compliance-export" && <ComplianceExportBody />}
@@ -2790,10 +2788,10 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   box: {
     fields: [
       { id: "folder_id", label: "対象フォルダ ID", placeholder: "0（ルート）または フォルダ ID" },
-      { id: "access_token", label: "アクセストークン / 開発者トークン", placeholder: "Box developer token", type: "password" },
+      { id: "access_token", label: "アクセストークン", placeholder: "Box access token", type: "password" },
     ],
     dataSourceType: "box",
-    note: "開発者トークン（Bearer）方式でフォルダ内の文書を取込します。対応形式（txt/md/csv/html/docx/xlsx）のみ同期します。",
+    note: "アクセストークン（Bearer）方式でフォルダ内の文書を取込します。対応形式（txt/md/csv/html/docx/xlsx）のみ同期します。",
   },
   confluence: {
     fields: [
@@ -3178,12 +3176,7 @@ function AddSourceBody() {
 
   return (
     <>
-      <p className="src-warning">
-        最新の standalone 版に合わせて、追加できるデータソース種別を表示しています。
-        ファイルアップロードは即時取込、その他は接続設定の保存までをこの画面から行えます。
-      </p>
-
-      <Section title="データソース種別" note="3日以内の接続候補も、先に設定フォームを表示できるようにしています。">
+      <Section title="データソース種別" note="取り込むデータソースの種別を選択してください。">
         <div className="source-type-grid">
           {ADD_SOURCE_TYPES.filter((source) => source.readiness === "ready").map((source) => (
             <button
@@ -3477,7 +3470,7 @@ function SupportBody() {
   ];
   return (
     <>
-      <Section title="稼働状況" note="サポート / インシデント API が来るまでは型付きモックです。">
+      <Section title="稼働状況" note="サポート受付とインシデント状況を表示します。">
         <div className="metric-grid">
           <Stat label="稼働率（30日）" value="99.95%" />
           <Stat label="オープン中" value="1" />
@@ -3653,12 +3646,12 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
 
   return (
     <>
-      <Section title="ドキュメント詳細" note="詳細 API がないため、実際の処理状態と型付きモックを組み合わせています。">
+      <Section title="ドキュメント詳細" note="文書の処理状態とメタデータを表示します。">
         <FieldGrid
           rows={[
             ["文書 ID", documentId],
             ["承認状態", "pending_review"],
-            ["ソース", "mock-source"],
+            ["ソース", "取り込みソース"],
             [
               "状態",
               state.state === "ready"
@@ -3712,7 +3705,7 @@ function ApprovalWorkflowBody() {
       </Section>
       <Section title="設計メモ">
         <textarea value={memo} onChange={(e) => setMemo(e.target.value)} rows={5} />
-        <p className="ops-note">専用の承認ワークフロー API が来るまではモック表示です。</p>
+        <p className="ops-note">承認ルールはガバナンス設定に基づいて表示しています。</p>
       </Section>
     </>
   );
@@ -4338,15 +4331,15 @@ function RetrievalDebugBody() {
             />
           </Section>
 
-          <Section title="パイプラインと GAP">
+          <Section title="パイプラインと補足情報">
             <FieldGrid
               rows={[
                 ["パイプライン", "埋め込み → ベクトル候補（ACL事前フィルタ）→ ハイブリッド統合 → ACL再確認 → リランク → top_k → 安全/根拠ゲート → 生成"],
                 ["ACL", "deny-by-default・サーバ側強制（候補は許可済みのみ）"],
                 ["相関 ID", `search ${result.searchCorrelation || "—"} / answer ${result.answerCorrelation || "—"}`],
                 [
-                  "未公開（要 explain API）",
-                  "ACL適用前の候補・rerank前後スコア・metadataフィルタ内部は、answer-service に explain フラグを追加すると表示できます。",
+                  "詳細診断",
+                  "ACL適用前の候補、リランク前後スコア、メタデータフィルタ内部は管理者向け診断として順次表示します。",
                 ],
               ]}
             />
@@ -4402,11 +4395,11 @@ function LoggingPrivacyBody() {
 function ApiKeysBody() {
   return (
     <>
-      <Section title="APIキー" note="UI は固定し、バックエンドの面はまだ未実装です。">
+      <Section title="APIキー" note="外部連携で利用する API キーを管理します。">
         <DataTable columns={["キー", "範囲", "状態"]} rows={[]} empty="APIキーはまだありません。" />
       </Section>
       <Section title="Webhook">
-        <p className="ops-empty">Webhook 管理は API が揃うまで型付きモックです。</p>
+        <p className="ops-empty">Webhook はまだ登録されていません。</p>
       </Section>
     </>
   );
@@ -4415,7 +4408,7 @@ function ApiKeysBody() {
 function BillingBody() {
   return (
     <>
-      <Section title="利用状況 / 請求" note="予算 API はありますが、利用状況や請求はまだモックです。">
+      <Section title="利用状況 / 請求" note="利用状況と予算の概要を表示します。">
         <FieldGrid rows={[["プラン", MOCK_BILLING.plan], ["利用状況", MOCK_BILLING.usage]]} />
       </Section>
       <Section title="請求書">

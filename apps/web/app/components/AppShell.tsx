@@ -2,13 +2,13 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "./Sidebar";
-import { loadSessionUserId } from "../../lib/session";
+import SalesDemoDrawer from "./SalesDemoDrawer";
+import { getBrowserSessionState } from "../../lib/session";
 import { navAllowed, rolesForUser, type WorkspaceRole } from "../../lib/nav-rbac";
 
 const AUTH_ROUTES = new Set(["/login", "/orgselect", "/onboarding"]);
-
 // B3: role-based navigation must hide unauthorized screens from the UI, not just from the sidebar —
 // a field_user typing /admin/users must not get the admin screen. The sidebar already filters its
 // links by role (filterNavGroups); this guards direct-URL / deep-link access at the single chokepoint
@@ -33,19 +33,51 @@ function AccessDenied({ pathname }: { pathname: string }) {
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "/";
+  const router = useRouter();
   // Least privilege until the session role is known (avoids an admin-nav / admin-screen flash on load).
   const [roles, setRoles] = useState<WorkspaceRole[] | null>(null);
+  const [salesDemo, setSalesDemo] = useState<{ enabled: boolean; displayName: string }>({
+    displayName: "",
+    enabled: false,
+  });
   // Mobile only: the sidebar is an off-canvas drawer; this toggles it. Desktop CSS ignores `nav-open`.
   const [navOpen, setNavOpen] = useState(false);
+  const [salesDrawerOpen, setSalesDrawerOpen] = useState(false);
 
   useEffect(() => {
-    const uid = loadSessionUserId() ?? "misaki";
-    setRoles(rolesForUser(uid));
-  }, []);
+    let active = true;
+    if (AUTH_ROUTES.has(pathname)) {
+      setRoles(null);
+      setSalesDemo({ displayName: "", enabled: false });
+      return () => {
+        active = false;
+      };
+    }
+    getBrowserSessionState()
+      .then((session) => {
+        if (!active) return;
+        if (session.isCognito && !session.isAuthenticated) {
+          router.replace(`/login?return_to=${encodeURIComponent(pathname)}`);
+          return;
+        }
+        setRoles(session.roles.length ? session.roles : rolesForUser(session.userId));
+        setSalesDemo({
+          displayName: session.displayName || session.userId,
+          enabled: session.isSalesDemo,
+        });
+      })
+      .catch(() => {
+        if (active) router.replace(`/login?return_to=${encodeURIComponent(pathname)}`);
+      });
+    return () => {
+      active = false;
+    };
+  }, [pathname, router]);
 
   // Close the drawer whenever the route changes so a nav tap doesn't leave it open over the new screen.
   useEffect(() => {
     setNavOpen(false);
+    setSalesDrawerOpen(false);
   }, [pathname]);
 
   if (AUTH_ROUTES.has(pathname)) {
@@ -95,6 +127,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <AccessDenied pathname={pathname} />
         )}
       </div>
+      {salesDemo.enabled && (
+        <SalesDemoDrawer
+          displayName={salesDemo.displayName}
+          open={salesDrawerOpen}
+          onClose={() => setSalesDrawerOpen(false)}
+          onToggle={() => setSalesDrawerOpen((open) => !open)}
+        />
+      )}
     </div>
   );
 }

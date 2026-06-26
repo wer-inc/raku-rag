@@ -16,6 +16,7 @@ const DEMO_USERS = [
   { id: "carol", label: "Carol Kato（承認者）" },
   { id: "dave", label: "Dave Ops（ナレッジ管理者）" },
   { id: "alice", label: "Alice Tanaka（管理者）" },
+  { id: "sales-demo@example.com", label: "資料確認ユーザー" },
 ] as const;
 
 export default function OrgSelectPage() {
@@ -37,7 +38,7 @@ export default function OrgSelectPage() {
           <span className="auth-brand">Raku RAG</span>
         </div>
         <h1>組織を選択</h1>
-        <p className="auth-subtle">デモ用にロール別ユーザーを選んでから組織に入れます。</p>
+        <p className="auth-subtle">ロール別ユーザーを選んでから組織に入れます。</p>
         <label className="auth-form-grid">
           <span>ユーザー（ロール）</span>
           <select id="demo-user" defaultValue="misaki">

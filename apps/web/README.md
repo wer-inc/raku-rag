@@ -51,3 +51,15 @@ npm run dev --workspace @raku-rag/web
 ```
 
 Set `NEXT_PUBLIC_API_BASE=http://localhost:3000/v1` when running against the local API.
+
+## Authentication
+
+The browser supports two app-auth modes:
+
+- `RAKU_AUTH_MODE=dev`: the web route `/api/dev-token` mints the local HMAC token used by demos.
+- `RAKU_AUTH_MODE=cognito`: the login page accepts email/password and sends the returned JWT as the
+  API bearer token.
+
+Optional HTTP Basic auth is enforced by `apps/web/middleware.ts` when both
+`RAKU_BASIC_AUTH_USER` and `RAKU_BASIC_AUTH_PASSWORD` are present. This protects the AWS-hosted web
+entrypoint before the app login screen; it is separate from tenant identity and API authorization.

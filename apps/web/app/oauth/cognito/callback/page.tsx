@@ -22,7 +22,7 @@ export default function CognitoCallbackPage() {
       return;
     }
     finishCognitoLogin(code, state)
-      .then(() => router.replace("/orgselect"))
+      .then((next) => router.replace(next))
       .catch((err) => setError(err instanceof Error ? err.message : "Cognito login failed"));
   }, [params, router]);
 

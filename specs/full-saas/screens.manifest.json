@@ -336,10 +336,10 @@
       "status": "spec"
     },
     {
-      "id": "poc-effect-report",
+      "id": "impact-report",
       "category": "operations-compliance",
-      "route": "/operations/poc-report",
-      "title": "PoC Effect Report",
+      "route": "/operations/impact-report",
+      "title": "Adoption Impact Report",
       "absorbs": [],
       "data": ["kpi_report", "safety_telemetry", "dashboard_summary", "draft_counts", "business_impact"],
       "apis": [

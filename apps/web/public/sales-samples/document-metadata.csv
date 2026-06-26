@@ -1,0 +1,4 @@
+document_id,title,document_kind,approval_status,effective_date,factory_id,line_id,equipment_id,owner_department,acl_tags
+WI-ASSY-014,始業前点検 PRESS-07,work_instruction,approved,2026-04-01,F01,L-A3,PRESS-07,製造技術,"quality,maintenance,line-a3"
+QC-CAMERA-008,外観検査カメラ再調整基準,quality_standard,approved,2026-03-15,F01,L-B1,CAMERA-02,品質保証,"quality,line-b1"
+MT-ROBOT-021,搬送ロボット原点復帰手順,maintenance_manual,draft,2026-06-01,F02,L-C2,ROBOT-04,設備保全,"maintenance,line-c2"

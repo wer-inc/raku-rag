@@ -15,7 +15,6 @@ export default async function FullSaasRoute({
       <section className="workspace" aria-label="Not found">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Full SaaS workspace</p>
             <h2>Unknown route</h2>
           </div>
         </header>

@@ -37,6 +37,7 @@ const DEV_ROLES_BY_USER: Record<string, string[]> = {
   carol: ["reviewer"],
   dave: ["ops_owner"],
   misaki: ["tenant_admin", "reviewer"],
+  "sales-demo@example.com": ["tenant_admin", "reviewer", "sales_demo"],
 };
 
 function normalize(body: Record<string, unknown>): DevClaims | null {

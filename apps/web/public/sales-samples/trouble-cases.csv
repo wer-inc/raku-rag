@@ -1,0 +1,4 @@
+case_id,factory_id,line_id,equipment_id,occurred_date,symptom,cause,countermeasure,approval_status,acl_tags
+TC-2026-001,F01,L-A3,PRESS-07,2026-05-12,始業直後に油圧が低下した,フィルタ目詰まり,フィルタ交換後に圧力を再測定,approved,"maintenance,line-a3"
+TC-2026-002,F01,L-B1,CAMERA-02,2026-05-18,外観検査で誤検知が増えた,照明角度のずれ,照明ブラケットを固定し再キャリブレーション,approved,"quality,line-b1"
+TC-2026-003,F02,L-C2,ROBOT-04,2026-06-03,搬送位置が数mmずれる,原点復帰センサーの汚れ,センサー清掃と原点確認,draft,"maintenance,line-c2"

@@ -81,8 +81,52 @@ CloudWatch ログを案内。`prod` なら `STACK=RakuRag-prod`。
 ```bash
 # AWS完結・TLS付き（最小スペック）:
 npx cdk deploy --context stage=sales --context frontendHosting=aws-nextjs --context domainName=demo.example.com
+
+# Cognitoログイン + Basic認証つき:
+npx cdk deploy \
+  --context stage=sales \
+  --context frontendHosting=aws-nextjs \
+  --context authMode=cognito \
+  --context basicAuthUser=raku
 ```
 `cdk synth` 実数(aws-nextjs)：公開ALB=1 / リスナ既定=web・Rule `/v1/*`=API / domain時はACM1＋443＋80リダイレクト。
+
+### Cognito ログイン
+
+`authMode=cognito` では、web の `/login` が通常のメールアドレス/パスワード画面として動作し、
+Cognito User Pool の `USER_PASSWORD_AUTH` で取得した JWT を API の Bearer token として送ります。
+API は JWKS で署名検証し、`custom:tenant_id` と `cognito:groups` から tenant/user/roles を確定します。
+Hosted UI の callback に依存しないため、営業用の HTTP-only ALB URL でもログイン確認できます。
+独自ドメイン/TLSは営業先に見せるURLを整えるタイミングで追加できます。
+
+デプロイ後、ユーザーは Cognito に作成します。例:
+
+```bash
+POOL_ID=$(aws cloudformation describe-stacks --stack-name RakuRag-sales \
+  --query "Stacks[0].Outputs[?OutputKey=='CognitoUserPoolId'].OutputValue" --output text)
+
+aws cognito-idp admin-create-user \
+  --user-pool-id "$POOL_ID" \
+  --username misaki@example.com \
+  --user-attributes Name=email,Value=misaki@example.com Name=email_verified,Value=true Name=custom:tenant_id,Value=demo
+
+aws cognito-idp admin-add-user-to-group \
+  --user-pool-id "$POOL_ID" \
+  --username misaki@example.com \
+  --group-name tenant_admin
+```
+
+### Basic 認証
+
+`basicAuthUser=<user>` を渡すと `${stage}/web-basic-auth` という Secrets Manager シークレットが作られ、
+web タスクに `RAKU_BASIC_AUTH_PASSWORD` として注入されます。パスワード取得:
+
+```bash
+SECRET=$(aws cloudformation describe-stacks --stack-name RakuRag-sales \
+  --query "Stacks[0].Outputs[?OutputKey=='WebBasicAuthSecretName'].OutputValue" --output text)
+aws secretsmanager get-secret-value --secret-id "$SECRET" \
+  --query SecretString --output text
+```
 
 **B. Vercel/外部(external-vercel・既定)** Vercel 側で `NEXT_PUBLIC_API_BASE=https://<ApiLoadBalancerDnsName>/v1`
 を設定（このとき API ALB 側に別途 TLS/ドメイン/CORS が必要）。
@@ -123,9 +167,8 @@ npx cdk deploy --context stage=sales --context frontendHosting=aws-nextjs --cont
 ## まだ残る穴（正直に）
 - **初回 cdk deploy は未実機検証**（この環境にAWS鍵・Docker無し→ `cdk synth` 緑まで）。最初のデプロイで
   Aurora の `raku_rag`→`SET ROLE raku_app` 権限、内部ALB到達、ヘルスチェックを実機確認してください。
-- **本番認証(Cognito)はアプリ未統合**：API は今 HMAC `X-User-Token`（dev-token発行）。営業デモはこのままで
-  可だが、web を本番ビルド(NODE_ENV=production)にすると dev-token 発行が無効化される点に注意（デモは
-  Vercel/web を dev、または dev-token override を入れる）。本番は Cognito/JWKS 統合が別ワーク。
+- **Cognitoユーザーの初期投入は手動**：User Pool / App Client / groups / Hosted UI / JWT検証はCDKとアプリに
+  結線済みですが、初回ユーザー作成・仮パスワード配布・グループ付与は運用手順として実施します。
 - **マイグレーション自動化**・**TLS(ACM/独自ドメイン)** は別途。
 
 ## 検証済み（このリポ環境）

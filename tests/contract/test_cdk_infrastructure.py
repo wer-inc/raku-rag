@@ -26,6 +26,8 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             "IngestionDeadLetterQueue",
             "s3.Bucket",
             "cognito.UserPool",
+            "CfnUserPoolGroup",
+            "sales_demo",
             "kms.Key",
             "secretsmanager.Secret",
             "cloudwatch.Dashboard",
@@ -183,10 +185,16 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             '"ApiRoute"',
             '"/v1/*"',
             "RAKU_ENABLE_DEV_TOKEN_ISSUER",
+            "RAKU_BASIC_AUTH_USER",
+            "RAKU_BASIC_AUTH_PASSWORD",
+            "WebBasicAuthSecret",
+            "CognitoUserPoolClientId",
             "WebCertificate",
             "redirectHTTP",
             "allowFrom",
             'tryGetContext("domainName")',
+            'tryGetContext("authMode")',
+            'tryGetContext("basicAuthUser")',
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)

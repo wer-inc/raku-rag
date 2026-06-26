@@ -16,11 +16,10 @@ import {
   homeNavVisible,
   primaryRole,
   roleLabel,
-  rolesForUser,
   userDisplayName,
   type WorkspaceRole,
 } from "../../lib/nav-rbac";
-import { clearSessionToken, loadSessionUserId } from "../../lib/session";
+import { getBrowserSessionState, startCognitoLogout } from "../../lib/session";
 
 const ICON_PATHS: Record<NavIconName | "orgswitch" | "signout", string> = {
   home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
@@ -85,23 +84,39 @@ export default function Sidebar() {
   const router = useRouter();
   const active = activeNavHref(pathname);
   const [userId, setUserId] = useState(DEMO_USER_FALLBACK);
-  // Least privilege until loadSessionUserId resolves the real role (avoids an admin-nav flash on load).
+  const [displayName, setDisplayName] = useState(userDisplayName(DEMO_USER_FALLBACK));
+  // Least privilege until the browser session resolves the real role (avoids an admin-nav flash on load).
   const [roles, setRoles] = useState<WorkspaceRole[]>(["field_user"]);
 
   useEffect(() => {
-    const uid = loadSessionUserId() ?? "misaki";
-    setUserId(uid);
-    setRoles(rolesForUser(uid));
+    let active = true;
+    getBrowserSessionState()
+      .then((session) => {
+        if (!active) return;
+        setUserId(session.userId);
+        setDisplayName(session.displayName || userDisplayName(session.userId));
+        setRoles(session.roles.length ? session.roles : ["field_user"]);
+      })
+      .catch(() => {
+        if (active) {
+          setUserId(DEMO_USER_FALLBACK);
+          setDisplayName(userDisplayName(DEMO_USER_FALLBACK));
+          setRoles(["field_user"]);
+        }
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const groups = filterNavGroups(roles);
   const showHome = homeNavVisible(roles);
-  const displayName = userDisplayName(userId);
   const displayRole = roleLabel(primaryRole(roles));
 
   function onSignOut() {
-    clearSessionToken();
-    router.push("/login");
+    void startCognitoLogout().then((started) => {
+      if (!started) router.push("/login");
+    });
   }
 
   return (

@@ -6,7 +6,17 @@ export type WorkspaceRole =
   | "reviewer"
   | "ops_owner"
   | "tenant_admin"
-  | "platform_admin";
+  | "platform_admin"
+  | "sales_demo";
+
+const WORKSPACE_ROLES: WorkspaceRole[] = [
+  "field_user",
+  "reviewer",
+  "ops_owner",
+  "tenant_admin",
+  "platform_admin",
+  "sales_demo",
+];
 
 const FIELD_USER_HREFS = new Set(["/home", "/", "/answers/history"]);
 
@@ -27,7 +37,7 @@ const OPS_OWNER_HREFS = new Set([
   "/operations/safety",
   "/operations/quality",
   "/operations/improvements",
-  "/operations/poc-report",
+  "/operations/impact-report",
   "/admin/retrieval/debug",
 ]);
 
@@ -40,8 +50,23 @@ export function rolesForUser(userId: string): WorkspaceRole[] {
     carol: ["reviewer"],
     dave: ["ops_owner"],
     misaki: ["reviewer", "tenant_admin"],
+    "sales-demo@example.com": ["sales_demo", "tenant_admin", "reviewer"],
   };
   return table[userId] ?? ["field_user"];
+}
+
+export function isWorkspaceRole(role: string): role is WorkspaceRole {
+  return (WORKSPACE_ROLES as string[]).includes(role);
+}
+
+export function normalizeWorkspaceRoles(values: string[]): WorkspaceRole[] {
+  const seen = new Set<WorkspaceRole>();
+  for (const value of values) {
+    if (isWorkspaceRole(value)) {
+      seen.add(value);
+    }
+  }
+  return Array.from(seen);
 }
 
 export function primaryRole(roles: WorkspaceRole[]): WorkspaceRole {
@@ -100,6 +125,8 @@ export function roleLabel(role: WorkspaceRole): string {
       return "ナレッジ管理者";
     case "reviewer":
       return "承認者";
+    case "sales_demo":
+      return "管理者";
     default:
       return "一般ユーザー";
   }
@@ -112,6 +139,7 @@ export function userDisplayName(userId: string): string {
     carol: "Carol Kato",
     dave: "Dave Ops",
     misaki: "田中 美咲",
+    "sales-demo@example.com": "資料確認ユーザー",
   };
   return names[userId] ?? userId;
 }
