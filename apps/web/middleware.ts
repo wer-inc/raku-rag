@@ -44,6 +44,10 @@ function unauthorized(): NextResponse {
 }
 
 export function middleware(req: NextRequest) {
+  if (req.nextUrl.pathname === "/api/health") {
+    return NextResponse.next();
+  }
+
   const expectedUser = envFirst("RAKU_BASIC_AUTH_USER", "BASIC_AUTH_USER");
   const expectedPassword = envFirst("RAKU_BASIC_AUTH_PASSWORD", "BASIC_AUTH_PASSWORD");
   if (!expectedUser || !expectedPassword) {

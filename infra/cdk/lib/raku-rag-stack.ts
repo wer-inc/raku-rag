@@ -534,7 +534,7 @@ export class RakuRagStack extends cdk.Stack {
         }
       );
       webService.targetGroup.configureHealthCheck({
-        path: "/",
+        path: "/api/health",
         healthyHttpCodes: "200-399"
       });
 
