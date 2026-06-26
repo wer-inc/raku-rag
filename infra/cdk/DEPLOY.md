@@ -116,6 +116,15 @@ aws cognito-idp admin-add-user-to-group \
   --group-name tenant_admin
 ```
 
+営業デモ用アカウントは、再実行可能な同期スクリプトで作成・補正できます。API は
+`custom:tenant_id` を必須の signed claim として検証するため、この属性が欠けるとログイン後の API
+呼び出しは `invalid Cognito JWT` になります。
+
+```bash
+SALES_DEMO_PASSWORD='<配布するパスワード>' \
+  bash scripts/aws/ensure-sales-demo-user.sh
+```
+
 ### Basic 認証
 
 `basicAuthUser=<user>` を渡すと `${stage}/web-basic-auth` という Secrets Manager シークレットが作られ、
