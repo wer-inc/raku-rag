@@ -14,6 +14,8 @@ import {
 import type { Request } from "express";
 import type {
   AdminJobSummary,
+  DataSourcePreviewRequest,
+  DataSourcePreviewResponse,
   DeleteDocumentResponse,
   DocumentProcessingStatusResponse,
   IngestResponse,
@@ -113,6 +115,15 @@ export class AdminJobsController {
     return this.postToCore(req, `/internal/sources/${encodeURIComponent(sourceId)}/test-connection`, body);
   }
 
+  @Post("sources/:source_id/preview")
+  @HttpCode(200)
+  async previewSource(
+    @Req() req: Request,
+    @Param("source_id") sourceId: string,
+    @Body() body: DataSourcePreviewRequest,
+  ): Promise<DataSourcePreviewResponse> {
+    return this.postToCore(req, `/internal/sources/${encodeURIComponent(sourceId)}/preview`, body);
+  }
 
   @Post("sources/:source_id/sync")
   @HttpCode(202)

@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type {
   AdminDataSource,
   Citation,
+  DataSourcePreviewResponse,
   GovernanceStatus,
   KnowledgeOpsDashboard,
   ManufacturingAnswerResponse,
@@ -20,6 +21,7 @@ import type {
 import {
   adminDataSources,
   adminCitationView,
+  adminSourcePreview,
   adminSourceSync,
   type AdminSourceSyncResponse,
   apiDeleteJson,
@@ -908,6 +910,13 @@ function sourceFreshness(row: SourceListRow): string {
   return Number.isNaN(parsed.getTime()) ? at : parsed.toLocaleString("ja-JP");
 }
 
+function valueLabel(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (Array.isArray(value)) return value.map(valueLabel).join(", ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
 async function loadSourceListRows(): Promise<SourceListRow[]> {
   const token = await getSessionToken();
   const sources = await adminDataSources(token);
@@ -961,6 +970,7 @@ function SourceListBody() {
               <div className="is-right">変更数</div>
               <div className="is-right">最終同期</div>
               <div>コレクション</div>
+              <div>取込前確認</div>
             </div>
             {state.data.map(({ source, sync }) => {
               const config = (source.config ?? {}) as Record<string, unknown>;
@@ -987,12 +997,291 @@ function SourceListBody() {
                   <div className="is-right mono">{changed ?? "—"}</div>
                   <div className="is-right muted">{sourceFreshness({ source, sync })}</div>
                   <div className="muted">{source.collection_id}</div>
+                  <div>
+                    <span className="standalone-status wait">プレビュー</span>
+                  </div>
                 </Link>
               );
             })}
           </div>
         ))}
     </div>
+  );
+}
+
+const PREVIEW_REQUIRED_FIELDS = ["equipment_id", "document_kind", "approval_status"];
+const PREVIEW_DEFAULT_KIND_OPTIONS = [
+  ["", "指定なし"],
+  ["trouble_report", "トラブル報告"],
+  ["work_instruction", "作業標準"],
+  ["inspection_record", "検査記録"],
+  ["maintenance_log", "保全記録"],
+] as const;
+const PREVIEW_APPROVAL_OPTIONS = [
+  ["", "指定なし"],
+  ["pending_review", "承認待ち"],
+  ["approved", "承認済み"],
+  ["draft", "ドラフト"],
+  ["obsolete", "旧版"],
+] as const;
+
+function splitPreviewFields(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function previewValidationClass(status: string): string {
+  return status === "valid" ? "ok" : "wait";
+}
+
+function previewDisplayFields(preview: DataSourcePreviewResponse): string[] {
+  const mapped = Object.values(preview.suggested_mapping);
+  const normalized = new Set<string>();
+  for (const row of preview.sample_rows) {
+    for (const key of Object.keys(row.normalized ?? {})) normalized.add(key);
+  }
+  const preferred = [
+    ...PREVIEW_REQUIRED_FIELDS,
+    "factory_id",
+    "line_id",
+    "process_id",
+    "alarm_code",
+    "defect_type",
+    "part_no",
+    "effective_date",
+  ];
+  const ordered = [
+    ...preferred,
+    ...preview.canonical_fields.filter((field) => !preferred.includes(field)),
+  ];
+  return ordered
+    .filter((field, index, all) => all.indexOf(field) === index)
+    .filter((field) => mapped.includes(field) || normalized.has(field))
+    .slice(0, 8);
+}
+
+function SourcePreviewPanel({
+  sourceId,
+  collectionId,
+}: {
+  sourceId: string;
+  collectionId?: string | null;
+}) {
+  const [sampleDocuments, setSampleDocuments] = useState(2);
+  const [sampleRows, setSampleRows] = useState(8);
+  const [requiredFields, setRequiredFields] = useState(PREVIEW_REQUIRED_FIELDS.join(", "));
+  const [documentKind, setDocumentKind] = useState("");
+  const [approvalStatus, setApprovalStatus] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState("");
+  const [preview, setPreview] = useState<DataSourcePreviewResponse | null>(null);
+  const [mappingEdits, setMappingEdits] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPreview(null);
+    setMappingEdits({});
+    setMessage(null);
+  }, [sourceId]);
+
+  const displayFields = useMemo(() => (preview ? previewDisplayFields(preview) : []), [preview]);
+
+  async function runPreview(useEditedMapping: boolean) {
+    if (busy) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const defaults: Record<string, unknown> = {};
+      if (documentKind) defaults.document_kind = documentKind;
+      if (approvalStatus) defaults.approval_status = approvalStatus;
+      if (effectiveDate) defaults.effective_date = effectiveDate;
+
+      const fieldMapping = useEditedMapping
+        ? Object.fromEntries(
+            Object.entries(mappingEdits).filter(([, target]) => target.trim()),
+          )
+        : undefined;
+
+      const token = await getSessionToken();
+      const data = await adminSourcePreview(
+        sourceId,
+        {
+          collection_id: collectionId ?? undefined,
+          sample_documents: sampleDocuments,
+          sample_rows: sampleRows,
+          field_mapping: fieldMapping,
+          defaults,
+          required_fields: splitPreviewFields(requiredFields),
+        },
+        token,
+      );
+      setPreview(data);
+      setMappingEdits((current) => {
+        const next: Record<string, string> = { ...data.suggested_mapping };
+        for (const column of data.detected_columns) {
+          if (current[column] !== undefined) next[column] = current[column];
+        }
+        return next;
+      });
+    } catch (err) {
+      setMessage(formatLoadError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateMapping(column: string, target: string) {
+    setMappingEdits((current) => ({ ...current, [column]: target }));
+  }
+
+  return (
+    <Section title="取込プレビュー" note="サンプル文書・行数・必須項目">
+      <div className="preview-control-grid">
+        <label>
+          <span>文書数</span>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            value={sampleDocuments}
+            onChange={(e) => setSampleDocuments(Math.max(1, Number(e.target.value) || 1))}
+          />
+        </label>
+        <label>
+          <span>行数</span>
+          <input
+            type="number"
+            min={1}
+            max={50}
+            value={sampleRows}
+            onChange={(e) => setSampleRows(Math.max(1, Number(e.target.value) || 1))}
+          />
+        </label>
+        <label>
+          <span>文書種別</span>
+          <select value={documentKind} onChange={(e) => setDocumentKind(e.target.value)}>
+            {PREVIEW_DEFAULT_KIND_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>承認状態</span>
+          <select value={approvalStatus} onChange={(e) => setApprovalStatus(e.target.value)}>
+            {PREVIEW_APPROVAL_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>発効日</span>
+          <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
+        </label>
+        <label>
+          <span>必須項目</span>
+          <input value={requiredFields} onChange={(e) => setRequiredFields(e.target.value)} />
+        </label>
+      </div>
+
+      <div className="screen-actions">
+        <button type="button" disabled={busy} onClick={() => void runPreview(false)}>
+          {busy ? "確認中…" : "プレビュー実行"}
+        </button>
+        {preview && (
+          <button type="button" disabled={busy} onClick={() => void runPreview(true)}>
+            補正して再プレビュー
+          </button>
+        )}
+      </div>
+      {message && <p className="src-warning">{message}</p>}
+
+      {preview && (
+        <div className="preview-results">
+          <div className="preview-summary">
+            <span>
+              <strong>{preview.document_count}</strong>
+              文書
+            </span>
+            <span>
+              <strong>{preview.detected_columns.length}</strong>
+              列
+            </span>
+            <span>
+              <strong>{preview.validation.valid_count}</strong>
+              正常行
+            </span>
+            <span>
+              <strong>{preview.validation.needs_review_count}</strong>
+              要確認行
+            </span>
+          </div>
+
+          {preview.detected_columns.length > 0 && (
+            <div className="preview-map">
+              <div className="preview-map-head">
+                <span>元カラム</span>
+                <span>標準項目</span>
+                <span>信頼度</span>
+              </div>
+              {preview.detected_columns.map((column) => (
+                <div key={column} className="preview-map-row">
+                  <span className="mono">{column}</span>
+                  <select
+                    value={mappingEdits[column] ?? preview.suggested_mapping[column] ?? ""}
+                    onChange={(e) => updateMapping(column, e.target.value)}
+                  >
+                    <option value="">未使用</option>
+                    {preview.canonical_fields.map((field) => (
+                      <option key={field} value={field}>
+                        {field}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="mono">
+                    {preview.mapping_confidence[column] != null
+                      ? `${Math.round(preview.mapping_confidence[column] * 100)}%`
+                      : "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <DataTable
+            columns={["行", "状態", ...displayFields, "メッセージ"]}
+            rows={preview.sample_rows.map((row) => [
+              `${row.document_id}:${row.row_number}`,
+              <span className={`standalone-status ${previewValidationClass(row.validation.status)}`}>
+                {row.validation.status === "valid" ? "正常" : "要確認"}
+              </span>,
+              ...displayFields.map((field) => valueLabel(row.normalized[field])),
+              [...row.validation.errors, ...row.validation.warnings].join(" / ") || "—",
+            ])}
+            empty="サンプル行はありません。"
+          />
+
+          {preview.documents.some((doc) => doc.text_preview) && (
+            <div className="preview-docs">
+              {preview.documents
+                .filter((doc) => doc.text_preview)
+                .map((doc) => (
+                  <pre key={doc.document_id} className="code-block">
+                    {doc.document_id}
+                    {"\n"}
+                    {doc.text_preview}
+                  </pre>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -1215,6 +1504,11 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
         {polling && <p className="ops-note">同期中です — {SYNC_POLL_MS / 1000} 秒ごとに自動更新します。</p>}
         {syncMessage && <p className="ops-note">{syncMessage}</p>}
       </Section>
+
+      <SourcePreviewPanel
+        sourceId={sourceId}
+        collectionId={syncState.state === "ready" ? syncState.data.collection_id : undefined}
+      />
 
       {syncState.state === "loading" && <p className="ops-empty">ソース同期状態を読み込み中…</p>}
       {syncState.state === "error" && <ScreenLoadError error={syncState.error} onRetry={reload} />}

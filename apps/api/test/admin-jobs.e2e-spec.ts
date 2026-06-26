@@ -101,6 +101,49 @@ describe("admin ingestion status facade (e2e)", () => {
         );
         return;
       }
+      if (req.method === "POST" && req.url === "/internal/sources/upload/preview") {
+        res.end(
+          JSON.stringify({
+            source_id: "upload",
+            document_count: 1,
+            documents: [
+              {
+                document_id: "sample",
+                document_ref: "s3://pilot/trouble.csv",
+                content_type: "text/csv",
+                kind: "table",
+                sample_row_count: 1,
+              },
+            ],
+            canonical_fields: ["equipment_id", "alarm_code"],
+            detected_columns: ["設備番号", "アラーム"],
+            explicit_mapping: {},
+            suggested_mapping: { "設備番号": "equipment_id", "アラーム": "alarm_code" },
+            mapping_confidence: { "設備番号": 0.92, "アラーム": 0.92 },
+            defaults: {},
+            required_fields: ["equipment_id"],
+            sample_rows: [
+              {
+                document_id: "sample",
+                sheet_name: "sheet1",
+                row_number: 2,
+                raw: { "設備番号": "M-100", "アラーム": "E152" },
+                normalized: { equipment_id: "M-100", alarm_code: "E152" },
+                validation: { status: "valid", errors: [], warnings: [] },
+              },
+            ],
+            validation: {
+              valid_count: 1,
+              needs_review_count: 0,
+              error_count: 0,
+              warning_count: 0,
+              errors: [],
+              warnings: [],
+            },
+          }),
+        );
+        return;
+      }
       if (req.method === "POST" && req.url === "/internal/admin/collections/manuals/reindex") {
         res.end(
           JSON.stringify({
@@ -263,6 +306,20 @@ describe("admin ingestion status facade (e2e)", () => {
     expect(res.status).toBe(202);
     expect(res.body.ingestion_run_id).toBe("ing_sync");
     expect(seen[seen.length - 1].url).toBe("/internal/sources/upload/sync");
+  });
+
+  it("POST /v1/admin/sources/:id/preview forwards onboarding preview requests", async () => {
+    const res = await request(app.getHttpServer())
+      .post("/v1/admin/sources/upload/preview")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", token)
+      .send({ sample_rows: 1 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.suggested_mapping["設備番号"]).toBe("equipment_id");
+    expect(res.body.sample_rows[0].normalized.alarm_code).toBe("E152");
+    expect(seen[seen.length - 1].url).toBe("/internal/sources/upload/preview");
+    expect(seen[seen.length - 1].tenant).toBe("tenant_admin");
   });
 
   it("POST /v1/admin/collections/:id/reindex creates a reindex plan", async () => {

@@ -1,5 +1,7 @@
 import type {
   AdminDataSource,
+  DataSourcePreviewRequest,
+  DataSourcePreviewResponse,
   AdminDocumentDetail,
   AnswerRequest,
   AnswerResponse,
@@ -357,6 +359,17 @@ export async function adminSourceTestConnection(
   );
 }
 
+export async function adminSourcePreview(
+  sourceId: string,
+  body: DataSourcePreviewRequest,
+  userToken: string,
+): Promise<DataSourcePreviewResponse> {
+  return apiPostJson<DataSourcePreviewResponse>(
+    "/admin/sources/" + encodeURIComponent(sourceId) + "/preview",
+    body,
+    userToken,
+  );
+}
 
 export async function adminSourceSync(
   sourceId: string,

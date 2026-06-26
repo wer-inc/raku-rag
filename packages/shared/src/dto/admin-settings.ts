@@ -37,6 +37,68 @@ export interface DataSourceUpsertRequest {
   reason?: string;
 }
 
+export interface DataSourcePreviewRequest {
+  collection_id?: string;
+  limit?: number;
+  sample_documents?: number;
+  sample_rows?: number;
+  mapping_profile?: {
+    field_mapping?: Record<string, string>;
+    mapping?: Record<string, string>;
+    defaults?: Record<string, unknown>;
+    required_fields?: string[];
+  };
+  field_mapping?: Record<string, string>;
+  defaults?: Record<string, unknown>;
+  required_fields?: string[];
+}
+
+export interface DataSourcePreviewRowValidation {
+  status: "valid" | "needs_review";
+  errors: string[];
+  warnings: string[];
+}
+
+export interface DataSourcePreviewSampleRow {
+  document_id: string;
+  sheet_name: string;
+  row_number: number;
+  raw: Record<string, unknown>;
+  normalized: Record<string, unknown>;
+  validation: DataSourcePreviewRowValidation;
+}
+
+export interface DataSourcePreviewDocument {
+  document_id: string;
+  document_ref: string;
+  content_type: string;
+  kind: "table" | "text";
+  sample_row_count: number;
+  text_preview?: string;
+}
+
+export interface DataSourcePreviewResponse {
+  source_id: string;
+  document_count: number;
+  documents: DataSourcePreviewDocument[];
+  canonical_fields: string[];
+  detected_columns: string[];
+  explicit_mapping: Record<string, string>;
+  suggested_mapping: Record<string, string>;
+  mapping_confidence: Record<string, number>;
+  defaults: Record<string, unknown>;
+  required_fields: string[];
+  sample_rows: DataSourcePreviewSampleRow[];
+  validation: {
+    valid_count: number;
+    needs_review_count: number;
+    error_count: number;
+    warning_count: number;
+    errors: string[];
+    warnings: string[];
+  };
+}
+
 export interface QueryProfileSettings extends QueryProfile {
   query_rewrite_enabled?: boolean;
   self_eval_enabled?: boolean;

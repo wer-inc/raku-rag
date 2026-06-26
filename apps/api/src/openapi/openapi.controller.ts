@@ -146,6 +146,100 @@ const OPENAPI_DOC = {
           reason: { type: "string" },
         },
       },
+      DataSourcePreviewRequest: {
+        type: "object",
+        properties: {
+          collection_id: { type: "string" },
+          limit: { type: "number" },
+          sample_documents: { type: "number" },
+          sample_rows: { type: "number" },
+          mapping_profile: { type: "object" },
+          field_mapping: { type: "object" },
+          defaults: { type: "object" },
+          required_fields: { type: "array", items: { type: "string" } },
+        },
+      },
+      DataSourcePreviewDocument: {
+        type: "object",
+        required: ["document_id", "document_ref", "content_type", "kind", "sample_row_count"],
+        properties: {
+          document_id: { type: "string" },
+          document_ref: { type: "string" },
+          content_type: { type: "string" },
+          kind: { type: "string", enum: ["table", "text"] },
+          sample_row_count: { type: "number" },
+          text_preview: { type: "string" },
+        },
+      },
+      DataSourcePreviewRowValidation: {
+        type: "object",
+        required: ["status", "errors", "warnings"],
+        properties: {
+          status: { type: "string", enum: ["valid", "needs_review"] },
+          errors: { type: "array", items: { type: "string" } },
+          warnings: { type: "array", items: { type: "string" } },
+        },
+      },
+      DataSourcePreviewSampleRow: {
+        type: "object",
+        required: ["document_id", "sheet_name", "row_number", "raw", "normalized", "validation"],
+        properties: {
+          document_id: { type: "string" },
+          sheet_name: { type: "string" },
+          row_number: { type: "number" },
+          raw: { type: "object" },
+          normalized: { type: "object" },
+          validation: { $ref: "#/components/schemas/DataSourcePreviewRowValidation" },
+        },
+      },
+      DataSourcePreviewResponse: {
+        type: "object",
+        required: [
+          "source_id",
+          "document_count",
+          "documents",
+          "canonical_fields",
+          "detected_columns",
+          "explicit_mapping",
+          "suggested_mapping",
+          "mapping_confidence",
+          "defaults",
+          "required_fields",
+          "sample_rows",
+          "validation",
+        ],
+        properties: {
+          source_id: { type: "string" },
+          document_count: { type: "number" },
+          documents: {
+            type: "array",
+            items: { $ref: "#/components/schemas/DataSourcePreviewDocument" },
+          },
+          canonical_fields: { type: "array", items: { type: "string" } },
+          detected_columns: { type: "array", items: { type: "string" } },
+          explicit_mapping: { type: "object" },
+          suggested_mapping: { type: "object" },
+          mapping_confidence: { type: "object" },
+          defaults: { type: "object" },
+          required_fields: { type: "array", items: { type: "string" } },
+          sample_rows: {
+            type: "array",
+            items: { $ref: "#/components/schemas/DataSourcePreviewSampleRow" },
+          },
+          validation: {
+            type: "object",
+            required: ["valid_count", "needs_review_count", "error_count", "warning_count", "errors", "warnings"],
+            properties: {
+              valid_count: { type: "number" },
+              needs_review_count: { type: "number" },
+              error_count: { type: "number" },
+              warning_count: { type: "number" },
+              errors: { type: "array", items: { type: "string" } },
+              warnings: { type: "array", items: { type: "string" } },
+            },
+          },
+        },
+      },
       QueryProfileSettings: {
         type: "object",
         required: ["profile_id", "tenant_id", "score_threshold", "top_k", "minimum_evidence_count"],
@@ -1815,6 +1909,53 @@ const OPENAPI_DOC = {
             },
           },
           "400": { description: "Connection test failed", content: { "application/json": {} } },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden", content: { "application/json": {} } },
+          "404": { description: "Not found", content: { "application/json": {} } },
+          "502": {
+            description: "Ingestion service unavailable",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
+            },
+          },
+        },
+      },
+    },
+    "/admin/sources/{source_id}/preview": {
+      post: {
+        operationId: "previewAdminSource",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          {
+            name: "source_id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/DataSourcePreviewRequest" },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Datasource onboarding preview",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/DataSourcePreviewResponse" },
+              },
+            },
+          },
+          "400": { description: "Preview failed", content: { "application/json": {} } },
           "401": { description: "Unauthorized", content: { "application/json": {} } },
           "403": { description: "Forbidden", content: { "application/json": {} } },
           "404": { description: "Not found", content: { "application/json": {} } },

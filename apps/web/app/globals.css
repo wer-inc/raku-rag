@@ -873,7 +873,7 @@ textarea {
 .standalone-table-head,
 .standalone-table-row {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) 1fr 1.1fr 0.8fr 0.8fr 1fr;
+  grid-template-columns: minmax(0, 2fr) 0.9fr 1.05fr 0.75fr 0.85fr 1fr 0.9fr;
   gap: 14px;
   align-items: center;
 }
@@ -1614,6 +1614,106 @@ button:disabled {
   color: var(--text);
 }
 
+.preview-control-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.preview-control-grid label {
+  display: grid;
+  gap: 5px;
+}
+
+.preview-control-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.preview-control-grid input,
+.preview-control-grid select,
+.preview-map-row select {
+  width: 100%;
+  height: 40px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.preview-results {
+  display: grid;
+  gap: 14px;
+}
+
+.preview-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preview-summary span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafafa;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.preview-summary strong {
+  color: var(--text);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-map {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.preview-map-head,
+.preview-map-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(180px, 1fr) 80px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+}
+
+.preview-map-head {
+  background: #fafafa;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.preview-map-row {
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.preview-map-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.preview-docs {
+  display: grid;
+  gap: 10px;
+}
+
 /* --- Reviews view (specs/014 slice 3) --- */
 .src-inline-form select,
 .review-actions textarea {
@@ -1720,6 +1820,7 @@ button:disabled {
   .home-task-grid,
   .quick-card-grid,
   .form-grid,
+  .preview-control-grid,
   .home-split,
   .sources-layout,
   .reviews-layout,
@@ -3754,7 +3855,7 @@ button,
 
   .standalone-table-head,
   .standalone-table-row {
-    min-width: 640px;
+    min-width: 760px;
   }
 
   .data-table {

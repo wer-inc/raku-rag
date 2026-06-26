@@ -18,6 +18,7 @@ from raku_rag.persistence.datasources import (
     materialize_datasource_credentials,
 )
 from raku_rag.persistence.secret_store import SecretStore
+from raku_rag.services.datasource_onboarding import build_datasource_preview
 from raku_rag.services.datasource_sync import SyncDocument, build_sync_documents
 from raku_rag.workers.ingestion import (
     IngestionJobMessage,
@@ -100,6 +101,25 @@ class SourceSyncService:
         materialized = materialize_datasource_credentials(datasource, self.secret_store)
         documents = build_sync_documents(source_id, materialized, body=body or {}, limit=1)
         return {"ok": True, "source_id": source_id, "sample_count": len(documents)}
+
+    def preview_source(
+        self, *, tenant_id: str, source_id: str, body: Mapping[str, object] | None = None
+    ) -> dict:
+        """Sample a datasource and explain canonical mapping before indexing anything."""
+
+        body = dict(body or {})
+        datasource = self.datasource_repo.get(tenant_id, source_id)
+        if datasource is None:
+            raise KeyError("datasource not found")
+        materialized = materialize_datasource_credentials(datasource, self.secret_store)
+        limit = _preview_document_limit(body)
+        documents = build_sync_documents(source_id, materialized, body=body, limit=limit)
+        return build_datasource_preview(
+            source_id=source_id,
+            datasource=materialized,
+            documents=documents,
+            body=body,
+        )
 
     def execute_source_sync(self, message: SourceSyncJobMessage) -> dict:
         parent = _parent_message(
@@ -355,6 +375,15 @@ def _manifest_checksum(documents: list[SyncDocument]) -> str:
 
 def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _preview_document_limit(body: Mapping[str, object]) -> int:
+    raw = body.get("limit") or body.get("sample_documents") or body.get("max_documents") or 3
+    try:
+        limit = int(raw)
+    except (TypeError, ValueError):
+        limit = 3
+    return max(1, min(limit, 10))
 
 
 def _mfg_raw_from_body(body: Mapping[str, object]) -> dict | None:

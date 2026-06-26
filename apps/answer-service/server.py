@@ -12,6 +12,7 @@ is never reimplemented in TypeScript.
     GET  /internal/ingestion-runs/{id}                                           -> IngestionRun JSON
     GET  /internal/documents/{id}/processing-status                              -> DocumentProcessingState JSON
     GET  /internal/sources/{id}/sync-status                                      -> SourceSyncState JSON
+    POST /internal/sources/{id}/preview                                          -> datasource mapping preview JSON
     GET  /healthz                                                                -> {status:"ok"}
 
 Run:  POSTGRES_URL=postgresql://raku:raku@127.0.0.1:5432/raku_parity \
@@ -2214,6 +2215,23 @@ def make_handler(system: ProductionSystem):
                         self._send(404, {"error": "datasource not found"})
                     except Exception as exc:
                         self._send(400, {"ok": False, "error": str(exc)})
+                elif (
+                    len(parts) == 4 and parts[:2] == ["internal", "sources"] and parts[3] == "preview"
+                ):
+                    tenant_id = self._tenant_header()
+                    try:
+                        self._send(
+                            200,
+                            source_sync_service.preview_source(
+                                tenant_id=tenant_id,
+                                source_id=parts[2],
+                                body=body,
+                            ),
+                        )
+                    except KeyError:
+                        self._send(404, {"error": "datasource not found"})
+                    except Exception as exc:
+                        self._send(400, {"error": str(exc)})
                 elif (
                     len(parts) == 4 and parts[:2] == ["internal", "sources"] and parts[3] == "sync"
                 ):
