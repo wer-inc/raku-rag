@@ -66,7 +66,7 @@ async function loadAuthConfig(): Promise<AuthConfig> {
 
 export function isCognitoConfigured(): boolean {
   const config = staticAuthConfig();
-  return Boolean(config.cognito_domain && config.cognito_client_id);
+  return config.auth_mode === "cognito" && Boolean(config.cognito_domain && config.cognito_client_id);
 }
 
 function callbackUrl(): string {
@@ -122,7 +122,12 @@ function loadCognitoToken(): string | null {
 
 export async function startCognitoLogin(): Promise<boolean> {
   const config = await loadAuthConfig();
-  if (typeof window === "undefined" || !config.cognito_domain || !config.cognito_client_id) {
+  if (
+    typeof window === "undefined" ||
+    config.auth_mode !== "cognito" ||
+    !config.cognito_domain ||
+    !config.cognito_client_id
+  ) {
     return false;
   }
   const verifier = randomString(32);
@@ -222,7 +227,7 @@ export async function getSessionToken(
   const cognitoToken = loadCognitoToken();
   if (cognitoToken) return cognitoToken;
   const authConfig = await loadAuthConfig();
-  if (authConfig.cognito_domain && authConfig.cognito_client_id) {
+  if (authConfig.auth_mode === "cognito" && authConfig.cognito_domain && authConfig.cognito_client_id) {
     throw new Error("Cognito session is missing; sign in again");
   }
   if (typeof window !== "undefined") {
