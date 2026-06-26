@@ -33,7 +33,7 @@ retention・export / platform security NFR）。技術選択の詳細は [resear
 
 ## Technical Context
 
-**Language/Version**: TypeScript/NestJS for synchronous API and Python 3.12 for parser/worker/evaluation code, following 001.
+**Language/Version**: TypeScript/NestJS for synchronous API and Python 3.12 for parser/worker/evaluation code, following 001. （**二段構え — analyze I2**: MVP/PoC の同期 API は本コードベースの **Python モジュール**（`src/raku_rag/manufacturing/api/*.py`）で先行実装し、ここで言う **NestJS は本番アダプタ（後続）**を指す。詳細は本ファイル末尾「Analyze 整合メモ」の「API 二系統」を参照。）
 
 **Primary Dependencies**: 001 基盤を再利用（NestJS API / SQS worker / optional Dagster control plane / PostgreSQL+pgvector / OpenTelemetry / provider abstractions）。本 layer で追加する parser 依存（すべて 001 の `Parser` 抽象越し）: DOCX = `python-docx`、XLSX = `openpyxl`、CSV = stdlib `csv`。高リスク判定の LLM 分類は 001 の `LLMProvider` 抽象を再利用（新規 provider を作らない）。AWS MVP の ingestion は SQS + Python worker を既定とし、Dagster は manufacturing metadata enrichment / evaluation / KPI materialization の optional control plane / asset hook として利用可能にする。NestJS API は answer/search、DraftArtifact、review、dashboard API を担当する。
 

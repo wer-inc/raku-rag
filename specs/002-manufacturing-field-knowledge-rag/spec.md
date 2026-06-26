@@ -37,7 +37,7 @@
 - PoC KPI / dashboard → 010 `KPIDefinition` / `DashboardWidgetDefinition`
 - factory_id / line_id / process_id / equipment_id / owner_department / access_scope → 010 `ACLMappingPolicy`
 
-010 は共通 contract と profile registry を提供するだけであり、製造業固有の safety semantics は本 002 spec に残す。
+010 は共通 contract と profile registry を提供するだけであり、製造業固有の safety semantics は本 002 spec に残す。**（analyze I3 — 依存境界の明確化）**: この 010 へのマッピングは **概念対応（Manufacturing IndustryProfile としても解釈できる）であり、ビルド時依存ではない**。002 の唯一のビルド依存は 001 であり、010 をビルド/実行時の必須依存にしない（plan.md「Analyze 整合メモ」と同旨）。
 
 ### Architecture Overview（001 + 010 + 002 + governance overlay） [CR:G6]
 
