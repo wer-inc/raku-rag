@@ -53,6 +53,7 @@ from raku_rag.services.ingestion import IngestionService
 from raku_rag.services.profile import ProfileRegistry
 from raku_rag.services.reindex import InMemoryReindexPlanStore, ReindexService
 from raku_rag.services.retrieval import RetrievalService
+from raku_rag.services.structured_tables import TableManifestStructuredTool
 from raku_rag.workers.ingestion import IngestionJobMessage, IngestionRun
 
 if TYPE_CHECKING:
@@ -129,6 +130,7 @@ class ProductionSystem(MvpSystem):
             self.tracer,
         )
         self.gate = GroundednessGate()
+        self.structured_tool = TableManifestStructuredTool(self.registry, self.acl)
         self.ingestion = IngestionService(
             self.store,
             self.embedder,
@@ -149,6 +151,8 @@ class ProductionSystem(MvpSystem):
             self.tracer,
             self.audit,
             self.vlm,
+            output_guardrail=self.guardrail,
+            structured_tool=self.structured_tool,
         )
         self.deletion = DeletionService(
             self.store, self.registry, self.cache, crop_store=self.crops.store

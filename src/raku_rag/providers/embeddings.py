@@ -66,6 +66,19 @@ def embedding_provider_from_settings(settings) -> EmbeddingProvider:
     provider_name = str(getattr(settings, "embedding_provider", "hashing") or "hashing")
     provider_name = provider_name.strip().lower().replace("-", "_")
     dim = int(getattr(settings, "embedding_dim", 256) or 256)
+    profile = str(getattr(settings, "runtime_profile", "deterministic") or "deterministic")
+    if profile.strip().lower() == "production" and provider_name in {
+        "hashing",
+        "hashing_bow",
+        "hashing_bow_v1",
+        "local",
+    }:
+        provider_name = "openai_text_embedding_3_small"
+        if dim != 256:
+            raise ValueError(
+                "production profile defaults to openai_text_embedding_3_small and requires "
+                f"embedding_dim=256; got {dim}."
+            )
     if provider_name in {"hashing", "hashing_bow", "hashing_bow_v1", "local"}:
         return HashingEmbeddingProvider(dim=dim)
     if provider_name in {"bedrock_cohere_multilingual_v3", "cohere_embed_multilingual_v3"}:
@@ -94,7 +107,9 @@ def embedding_provider_from_settings(settings) -> EmbeddingProvider:
         from workers.ingest.providers.embeddings.openai_embed3 import OpenAIEmbedding3Provider
 
         model = "text-embedding-3-large" if "large" in provider_name else "text-embedding-3-small"
-        api_key = str(getattr(settings, "openai_api_key", "") or os.environ.get("OPENAI_API_KEY", ""))
+        api_key = str(
+            getattr(settings, "openai_api_key", "") or os.environ.get("OPENAI_API_KEY", "")
+        )
         return OpenAIEmbedding3Provider(model=model, dimensions=dim, api_key=api_key)  # type: ignore[return-value]
     raise ValueError(f"unsupported embedding_provider: {provider_name!r}")
 

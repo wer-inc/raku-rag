@@ -11,13 +11,16 @@ interface DevClaims {
 }
 
 function enabled(): boolean {
-  // Honor an EXPLICIT opt-in even in production builds — the AWS demo deploy runs NODE_ENV=production
-  // but intentionally injects RAKU_ENABLE_DEV_TOKEN_ISSUER=1 + the API's shared signing secret so the
-  // browser can mint a valid demo session (no Cognito yet). When the flag is unset we default to
-  // dev-only (off in production) so a real production build never opens the issuer by accident.
+  const mode = (process.env.RAKU_AUTH_MODE ?? "").trim().toLowerCase();
+  if (process.env.STAGE_NAME === "prod" || mode === "cognito") {
+    return false;
+  }
+  if (mode === "dev") {
+    return true;
+  }
   const raw = process.env.RAKU_ENABLE_DEV_TOKEN_ISSUER;
   if (raw !== undefined) {
-    return raw === "1" || raw.toLowerCase() === "true";
+    return process.env.NODE_ENV !== "production" && (raw === "1" || raw.toLowerCase() === "true");
   }
   return process.env.NODE_ENV !== "production";
 }

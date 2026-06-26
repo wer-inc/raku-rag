@@ -44,11 +44,14 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
 }
 
 function authHeaders(userToken: string): Record<string, string> {
-  return {
+  const headers: Record<string, string> = {
     "content-type": "application/json",
-    authorization: "Bearer local-dev-key",
-    "x-user-token": userToken,
+    authorization: `Bearer ${userToken.split(".").length === 3 ? userToken : "local-dev-key"}`,
   };
+  if (userToken.split(".").length !== 3) {
+    headers["x-user-token"] = userToken;
+  }
+  return headers;
 }
 
 function authedRequestInit(

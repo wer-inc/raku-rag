@@ -3,6 +3,7 @@ import { NestFactory } from "@nestjs/core";
 import { VersioningType } from "@nestjs/common";
 import type { Request, Response, NextFunction } from "express";
 import { AppModule } from "./app.module";
+import { authMode } from "./auth/auth.middleware";
 import { tokenSecret } from "./auth/principal";
 import { versionHeaderPolicy } from "./versioning/version-policy";
 
@@ -39,7 +40,9 @@ export async function createApp() {
 async function bootstrap() {
   // Fail fast at boot if the token signing secret is misconfigured, rather than 500-ing on the first
   // request (or, worse, silently accepting forged tokens signed with the public default).
-  tokenSecret();
+  if (authMode() === "dev") {
+    tokenSecret();
+  }
   const app = await createApp();
   const port = Number(process.env.API_PORT ?? 3000);
   await app.listen(port);

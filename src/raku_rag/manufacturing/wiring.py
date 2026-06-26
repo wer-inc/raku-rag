@@ -19,7 +19,10 @@ from datetime import date
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswerService
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
 from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY
-from raku_rag.manufacturing.safety.classifier import RuleHighRiskClassifier
+from raku_rag.manufacturing.safety.classifier import (
+    RuleHighRiskClassifier,
+    semantic_danger_classifier_from_settings,
+)
 
 
 def registry_mfg_meta_resolver(system):
@@ -51,7 +54,12 @@ def build_manufacturing_answer_service(
         groundedness=system.gate,
         answer_service=system.answer_service,
         get_mfg_meta=registry_mfg_meta_resolver(system),
-        classifier=RuleHighRiskClassifier(llm=system.llm),
+        classifier=RuleHighRiskClassifier(
+            llm=system.llm,
+            semantic_classifier=semantic_danger_classifier_from_settings(
+                system.settings, system.llm
+            ),
+        ),
         get_document=system.registry.get,
         today=today,
     )

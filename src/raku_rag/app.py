@@ -23,7 +23,7 @@ from raku_rag.domain.models import (
 from raku_rag.providers.chunkers import SentenceChunker
 from raku_rag.providers.embeddings import embedding_provider_from_settings
 from raku_rag.providers.llms import ExtractiveLLMProvider
-from raku_rag.providers.parsers import TextParser
+from raku_rag.providers.parsers import CompositeParser, DocxParser, SpreadsheetParser, TextParser
 from raku_rag.providers.rerankers import ScoreOrderReranker
 from raku_rag.providers.vectorstores import InMemoryVectorStore
 from raku_rag.providers.visual_embeddings import HashingVisualEmbeddingProvider
@@ -43,6 +43,7 @@ from raku_rag.services.ingestion import DocumentRegistry, IngestionService
 from raku_rag.services.profile import ProfileRegistry
 from raku_rag.services.reindex import InMemoryReindexPlanStore, ReindexService
 from raku_rag.services.retrieval import RetrievalService
+from raku_rag.services.structured_tables import TableManifestStructuredTool
 from raku_rag.services.visual import visual_chunks_from_ingestion
 from raku_rag.workers.ingestion import VisualIngestionExecutor, VisualIngestionOptions
 
@@ -57,7 +58,7 @@ class MvpSystem:
         self.registry = DocumentRegistry()
         self.store = InMemoryVectorStore()
         self.embedder = embedding_provider_from_settings(self.settings)
-        self.parser = TextParser()
+        self.parser = CompositeParser([TextParser(), DocxParser(), SpreadsheetParser()])
         self.chunker = SentenceChunker()
         self.reranker = ScoreOrderReranker()
         self.llm = ExtractiveLLMProvider()
@@ -93,6 +94,7 @@ class MvpSystem:
             self.tracer,
         )
         self.gate = GroundednessGate()
+        self.structured_tool = TableManifestStructuredTool(self.registry, self.acl)
         self.ingestion = IngestionService(
             self.store,
             self.embedder,
@@ -113,6 +115,7 @@ class MvpSystem:
             self.tracer,
             self.audit,
             self.vlm,
+            structured_tool=self.structured_tool,
         )
         self.deletion = DeletionService(
             self.store, self.registry, self.cache, crop_store=self.crops.store
@@ -206,7 +209,9 @@ class MvpSystem:
     def answer(
         self, principal: IdentityClaims, query: str, collection_id: str | None = None
     ) -> Answer:
-        return self.answer_service.answer(principal, query, self.profiles.resolve(collection_id))
+        return self.answer_service.answer(
+            principal, query, self.profiles.resolve(collection_id), collection_id=collection_id
+        )
 
     def search(
         self,

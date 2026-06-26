@@ -19,6 +19,15 @@ from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.redaction import Redactor
 from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.providers.embeddings import embedding_dimension
+from raku_rag.services.structured_tables import (
+    STRUCTURED_TABLE_COUNT_KEY,
+    STRUCTURED_TABLE_MANIFEST_VERSION,
+    STRUCTURED_TABLE_MANIFEST_VERSION_KEY,
+    STRUCTURED_TABLE_MANIFESTS_KEY,
+    cell_metadata_for_text,
+    extract_structured_table_manifests,
+    redact_table_manifest_values,
+)
 
 PII_REDACTION_PRE_INDEX = "pre_index_redact"
 PII_REDACTION_DETECT_ONLY = "detect_only"
@@ -149,6 +158,7 @@ class IngestionService:
 
                 version = (existing.version + 1) if existing else 1
                 text = self._parser.parse(raw, content_type)
+                table_manifests = extract_structured_table_manifests(raw, content_type)
                 detected = self._redactor.classify(text)
                 detection_labels = sorted({label for label, _start, _end in detected})
                 sensitive_detected = bool(detected)
@@ -158,6 +168,11 @@ class IngestionService:
                     sensitive_detected and self._pii_redaction_mode == PII_REDACTION_PRE_INDEX
                 )
                 indexed_text = self._redactor.redact(text) if redaction_applied else text
+                indexed_table_manifests = (
+                    redact_table_manifest_values(table_manifests, self._redactor.redact)
+                    if redaction_applied
+                    else table_manifests
+                )
                 pieces = _chunk_text(self._chunker, indexed_text, effective_chunking_metadata)
 
                 # Replace old version: purge prior chunks for this document (FR-005/SC-007)
@@ -189,6 +204,7 @@ class IngestionService:
                                 "embedding_model_version": self._embedder.model_version,
                                 "embedding_dimension": embedding_dimension(self._embedder),
                                 **chunking_config,
+                                **cell_metadata_for_text(text_piece, indexed_table_manifests),
                             },
                         )
                     )
@@ -207,6 +223,9 @@ class IngestionService:
                         "sensitive_detection_labels": detection_labels,
                         "embedding_model_version": self._embedder.model_version,
                         "embedding_dimension": embedding_dimension(self._embedder),
+                        STRUCTURED_TABLE_MANIFEST_VERSION_KEY: STRUCTURED_TABLE_MANIFEST_VERSION,
+                        STRUCTURED_TABLE_MANIFESTS_KEY: indexed_table_manifests,
+                        STRUCTURED_TABLE_COUNT_KEY: len(indexed_table_manifests),
                         **chunking_config,
                     }
                 )

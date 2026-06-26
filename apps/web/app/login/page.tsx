@@ -1,9 +1,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { isCognitoConfigured, startCognitoLogin } from "../../lib/session";
 
 export default function LoginPage() {
   const router = useRouter();
+  const signIn = () => {
+    if (isCognitoConfigured()) {
+      void startCognitoLogin();
+      return;
+    }
+    void startCognitoLogin().then((started) => {
+      if (!started) router.push("/orgselect");
+    });
+  };
   return (
     <div className="auth-page">
       <section className="auth-hero">
@@ -39,14 +49,14 @@ export default function LoginPage() {
               <span>パスワード</span>
               <input type="password" defaultValue="passwordvalue" />
             </label>
-            <button className="auth-primary" type="button" onClick={() => router.push("/orgselect")}>
+            <button className="auth-primary" type="button" onClick={signIn}>
               ログイン
             </button>
           </div>
           <div className="auth-divider">
             <span>または</span>
           </div>
-          <button className="auth-secondary" type="button" onClick={() => router.push("/orgselect")}>
+          <button className="auth-secondary" type="button" onClick={signIn}>
             <span className="auth-ms">M</span>
             Microsoft (SSO) で続ける
           </button>

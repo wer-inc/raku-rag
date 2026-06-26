@@ -22,7 +22,8 @@ query; the SafetyGate (§4) is what enforces the approved-citation requirement o
 
 from __future__ import annotations
 
-from typing import Sequence
+import json
+from typing import Callable, Mapping, Sequence
 
 from raku_rag.interfaces.base import LLMProvider
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
@@ -234,6 +235,48 @@ _HIGH_RISK_METADATA_FIELDS: tuple[str, ...] = (
 
 # A query shorter than this many content tokens is treated as too terse to rule danger out.
 _AMBIGUOUS_MIN_TOKENS = 3
+_SEMANTIC_CONFIDENCE_THRESHOLD = 0.80
+
+SemanticDangerClassifier = Callable[
+    [str, Sequence[ManufacturingDocumentMetadata], str | None],
+    Mapping[str, object] | HighRiskClassification | None,
+]
+
+
+class LLMSemanticDangerClassifier:
+    """Production semantic danger classifier over the configured LLM provider.
+
+    The LLM is asked for a small JSON verdict. Parsing errors, provider errors, ambiguity, and low
+    confidence are handled by ``RuleHighRiskClassifier`` as high-risk.
+    """
+
+    def __init__(self, llm: LLMProvider) -> None:
+        self._llm = llm
+
+    def __call__(
+        self,
+        query: str,
+        candidate_metadata: Sequence[ManufacturingDocumentMetadata],
+        intent_hint: str | None = None,
+    ) -> Mapping[str, object] | None:
+        meta_summary = [
+            {
+                "safety_category": getattr(meta, "safety_category", None),
+                "quality_category": getattr(meta, "quality_category", None),
+                "equipment_id": getattr(meta, "equipment_id", None),
+                "hazard_tags": list(getattr(meta, "hazard_tags", ()) or ()),
+            }
+            for meta in candidate_metadata
+            if meta is not None
+        ]
+        prompt = (
+            "Classify whether this manufacturing field request is dangerous/high-risk. "
+            "Return ONLY JSON with keys is_high_risk:boolean|null, confidence:number 0..1, "
+            "reason_codes:string[]. Treat ambiguous or hands-on equipment work as high-risk.\n"
+            f"Query: {query}\nIntent hint: {intent_hint or ''}\nMetadata: {json.dumps(meta_summary, ensure_ascii=False)}"
+        )
+        raw = self._llm.generate(prompt, ())
+        return json.loads(raw)
 
 
 class RuleHighRiskClassifier:
@@ -243,10 +286,18 @@ class RuleHighRiskClassifier:
     so subclassing would be a needless coupling. ``classify`` matches the ABC signature.
     """
 
-    def __init__(self, llm: LLMProvider | None = None) -> None:
+    def __init__(
+        self,
+        llm: LLMProvider | None = None,
+        *,
+        semantic_classifier: SemanticDangerClassifier | None = None,
+        semantic_confidence_threshold: float = _SEMANTIC_CONFIDENCE_THRESHOLD,
+    ) -> None:
         # The 001 LLMProvider is only consulted for stage (3) (ambiguous tie-break). Optional so the
         # classifier degrades safely (no LLM => ambiguous still fails safe to high-risk).
         self._llm = llm
+        self._semantic_classifier = semantic_classifier
+        self._semantic_confidence_threshold = semantic_confidence_threshold
 
     def classify(
         self,
@@ -279,6 +330,9 @@ class RuleHighRiskClassifier:
                 reason_codes=tuple(reason_codes),
                 classification_source=first_source,
             )
+
+        if self._semantic_classifier is not None:
+            return self._semantic_decision(query, candidate_metadata, intent_hint)
 
         # --- (3) AMBIGUOUS tie-break (LLM only here) -----------------------------------------------
         # Nothing concrete fired. If the query is explicitly hinted ambiguous, or is too terse to rule
@@ -356,3 +410,62 @@ class RuleHighRiskClassifier:
         except Exception:
             return False
         return "safe" in (verdict or "").strip().lower()
+
+    def _semantic_decision(
+        self,
+        query: str,
+        candidate_metadata: Sequence[ManufacturingDocumentMetadata],
+        intent_hint: str | None,
+    ) -> HighRiskClassification:
+        try:
+            raw = self._semantic_classifier(query, candidate_metadata, intent_hint)
+        except Exception:
+            return HighRiskClassification(
+                is_high_risk=True,
+                reason_codes=("semantic_classifier_error",),
+                classification_source=ClassificationSource.LLM,
+            )
+        if isinstance(raw, HighRiskClassification):
+            return raw
+        if not isinstance(raw, Mapping):
+            return HighRiskClassification(
+                is_high_risk=True,
+                reason_codes=("semantic_classifier_ambiguous",),
+                classification_source=ClassificationSource.LLM,
+            )
+        value = raw.get("is_high_risk")
+        confidence = _float(raw.get("confidence"))
+        reason_codes = tuple(str(code) for code in raw.get("reason_codes") or ())
+        if value is True:
+            return HighRiskClassification(
+                is_high_risk=True,
+                reason_codes=reason_codes or ("semantic_danger",),
+                classification_source=ClassificationSource.LLM,
+            )
+        if value is False and confidence >= self._semantic_confidence_threshold:
+            return HighRiskClassification(
+                is_high_risk=False,
+                reason_codes=(),
+                classification_source=ClassificationSource.LLM,
+            )
+        return HighRiskClassification(
+            is_high_risk=True,
+            reason_codes=("semantic_low_confidence",),
+            classification_source=ClassificationSource.LLM,
+        )
+
+
+def semantic_danger_classifier_from_settings(
+    settings, llm: LLMProvider | None
+) -> SemanticDangerClassifier | None:
+    profile = str(getattr(settings, "runtime_profile", "deterministic") or "deterministic")
+    if profile.strip().lower() != "production" or llm is None:
+        return None
+    return LLMSemanticDangerClassifier(llm)
+
+
+def _float(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0

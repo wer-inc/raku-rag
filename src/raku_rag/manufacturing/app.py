@@ -60,7 +60,10 @@ from raku_rag.manufacturing.knowledge.trouble_cases import (
     TroubleCaseSearchResponse,
 )
 from raku_rag.dagster.assets.manufacturing import InMemoryManufacturingKpiMaterializationStore
-from raku_rag.manufacturing.safety.classifier import RuleHighRiskClassifier
+from raku_rag.manufacturing.safety.classifier import (
+    RuleHighRiskClassifier,
+    semantic_danger_classifier_from_settings,
+)
 from raku_rag.manufacturing.safety.gate import ManufacturingSafetyGate
 from raku_rag.persistence.control_plane import InMemoryControlPlaneStateRepository
 from raku_rag.providers.parsers import (
@@ -170,7 +173,12 @@ class ManufacturingSystem:
             enricher=self._enricher,
         )
 
-        classifier = RuleHighRiskClassifier(llm=self._mvp.llm)
+        classifier = RuleHighRiskClassifier(
+            llm=self._mvp.llm,
+            semantic_classifier=semantic_danger_classifier_from_settings(
+                self._mvp.settings, self._mvp.llm
+            ),
+        )
         safety_gate = ManufacturingSafetyGate(today=today)
         self._answer = ManufacturingAnswerService(
             retrieval=self._mvp.retrieval,
@@ -363,9 +371,7 @@ class ManufacturingSystem:
         out.sort(key=lambda d: (d["collection_id"] or "", d["document_id"]))
         return out
 
-    def get_document_detail(
-        self, principal: IdentityClaims, document_id: str
-    ) -> dict | None:
+    def get_document_detail(self, principal: IdentityClaims, document_id: str) -> dict | None:
         """ACL-filtered document inventory row plus chunk summaries for review / citation view."""
         tenant_id = principal.tenant_id
         doc = self._mvp.registry.get(tenant_id, document_id)
@@ -584,7 +590,10 @@ class ManufacturingSystem:
         # Propagate to indexed chunks (FR-MFG-003) so the metadata travels with the evidence.
         self._enricher.propagate_to_chunks(tenant_id, document_id, metadata)
         self._stash_document_source(
-            tenant_id, document_id, document_ref=f"inline://{document_id}", content_type="text/plain"
+            tenant_id,
+            document_id,
+            document_ref=f"inline://{document_id}",
+            content_type="text/plain",
         )
         # Audit the ingest / metadata enrichment (reference IDs only; no body text) — FR-MFG-021.
         self._audit_ingest(

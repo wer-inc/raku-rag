@@ -708,6 +708,9 @@ def _answer_json(ans) -> dict:
                 "version": c.version,
                 "text_range": list(c.text_range) if c.text_range else None,
                 "retrieval_score": c.retrieval_score,
+                "sheet_name": getattr(c, "sheet_name", "") or None,
+                "cell_range": getattr(c, "cell_range", "") or None,
+                "row_id": getattr(c, "row_id", "") or None,
             }
             for c in ans.citations
         ],
@@ -716,6 +719,7 @@ def _answer_json(ans) -> dict:
             for cid in ans.used_chunks
         ],
         "confidence": ans.confidence,
+        "route": getattr(ans, "route", "rag"),
         "freshness": (
             {
                 "indexed_at": ans.freshness[0].indexed_at,
@@ -2211,9 +2215,7 @@ def make_handler(system: ProductionSystem):
                     except Exception as exc:
                         self._send(400, {"ok": False, "error": str(exc)})
                 elif (
-                    len(parts) == 4
-                    and parts[:2] == ["internal", "sources"]
-                    and parts[3] == "sync"
+                    len(parts) == 4 and parts[:2] == ["internal", "sources"] and parts[3] == "sync"
                 ):
                     tenant_id = self._tenant_header()
                     source_id = parts[2]
@@ -2451,9 +2453,7 @@ def main() -> None:
     # 127.0.0.1 bind is unreachable from the load balancer and ECS kills the task on failed health checks.
     host = os.environ.get("ANSWER_SERVICE_HOST", "127.0.0.1")
     httpd = HTTPServer((host, args.port), make_handler(system))
-    print(
-        f"answer-service listening on http://{host}:{args.port} (/internal/answer)", flush=True
-    )
+    print(f"answer-service listening on http://{host}:{args.port} (/internal/answer)", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

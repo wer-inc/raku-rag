@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 from raku_rag.domain.models import ScopeType, SubjectType
+from raku_rag.services.structured_tables import STRUCTURED_TABLE_MANIFESTS_KEY
 from tests.helpers import claims, fresh
 
 T = "tenant_a"
@@ -80,6 +81,43 @@ class TestReindexService(unittest.TestCase):
         answer = self.sys.answer(self.alice, "What is the release code?")
         self.assertEqual(answer.status, "ok")
         self.assertIn("alpha", answer.text)
+
+    def test_reindex_preserves_structured_table_manifest(self) -> None:
+        self.sys.ingestion.ingest(
+            tenant_id=T,
+            collection_id="metrics",
+            source_id="quality-csv",
+            document_id="defects",
+            raw=b"month,defect count\nJan 2024,12\n",
+            content_type="text/csv",
+        )
+        self.sys.grant(T, ScopeType.COLLECTION, "metrics", SubjectType.USER, "alice")
+
+        plan = self.sys.reindex.reindex_documents(
+            tenant_id=T,
+            collection_id="metrics",
+            source_id="quality-csv",
+            documents={"defects": b"month,defect count\nJan 2024,12\nFeb 2024,18\n"},
+            content_type="text/csv",
+            reason="embedding_model_change",
+            created_by="ops",
+        )
+
+        self.assertEqual(plan.status, "succeeded", plan.last_error)
+        doc = self.sys.registry.get(T, "defects")
+        self.assertEqual(doc.version, 2)
+        self.assertEqual(len(doc.metadata[STRUCTURED_TABLE_MANIFESTS_KEY]), 1)
+
+        answer = self.sys.answer(
+            self.alice,
+            "what is the total defect count by month?",
+            collection_id="metrics",
+        )
+
+        self.assertEqual(answer.status, "ok")
+        self.assertEqual(answer.route, "structured_tool")
+        self.assertIn("Feb 2024=18", answer.text or "")
+        self.assertEqual(answer.citations[0].kind, "spreadsheet")
 
 
 if __name__ == "__main__":

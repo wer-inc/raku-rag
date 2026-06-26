@@ -6,6 +6,7 @@ they still meet the threshold/evidence requirements.
 
 from __future__ import annotations
 
+import json
 from typing import Callable, Sequence
 
 from raku_rag.domain.models import ScoredChunk
@@ -51,6 +52,39 @@ class BedrockCohereReranker(Reranker):
         return reranked[:top_n]
 
 
+def build_bedrock_cohere_rerank_invoker(
+    *,
+    region_name: str = "us-east-1",
+    client: object | None = None,
+    model_id: str = BedrockCohereReranker.model,
+) -> RerankInvoker:
+    state: dict[str, object | None] = {"client": client}
+
+    def _invoke(*, query: str, documents: Sequence[str]) -> Sequence[float]:
+        if state["client"] is None:
+            import boto3  # type: ignore
+
+            state["client"] = boto3.client("bedrock-runtime", region_name=region_name)
+        body = {"query": query, "documents": list(documents), "top_n": len(documents)}
+        response = state["client"].invoke_model(  # type: ignore[attr-defined]
+            modelId=model_id,
+            body=json.dumps(body).encode("utf-8"),
+            accept="application/json",
+            contentType="application/json",
+        )
+        payload = json.loads(response["body"].read().decode("utf-8"))
+        scores = [0.0] * len(documents)
+        for item in payload.get("results") or []:
+            if not isinstance(item, dict):
+                continue
+            idx = int(item.get("index", -1))
+            if 0 <= idx < len(scores):
+                scores[idx] = float(item.get("relevance_score", 0.0))
+        return scores
+
+    return _invoke
+
+
 def reranker_from_settings(settings, *, invoker: RerankInvoker | None = None) -> Reranker:
     """Select the reranker by runtime profile (P1-3). deterministic -> ScoreOrderReranker;
     production -> BedrockCohereReranker (fail-safe to score-order without an invoker, per FR-030).
@@ -60,5 +94,8 @@ def reranker_from_settings(settings, *, invoker: RerankInvoker | None = None) ->
     if profile in {"deterministic", "mvp", "offline", ""}:
         return ScoreOrderReranker()
     if profile == "production":
-        return BedrockCohereReranker(invoker=invoker)
+        region = str(getattr(settings, "aws_region", "us-east-1") or "us-east-1")
+        return BedrockCohereReranker(
+            invoker=invoker or build_bedrock_cohere_rerank_invoker(region_name=region)
+        )
     raise ValueError(f"unsupported runtime_profile: {profile!r}")

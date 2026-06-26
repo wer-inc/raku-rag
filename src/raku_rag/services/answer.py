@@ -37,6 +37,7 @@ from raku_rag.services.cost import CostService
 from raku_rag.services.groundedness import GroundednessGate
 from raku_rag.services.injection import PromptInjectionGuard
 from raku_rag.services.retrieval import RetrievalService
+from raku_rag.services.structured_query import classify_structured_query
 
 _EST_QUERY_COST = 1.0
 
@@ -60,6 +61,8 @@ class AnswerService:
         audit: AuditSink | None = None,
         vlm: VLMProvider | None = None,
         injection_guard: PromptInjectionGuard | None = None,
+        output_guardrail: object | None = None,
+        structured_tool: object | None = None,
     ) -> None:
         self._retrieval = retrieval
         self._llm = llm
@@ -72,8 +75,16 @@ class AnswerService:
         self._vlm = vlm
         # P1-2: prompt-injection defense runs in the live flow (default-on, provider-agnostic).
         self._injection_guard = injection_guard or PromptInjectionGuard()
+        self._output_guardrail = output_guardrail
+        self._structured_tool = structured_tool
 
-    def answer(self, principal: IdentityClaims, query: str, profile: QueryProfile) -> Answer:
+    def answer(
+        self,
+        principal: IdentityClaims,
+        query: str,
+        profile: QueryProfile,
+        collection_id: str | None = None,
+    ) -> Answer:
         cid = new_correlation_id()
         total_started = time.perf_counter()
         span_cm = (
@@ -88,6 +99,31 @@ class AnswerService:
         )
 
         with span_cm as span:
+            route = classify_structured_query(
+                query, tool_available=self._structured_tool is not None
+            )
+            if route.route == "structured_tool":
+                ans = self._answer_with_structured_tool(
+                    principal,
+                    query,
+                    profile,
+                    span,
+                    cid,
+                    total_started,
+                    route.reason,
+                    collection_id,
+                )
+                if ans is not None:
+                    return ans
+            if route.requires_tool:
+                status = AnswerStatus.TEMPORARILY_UNAVAILABLE.value
+                self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
+                self._record_audit(principal, cid, "answer", status, reason=route.reason)
+                self._record_hot_path(principal, cid, profile, status, total_started=total_started)
+                if hasattr(span, "finish"):
+                    span.finish("ok", answer_status=status, route=route.route, reason=route.reason)
+                return Answer(status=status, used_chunks=(), correlation_id=cid, route=route.route)
+
             # Budget gate first (FR-034). Never weakens ACL/groundedness.
             if self._cost.would_exceed(principal.tenant_id, _EST_QUERY_COST):
                 log("answer.budget_exceeded", correlation_id=cid, tenant=principal.tenant_id)
@@ -333,6 +369,35 @@ class AnswerService:
                     span.finish("ok", answer_status=status)
                 return Answer(status=status, used_chunks=(), correlation_id=cid)
 
+            if self._output_guardrail is not None:
+                try:
+                    verdict = self._output_guardrail.check(text)
+                    blocked = bool(getattr(verdict, "blocked", False))
+                    reason = str(getattr(verdict, "reason", "") or "output_guardrail")
+                except Exception:
+                    blocked = True
+                    reason = "output_guardrail_unavailable"
+                if blocked:
+                    status = AnswerStatus.TEMPORARILY_UNAVAILABLE.value
+                    log("answer.output_guardrail_blocked", correlation_id=cid, reason=reason)
+                    self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
+                    self._record_audit(principal, cid, "answer", status, reason=reason)
+                    self._record_hot_path(
+                        principal,
+                        cid,
+                        profile,
+                        status,
+                        total_started=total_started,
+                        llm_call_count=1,
+                        generation_ms=generation_ms,
+                        context_tokens=context_tokens,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    )
+                    if hasattr(span, "finish"):
+                        span.finish("ok", answer_status=status, reason=reason)
+                    return Answer(status=status, used_chunks=(), correlation_id=cid)
+
             ans_terms = _terms(text)
             citations: list[Citation] = []
             used: list[str] = []
@@ -437,7 +502,76 @@ class AnswerService:
                 freshness=tuple(freshness),
                 cost=cost,
                 correlation_id=cid,
+                route="rag",
             )
+
+    def _answer_with_structured_tool(
+        self,
+        principal: IdentityClaims,
+        query: str,
+        profile: QueryProfile,
+        span,
+        correlation_id: str,
+        total_started: float,
+        reason: str,
+        collection_id: str | None,
+    ) -> Answer | None:
+        if self._structured_tool is None or not hasattr(self._structured_tool, "answer"):
+            return None
+        try:
+            ans = self._structured_tool.answer(
+                principal=principal,
+                query=query,
+                collection_id=collection_id,
+                reason=reason,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            status = AnswerStatus.TEMPORARILY_UNAVAILABLE.value
+            self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
+            self._record_audit(
+                principal,
+                correlation_id,
+                "answer",
+                status,
+                reason="structured_tool_unavailable",
+            )
+            self._record_hot_path(
+                principal, correlation_id, profile, status, total_started=total_started
+            )
+            if hasattr(span, "finish"):
+                span.finish("ok", answer_status=status, route="structured_tool")
+            return Answer(
+                status=status,
+                used_chunks=(),
+                correlation_id=correlation_id,
+                route="structured_tool",
+            )
+        self._record_metric(
+            principal.tenant_id, profile.profile_id, ans.status, len(ans.used_chunks)
+        )
+        self._record_audit(
+            principal,
+            correlation_id,
+            "answer",
+            ans.status,
+            reason=reason,
+            document_ids=tuple(c.document_id for c in ans.citations),
+            chunk_ids=ans.used_chunks,
+        )
+        self._record_hot_path(
+            principal,
+            correlation_id,
+            profile,
+            ans.status,
+            total_started=total_started,
+            context_tokens=0,
+            prompt_tokens=_token_count(query),
+            completion_tokens=_token_count(ans.text or ""),
+        )
+        if hasattr(span, "finish"):
+            span.finish("ok", answer_status=ans.status, route="structured_tool", reason=reason)
+        return ans
 
     def _revalidate_evidence(
         self,

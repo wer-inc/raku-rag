@@ -16,6 +16,14 @@ from typing import Mapping
 from raku_rag.domain.models import Chunk, Document, Modality
 from raku_rag.interfaces.base import Chunker, EmbeddingProvider, Parser, Vector, VectorStore
 from raku_rag.services.ingestion import DocumentRegistry
+from raku_rag.services.structured_tables import (
+    STRUCTURED_TABLE_COUNT_KEY,
+    STRUCTURED_TABLE_MANIFEST_VERSION,
+    STRUCTURED_TABLE_MANIFEST_VERSION_KEY,
+    STRUCTURED_TABLE_MANIFESTS_KEY,
+    cell_metadata_for_text,
+    extract_structured_table_manifests,
+)
 
 
 def _now() -> str:
@@ -216,6 +224,14 @@ class ReindexService:
         content_type: str,
     ) -> list[tuple[Chunk, Vector]]:
         text = self._parser.parse(raw, content_type)
+        table_manifests = extract_structured_table_manifests(raw, content_type)
+        doc.metadata.update(
+            {
+                STRUCTURED_TABLE_MANIFEST_VERSION_KEY: STRUCTURED_TABLE_MANIFEST_VERSION,
+                STRUCTURED_TABLE_MANIFESTS_KEY: table_manifests,
+                STRUCTURED_TABLE_COUNT_KEY: len(table_manifests),
+            }
+        )
         pieces = self._chunker.chunk(text)
         chunks: list[Chunk] = []
         for text_piece, heading, position, span in pieces:
@@ -233,6 +249,7 @@ class ReindexService:
                     embedding_model_version=plan.target_embedding_model_version
                     or self._embedder.model_version,
                     offset_mapping=(span, span[0]),
+                    metadata=cell_metadata_for_text(text_piece, table_manifests),
                 )
             )
         vectors = self._embedder.embed([c.text for c in chunks]) if chunks else []

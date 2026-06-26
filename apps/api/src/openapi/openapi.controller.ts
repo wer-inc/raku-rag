@@ -702,6 +702,10 @@ const OPENAPI_DOC = {
           version: { type: "number" },
           retrieval_score: { type: "number" },
           chunk_id: { type: "string" },
+          text_range: { type: "array", items: { type: "number" }, nullable: true },
+          sheet_name: { type: "string", nullable: true },
+          cell_range: { type: "string", nullable: true },
+          row_id: { type: "string", nullable: true },
           approval_status: {
             type: "string",
             enum: ["draft", "pending_review", "approved", "obsolete"],
@@ -769,6 +773,10 @@ const OPENAPI_DOC = {
             type: "string",
             enum: ["ok", "insufficient_evidence", "budget_exceeded", "temporarily_unavailable"],
           },
+          route: {
+            type: "string",
+            enum: ["rag", "structured_tool", "refused_structured_tool_required"],
+          },
           text: { type: "string", nullable: true },
           confidence: { type: "number", nullable: true },
           answer_template_version: { type: "string" },
@@ -820,6 +828,10 @@ const OPENAPI_DOC = {
           status: {
             type: "string",
             enum: ["ok", "insufficient_evidence", "budget_exceeded", "temporarily_unavailable"],
+          },
+          route: {
+            type: "string",
+            enum: ["rag", "structured_tool", "refused_structured_tool_required"],
           },
           text: { type: "string", nullable: true },
           confidence: { type: "number", nullable: true },

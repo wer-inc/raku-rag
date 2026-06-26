@@ -130,6 +130,9 @@ class Citation:
     region_id: str = ""
     bbox: BoundingBox | None = None
     crop_uri: str = ""
+    sheet_name: str = ""
+    cell_range: str = ""
+    row_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -228,3 +231,4 @@ class Answer:
     freshness: tuple[Freshness, ...] = ()
     cost: dict = field(default_factory=dict)
     correlation_id: str = ""
+    route: str = "rag"

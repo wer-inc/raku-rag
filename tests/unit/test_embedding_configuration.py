@@ -11,6 +11,7 @@ from raku_rag.providers.embeddings import (
     embedding_dimension,
     embedding_provider_from_settings,
 )
+from workers.ingest.providers.embeddings.openai_embed3 import OpenAIEmbedding3Provider
 from raku_rag.domain.models import Chunk
 from raku_rag.persistence.postgres import PostgresVectorStore
 from raku_rag.services.ingestion import IngestionService
@@ -44,6 +45,26 @@ class TestEmbeddingConfiguration(unittest.TestCase):
         self.assertEqual(settings.embedding_provider, "hashing")
         self.assertEqual(settings.embedding_dim, 128)
         self.assertEqual(settings.aws_region, "us-west-2")
+
+    def test_production_profile_defaults_to_openai_small_256(self) -> None:
+        provider = embedding_provider_from_settings(
+            Settings(runtime_profile="production", openai_api_key="sk-test")
+        )
+
+        self.assertIsInstance(provider, OpenAIEmbedding3Provider)
+        self.assertEqual(provider.model, "text-embedding-3-small")
+        self.assertEqual(provider.dimensions, 256)
+
+    def test_production_profile_rejects_non_256_openai_default(self) -> None:
+        with self.assertRaises(ValueError):
+            embedding_provider_from_settings(
+                Settings(
+                    runtime_profile="production",
+                    embedding_provider="hashing",
+                    embedding_dim=1024,
+                    openai_api_key="sk-test",
+                )
+            )
 
     def test_same_raw_document_reindexes_when_embedding_dimension_changes(self) -> None:
         sys = MvpSystem(Settings(embedding_provider="hashing", embedding_dim=32))

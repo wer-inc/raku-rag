@@ -1,6 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
 import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as ec2 from "aws-cdk-lib/aws-ec2";
 import * as ecs from "aws-cdk-lib/aws-ecs";
@@ -12,6 +13,7 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import * as sns from "aws-cdk-lib/aws-sns";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as path from "path";
@@ -83,6 +85,26 @@ export class RakuRagStack extends cdk.Stack {
           ...(bedrockModelIdCtx ? { RAKU_BEDROCK_CLAUDE_MODEL_ID: bedrockModelIdCtx } : {})
         }
       : {};
+    const bedrockGuardrailIdCtx = this.node.tryGetContext("bedrockGuardrailId") as
+      | string
+      | undefined;
+    const bedrockGuardrailVersionCtx = this.node.tryGetContext("bedrockGuardrailVersion") as
+      | string
+      | undefined;
+    if (isProd && useBedrockAnswerLlm && (!bedrockGuardrailIdCtx || !bedrockGuardrailVersionCtx)) {
+      throw new Error(
+        "prod Bedrock answer path requires --context bedrockGuardrailId and bedrockGuardrailVersion"
+      );
+    }
+    const productionRuntimeEnvironment: Record<string, string> =
+      useBedrockAnswerLlm && bedrockGuardrailIdCtx && bedrockGuardrailVersionCtx
+        ? {
+            RAKU_RUNTIME_PROFILE: "production",
+            RAKU_BEDROCK_GUARDRAIL_ID: bedrockGuardrailIdCtx,
+            RAKU_BEDROCK_GUARDRAIL_VERSION: bedrockGuardrailVersionCtx,
+            AWS_DEFAULT_REGION: cdk.Stack.of(this).region
+          }
+        : {};
     // Frontend hosting shape (resolved early — it decides who owns the public ALB):
     //  - external-vercel (default): the NestJS API owns the public ALB; web is hosted off-AWS (Vercel).
     //  - aws-nextjs: the Next.js web owns the public ALB and is the default target; the API is attached
@@ -92,6 +114,14 @@ export class RakuRagStack extends cdk.Stack {
     const frontendHosting = props.frontendHosting ?? "external-vercel";
     const awsWeb = frontendHosting === "aws-nextjs";
     const publicDomainName = this.node.tryGetContext("domainName") as string | undefined;
+    if (isProd && minimalSpec) {
+      throw new Error("prod full deployment requires --context minimalSpec=false");
+    }
+    if (isProd && !publicDomainName) {
+      throw new Error("prod deployment requires --context domainName=<custom-domain> for HTTPS");
+    }
+    const publicBaseUrl = publicDomainName ? `https://${publicDomainName}` : "http://localhost:3002";
+    const authMode = String(this.node.tryGetContext("authMode") ?? (isProd ? "cognito" : "dev"));
     const fargateSize = {
       api: minimalSpec ? { cpu: 512, memoryLimitMiB: 1024 } : { cpu: 1024, memoryLimitMiB: 2048 },
       worker: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 512, memoryLimitMiB: 1024 },
@@ -158,6 +188,13 @@ export class RakuRagStack extends cdk.Stack {
         maxReceiveCount: 5
       }
     });
+    const alarmTopicArn = this.node.tryGetContext("alarmTopicArn") as string | undefined;
+    const alarmTopic = alarmTopicArn
+      ? sns.Topic.fromTopicArn(this, "OperationsAlarmTopic", alarmTopicArn)
+      : new sns.Topic(this, "OperationsAlarmTopic", {
+          topicName: `${servicePrefix}-ops-alerts`,
+          masterKey: dataKey
+        });
 
     const appSecret = new secretsmanager.Secret(this, "ApplicationSecret", {
       secretName: `${servicePrefix}/application`,
@@ -219,10 +256,27 @@ export class RakuRagStack extends cdk.Stack {
       userPoolName: `${servicePrefix}-users`,
       selfSignUpEnabled: false,
       signInAliases: { email: true },
+      customAttributes: {
+        tenant_id: new cognito.StringAttribute({ minLen: 1, maxLen: 128, mutable: true })
+      },
       mfa: cognito.Mfa.OPTIONAL,
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy
     });
+
+    const cognitoDomainPrefix = String(
+      this.node.tryGetContext("cognitoDomainPrefix") ?? `${servicePrefix}-${cdk.Stack.of(this).region}`
+    )
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-");
+    const userPoolDomain = userPool.addDomain("UserPoolDomain", {
+      cognitoDomain: {
+        domainPrefix: cognitoDomainPrefix
+      }
+    });
+    const cognitoIssuer = `https://cognito-idp.${cdk.Stack.of(this).region}.amazonaws.com/${userPool.userPoolId}`;
+    const cognitoJwksUri = `${cognitoIssuer}/.well-known/jwks.json`;
+    const cognitoHostedUiDomain = userPoolDomain.baseUrl();
 
     const userPoolClient = userPool.addClient("UserPoolClient", {
       userPoolClientName: `${servicePrefix}-web`,
@@ -236,8 +290,8 @@ export class RakuRagStack extends cdk.Stack {
           authorizationCodeGrant: true
         },
         scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
-        callbackUrls: ["http://localhost:3000/api/auth/callback/cognito"],
-        logoutUrls: ["http://localhost:3000"]
+        callbackUrls: [`${publicBaseUrl}/oauth/cognito/callback`, "http://localhost:3002/oauth/cognito/callback"],
+        logoutUrls: [publicBaseUrl, "http://localhost:3002"]
       }
     });
 
@@ -335,6 +389,10 @@ export class RakuRagStack extends cdk.Stack {
         INGESTION_QUEUE_URL: ingestionQueue.queueUrl,
         COGNITO_USER_POOL_ID: userPool.userPoolId,
         COGNITO_USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId,
+        RAKU_AUTH_MODE: authMode,
+        COGNITO_ISSUER: cognitoIssuer,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        COGNITO_JWKS_URI: cognitoJwksUri,
         DATABASE_HOST: database.clusterEndpoint.hostname,
         DATABASE_PORT: database.clusterEndpoint.port.toString(),
         DATABASE_NAME: "raku_rag",
@@ -376,7 +434,10 @@ export class RakuRagStack extends cdk.Stack {
         // and API are same-origin the browser calls the relative "/v1" — no domain needed at build.
         image: ecs.ContainerImage.fromAsset(REPO_ROOT, {
           file: "apps/web/Dockerfile",
-          buildArgs: { NEXT_PUBLIC_API_BASE: "/v1" }
+          buildArgs: {
+            NEXT_PUBLIC_API_BASE: "/v1",
+            NEXT_PUBLIC_RAKU_AUTH_MODE: authMode
+          }
         }),
         essential: true,
         logging: ecs.LogDrivers.awsLogs({
@@ -387,8 +448,11 @@ export class RakuRagStack extends cdk.Stack {
           NODE_ENV: "production",
           STAGE_NAME: props.stageName,
           WEB_PORT: "3002",
-          // Demo auth: lets the browser mint the HMAC X-User-Token the API verifies (no Cognito yet).
-          RAKU_ENABLE_DEV_TOKEN_ISSUER: "1",
+          RAKU_AUTH_MODE: authMode,
+          RAKU_ENABLE_DEV_TOKEN_ISSUER: authMode === "dev" ? "1" : "0",
+          COGNITO_DOMAIN: cognitoHostedUiDomain,
+          COGNITO_ISSUER: cognitoIssuer,
+          COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
           COGNITO_USER_POOL_ID: userPool.userPoolId,
           COGNITO_USER_POOL_CLIENT_ID: userPoolClient.userPoolClientId
         },
@@ -683,6 +747,7 @@ export class RakuRagStack extends cdk.Stack {
       environment: {
         ...embeddingEnvironment,
         ...answerLlmEnvironment,
+        ...productionRuntimeEnvironment,
         STAGE_NAME: props.stageName,
         // Listen on all interfaces so the internal ALB health check reaches the task ENI (the default
         // 127.0.0.1 bind is loopback-only → failed ELB health checks → ECS kills the task).
@@ -935,6 +1000,18 @@ export class RakuRagStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING
     });
+    if (isProd) {
+      const snsAction = new cloudwatchActions.SnsAction(alarmTopic);
+      for (const alarm of [
+        apiTarget5xxAlarm,
+        dlqVisibleAlarm,
+        ingestionQueueAgeAlarm,
+        auroraCpuAlarm,
+        wafRateLimitAlarm
+      ]) {
+        alarm.addAlarmAction(snsAction);
+      }
+    }
 
     const dashboard = new cloudwatch.Dashboard(this, "OperationsDashboard", {
       dashboardName: `${servicePrefix}-operations`
@@ -1016,6 +1093,9 @@ export class RakuRagStack extends cdk.Stack {
     new cdk.CfnOutput(this, "CognitoUserPoolId", {
       value: userPool.userPoolId
     });
+    new cdk.CfnOutput(this, "CognitoHostedUiDomain", {
+      value: cognitoHostedUiDomain
+    });
     new cdk.CfnOutput(this, "CloudWatchDashboardName", {
       value: dashboard.dashboardName
     });
@@ -1027,6 +1107,9 @@ export class RakuRagStack extends cdk.Stack {
         auroraCpuAlarm.alarmName,
         wafRateLimitAlarm.alarmName
       ].join(",")
+    });
+    new cdk.CfnOutput(this, "OperationsAlarmTopicArn", {
+      value: alarmTopic.topicArn
     });
     new cdk.CfnOutput(this, "ApiWebAclArn", {
       value: apiWebAcl.attrArn
@@ -1072,10 +1155,11 @@ export class RakuRagStack extends cdk.Stack {
   private grantBedrockInvoke(taskRole: iam.IRole): void {
     taskRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
-        actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+        actions: ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream", "bedrock:ApplyGuardrail"],
         resources: [
           `arn:aws:bedrock:*::foundation-model/*`,
-          `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:inference-profile/*`
+          `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:inference-profile/*`,
+          `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:guardrail/*`
         ]
       })
     );

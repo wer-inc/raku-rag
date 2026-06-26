@@ -7,8 +7,16 @@ WORKDIR /repo
 # (web + API behind one ALB); override with --build-arg NEXT_PUBLIC_API_BASE=https://api.example.com/v1
 # for a split-origin (e.g. Vercel) deploy.
 ARG NEXT_PUBLIC_API_BASE=/v1
+ARG NEXT_PUBLIC_RAKU_AUTH_MODE=dev
+ARG NEXT_PUBLIC_COGNITO_DOMAIN=
+ARG NEXT_PUBLIC_COGNITO_CLIENT_ID=
+ARG NEXT_PUBLIC_COGNITO_ISSUER=
 ENV NEXT_TELEMETRY_DISABLED=1 \
-    NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE}
+    NEXT_PUBLIC_API_BASE=${NEXT_PUBLIC_API_BASE} \
+    NEXT_PUBLIC_RAKU_AUTH_MODE=${NEXT_PUBLIC_RAKU_AUTH_MODE} \
+    NEXT_PUBLIC_COGNITO_DOMAIN=${NEXT_PUBLIC_COGNITO_DOMAIN} \
+    NEXT_PUBLIC_COGNITO_CLIENT_ID=${NEXT_PUBLIC_COGNITO_CLIENT_ID} \
+    NEXT_PUBLIC_COGNITO_ISSUER=${NEXT_PUBLIC_COGNITO_ISSUER}
 COPY . .
 # Build with full deps, then do a CLEAN prod-only install so dev tooling (jest/@nestjs/cli/
 # @angular-devkit and their transitive globs — glob/tmp/picomatch) is ABSENT from the runtime image,

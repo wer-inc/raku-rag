@@ -48,6 +48,8 @@ class Settings:
     # IAM). Lets the answer text come from Claude without flipping guardrail/reranker to production.
     llm_provider: str = ""
     bedrock_claude_model_id: str = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    bedrock_guardrail_id: str = ""
+    bedrock_guardrail_version: str = ""
     langfuse_enabled: bool = False
     # P1-5 Langfuse self-host edge (host/keys live at the composition edge; the SDK is a `prod` extra).
     # Empty host/keys -> build_langfuse_client returns None -> LangfuseTelemetryExporter is a fail-safe no-op.
@@ -152,6 +154,10 @@ def settings_from_env(env: dict | None = None) -> Settings:
         llm_provider=_get("RAKU_LLM_PROVIDER", Settings.llm_provider),
         bedrock_claude_model_id=_get(
             "RAKU_BEDROCK_CLAUDE_MODEL_ID", Settings.bedrock_claude_model_id
+        ),
+        bedrock_guardrail_id=_get("RAKU_BEDROCK_GUARDRAIL_ID", Settings.bedrock_guardrail_id),
+        bedrock_guardrail_version=_get(
+            "RAKU_BEDROCK_GUARDRAIL_VERSION", Settings.bedrock_guardrail_version
         ),
         langfuse_enabled=_bool("LANGFUSE_ENABLED", Settings.langfuse_enabled),
         langfuse_host=_get("LANGFUSE_HOST", Settings.langfuse_host),

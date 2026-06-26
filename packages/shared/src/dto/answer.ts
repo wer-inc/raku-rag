@@ -7,7 +7,7 @@ export type AnswerStatus =
   | "temporarily_unavailable";
 
 export interface Citation {
-  kind: "text" | "visual";
+  kind: "text" | "visual" | "spreadsheet";
   document_id: string;
   chunk_id: string | null;
   source_id: string;
@@ -15,6 +15,9 @@ export interface Citation {
   /** [start, end) code-point offsets in the source for text citations */
   text_range?: [number, number];
   retrieval_score: number;
+  sheet_name?: string | null;
+  cell_range?: string | null;
+  row_id?: string | null;
   approval_status?: "draft" | "pending_review" | "approved" | "obsolete" | string;
   effective_date?: string | null;
   approval_source?: string | null;
@@ -55,6 +58,7 @@ export interface ManufacturingSafetyExtension {
 
 export interface AnswerResponse {
   status: AnswerStatus;
+  route?: "rag" | "structured_tool" | "refused_structured_tool_required";
   text: string | null;
   citations: Citation[];
   used_chunks: UsedChunk[];
