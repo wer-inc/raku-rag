@@ -3535,6 +3535,11 @@ function DocumentListBody() {
     setUploaded(loadIngestedDocs());
   }, []);
 
+  const emptyDocumentMessage =
+    uploaded.length > 0
+      ? "テナント一覧への反映を確認中です。直近アップロードは上の控えに表示されています。"
+      : "ドキュメントはまだありません。「ソースを追加」から取り込めます。";
+
   return (
     <>
       {uploaded.length > 0 && (
@@ -3595,7 +3600,7 @@ function DocumentListBody() {
               doc.source_id,
               doc.collection_id,
             ])}
-            empty="ドキュメントはまだありません。「ソースを追加」から取り込めます。"
+            empty={emptyDocumentMessage}
           />
         )}
       </Section>
