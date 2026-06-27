@@ -126,9 +126,15 @@ export default function LoginPage() {
                 : "組織とユーザーを選んでワークスペースに入ります。"}
             </p>
           </div>
-          {state.error && <p className="auth-alert">{state.error}</p>}
+          {state.error && (
+            <p className="auth-alert" role="alert" id="login-error">
+              {state.error}
+            </p>
+          )}
           {isCognito && !state.configured && !state.loading && (
-            <p className="auth-alert">ログイン設定が完了していません。管理者に確認してください。</p>
+            <p className="auth-alert" role="alert">
+              ログイン設定が完了していません。管理者に確認してください。
+            </p>
           )}
           {isCognito ? (
             <form className="auth-form-grid" onSubmit={signIn}>
@@ -142,6 +148,8 @@ export default function LoginPage() {
                   required
                   type="email"
                   value={email}
+                  aria-invalid={state.error ? true : undefined}
+                  aria-describedby={state.error ? "login-error" : undefined}
                 />
               </label>
               {!challengeSession && (
@@ -153,6 +161,8 @@ export default function LoginPage() {
                     required
                     type="password"
                     value={password}
+                    aria-invalid={state.error ? true : undefined}
+                    aria-describedby={state.error ? "login-error" : undefined}
                   />
                 </label>
               )}
@@ -165,6 +175,8 @@ export default function LoginPage() {
                     required
                     type="password"
                     value={newPassword}
+                    aria-invalid={state.error ? true : undefined}
+                    aria-describedby={state.error ? "login-error" : undefined}
                   />
                 </label>
               )}

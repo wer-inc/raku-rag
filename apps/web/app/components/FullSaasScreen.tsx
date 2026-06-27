@@ -806,6 +806,7 @@ function SourceSearchBody() {
               value={sourceId}
               onChange={(e) => setSourceId(e.target.value)}
               placeholder="source_id"
+              aria-label="ソース ID"
               autoComplete="off"
             />
             <button type="submit">確認</button>
@@ -816,7 +817,7 @@ function SourceSearchBody() {
         <section className="ops-panel">
           <h3>取り込み実行</h3>
           <form className="src-inline-form" onSubmit={onRun}>
-            <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="run_id" autoComplete="off" />
+            <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="run_id" aria-label="実行 ID" autoComplete="off" />
             <button type="submit">確認</button>
           </form>
           {runError && <p className="ops-note">{runError}</p>}
@@ -1506,6 +1507,7 @@ function SourcePreviewPanel({
                   <select
                     value={mappingEdits[column] ?? preview.suggested_mapping[column] ?? ""}
                     onChange={(e) => updateMapping(column, e.target.value)}
+                    aria-label="標準項目マッピング"
                   >
                     <option value="">未使用</option>
                     {preview.canonical_fields.map((field) => (
@@ -2122,7 +2124,7 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
       <Section title="レビュー操作" note={terminal ? "このドラフトは終了状態です。" : undefined}>
         <div className="form-grid">
           <div className="review-assign-row">
-            <input value={reviewerId} onChange={(e) => setReviewerId(e.target.value)} placeholder="reviewer_id" />
+            <input value={reviewerId} onChange={(e) => setReviewerId(e.target.value)} placeholder="reviewer_id" aria-label="レビュー担当者ID" />
             <button type="button" onClick={() => void onAssign()} disabled={terminal || !reviewerId.trim()}>
               担当に割り当て
             </button>
@@ -2130,6 +2132,7 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
           <textarea
             value={comment}
             onChange={(e) => setComment(e.target.value)}
+            aria-label="レビューコメント"
             placeholder="レビューコメント（任意）"
             rows={3}
             disabled={terminal}
@@ -2147,8 +2150,8 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
 
       <Section title="文書承認">
         <div className="form-grid">
-          <input value={docId} onChange={(e) => setDocId(e.target.value)} placeholder="document_id" />
-          <select value={approvalState} onChange={(e) => setApprovalState(e.target.value)}>
+          <input value={docId} onChange={(e) => setDocId(e.target.value)} placeholder="document_id" aria-label="ドキュメントID" />
+          <select value={approvalState} onChange={(e) => setApprovalState(e.target.value)} aria-label="承認状態">
             <option value="pending_review">pending_review</option>
             <option value="approved">approved</option>
             <option value="obsolete">obsolete</option>
@@ -2365,7 +2368,7 @@ function IngestionRunsBody() {
     <>
       <Section title="実行を確認" note="実行 ID でバックエンドの投影を確認できます。">
         <form className="src-inline-form" onSubmit={lookup}>
-          <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="ingestion_run_id" />
+          <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="ingestion_run_id" aria-label="実行 ID" />
           <button type="submit" disabled={!runId.trim()}>
             確認
           </button>
@@ -3498,11 +3501,10 @@ function AddSourceBody() {
       {selectedSource === "file" ? (
         <form className="upload-form" onSubmit={onSubmit}>
         <Section title="ドキュメントを追加" note="対応形式: テキスト / Markdown / HTML / CSV / Word(.docx) / Excel(.xlsx)">
-          <div className="upload-mode-tabs" role="tablist">
+          <div className="upload-mode-tabs">
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === "file"}
+              aria-pressed={mode === "file"}
               className={`upload-mode-tab ${mode === "file" ? "active" : ""}`}
               onClick={() => setMode("file")}
             >
@@ -3510,8 +3512,7 @@ function AddSourceBody() {
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === "text"}
+              aria-pressed={mode === "text"}
               className={`upload-mode-tab ${mode === "text" ? "active" : ""}`}
               onClick={() => setMode("text")}
             >
@@ -3992,7 +3993,7 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
         />
       </Section>
       <Section title="メタデータ編集">
-        <textarea value={metadata} onChange={(e) => setMetadata(e.target.value)} rows={8} />
+        <textarea value={metadata} onChange={(e) => setMetadata(e.target.value)} rows={8} aria-label="メタデータ" />
         <div className="screen-actions">
           <button type="button" onClick={() => void onSave()} disabled={saving}>
             メタデータを保存
@@ -4034,7 +4035,7 @@ function ApprovalWorkflowBody() {
         />
       </Section>
       <Section title="設計メモ">
-        <textarea value={memo} onChange={(e) => setMemo(e.target.value)} rows={5} />
+        <textarea value={memo} onChange={(e) => setMemo(e.target.value)} rows={5} aria-label="メモ" />
         <p className="ops-note">承認ルールはガバナンス設定に基づいて表示しています。</p>
       </Section>
     </>
@@ -4334,9 +4335,9 @@ function PermissionSimulator() {
       note="指定ユーザーとして同じ質問を実行し、その人がアクセスできる根拠だけが返ることを確認します（ACL は deny-by-default でサーバ側強制）。"
     >
       <div className="form-grid">
-        <textarea value={query} onChange={(e) => setQuery(e.target.value)} rows={2} placeholder="質問" />
+        <textarea value={query} onChange={(e) => setQuery(e.target.value)} rows={2} placeholder="質問" aria-label="質問" />
         <div className="review-assign-row">
-          <input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="user_id" />
+          <input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="user_id" aria-label="ユーザーID" />
           <button type="button" onClick={() => void run(userId.trim() || "bob")} disabled={loading || !query.trim()}>
             このユーザーで実行
           </button>

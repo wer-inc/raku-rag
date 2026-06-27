@@ -29,8 +29,14 @@ export default function CognitoCallbackPage() {
   return (
     <section className="auth-page">
       <div className="auth-card">
-        <h2>サインイン</h2>
-        <p className="auth-subtle">{error ? `ログインに失敗しました: ${error}` : "認証を完了しています..."}</p>
+        <h1>サインイン</h1>
+        <p
+          className="auth-subtle"
+          role={error ? "alert" : "status"}
+          aria-live={error ? "assertive" : "polite"}
+        >
+          {error ? `ログインに失敗しました: ${error}` : "認証を完了しています..."}
+        </p>
       </div>
     </section>
   );

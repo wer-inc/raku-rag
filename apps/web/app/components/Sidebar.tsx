@@ -154,7 +154,13 @@ export default function Sidebar() {
           <span className="sidebar-foot-name">{displayName}</span>
           <span className="sidebar-foot-role">{displayRole}</span>
         </span>
-        <button type="button" className="sidebar-foot-signout" title="サインアウト" onClick={onSignOut}>
+        <button
+          type="button"
+          className="sidebar-foot-signout"
+          aria-label="サインアウト"
+          title="サインアウト"
+          onClick={onSignOut}
+        >
           <NavIcon name="signout" size={17} />
         </button>
       </div>
