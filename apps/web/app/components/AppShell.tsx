@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "./Sidebar";
@@ -43,6 +43,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   // Mobile only: the sidebar is an off-canvas drawer; this toggles it. Desktop CSS ignores `nav-open`.
   const [navOpen, setNavOpen] = useState(false);
   const [salesDrawerOpen, setSalesDrawerOpen] = useState(false);
+  const navToggleRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -80,6 +81,24 @@ export default function AppShell({ children }: { children: ReactNode }) {
     setSalesDrawerOpen(false);
   }, [pathname]);
 
+  // Mobile off-canvas drawer a11y: Escape closes it, focus moves into the nav on open and
+  // returns to the toggle on close. navOpen is only ever true on mobile (the toggle is
+  // display:none on desktop), so this stays inert for the always-visible desktop sidebar.
+  useEffect(() => {
+    if (!navOpen) return;
+    const sidebar = document.getElementById("workspace-sidebar");
+    (sidebar?.querySelector<HTMLElement>('a[href], button:not([disabled])') ?? sidebar)?.focus();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setNavOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    const trigger = navToggleRef.current;
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      trigger?.focus();
+    };
+  }, [navOpen]);
+
   if (AUTH_ROUTES.has(pathname)) {
     return <>{children}</>;
   }
@@ -94,10 +113,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
       {/* Mobile-only header: gives the drawer a launch point when the sidebar is off-canvas. */}
       <header className="mobile-topbar">
         <button
+          ref={navToggleRef}
           type="button"
           className="mobile-nav-toggle"
           aria-label={navOpen ? "メニューを閉じる" : "メニューを開く"}
           aria-expanded={navOpen}
+          aria-controls="workspace-sidebar"
           onClick={() => setNavOpen(true)}
         >
           <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">

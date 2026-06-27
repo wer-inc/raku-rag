@@ -73,7 +73,9 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
       <NavIcon name={item.icon} />
       <span className="sidebar-nav-label">{item.label}</span>
       {item.badge === "review" && REVIEW_BADGE_COUNT > 0 && (
-        <span className="sidebar-nav-badge">{REVIEW_BADGE_COUNT}</span>
+        <span className="sidebar-nav-badge" aria-label={`未レビュー ${REVIEW_BADGE_COUNT} 件`}>
+          {REVIEW_BADGE_COUNT}
+        </span>
       )}
     </Link>
   );
@@ -120,7 +122,7 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="sidebar" aria-label="Workspace">
+    <aside id="workspace-sidebar" className="sidebar" aria-label="Workspace" tabIndex={-1}>
       <div className="sidebar-org">
         <Link href="/orgselect" className="sidebar-org-btn">
           <span className="sidebar-org-mark" aria-hidden="true">

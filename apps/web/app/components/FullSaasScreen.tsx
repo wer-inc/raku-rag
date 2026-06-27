@@ -410,7 +410,7 @@ function AnswerFeedback({ question, answerId }: { question: string; answerId: st
           </div>
         </div>
       )}
-      {error && <span className="cv-foot-error">{error}</span>}
+      {error && <span className="cv-foot-error" role="alert">{error}</span>}
     </div>
   );
 }
@@ -625,7 +625,7 @@ function AnswersBody() {
           return <AnswerPanel key={turn.id} turn={turn} onOpenCitation={setViewer} />;
         })}
 
-        {loading && <p className="ops-empty">回答を生成中…</p>}
+        {loading && <p className="ops-empty" role="status" aria-live="polite">回答を生成中…</p>}
       </div>
 
       <form className="answers-composer" onSubmit={onAsk}>
@@ -781,7 +781,7 @@ function SourceSearchBody() {
                 </div>
                 {match.failure_mode && (
                   <div>
-                    <h4 className="src-h4">原因候補</h4>
+                    <h3 className="src-h4">原因候補</h3>
                     <p className="answer-text src-cause">
                       {match.failure_mode.name}
                       {match.failure_mode.description ? ` — ${match.failure_mode.description}` : ""}
@@ -1027,7 +1027,7 @@ function SourceListBody() {
           <Link href="/sources/new">ソースを追加</Link>
         </div>
       </header>
-      {state.state === "loading" && <p className="ops-empty">ソースを読み込み中…</p>}
+      {state.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ソースを読み込み中…</p>}
       {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
       {state.state === "ready" &&
         (state.data.length === 0 ? (
@@ -1047,15 +1047,15 @@ function SourceListBody() {
             </Link>
           </div>
         ) : (
-          <div className="standalone-table-wrap">
-            <div className="standalone-table-head">
-              <div>ソース</div>
-              <div>種別</div>
-              <div>ステータス</div>
-              <div className="is-right">文書数</div>
-              <div className="is-right">最終同期</div>
-              <div>コレクション</div>
-              <div>承認内訳</div>
+          <div className="standalone-table-wrap" role="table">
+            <div className="standalone-table-head" role="row">
+              <div role="columnheader">ソース</div>
+              <div role="columnheader">種別</div>
+              <div role="columnheader">ステータス</div>
+              <div className="is-right" role="columnheader">文書数</div>
+              <div className="is-right" role="columnheader">最終同期</div>
+              <div role="columnheader">コレクション</div>
+              <div role="columnheader">承認内訳</div>
             </div>
             {state.data.map((row) => {
               const { source, sync } = row;
@@ -1079,19 +1079,20 @@ function SourceListBody() {
                   key={source.source_id}
                   href={href}
                   className="standalone-table-row"
+                  role="row"
                 >
-                  <div className="standalone-source-cell">
+                  <div className="standalone-source-cell" role="cell">
                     <div className="standalone-source-mark">{kind.slice(0, 2).toUpperCase()}</div>
                     <span>{name}</span>
                   </div>
-                  <div>{kind}</div>
-                  <div>
+                  <div role="cell">{kind}</div>
+                  <div role="cell">
                     <span className={`standalone-status ${status.key}`}>{status.label}</span>
                   </div>
-                  <div className="is-right mono">{changed ?? "—"}</div>
-                  <div className="is-right muted">{sourceFreshness(row)}</div>
-                  <div className="muted">{source.collection_id}</div>
-                  <div>
+                  <div className="is-right mono" role="cell">{changed ?? "—"}</div>
+                  <div className="is-right muted" role="cell">{sourceFreshness(row)}</div>
+                  <div className="muted" role="cell">{source.collection_id}</div>
+                  <div role="cell">
                     <span className="standalone-status wait">{approval}</span>
                   </div>
                 </Link>
@@ -1623,7 +1624,7 @@ function HomeDashboardBody() {
     [],
   );
 
-  if (state.state === "loading") return <p className="ops-empty">ホームダッシュボードを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">ホームダッシュボードを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
 
   const { dashboard, telemetry, kpi, governance } = state.data;
@@ -1783,7 +1784,7 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
         collectionId={syncState.state === "ready" ? syncState.data.collection_id : undefined}
       />
 
-      {syncState.state === "loading" && <p className="ops-empty">ソース同期状態を読み込み中…</p>}
+      {syncState.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ソース同期状態を読み込み中…</p>}
       {syncState.state === "error" && <ScreenLoadError error={syncState.error} onRetry={reload} />}
       {syncState.state === "ready" && (
         <>
@@ -1971,7 +1972,7 @@ function DocumentApprovalQueueBody() {
           </div>
         )}
         {message && <p className="cv-foot-done">{message}</p>}
-        {error && <p className="cv-foot-error">{error}</p>}
+        {error && <p className="cv-foot-error" role="alert">{error}</p>}
       </Section>
     </>
   );
@@ -2037,7 +2038,7 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
     }
   }
 
-  if (draftState.state === "loading") return <p className="ops-empty">ドラフトを読み込み中…</p>;
+  if (draftState.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">ドラフトを読み込み中…</p>;
   if (draftState.state === "error") return <ScreenLoadError error={draftState.error} />;
 
   const draft = draftState.data;
@@ -2315,7 +2316,7 @@ function ReviewQueueBody() {
               {creating ? "生成中…" : "ドラフトを生成"}
             </button>
           </form>
-          {error && <p className="cv-foot-error">{error}</p>}
+          {error && <p className="cv-foot-error" role="alert">{error}</p>}
         </section>
       </div>
     </>
@@ -2433,7 +2434,7 @@ function IngestionRunsBody() {
           まだ取込履歴はありません。<Link href="/sources/new">ソースを追加</Link> から同期またはアップロードしてください。
         </p>
       )}
-      {state.state === "loading" && lastLookupId && <p className="ops-empty">実行状態を読み込み中…</p>}
+      {state.state === "loading" && lastLookupId && <p className="ops-empty" role="status" aria-live="polite">実行状態を読み込み中…</p>}
       {state.state === "error" && <ScreenLoadError error={state.error} onRetry={retryLookup} />}
       {state.state === "ready" && (
         <Section title="実行詳細">
@@ -2466,7 +2467,7 @@ function OperationTelemetryBody() {
     [],
   );
 
-  if (state.state === "loading") return <p className="ops-empty">安全テレメトリを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">安全テレメトリを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const breakdown = state.data.telemetry.block_breakdown ?? state.data.telemetry.safety_gate_block_breakdown ?? {};
   return (
@@ -2499,7 +2500,7 @@ function QualityBody() {
     },
     [],
   );
-  if (state.state === "loading") return <p className="ops-empty">品質データを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">品質データを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const { kpi } = state.data;
   return (
@@ -2581,7 +2582,7 @@ function QualityEvalSection() {
           {running ? "評価を実行中…" : "品質評価を実行"}
         </button>
       </div>
-      {error && <p className="cv-foot-error">{error}</p>}
+      {error && <p className="cv-foot-error" role="alert">{error}</p>}
       {result && (
         <>
           <div className="metric-grid">
@@ -2618,7 +2619,7 @@ function ImpactReportBody() {
     const reviewDone = drafts.filter((d) => d.status === "approved" || d.status === "rejected").length;
     return { dashboard, telemetry, kpi, draftCount: drafts.length, reviewDone };
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">導入効果レポートを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">導入効果レポートを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const { dashboard, telemetry, kpi, draftCount, reviewDone } = state.data;
   const blocks = telemetry.safety_gate_block_breakdown ?? telemetry.block_breakdown ?? {};
@@ -2806,7 +2807,7 @@ function ComplianceExportBody() {
     },
     [],
   );
-  if (state.state === "loading") return <p className="ops-empty">出力データを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">出力データを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   return (
       <Section title="コンプライアンス出力">
@@ -3595,7 +3596,7 @@ function AddSourceBody() {
                       : "「Google で接続」で drive.readonly を認可します。リフレッシュトークンはサーバ側に保管されます。"}
                   </span>
                   {oauthStatus === "error" && oauthError && (
-                    <span className="connector-oauth-error" style={{ color: "#c0392b" }}>
+                    <span className="connector-oauth-error" style={{ color: "#c0392b" }} role="alert">
                       接続エラー: {oauthError}
                     </span>
                   )}
@@ -3895,7 +3896,7 @@ function DocumentListBody() {
         title="ドキュメント"
         note="テナントのナレッジベースに取り込まれ、検索・回答の根拠になっているドキュメントです。"
       >
-        {docs.state === "loading" && <p className="ops-empty">ドキュメントを読み込み中…</p>}
+        {docs.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ドキュメントを読み込み中…</p>}
         {docs.state === "error" && <ScreenLoadError error={docs.error} onRetry={reloadDocs} />}
         {docs.state === "ready" && (
           <DataTable
@@ -4003,7 +4004,7 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
           </button>
         </div>
       </Section>
-      {state.state === "loading" && <p className="ops-empty">処理状態を読み込み中…</p>}
+      {state.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">処理状態を読み込み中…</p>}
       {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
       {state.state === "ready" && (
         <Section title="処理状態">
@@ -4021,7 +4022,7 @@ function ApprovalWorkflowBody() {
     const token = await getSessionToken();
     return manufacturingGovernanceStatus(token);
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">ガバナンス状態を読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">ガバナンス状態を読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   return (
     <>
@@ -4056,7 +4057,7 @@ function GenericOpsOverview() {
     },
     [],
   );
-  if (state.state === "loading") return <p className="ops-empty">運用概要を読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">運用概要を読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const telemetryBreakdown =
     state.data.telemetry.block_breakdown ?? state.data.telemetry.safety_gate_block_breakdown ?? {};
@@ -4204,7 +4205,7 @@ function AuditLogBody() {
       return { events: records, total: records.length, offset: 0, limit: records.length };
     }
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">監査ログを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">監査ログを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
 
   const records = (state.data.events ?? []) as AuditRecord[];
@@ -4352,8 +4353,8 @@ function PermissionSimulator() {
         </div>
       </div>
 
-      {loading && <p className="ops-empty">実行中…</p>}
-      {error && <p className="cv-foot-error">{error}</p>}
+      {loading && <p className="ops-empty" role="status" aria-live="polite">実行中…</p>}
+      {error && <p className="cv-foot-error" role="alert">{error}</p>}
       {result && (
         <div className={`sim-result ${accessible ? "sim-ok" : "sim-deny"}`}>
           <div className="result-head">
@@ -4398,7 +4399,7 @@ function RolesAclBody() {
       </Section>
 
       <Section title="ACL 付与" note="GET /v1/admin/acl から取得した実データです。">
-        {state.state === "loading" && <p className="ops-empty">ACL を読み込み中…</p>}
+        {state.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ACL を読み込み中…</p>}
         {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
         {state.state === "ready" && (
           <DataTable
@@ -4476,7 +4477,7 @@ function ProviderPolicyBody() {
     ]);
     return { policies, dataUse };
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">プロバイダーポリシーを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">プロバイダーポリシーを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const policies = (Array.isArray(state.data.policies) ? state.data.policies : []) as ProviderPolicy[];
   const dataUse = state.data.dataUse as DataUsePolicy;
@@ -4631,7 +4632,7 @@ function RetrievalDebugBody() {
       </form>
 
       {error && (
-        <section className="result-panel error-panel">
+        <section className="result-panel error-panel" role="alert">
           <h3>診断に失敗しました</h3>
           <p>{error}</p>
         </section>
@@ -4704,7 +4705,7 @@ function RetrievalBody() {
     ]);
     return { profiles, queries };
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">検索設定を読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">検索設定を読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   return <Section title="検索設定"><pre className="code-block">{JSON.stringify(state.data, null, 2)}</pre></Section>;
 }
@@ -4718,7 +4719,7 @@ function LoggingPrivacyBody() {
     ]);
     return { logging, policy };
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">ログポリシーを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">ログポリシーを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const dataUse = state.data.policy as DataUsePolicy;
   return (
