@@ -814,6 +814,7 @@ export class RakuRagStack extends cdk.Stack {
     });
     this.attachRuntimePolicies(answerTask.taskRole, documentBucket, dataKey);
     this.grantBedrockInvoke(answerTask.taskRole);
+    this.grantTextractDocumentAnalysis(answerTask.taskRole);
     internalAuthSecret.grantRead(answerTask.taskRole);
     openAiSecret?.grantRead(answerTask.taskRole);
     database.secret?.grantRead(answerTask.taskRole);

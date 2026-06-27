@@ -467,9 +467,7 @@ class AnswerService:
             used: list[str] = []
             freshness: list[Freshness] = []
             visual_verifications_attempted = 0
-            max_visual_verifications = max(
-                0, int(self._settings.max_regions_verified_per_answer)
-            )
+            max_visual_verifications = max(0, int(self._settings.max_regions_verified_per_answer))
             for s in evidence:
                 c = s.chunk
                 chunk_terms = _terms(c.text)
