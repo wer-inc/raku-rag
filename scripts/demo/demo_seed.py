@@ -135,10 +135,16 @@ def ingest(doc: dict) -> tuple[str, object]:
 # this is what made the seeded KB look empty even after ingestion succeeded. Grant each demo user READ
 # on the demo collection so any demo login can retrieve. (Persisted in acl_grants; idempotent.)
 DEMO_USERS = ["alice", "misaki", "bob", "carol", "dave"]
+DEMO_ROLES = ["sales_demo"]
 
 
 def grant_demo_acl() -> tuple[str, object]:
-    """PUT /internal/admin/acl — collection-scoped READ grant for each demo user (deny-by-default)."""
+    """PUT /internal/admin/acl — collection-scoped READ grant for demo users/roles.
+
+    Cognito sales users authenticate as real email users with the ``sales_demo`` group/role, not as
+    one of the local dev-token users above. Granting the role keeps ACL deny-by-default intact while
+    letting the sales account retrieve the prepared demo corpus.
+    """
     grants = [
         {
             "scope_type": "collection",
@@ -148,6 +154,15 @@ def grant_demo_acl() -> tuple[str, object]:
         }
         for user in DEMO_USERS
     ]
+    grants.extend(
+        {
+            "scope_type": "collection",
+            "scope_id": COLLECTION,
+            "subject_type": "role",
+            "subject_id": role,
+        }
+        for role in DEMO_ROLES
+    )
     headers = {"content-type": "application/json", "x-raku-tenant-id": TENANT, "x-raku-user-id": "alice"}
     if INTERNAL_AUTH:
         headers["X-Internal-Auth"] = INTERNAL_AUTH
@@ -178,7 +193,8 @@ def main() -> None:
         print(f"  {status:10} {doc['document_id']:22} {doc['approval_status']:14} chunks={chunks}")
     # Without this grant, deny-by-default ACL hides every doc from search/answer (empty KB symptom).
     acl_status, acl_info = grant_demo_acl()
-    print(f"[demo-seed] acl grant ({', '.join(DEMO_USERS)} -> read {COLLECTION}): {acl_status} {acl_info}")
+    principals = ", ".join(DEMO_USERS + [f"role:{role}" for role in DEMO_ROLES])
+    print(f"[demo-seed] acl grant ({principals} -> read {COLLECTION}): {acl_status} {acl_info}")
     print(f"[demo-seed] done: {ok}/{len(DOCS)} succeeded")
 
 

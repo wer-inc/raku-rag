@@ -22,9 +22,9 @@ stdlib only.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import Callable
+from typing import Callable, Sequence
 
 from raku_rag.core.errors import AnswerStatus
 from raku_rag.domain.models import (
@@ -114,6 +114,35 @@ class ManufacturingAnswer:
 GetMfgMeta = Callable[[str, str], ManufacturingDocumentMetadata | None]
 
 
+_METADATA_RISK_REASON_PREFIX = "metadata:"
+_METADATA_RISK_REASON_CODES = {"hazard_tag"}
+
+
+class _PreselectedRetrieval:
+    """Retrieval facade for reusing AnswerService with already filtered evidence."""
+
+    def __init__(self, base: RetrievalService, scored: Sequence[ScoredChunk]) -> None:
+        self._base = base
+        self._scored = tuple(scored)
+        self.last_prefiltered_count = len(self._scored)
+
+    def retrieve(
+        self,
+        principal: IdentityClaims,
+        query: str,
+        profile: QueryProfile,
+        *,
+        correlation_id: str = "",
+    ) -> list[ScoredChunk]:
+        return list(self._scored)
+
+    def is_visible(self, principal: IdentityClaims, chunk) -> bool:
+        is_visible = getattr(self._base, "is_visible", None)
+        if callable(is_visible):
+            return bool(is_visible(principal, chunk))
+        return chunk.tenant_id == principal.tenant_id and not getattr(chunk, "tombstone", False)
+
+
 def _matches_filters(meta: ManufacturingDocumentMetadata | None, filters: dict | None) -> bool:
     """Map 001 metadata filter to manufacturing tags: a candidate must match every provided key."""
     if not filters:
@@ -132,6 +161,16 @@ def _matches_filters(meta: ManufacturingDocumentMetadata | None, filters: dict |
         if got != want:
             return False
     return True
+
+
+def _is_metadata_only_high_risk(classification: HighRiskClassification) -> bool:
+    """True when risk came from document metadata, not a dangerous user intent."""
+    if not classification.is_high_risk or not classification.reason_codes:
+        return False
+    return all(
+        code in _METADATA_RISK_REASON_CODES or code.startswith(_METADATA_RISK_REASON_PREFIX)
+        for code in classification.reason_codes
+    )
 
 
 class ManufacturingAnswerService:
@@ -226,7 +265,32 @@ class ManufacturingAnswerService:
             return blocked, classification, decision, tuple(candidate_doc_ids)
 
         # Not blocked => run the REUSED 001 answer path and decorate citations.
-        base: Answer = self._answer_service.answer(principal, query, profile)
+        # Metadata-only high-risk often means "the document is about equipment/safety", not that the
+        # user's request asks for an operation. For those lookups, keep the high-risk label but force
+        # generation to approved+effective evidence only so draft/obsolete noise cannot poison the
+        # answer or cause an avoidable approved_citation_missing demotion.
+        answer_service, approved_lookup_evidence = self._answer_service_for_metadata_lookup(
+            principal,
+            profile,
+            classification=classification,
+            evidence=evidence,
+        )
+        if approved_lookup_evidence:
+            filtered_citations = [self._candidate_citation(s) for s in approved_lookup_evidence]
+            filtered_meta = [
+                m
+                for c in filtered_citations
+                if (m := self._get_mfg_meta(tenant, c.document_id)) is not None
+            ]
+            filtered_decision = self._safety_gate.evaluate(
+                classification, filtered_citations, filtered_meta
+            )
+            if decision.obsolete_warning and not filtered_decision.obsolete_warning:
+                filtered_decision = replace(filtered_decision, obsolete_warning=True)
+            decision = filtered_decision
+            notice = ONSITE_CONFIRMATION_NOTICE if decision.requires_onsite_confirmation else None
+
+        base: Answer = answer_service.answer(principal, query, profile)
 
         mfg_citations = tuple(
             ManufacturingCitation.from_base(c, self._get_mfg_meta(tenant, c.document_id))
@@ -315,6 +379,51 @@ class ManufacturingAnswerService:
             notice=notice if base.status == AnswerStatus.OK.value else notice,
         )
         return ans, classification, decision, tuple(candidate_doc_ids)
+
+    def _answer_service_for_metadata_lookup(
+        self,
+        principal: IdentityClaims,
+        profile: QueryProfile,
+        *,
+        classification: HighRiskClassification,
+        evidence: Sequence[ScoredChunk],
+    ) -> tuple[AnswerService, tuple[ScoredChunk, ...]]:
+        if not _is_metadata_only_high_risk(classification):
+            return self._answer_service, ()
+
+        approved_effective = [
+            s
+            for s in evidence
+            if is_approved_effective(
+                self._get_mfg_meta(principal.tenant_id, s.chunk.document_id), today=self._today
+            )
+        ]
+        if not approved_effective:
+            return self._answer_service, ()
+        pre = self._groundedness.pre_gate(approved_effective, profile)
+        if not pre.passed:
+            return self._answer_service, ()
+
+        retrieval = _PreselectedRetrieval(self._retrieval, pre.evidence)
+        # Reuse the existing AnswerService implementation so generation, prompt-injection defense,
+        # post-grounding, citation revalidation, cost, metrics, and audit behavior stay identical.
+        return (
+            AnswerService(
+                retrieval=retrieval,  # type: ignore[arg-type]
+                llm=self._answer_service._llm,
+                gate=self._answer_service._gate,
+                cost=self._answer_service._cost,
+                get_document=self._answer_service._get_document,
+                metrics=self._answer_service._metrics,
+                tracer=self._answer_service._tracer,
+                audit=self._answer_service._audit,
+                vlm=self._answer_service._vlm,
+                injection_guard=self._answer_service._injection_guard,
+                output_guardrail=self._answer_service._output_guardrail,
+                structured_tool=self._answer_service._structured_tool,
+            ),
+            tuple(pre.evidence),
+        )
 
     def _candidate_citation(self, s: ScoredChunk) -> Citation:
         """Build the 001-shaped Citation for a candidate chunk so the SafetyGate can survey approval."""
