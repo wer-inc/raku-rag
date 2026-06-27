@@ -7,6 +7,8 @@ import type { FormEvent, ReactNode } from "react";
 import type {
   AdminDataSource,
   Citation,
+  DataSourceMappingProfile,
+  DataSourceProfileType,
   DataSourcePreviewResponse,
   GovernanceStatus,
   KnowledgeOpsDashboard,
@@ -1100,7 +1102,53 @@ function SourceListBody() {
   );
 }
 
-const PREVIEW_REQUIRED_FIELDS = ["equipment_id", "document_kind", "approval_status"];
+const PREVIEW_PROFILE_OPTIONS: Array<{ value: DataSourceProfileType; label: string }> = [
+  { value: "auto", label: "自動判定" },
+  { value: "manufacturing", label: "設備・工程データ" },
+  { value: "faq", label: "FAQ" },
+  { value: "manual", label: "マニュアル・手順書" },
+  { value: "generic", label: "汎用文書" },
+];
+const PREVIEW_REQUIRED_FIELDS_BY_PROFILE: Record<DataSourceProfileType, string[]> = {
+  auto: [],
+  manufacturing: ["equipment_id"],
+  faq: ["question", "answer"],
+  manual: [],
+  generic: [],
+};
+const PREVIEW_DISPLAY_FIELDS_BY_PROFILE: Record<string, string[]> = {
+  manufacturing: [
+    "equipment_id",
+    "factory_id",
+    "line_id",
+    "process_id",
+    "alarm_code",
+    "defect_type",
+    "part_no",
+    "effective_date",
+  ],
+  faq: [
+    "question",
+    "answer",
+    "category",
+    "product_id",
+    "product_name",
+    "equipment_id",
+    "published_at",
+    "updated_at",
+  ],
+  manual: [
+    "document_title",
+    "document_version",
+    "section",
+    "heading",
+    "body",
+    "equipment_id",
+    "published_at",
+    "updated_at",
+  ],
+  generic: ["document_title", "category", "body", "owner_department", "published_at", "updated_at"],
+};
 const PREVIEW_DEFAULT_KIND_OPTIONS = [
   ["", "指定なし"],
   ["trouble_report", "トラブル報告"],
@@ -1115,6 +1163,16 @@ const PREVIEW_APPROVAL_OPTIONS = [
   ["draft", "ドラフト"],
   ["obsolete", "旧版"],
 ] as const;
+
+function isDataSourceProfileType(value: unknown): value is DataSourceProfileType {
+  return (
+    value === "auto" ||
+    value === "manufacturing" ||
+    value === "faq" ||
+    value === "manual" ||
+    value === "generic"
+  );
+}
 
 function splitPreviewFields(value: string): string[] {
   return value
@@ -1133,16 +1191,7 @@ function previewDisplayFields(preview: DataSourcePreviewResponse): string[] {
   for (const row of preview.sample_rows) {
     for (const key of Object.keys(row.normalized ?? {})) normalized.add(key);
   }
-  const preferred = [
-    ...PREVIEW_REQUIRED_FIELDS,
-    "factory_id",
-    "line_id",
-    "process_id",
-    "alarm_code",
-    "defect_type",
-    "part_no",
-    "effective_date",
-  ];
+  const preferred = PREVIEW_DISPLAY_FIELDS_BY_PROFILE[preview.profile_type] ?? [];
   const ordered = [
     ...preferred,
     ...preview.canonical_fields.filter((field) => !preferred.includes(field)),
@@ -1160,24 +1209,82 @@ function SourcePreviewPanel({
   sourceId: string;
   collectionId?: string | null;
 }) {
+  const [profileType, setProfileType] = useState<DataSourceProfileType>("auto");
   const [sampleDocuments, setSampleDocuments] = useState(2);
   const [sampleRows, setSampleRows] = useState(8);
-  const [requiredFields, setRequiredFields] = useState(PREVIEW_REQUIRED_FIELDS.join(", "));
+  const [requiredFields, setRequiredFields] = useState(
+    PREVIEW_REQUIRED_FIELDS_BY_PROFILE.auto.join(", "),
+  );
   const [documentKind, setDocumentKind] = useState("");
   const [approvalStatus, setApprovalStatus] = useState("");
   const [effectiveDate, setEffectiveDate] = useState("");
+  const [datasource, setDatasource] = useState<AdminDataSource | null>(null);
   const [preview, setPreview] = useState<DataSourcePreviewResponse | null>(null);
   const [mappingEdits, setMappingEdits] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
     setPreview(null);
     setMappingEdits({});
     setMessage(null);
+    setDatasource(null);
+    setProfileType("auto");
+    setRequiredFields(PREVIEW_REQUIRED_FIELDS_BY_PROFILE.auto.join(", "));
+    setDocumentKind("");
+    setApprovalStatus("");
+    setEffectiveDate("");
+    void getSessionToken()
+      .then((token) =>
+        apiGetJson<AdminDataSource>(
+          `/admin/datasources/${encodeURIComponent(sourceId)}`,
+          token,
+        ),
+      )
+      .then((data) => {
+        if (!active) return;
+        setDatasource(data);
+        const rawProfile = data.config?.mapping_profile;
+        if (!rawProfile || typeof rawProfile !== "object" || Array.isArray(rawProfile)) return;
+        const mappingProfile = rawProfile as DataSourceMappingProfile;
+        const storedProfile = mappingProfile.profile_type ?? mappingProfile.data_profile;
+        if (isDataSourceProfileType(storedProfile)) {
+          setProfileType(storedProfile);
+          setRequiredFields(
+            Array.isArray(mappingProfile.required_fields)
+              ? mappingProfile.required_fields.join(", ")
+              : PREVIEW_REQUIRED_FIELDS_BY_PROFILE[storedProfile].join(", "),
+          );
+        }
+        if (mappingProfile.defaults && typeof mappingProfile.defaults === "object") {
+          setDocumentKind(String(mappingProfile.defaults.document_kind ?? ""));
+          setApprovalStatus(String(mappingProfile.defaults.approval_status ?? ""));
+          setEffectiveDate(String(mappingProfile.defaults.effective_date ?? ""));
+        }
+        const storedMapping = {
+          ...(mappingProfile.mapping ?? {}),
+          ...(mappingProfile.field_mapping ?? {}),
+        };
+        setMappingEdits(storedMapping);
+      })
+      .catch(() => {
+        if (active) setDatasource(null);
+      });
+    return () => {
+      active = false;
+    };
   }, [sourceId]);
 
   const displayFields = useMemo(() => (preview ? previewDisplayFields(preview) : []), [preview]);
+
+  function onProfileTypeChange(value: DataSourceProfileType) {
+    setProfileType(value);
+    setRequiredFields(PREVIEW_REQUIRED_FIELDS_BY_PROFILE[value].join(", "));
+    setPreview(null);
+    setMessage(null);
+  }
 
   async function runPreview(useEditedMapping: boolean) {
     if (busy) return;
@@ -1194,17 +1301,19 @@ function SourcePreviewPanel({
             Object.entries(mappingEdits).filter(([, target]) => target.trim()),
           )
         : undefined;
+      const required = splitPreviewFields(requiredFields);
 
       const token = await getSessionToken();
       const data = await adminSourcePreview(
         sourceId,
         {
           collection_id: collectionId ?? undefined,
+          profile_type: profileType,
           sample_documents: sampleDocuments,
           sample_rows: sampleRows,
-          field_mapping: fieldMapping,
-          defaults,
-          required_fields: splitPreviewFields(requiredFields),
+          ...(fieldMapping && Object.keys(fieldMapping).length ? { field_mapping: fieldMapping } : {}),
+          ...(Object.keys(defaults).length ? { defaults } : {}),
+          ...(required.length ? { required_fields: required } : {}),
         },
         token,
       );
@@ -1227,9 +1336,71 @@ function SourcePreviewPanel({
     setMappingEdits((current) => ({ ...current, [column]: target }));
   }
 
+  async function saveMappingProfile() {
+    if (!preview || savingProfile) return;
+    setSavingProfile(true);
+    setMessage(null);
+    try {
+      const defaults: Record<string, unknown> = {};
+      if (documentKind) defaults.document_kind = documentKind;
+      if (approvalStatus) defaults.approval_status = approvalStatus;
+      if (effectiveDate) defaults.effective_date = effectiveDate;
+      const fieldMapping = Object.fromEntries(
+        Object.entries(mappingEdits).filter(([, target]) => target.trim()),
+      );
+      const required = splitPreviewFields(requiredFields);
+      const token = await getSessionToken();
+      const current =
+        datasource ??
+        (await apiGetJson<AdminDataSource>(
+          `/admin/datasources/${encodeURIComponent(sourceId)}`,
+          token,
+        ));
+      const nextConfig: Record<string, unknown> = { ...(current.config ?? {}) };
+      delete nextConfig.credential_status;
+      nextConfig.mapping_profile = {
+        profile_type: profileType === "auto" ? preview.profile_type : profileType,
+        field_mapping: fieldMapping,
+        defaults,
+        required_fields: required,
+      };
+      await apiPutJson(
+        `/admin/datasources/${encodeURIComponent(sourceId)}`,
+        {
+          collection_id: current.collection_id,
+          type: current.type,
+          config: nextConfig,
+          sync_schedule: current.sync_schedule ?? null,
+          status: current.status,
+          reason: "mapping_profile_saved_from_preview",
+        },
+        token,
+      );
+      setDatasource({ ...current, config: nextConfig });
+      setMessage("マッピング設定を保存しました。次回同期からこの設定を使います。");
+    } catch (err) {
+      setMessage(formatLoadError(err));
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
   return (
     <Section title="取込プレビュー" note="サンプル文書・行数・必須項目">
       <div className="preview-control-grid">
+        <label>
+          <span>データ種別</span>
+          <select
+            value={profileType}
+            onChange={(e) => onProfileTypeChange(e.target.value as DataSourceProfileType)}
+          >
+            {PREVIEW_PROFILE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           <span>文書数</span>
           <input
@@ -1289,12 +1460,21 @@ function SourcePreviewPanel({
             補正して再プレビュー
           </button>
         )}
+        {preview && (
+          <button type="button" disabled={busy || savingProfile} onClick={() => void saveMappingProfile()}>
+            {savingProfile ? "保存中…" : "この設定を保存"}
+          </button>
+        )}
       </div>
       {message && <p className="src-warning">{message}</p>}
 
       {preview && (
         <div className="preview-results">
           <div className="preview-summary">
+            <span>
+              <strong>{preview.profile_label}</strong>
+              判定
+            </span>
             <span>
               <strong>{preview.document_count}</strong>
               文書
@@ -2990,6 +3170,10 @@ function AddSourceBody() {
   const [approvalPolicy, setApprovalPolicy] = useState<"review_required" | "trusted">(
     "review_required",
   );
+  const [mappingProfileType, setMappingProfileType] = useState<DataSourceProfileType>("auto");
+  const [mappingRequiredFields, setMappingRequiredFields] = useState(
+    PREVIEW_REQUIRED_FIELDS_BY_PROFILE.auto.join(", "),
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<IngestedDoc | null>(null);
@@ -3061,6 +3245,13 @@ function AddSourceBody() {
     setOauthStatus("idle");
     setOauthConnectionId("");
     setOauthError(null);
+    setMappingProfileType("auto");
+    setMappingRequiredFields(PREVIEW_REQUIRED_FIELDS_BY_PROFILE.auto.join(", "));
+  }
+
+  function onMappingProfileTypeChange(value: DataSourceProfileType) {
+    setMappingProfileType(value);
+    setMappingRequiredFields(PREVIEW_REQUIRED_FIELDS_BY_PROFILE[value].join(", "));
   }
 
   function onConfigChange(fieldId: string, value: string) {
@@ -3096,6 +3287,12 @@ function AddSourceBody() {
       const safeConfigValues = Object.fromEntries(
         Object.entries(configValues).filter(([key]) => !credentialFieldIds.has(key)),
       );
+      const mappingDefaults: Record<string, unknown> = {
+        approval_status: approvalPolicy === "trusted" ? "approved" : "pending_review",
+      };
+      if (approvalPolicy === "trusted" && effectiveDate) {
+        mappingDefaults.effective_date = effectiveDate;
+      }
       await apiPutJson(
         `/admin/datasources/${encodeURIComponent(datasourceId)}`,
         {
@@ -3115,6 +3312,11 @@ function AddSourceBody() {
             approval_policy: approvalPolicy,
             approval_effective_date: approvalPolicy === "trusted" ? effectiveDate || todayIso() : null,
             ...safeConfigValues,
+            mapping_profile: {
+              profile_type: mappingProfileType,
+              defaults: mappingDefaults,
+              required_fields: splitPreviewFields(mappingRequiredFields),
+            },
           },
           credentials,
           sync_schedule: configValues.sync_schedule || null,
@@ -3462,6 +3664,36 @@ function AddSourceBody() {
                   />
                 </label>
               ))}
+            </div>
+
+            <div className="connector-mapping-panel">
+              <div className="connector-mapping-head">
+                <strong>データ解釈</strong>
+                <span>FAQ、マニュアル、設備データなどの列名差分を標準項目に寄せる設定です。</span>
+              </div>
+              <div className="connector-form-grid">
+                <label>
+                  <span>データ種別</span>
+                  <select
+                    value={mappingProfileType}
+                    onChange={(e) => onMappingProfileTypeChange(e.target.value as DataSourceProfileType)}
+                  >
+                    {PREVIEW_PROFILE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>必須項目</span>
+                  <input
+                    value={mappingRequiredFields}
+                    onChange={(e) => setMappingRequiredFields(e.target.value)}
+                    placeholder="例: question, answer"
+                  />
+                </label>
+              </div>
             </div>
 
             <p className="ops-note">

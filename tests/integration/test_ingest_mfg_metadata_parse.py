@@ -151,6 +151,23 @@ class TestSyncApprovalPolicy(unittest.TestCase):
         self.assertEqual(meta.approval_status, ApprovalStatus.PENDING_REVIEW)
         self.assertEqual(meta.approval_source.value, "workflow")
 
+    def test_mapping_profile_is_carried_as_audit_extra_without_changing_safety_fields(self) -> None:
+        ds = {
+            "config": {
+                "source_type": "s3",
+                "mapping_profile": {
+                    "profile_type": "faq",
+                    "required_fields": ["question", "answer"],
+                    "field_mapping": {"質問": "question", "回答": "answer"},
+                },
+            }
+        }
+        meta = self.server._mfg_metadata_for_sync({}, ds, "t1", "d4")
+        self.assertEqual(meta.approval_status, ApprovalStatus.PENDING_REVIEW)
+        self.assertEqual(meta.extra["datasource_profile_type"], "faq")
+        self.assertEqual(meta.extra["datasource_required_fields"], ["question", "answer"])
+        self.assertEqual(meta.extra["datasource_mapped_fields"], ["answer", "question"])
+
 
 if __name__ == "__main__":
     unittest.main()

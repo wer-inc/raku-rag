@@ -146,6 +146,23 @@ const OPENAPI_DOC = {
           reason: { type: "string" },
         },
       },
+      DataSourceMappingProfile: {
+        type: "object",
+        properties: {
+          profile_type: {
+            type: "string",
+            enum: ["auto", "manufacturing", "faq", "manual", "generic"],
+          },
+          data_profile: {
+            type: "string",
+            enum: ["auto", "manufacturing", "faq", "manual", "generic"],
+          },
+          field_mapping: { type: "object", additionalProperties: { type: "string" } },
+          mapping: { type: "object", additionalProperties: { type: "string" } },
+          defaults: { type: "object" },
+          required_fields: { type: "array", items: { type: "string" } },
+        },
+      },
       DataSourcePreviewRequest: {
         type: "object",
         properties: {
@@ -153,8 +170,16 @@ const OPENAPI_DOC = {
           limit: { type: "number" },
           sample_documents: { type: "number" },
           sample_rows: { type: "number" },
-          mapping_profile: { type: "object" },
-          field_mapping: { type: "object" },
+          profile_type: {
+            type: "string",
+            enum: ["auto", "manufacturing", "faq", "manual", "generic"],
+          },
+          data_profile: {
+            type: "string",
+            enum: ["auto", "manufacturing", "faq", "manual", "generic"],
+          },
+          mapping_profile: { $ref: "#/components/schemas/DataSourceMappingProfile" },
+          field_mapping: { type: "object", additionalProperties: { type: "string" } },
           defaults: { type: "object" },
           required_fields: { type: "array", items: { type: "string" } },
         },
@@ -169,6 +194,25 @@ const OPENAPI_DOC = {
           kind: { type: "string", enum: ["table", "text"] },
           sample_row_count: { type: "number" },
           text_preview: { type: "string" },
+        },
+      },
+      DataSourcePreviewProfileOption: {
+        type: "object",
+        required: ["profile_type", "label"],
+        properties: {
+          profile_type: {
+            type: "string",
+            enum: ["auto", "manufacturing", "faq", "manual", "generic"],
+          },
+          label: { type: "string" },
+        },
+      },
+      DataSourcePreviewCanonicalSection: {
+        type: "object",
+        required: ["label", "fields"],
+        properties: {
+          label: { type: "string" },
+          fields: { type: "array", items: { type: "string" } },
         },
       },
       DataSourcePreviewRowValidation: {
@@ -196,6 +240,10 @@ const OPENAPI_DOC = {
         type: "object",
         required: [
           "source_id",
+          "profile_type",
+          "profile_label",
+          "profile_options",
+          "canonical_sections",
           "document_count",
           "documents",
           "canonical_fields",
@@ -210,6 +258,19 @@ const OPENAPI_DOC = {
         ],
         properties: {
           source_id: { type: "string" },
+          profile_type: {
+            type: "string",
+            enum: ["manufacturing", "faq", "manual", "generic"],
+          },
+          profile_label: { type: "string" },
+          profile_options: {
+            type: "array",
+            items: { $ref: "#/components/schemas/DataSourcePreviewProfileOption" },
+          },
+          canonical_sections: {
+            type: "array",
+            items: { $ref: "#/components/schemas/DataSourcePreviewCanonicalSection" },
+          },
           document_count: { type: "number" },
           documents: {
             type: "array",

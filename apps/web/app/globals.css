@@ -3501,6 +3501,32 @@ button,
   font-size: 13.5px;
 }
 
+.connector-mapping-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line, #ececec);
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.connector-mapping-head {
+  display: grid;
+  gap: 3px;
+}
+
+.connector-mapping-head strong {
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.connector-mapping-head span {
+  color: #71717a;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .connector-oauth {
   display: flex;
   align-items: center;

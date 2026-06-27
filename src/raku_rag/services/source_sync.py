@@ -413,6 +413,28 @@ def _approval_from_datasource_policy(datasource: Mapping[str, object]) -> tuple[
     return ("pending_review", "workflow", None)
 
 
+def _datasource_mapping_profile_extra(datasource: Mapping[str, object]) -> dict:
+    config = datasource.get("config") if isinstance(datasource.get("config"), Mapping) else {}
+    profile = dict(config).get("mapping_profile")
+    if not isinstance(profile, Mapping):
+        return {}
+    extra: dict[str, object] = {}
+    profile_type = profile.get("profile_type") or profile.get("data_profile")
+    if profile_type:
+        extra["datasource_profile_type"] = str(profile_type)
+    raw_required = profile.get("required_fields")
+    if isinstance(raw_required, (list, tuple)):
+        extra["datasource_required_fields"] = [str(field) for field in raw_required]
+    raw_mapping = {}
+    if isinstance(profile.get("mapping"), Mapping):
+        raw_mapping.update(profile.get("mapping") or {})
+    if isinstance(profile.get("field_mapping"), Mapping):
+        raw_mapping.update(profile.get("field_mapping") or {})
+    if raw_mapping:
+        extra["datasource_mapped_fields"] = sorted({str(value) for value in raw_mapping.values()})
+    return extra
+
+
 def _mfg_metadata_for_sync(
     body: Mapping[str, object], datasource: Mapping[str, object], tenant_id: str, document_id: str
 ):
@@ -423,6 +445,10 @@ def _mfg_metadata_for_sync(
     raw["approval_status"] = status
     raw["approval_source"] = source
     raw["effective_date"] = eff
+    extra = dict(raw.get("extra") or {}) if isinstance(raw.get("extra"), Mapping) else {}
+    extra.update(_datasource_mapping_profile_extra(datasource))
+    if extra:
+        raw["extra"] = extra
     return ManufacturingDocumentMetadata.from_mapping(
         {**raw, "tenant_id": tenant_id, "document_id": document_id}
     )

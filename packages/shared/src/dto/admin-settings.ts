@@ -37,17 +37,25 @@ export interface DataSourceUpsertRequest {
   reason?: string;
 }
 
+export type DataSourceProfileType = "auto" | "manufacturing" | "faq" | "manual" | "generic";
+
+export interface DataSourceMappingProfile {
+  profile_type?: DataSourceProfileType;
+  data_profile?: DataSourceProfileType;
+  field_mapping?: Record<string, string>;
+  mapping?: Record<string, string>;
+  defaults?: Record<string, unknown>;
+  required_fields?: string[];
+}
+
 export interface DataSourcePreviewRequest {
   collection_id?: string;
   limit?: number;
   sample_documents?: number;
   sample_rows?: number;
-  mapping_profile?: {
-    field_mapping?: Record<string, string>;
-    mapping?: Record<string, string>;
-    defaults?: Record<string, unknown>;
-    required_fields?: string[];
-  };
+  profile_type?: DataSourceProfileType;
+  data_profile?: DataSourceProfileType;
+  mapping_profile?: DataSourceMappingProfile;
   field_mapping?: Record<string, string>;
   defaults?: Record<string, unknown>;
   required_fields?: string[];
@@ -77,8 +85,22 @@ export interface DataSourcePreviewDocument {
   text_preview?: string;
 }
 
+export interface DataSourcePreviewProfileOption {
+  profile_type: DataSourceProfileType;
+  label: string;
+}
+
+export interface DataSourcePreviewCanonicalSection {
+  label: string;
+  fields: string[];
+}
+
 export interface DataSourcePreviewResponse {
   source_id: string;
+  profile_type: Exclude<DataSourceProfileType, "auto">;
+  profile_label: string;
+  profile_options: DataSourcePreviewProfileOption[];
+  canonical_sections: DataSourcePreviewCanonicalSection[];
   document_count: number;
   documents: DataSourcePreviewDocument[];
   canonical_fields: string[];
