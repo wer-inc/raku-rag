@@ -173,6 +173,43 @@ def _is_metadata_only_high_risk(classification: HighRiskClassification) -> bool:
     )
 
 
+def _is_approved(meta: ManufacturingDocumentMetadata | None) -> bool:
+    status = getattr(meta, "approval_status", None)
+    if hasattr(status, "value"):
+        status = status.value
+    return status == ApprovalStatus.APPROVED.value
+
+
+def _should_answer_from_approved_lookup_evidence(
+    query: str,
+    intent_hint: str | None,
+    *,
+    classification: HighRiskClassification,
+) -> bool:
+    if _is_metadata_only_high_risk(classification):
+        return True
+    if classification.is_high_risk:
+        return False
+    hint = (intent_hint or "").strip().lower()
+    if hint in {"equipment_lookup", "metadata_lookup", "asset_lookup"}:
+        return True
+    q = query or ""
+    return "設備" in q and any(
+        field in q
+        for field in (
+            "担当部門",
+            "担当部署",
+            "設置ライン",
+            "保全コード",
+            "記録先",
+            "発効日",
+            "点検計画日",
+            "次回点検",
+            "について",
+        )
+    )
+
+
 class ManufacturingAnswerService:
     """Overlay service composing 001 services with the manufacturing safety gate."""
 
@@ -272,6 +309,8 @@ class ManufacturingAnswerService:
         answer_service, approved_lookup_evidence = self._answer_service_for_metadata_lookup(
             principal,
             profile,
+            query=query,
+            intent_hint=intent_hint,
             classification=classification,
             evidence=evidence,
         )
@@ -385,22 +424,32 @@ class ManufacturingAnswerService:
         principal: IdentityClaims,
         profile: QueryProfile,
         *,
+        query: str,
+        intent_hint: str | None,
         classification: HighRiskClassification,
         evidence: Sequence[ScoredChunk],
     ) -> tuple[AnswerService, tuple[ScoredChunk, ...]]:
-        if not _is_metadata_only_high_risk(classification):
+        if not _should_answer_from_approved_lookup_evidence(
+            query, intent_hint, classification=classification
+        ):
             return self._answer_service, ()
 
-        approved_effective = [
+        require_effective = _is_metadata_only_high_risk(classification)
+        approved_lookup = [
             s
             for s in evidence
-            if is_approved_effective(
-                self._get_mfg_meta(principal.tenant_id, s.chunk.document_id), today=self._today
+            if (
+                is_approved_effective(
+                    self._get_mfg_meta(principal.tenant_id, s.chunk.document_id),
+                    today=self._today,
+                )
+                if require_effective
+                else _is_approved(self._get_mfg_meta(principal.tenant_id, s.chunk.document_id))
             )
         ]
-        if not approved_effective:
+        if not approved_lookup:
             return self._answer_service, ()
-        pre = self._groundedness.pre_gate(approved_effective, profile)
+        pre = self._groundedness.pre_gate(approved_lookup, profile)
         if not pre.passed:
             return self._answer_service, ()
 

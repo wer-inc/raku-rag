@@ -17,10 +17,40 @@ from raku_rag.domain.models import Chunk
 from raku_rag.interfaces.base import LLMProvider
 
 _SENT = re.compile(r"[^。．.!?！？\n]+[。．.!?！？]?")
+_IDENTIFIER = re.compile(r"\b[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+){2,}\b")
+
+
+def _identifier_anchors(text: str) -> set[str]:
+    return {
+        match.group(0).lower()
+        for match in _IDENTIFIER.finditer(text or "")
+        if any(ch.isdigit() for ch in match.group(0))
+    }
+
+
+def _has_identifier(text: str, identifiers: set[str]) -> bool:
+    haystack = (text or "").lower()
+    return any(identifier in haystack for identifier in identifiers)
 
 
 def _anchor_terms(query: str) -> set[str]:
     return {term for term in _terms(query) if any(ch.isdigit() for ch in term)}
+
+
+def _field_lookup(query: str) -> bool:
+    return any(
+        field in (query or "")
+        for field in (
+            "担当部門",
+            "担当部署",
+            "設置ライン",
+            "保全コード",
+            "記録先",
+            "発効日",
+            "点検計画日",
+            "次回点検",
+        )
+    )
 
 
 class ExtractiveLLMProvider(LLMProvider):
@@ -28,6 +58,9 @@ class ExtractiveLLMProvider(LLMProvider):
 
     def generate(self, query: str, context: Sequence[Chunk]) -> str:
         q = _terms(query)
+        identifiers = _identifier_anchors(query)
+        if identifiers and any(_has_identifier(chunk.text, identifiers) for chunk in context):
+            context = [chunk for chunk in context if _has_identifier(chunk.text, identifiers)]
         anchors = _anchor_terms(query)
         anchor_threshold = 0
         if anchors:
@@ -53,7 +86,7 @@ class ExtractiveLLMProvider(LLMProvider):
         selected = sorted(
             (item for item in best if item[0] >= min_overlap),
             key=lambda t: (-t[0], t[1], t[2]),
-        )[:4]
+        )[: 8 if _field_lookup(query) else 4]
         selected.sort(key=lambda t: (t[1], t[2]))
         return " ".join(s for _, _, _, s in selected)
 

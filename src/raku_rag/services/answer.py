@@ -9,6 +9,7 @@ Invariants:
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import replace
 from typing import Callable, Sequence
@@ -40,12 +41,26 @@ from raku_rag.services.retrieval import RetrievalService
 from raku_rag.services.structured_query import classify_structured_query
 
 _EST_QUERY_COST = 1.0
+_IDENTIFIER = re.compile(r"\b[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+){2,}\b")
 
 GetDocument = Callable[[str, str], Document | None]  # (tenant_id, document_id) -> Document
 
 
 def _token_count(text: str) -> int:
     return len(text.split())
+
+
+def _identifier_anchors(text: str) -> set[str]:
+    return {
+        match.group(0).lower()
+        for match in _IDENTIFIER.finditer(text or "")
+        if any(ch.isdigit() for ch in match.group(0))
+    }
+
+
+def _has_identifier(text: str, identifiers: set[str]) -> bool:
+    haystack = (text or "").lower()
+    return any(identifier in haystack for identifier in identifiers)
 
 
 class AnswerService:
@@ -401,6 +416,11 @@ class AnswerService:
             ans_terms = _terms(text)
             citation_overlap_threshold = self._citation_overlap_threshold(ans_terms, evidence)
             query_anchor_terms = self._query_anchor_terms(query)
+            query_identifiers = _identifier_anchors(query)
+            citation_identifier_required = bool(
+                query_identifiers
+                and any(_has_identifier(item.chunk.text, query_identifiers) for item in evidence)
+            )
             citation_anchor_threshold = self._citation_anchor_threshold(
                 query_anchor_terms, evidence
             )
@@ -413,6 +433,12 @@ class AnswerService:
                 if len(ans_terms & chunk_terms) < citation_overlap_threshold:
                     continue  # cite only chunks that actually support the answer (FR-012)
                 doc = self._get_document(c.tenant_id, c.document_id)
+                if (
+                    citation_identifier_required
+                    and not _has_identifier(c.text, query_identifiers)
+                    and not self._must_expose_for_approval_gate(doc)
+                ):
+                    continue
                 if (
                     citation_anchor_threshold
                     and len(query_anchor_terms & chunk_terms) < citation_anchor_threshold

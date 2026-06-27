@@ -149,6 +149,82 @@ class TestMetadataLookupUsesApprovedEvidence(unittest.TestCase):
         self.assertEqual({c.document_id for c in ans.citations}, {"biz-approved"})
         self.assertEqual({c.approval_status for c in ans.citations}, {"approved"})
 
+    def test_upload_style_lookup_uses_exact_identifier_and_approved_evidence(self) -> None:
+        sys = fresh()
+        equipment_id = "CL-BIZ-E2E-UPLOAD-20260627"
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="manuals",
+            document_id="upload-approved",
+            text=(
+                f"設備ID: {equipment_id}\n"
+                "担当部門: 品質保証部\n"
+                "設置ライン: A3\n"
+                "保全コード: MNT-77\n"
+                "発効日: 2026-07-15\n"
+            ),
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="upload-approved",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-07-15",
+                document_kind=DocumentKind.WORK_INSTRUCTION,
+            ),
+        )
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="manuals",
+            document_id="upload-pending",
+            text=(
+                f"設備ID: {equipment_id}\n"
+                "担当部門: 未承認メモ部\n"
+                "設置ライン: Z9\n"
+                "保全コード: TMP-00\n"
+                "発効日: 2099-01-01\n"
+            ),
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="upload-pending",
+                approval_status=ApprovalStatus.PENDING_REVIEW,
+                effective_date="2099-01-01",
+                document_kind=DocumentKind.WORK_INSTRUCTION,
+            ),
+        )
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="manuals",
+            document_id="upload-other-approved",
+            text=(
+                "設備ID: CL-BIZ-E2E-OTHER-UPLOAD-20260627\n"
+                "担当部門: 品質保証部\n"
+                "設置ライン: A3\n"
+                "保全コード: MNT-77\n"
+                "発効日: 2026-07-15\n"
+            ),
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="upload-other-approved",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-07-15",
+                document_kind=DocumentKind.WORK_INSTRUCTION,
+            ),
+        )
+        sys.grant(T, ScopeType.COLLECTION, "manuals", SubjectType.USER, "op")
+
+        ans = sys.answer(
+            claims(T, "op"),
+            f"設備 {equipment_id} の担当部門、設置ライン、保全コード、発効日を教えて",
+        )
+
+        self.assertEqual(ans.status, "ok")
+        self.assertTrue(ans.text)
+        for expected in ("品質保証部", "A3", "MNT-77", "2026-07-15"):
+            self.assertIn(expected, ans.text)
+        for unexpected in ("未承認メモ部", "Z9", "TMP-00", "2099-01-01"):
+            self.assertNotIn(unexpected, ans.text)
+        self.assertEqual({c.document_id for c in ans.citations}, {"upload-approved"})
+        self.assertEqual({c.approval_status for c in ans.citations}, {"approved"})
+
 
 if __name__ == "__main__":
     unittest.main()
