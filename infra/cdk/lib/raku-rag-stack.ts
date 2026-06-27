@@ -219,6 +219,10 @@ export class RakuRagStack extends cdk.Stack {
       versioned: true,
       removalPolicy
     });
+    const ingestConnectorEnvironment: Record<string, string> = {
+      RAKU_INGEST_CONNECTOR: "s3",
+      S3_BUCKET: documentBucket.bucketName
+    };
     const visualStorageEnvironment: Record<string, string> = visualProvidersConfigured
       ? { RAKU_CROP_STORAGE_URI: `s3://${documentBucket.bucketName}/visual-crops` }
       : {};
@@ -758,6 +762,7 @@ export class RakuRagStack extends cdk.Stack {
         ...productionRuntimeEnvironment,
         ...visualProviderEnvironment,
         ...visualStorageEnvironment,
+        ...ingestConnectorEnvironment,
         STAGE_NAME: props.stageName,
         RAKU_WORKER_BACKEND: "postgres",
         DOCUMENT_BUCKET: documentBucket.bucketName,
@@ -846,6 +851,7 @@ export class RakuRagStack extends cdk.Stack {
         ...productionRuntimeEnvironment,
         ...visualProviderEnvironment,
         ...visualStorageEnvironment,
+        ...ingestConnectorEnvironment,
         STAGE_NAME: props.stageName,
         // Listen on all interfaces so the internal ALB health check reaches the task ENI (the default
         // 127.0.0.1 bind is loopback-only → failed ELB health checks → ECS kills the task).
