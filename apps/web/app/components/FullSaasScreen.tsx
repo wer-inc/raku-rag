@@ -955,7 +955,7 @@ function SourceListBody() {
           {polling && <span className="sync-poll-badge">同期中 — 自動更新</span>}
         </div>
         <div className="standalone-list-tools">
-          <button type="button" onClick={reload}>
+          <button type="button" className="is-secondary" onClick={reload}>
             更新
           </button>
           <Link href="/sources/new">ソースを追加</Link>
@@ -965,9 +965,21 @@ function SourceListBody() {
       {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
       {state.state === "ready" &&
         (state.data.length === 0 ? (
-          <p className="ops-empty">
-            登録済みのソースはありません。「ソースを追加」から接続・同期してください。
-          </p>
+          <div className="standalone-empty-state">
+            <div className="standalone-empty-icon" aria-hidden="true">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h6a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                <path d="M12 11v5M9.5 13.5h5" />
+              </svg>
+            </div>
+            <h4>まだソースが登録されていません</h4>
+            <p>
+              社内ドキュメントやデータソースを接続すると、根拠付きで横断検索・回答できるようになります。
+            </p>
+            <Link className="standalone-empty-cta" href="/sources/new">
+              ソースを追加
+            </Link>
+          </div>
         ) : (
           <div className="standalone-table-wrap">
             <div className="standalone-table-head">

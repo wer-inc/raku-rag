@@ -870,6 +870,73 @@ textarea {
   text-decoration: none;
 }
 
+/* Secondary (non-primary) tool button, e.g. 更新 — de-emphasised next to the primary CTA */
+.standalone-list-tools button.is-secondary {
+  background: #ffffff;
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.standalone-list-tools button.is-secondary:hover {
+  background: #f6f6f7;
+}
+
+/* Empty state for list cards (centered icon + heading + description + CTA) */
+.standalone-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 48px 24px 52px;
+  text-align: center;
+}
+
+.standalone-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 4px;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.standalone-empty-state h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.standalone-empty-state p {
+  margin: 0;
+  max-width: 400px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.standalone-empty-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  margin-top: 8px;
+  padding: 0 18px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.standalone-empty-cta:hover {
+  background: var(--accent-strong);
+}
+
 .standalone-table-head,
 .standalone-table-row {
   display: grid;
