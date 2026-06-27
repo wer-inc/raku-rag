@@ -138,9 +138,18 @@ class _AdminSettingsStore:
     }
     _model_policy_keys = {"embedding_provider", "llm_provider", "llm_model"}
 
-    def __init__(self, system: ProductionSystem, *, datasource_repo: object | None = None) -> None:
+    def __init__(
+        self,
+        system: ProductionSystem,
+        *,
+        datasource_repo: object | None = None,
+        provider_policy_repo: object | None = None,
+    ) -> None:
         self._system = system
         self._datasource_repo = datasource_repo
+        self._provider_policy_repo = provider_policy_repo or getattr(
+            system, "provider_policies", None
+        )
         self._items: dict[str, dict[str, dict[str, dict]]] = {name: {} for name in self._id_fields}
         self._acl: dict[str, dict[str, dict]] = {}
         self._budgets: dict[str, dict[str, dict]] = {}
@@ -345,6 +354,12 @@ class _AdminSettingsStore:
     ) -> list[dict]:
         if resource == "datasources" and self._datasource_repo is not None:
             return self._datasource_repo.list(tenant_id, collection_id=collection_id)
+        if resource == "provider-policies" and hasattr(
+            self._provider_policy_repo, "list_mappings"
+        ):
+            items = self._provider_policy_repo.list_mappings(tenant_id, collection_id)
+            if items:
+                return [copy.deepcopy(item) for item in items]
         self._ensure_default(tenant_id, resource)
         items = list(self._bucket(resource, tenant_id).values())
         if collection_id:
@@ -354,6 +369,10 @@ class _AdminSettingsStore:
     def get_resource(self, tenant_id: str, resource: str, item_id: str) -> dict | None:
         if resource == "datasources" and self._datasource_repo is not None:
             return self._datasource_repo.get(tenant_id, item_id)
+        if resource == "provider-policies" and hasattr(self._provider_policy_repo, "get_mapping"):
+            item = self._provider_policy_repo.get_mapping(tenant_id, "", item_id)
+            if item is not None:
+                return copy.deepcopy(item)
         self._ensure_default(tenant_id, resource)
         item = self._bucket(resource, tenant_id).get(item_id)
         return copy.deepcopy(item) if item else None
@@ -405,6 +424,9 @@ class _AdminSettingsStore:
             item.setdefault("raw_retrieved_context_storage", "disabled")
         if resource == "retrieval-profiles":
             item["version"] = int(item.get("version") or 1) + (1 if existing else 0)
+        if resource == "provider-policies" and hasattr(self._provider_policy_repo, "upsert"):
+            persisted = self._provider_policy_repo.upsert(tenant_id, item_id, item)
+            item.update(persisted)
 
         after = self._audit_snapshot(item)
         event = self._audit_event(

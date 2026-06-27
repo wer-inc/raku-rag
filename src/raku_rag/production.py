@@ -262,15 +262,20 @@ class ProductionSystem(MvpSystem):
 
         self.ingestion_runs.mark_running(run)
         if _is_image_content_type(content_type):
-            result = self.ingestion_executor.execute_document(
-                tenant_id=tenant_id,
-                collection_id=collection_id,
-                source_id=source_id,
-                document_id=document_id,
-                document_ref=document_ref,
-                raw=raw,
-                content_type=content_type,
-            )
+            try:
+                result = self.ingestion_executor.execute_document(
+                    tenant_id=tenant_id,
+                    collection_id=collection_id,
+                    source_id=source_id,
+                    document_id=document_id,
+                    document_ref=document_ref,
+                    raw=raw,
+                    content_type=content_type,
+                )
+            except Exception as exc:
+                self.ingestion_runs.mark_failed(run, reason=str(exc), retry_count=0)
+                refreshed = self.ingestion_runs.get_for_tenant(tenant_id, run.ingestion_run_id)
+                return refreshed or run
             if result.status == JobStatus.SUCCEEDED.value:
                 self.ingestion_runs.mark_succeeded(
                     run,
