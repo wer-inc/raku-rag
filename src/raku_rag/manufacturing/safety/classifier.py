@@ -461,6 +461,11 @@ def semantic_danger_classifier_from_settings(
     profile = str(getattr(settings, "runtime_profile", "deterministic") or "deterministic")
     if profile.strip().lower() != "production" or llm is None:
         return None
+    llm_provider = (
+        str(getattr(settings, "llm_provider", "") or "").strip().lower().replace("-", "_")
+    )
+    if llm_provider in {"extractive", "extractive_mvp", "deterministic", "local"}:
+        return None
     return LLMSemanticDangerClassifier(llm)
 
 

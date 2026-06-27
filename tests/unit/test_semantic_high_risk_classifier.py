@@ -83,6 +83,16 @@ class TestProductionSemanticClassifier(unittest.TestCase):
             semantic_danger_classifier_from_settings(Settings(runtime_profile="production"), llm)
         )
 
+    def test_factory_does_not_enable_json_semantic_classifier_for_extractive_llm(self) -> None:
+        llm = _JsonLLM('{"is_high_risk": false, "confidence": 0.99, "reason_codes": []}')
+
+        self.assertIsNone(
+            semantic_danger_classifier_from_settings(
+                Settings(runtime_profile="production", llm_provider="extractive"),
+                llm,
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
