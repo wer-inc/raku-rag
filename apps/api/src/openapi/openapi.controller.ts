@@ -64,6 +64,35 @@ const OPENAPI_DOC = {
           document_id: { type: "string" },
           ref: { type: "string" },
           content_type: { type: "string" },
+          manufacturing: { $ref: "#/components/schemas/ManufacturingIngestMetadata" },
+        },
+      },
+      ManufacturingIngestMetadata: {
+        // Optional manufacturing approval/safety metadata forwarded verbatim to the answer-service,
+        // which persists it on the Document so the safety overlay fires (mirrors dto/ingest.ts).
+        type: "object",
+        properties: {
+          approval_status: {
+            type: "string",
+            enum: ["draft", "pending_review", "approved", "obsolete"],
+          },
+          effective_date: { type: "string", nullable: true },
+          approval_source: { type: "string", enum: ["imported", "workflow"] },
+          approved_by: { type: "string" },
+          approved_at: { type: "string" },
+          obsolete_at: { type: "string" },
+          superseded_by: { type: "string" },
+          document_kind: { type: "string" },
+          safety_category: { type: "string" },
+          quality_category: { type: "string" },
+          equipment_operation_category: { type: "string" },
+          hazard_tags: { type: "array", items: { type: "string" } },
+          equipment_id: { type: "string" },
+          process_id: { type: "string" },
+          alarm_code: { type: "string" },
+          defect_type: { type: "string" },
+          part_no: { type: "string" },
+          customer: { type: "string" },
         },
       },
       IngestResponse: {
@@ -895,7 +924,7 @@ const OPENAPI_DOC = {
           source_id: { type: "string" },
           version: { type: "number" },
           retrieval_score: { type: "number" },
-          chunk_id: { type: "string" },
+          chunk_id: { type: "string", nullable: true },
           text_range: { type: "array", items: { type: "number" }, nullable: true },
           asset_id: { type: "string", nullable: true },
           page_number: { type: "number", nullable: true },
@@ -978,7 +1007,7 @@ const OPENAPI_DOC = {
       },
       AnswerResponse: {
         type: "object",
-        required: ["status", "citations", "used_chunks"],
+        required: ["status", "citations", "used_chunks", "correlation_id"],
         properties: {
           status: {
             type: "string",
@@ -1034,7 +1063,7 @@ const OPENAPI_DOC = {
       },
       ManufacturingAnswerResponse: {
         type: "object",
-        required: ["status", "citations", "used_chunks", "manufacturing"],
+        required: ["status", "citations", "used_chunks", "correlation_id", "manufacturing"],
         properties: {
           status: {
             type: "string",

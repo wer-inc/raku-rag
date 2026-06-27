@@ -47,7 +47,7 @@ export class OAuthController {
     return (
       override ||
       process.env.GOOGLE_OAUTH_REDIRECT_URI ||
-      "http://localhost:3002/api/oauth/google/callback"
+      "http://localhost:3002/oauth/google/callback"
     );
   }
 

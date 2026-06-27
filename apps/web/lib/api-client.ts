@@ -275,7 +275,7 @@ export interface QualityEvalResult {
   gate_result: string;
   status: string;
   metrics: { recall_at_k?: number; groundedness?: number; high_risk_recall?: number };
-  security_checks: Record<string, { passed?: boolean } | boolean>;
+  security_checks: Record<string, { passed: boolean; count: number }>;
 }
 
 /** Register a quality eval set and run it against the live answer path, returning the scorecard
