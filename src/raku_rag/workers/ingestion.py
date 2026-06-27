@@ -336,9 +336,7 @@ class IngestionRunStore:
         run.sqs_message_id = message_id
         run.updated_at = _now()
 
-    def mark_async_job(
-        self, run: IngestionRun, *, provider: str, job_id: str, status: str
-    ) -> None:
+    def mark_async_job(self, run: IngestionRun, *, provider: str, job_id: str, status: str) -> None:
         run.async_provider = provider
         run.async_job_id = job_id
         run.async_job_status = status
@@ -664,7 +662,9 @@ class VisualIngestionExecutor:
                     **_visual_region_provenance_metadata(region),
                     **_visual_region_redaction_metadata(
                         region,
-                        ocr_labels=ocr_sensitive_labels[idx] if idx < len(ocr_sensitive_labels) else (),
+                        ocr_labels=(
+                            ocr_sensitive_labels[idx] if idx < len(ocr_sensitive_labels) else ()
+                        ),
                         caption_labels=caption_result.sensitive_detection_labels,
                     ),
                 },
@@ -875,7 +875,9 @@ def _sensitive_labels(redactor: Redactor, text: str) -> tuple[str, ...]:
 
 
 def _visual_region_provenance_metadata(region: LayoutRegion) -> dict:
-    extraction_source = str(region.extraction_source or region.metadata.get("extraction_source") or "")
+    extraction_source = str(
+        region.extraction_source or region.metadata.get("extraction_source") or ""
+    )
     caption_source = str(region.caption_source or region.metadata.get("caption_source") or "")
     metadata: dict = {}
     if extraction_source:
@@ -1127,7 +1129,9 @@ class IngestionExecutor:
     ) -> int:
         from raku_rag.services.visual import visual_chunks_from_ingestion
 
-        chunks = tuple(chunk for result in results for chunk in visual_chunks_from_ingestion(result))
+        chunks = tuple(
+            chunk for result in results for chunk in visual_chunks_from_ingestion(result)
+        )
         vectors = tuple(vector for result in results for vector in result.visual_vectors)
         self.ingestion._store.purge(tenant_id, document_id)
         self.ingestion._store.upsert(list(zip(chunks, vectors)))
@@ -1250,7 +1254,6 @@ class IngestionWorker:
             self._fail(envelope, run, str(exc))
         return True
 
-
     def _process_source_sync(self, envelope: QueueEnvelope) -> bool:
         if self.source_sync_service is None:
             self.queue.fail(envelope, "source sync service is not configured")
@@ -1273,7 +1276,6 @@ class IngestionWorker:
             if moved_to_dlq:
                 self.stats.dead_lettered += 1
         return True
-
 
     def drain(self, *, max_messages: int = 100) -> IngestionWorkerStats:
         for _ in range(max_messages):

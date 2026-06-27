@@ -147,9 +147,7 @@ class ProviderPolicyContractTest(unittest.TestCase):
             def list_mappings(self, tenant_id: str, collection_id: str = "") -> list[dict]:
                 return list(self.items.values())
 
-            def upsert(
-                self, tenant_id: str, provider_policy_id: str, body: dict
-            ) -> dict:
+            def upsert(self, tenant_id: str, provider_policy_id: str, body: dict) -> dict:
                 item = {
                     **self.get_mapping(tenant_id, "", provider_policy_id),
                     **body,

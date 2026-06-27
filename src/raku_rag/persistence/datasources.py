@@ -94,15 +94,21 @@ class InMemoryDataSourceRepository:
         self, tenant_id: str, source_id: str, body: Mapping[str, object], *, actor: str = ""
     ) -> dict:
         existing = self._items.get((tenant_id, source_id))
-        clean = _clean_body(tenant_id, source_id, body, self.secret_store, existing.config if existing else {})
+        clean = _clean_body(
+            tenant_id, source_id, body, self.secret_store, existing.config if existing else {}
+        )
         now = _now()
         record = DataSourceRecord(
             source_id=source_id,
             tenant_id=tenant_id,
-            collection_id=str(clean.get("collection_id") or (existing.collection_id if existing else "default")),
+            collection_id=str(
+                clean.get("collection_id") or (existing.collection_id if existing else "default")
+            ),
             type=str(clean.get("type") or (existing.type if existing else "upload")),
             config=clean["config"],
-            sync_schedule=_optional_str(clean.get("sync_schedule"), existing.sync_schedule if existing else None),
+            sync_schedule=_optional_str(
+                clean.get("sync_schedule"), existing.sync_schedule if existing else None
+            ),
             last_synced_at=existing.last_synced_at if existing else None,
             status=str(clean.get("status") or (existing.status if existing else "active")),
             created_at=existing.created_at if existing else now,
@@ -130,9 +136,7 @@ class PostgresDataSourceRepository:
             cur.execute(
                 "SELECT source_id, tenant_id, collection_id, type, config, sync_schedule, "
                 "last_synced_at, status, created_at, updated_at FROM data_sources "
-                "WHERE "
-                + " AND ".join(clauses)
-                + " ORDER BY updated_at DESC",
+                "WHERE " + " AND ".join(clauses) + " ORDER BY updated_at DESC",
                 params,
             )
             return [_row_to_record(row).to_public_dict() for row in cur.fetchall()]
@@ -159,7 +163,9 @@ class PostgresDataSourceRepository:
         existing = self.get(tenant_id, source_id)
         existing_config = existing.get("config", {}) if existing else {}
         clean = _clean_body(tenant_id, source_id, body, self._secret_store, existing_config)
-        collection_id = str(clean.get("collection_id") or (existing or {}).get("collection_id") or "default")
+        collection_id = str(
+            clean.get("collection_id") or (existing or {}).get("collection_id") or "default"
+        )
         _use_tenant(self._conn, tenant_id)
         _ensure_collection_parent(self._conn, tenant_id, collection_id)
         with self._conn.cursor() as cur:
@@ -176,7 +182,9 @@ class PostgresDataSourceRepository:
                     collection_id,
                     str(clean.get("type") or (existing or {}).get("type") or "upload"),
                     Json(clean["config"]),
-                    _optional_str(clean.get("sync_schedule"), (existing or {}).get("sync_schedule")),
+                    _optional_str(
+                        clean.get("sync_schedule"), (existing or {}).get("sync_schedule")
+                    ),
                     str(clean.get("status") or (existing or {}).get("status") or "active"),
                 ),
             )
@@ -185,7 +193,9 @@ class PostgresDataSourceRepository:
         return saved
 
 
-def materialize_datasource_credentials(datasource: Mapping[str, object], secret_store: SecretStore) -> dict:
+def materialize_datasource_credentials(
+    datasource: Mapping[str, object], secret_store: SecretStore
+) -> dict:
     """Return a datasource copy with secret values merged into config for connector execution."""
 
     result = copy.deepcopy(dict(datasource))
@@ -224,7 +234,9 @@ def _clean_body(
     existing_config: Mapping[str, object],
 ) -> dict:
     config = dict(existing_config or {})
-    incoming_config = dict(body.get("config") or {}) if isinstance(body.get("config"), Mapping) else {}
+    incoming_config = (
+        dict(body.get("config") or {}) if isinstance(body.get("config"), Mapping) else {}
+    )
     config.update(incoming_config)
 
     credentials: dict[str, object] = {}
@@ -238,7 +250,9 @@ def _clean_body(
                 credentials[key] = value
 
     if credentials:
-        config["credential_ref"] = _store_credentials(secret_store, tenant_id, source_id, credentials)
+        config["credential_ref"] = _store_credentials(
+            secret_store, tenant_id, source_id, credentials
+        )
 
     return {
         "collection_id": body.get("collection_id"),

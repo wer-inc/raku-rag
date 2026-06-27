@@ -132,12 +132,10 @@ class SchemaLockMigrationSqlTest(unittest.TestCase):
                 self.assertIn(token, visual_down)
 
     def test_visual_provider_policy_columns_have_down_migration(self) -> None:
-        visual_policy = (MIGRATIONS / "0015_visual_provider_policy.sql").read_text(
+        visual_policy = (MIGRATIONS / "0015_visual_provider_policy.sql").read_text(encoding="utf-8")
+        visual_policy_down = (MIGRATIONS / "0015_visual_provider_policy.down.sql").read_text(
             encoding="utf-8"
         )
-        visual_policy_down = (
-            MIGRATIONS / "0015_visual_provider_policy.down.sql"
-        ).read_text(encoding="utf-8")
 
         for token in (
             "allowed_layout_providers",

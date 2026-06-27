@@ -6,7 +6,14 @@ import unittest
 from typing import Sequence
 
 from raku_rag.core.errors import AnswerStatus
-from raku_rag.domain.models import Chunk, Document, IdentityClaims, Modality, QueryProfile, ScoredChunk
+from raku_rag.domain.models import (
+    Chunk,
+    Document,
+    IdentityClaims,
+    Modality,
+    QueryProfile,
+    ScoredChunk,
+)
 from raku_rag.providers.llms import ExtractiveLLMProvider
 from raku_rag.services.answer import AnswerService
 from raku_rag.services.cost import CostService

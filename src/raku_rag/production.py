@@ -291,7 +291,9 @@ class ProductionSystem(MvpSystem):
                     doc.metadata["content_type"] = content_type
                     self.registry.put(doc)
                 if manufacturing_metadata is not None:
-                    self.attach_manufacturing_metadata(tenant_id, document_id, manufacturing_metadata)
+                    self.attach_manufacturing_metadata(
+                        tenant_id, document_id, manufacturing_metadata
+                    )
             else:
                 self.ingestion_runs.mark_failed(
                     run, reason=result.failure_reason or "visual ingestion failed", retry_count=0

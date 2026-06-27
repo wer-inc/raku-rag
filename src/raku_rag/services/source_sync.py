@@ -51,10 +51,14 @@ class SourceSyncService:
         datasource = self.datasource_repo.get(tenant_id, source_id)
         if datasource is None:
             raise KeyError("datasource not found")
-        collection_id = str(body.get("collection_id") or datasource.get("collection_id") or "default")
+        collection_id = str(
+            body.get("collection_id") or datasource.get("collection_id") or "default"
+        )
         idempotency_key = str(body.get("idempotency_key") or "")
         if not idempotency_key:
-            idempotency_key = "source-sync:" + _digest([tenant_id, source_id, collection_id, body, _now()])
+            idempotency_key = "source-sync:" + _digest(
+                [tenant_id, source_id, collection_id, body, _now()]
+            )
         parent = _parent_message(
             tenant_id=tenant_id,
             collection_id=collection_id,
@@ -81,16 +85,20 @@ class SourceSyncService:
             requested_by=requested_by,
             force=bool(body.get("force")),
         )
-        return _sync_response(
-            source_id=source_id,
-            collection_id=collection_id,
-            status=run.status,
-            run_id=run.ingestion_run_id,
-            observed_count=0,
-            changed_count=0,
-            failed_count=0,
-            runs=[],
-        ), message, created
+        return (
+            _sync_response(
+                source_id=source_id,
+                collection_id=collection_id,
+                status=run.status,
+                run_id=run.ingestion_run_id,
+                observed_count=0,
+                changed_count=0,
+                failed_count=0,
+                runs=[],
+            ),
+            message,
+            created,
+        )
 
     def test_connection(
         self, *, tenant_id: str, source_id: str, body: Mapping[str, object] | None = None
@@ -172,9 +180,7 @@ class SourceSyncService:
                 final_status = JobStatus.FAILED.value
                 self.runs.mark_failed(run, reason="all synced documents failed", retry_count=0)
             else:
-                final_status = (
-                    "partially_succeeded" if failed else JobStatus.SUCCEEDED.value
-                )
+                final_status = "partially_succeeded" if failed else JobStatus.SUCCEEDED.value
                 chunk_count = sum(int(item.get("chunk_count") or 0) for item in child_runs)
                 if failed:
                     self.runs.mark_partially_succeeded(
@@ -257,7 +263,10 @@ class SourceSyncService:
         )
 
     def _ingest_document(
-        self, message: SourceSyncJobMessage, datasource: Mapping[str, object], document: SyncDocument
+        self,
+        message: SourceSyncJobMessage,
+        datasource: Mapping[str, object],
+        document: SyncDocument,
     ) -> IngestionRun:
         mfg_meta = _mfg_metadata_for_sync(
             message.scope, datasource, message.tenant_id, document.document_id
@@ -374,7 +383,9 @@ def _manifest_checksum(documents: list[SyncDocument]) -> str:
 
 
 def _digest(value: object) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
 
 
 def _preview_document_limit(body: Mapping[str, object]) -> int:
@@ -405,7 +416,9 @@ def _datasource_approval_policy(datasource: Mapping[str, object]) -> str:
     return "trusted" if policy == "trusted" else "review_required"
 
 
-def _approval_from_datasource_policy(datasource: Mapping[str, object]) -> tuple[str, str, str | None]:
+def _approval_from_datasource_policy(
+    datasource: Mapping[str, object],
+) -> tuple[str, str, str | None]:
     if _datasource_approval_policy(datasource) == "trusted":
         config = datasource.get("config") if isinstance(datasource.get("config"), Mapping) else {}
         eff = dict(config).get("approval_effective_date") or _now()[:10]

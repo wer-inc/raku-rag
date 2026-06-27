@@ -439,10 +439,16 @@ def _numeric_filter(
     if not value_col or threshold is None:
         return None
     if re.search(r"\b(less|below|under)\b|<|以下|未満|より小さい", query, re.I):
-        predicate = lambda value: value < threshold
+
+        def predicate(value: float) -> bool:
+            return value < threshold
+
         label = f"{value_col} < {_format_number(threshold)}"
     else:
-        predicate = lambda value: value > threshold
+
+        def predicate(value: float) -> bool:
+            return value > threshold
+
         label = f"{value_col} > {_format_number(threshold)}"
     matches = [
         row

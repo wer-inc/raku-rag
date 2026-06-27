@@ -372,7 +372,9 @@ def _visual_grounding_subset_score(
             scores.append(0.0)
             continue
         assertion = _attributed_visual_text(answer_text, chunk)
-        ocr_text = str(chunk.metadata.get("primary_evidence_text") or chunk.metadata.get("ocr_text") or "")
+        ocr_text = str(
+            chunk.metadata.get("primary_evidence_text") or chunk.metadata.get("ocr_text") or ""
+        )
         scores.append(_term_subset_score(assertion, ocr_text))
     return min(scores) if scores else 0.0
 

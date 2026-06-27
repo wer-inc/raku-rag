@@ -22,7 +22,6 @@ from urllib.parse import unquote, urlencode, urljoin, urlparse
 
 from raku_rag.providers.connectors import S3Connector
 
-
 # The fetch seam returns ``(raw_bytes, content_type)``. The default implementation (``_fetch_url``)
 # accepts ``headers``/``data``/``method``/``allow_hosts`` keyword arguments; the web crawl path calls
 # it positionally with just the URL. Tests inject their own callable.
@@ -223,9 +222,13 @@ def build_sync_documents(
     if source_type in {"db", "mysql", "postgres", "postgresql", "database"}:
         return _db_documents(source_id, config, body, effective_limit)
     if source_type == "kintone":
-        return [_kintone_document(source_id, config, body, effective_limit, fetch_url or _fetch_url)]
+        return [
+            _kintone_document(source_id, config, body, effective_limit, fetch_url or _fetch_url)
+        ]
     if source_type == "confluence":
-        return _confluence_documents(source_id, config, body, effective_limit, fetch_url or _fetch_url)
+        return _confluence_documents(
+            source_id, config, body, effective_limit, fetch_url or _fetch_url
+        )
     if source_type == "notion":
         return _notion_documents(source_id, config, body, effective_limit, fetch_url or _fetch_url)
     if source_type == "box":
@@ -315,7 +318,9 @@ def _url_documents(
                 document_id=_document_id(source_id, url),
                 document_ref=url,
                 raw=raw,
-                content_type=content_type if content_type in _PARSEABLE_CONTENT_TYPES else "text/plain",
+                content_type=(
+                    content_type if content_type in _PARSEABLE_CONTENT_TYPES else "text/plain"
+                ),
             )
         )
         if current_depth < depth and "html" in content_type:
@@ -381,9 +386,7 @@ def _db_host(dsn: str) -> str:
     return match.group(1) if match else ""
 
 
-def _db_engine(
-    body: Mapping[str, object], config: Mapping[str, object], dsn: str
-) -> str:
+def _db_engine(body: Mapping[str, object], config: Mapping[str, object], dsn: str) -> str:
     explicit = _str_value(body, config, ("db_engine", "engine", "driver")).lower()
     if explicit in {"mysql", "mariadb"}:
         return "mysql"
@@ -400,7 +403,7 @@ def _postgres_rows(
 ) -> list[Mapping[str, object]]:
     table_sql = _quote_table(table_name, '"')
     order_sql = (
-        f' ORDER BY {_quote_ident(updated_column, chr(34))} DESC NULLS LAST'
+        f" ORDER BY {_quote_ident(updated_column, chr(34))} DESC NULLS LAST"
         if updated_column
         else ""
     )
@@ -476,7 +479,9 @@ def _kintone_document(
     app_id = _str_value(body, config, ("app_id", "app"))
     if not subdomain or not api_token or not app_id:
         raise ValueError("kintone datasource requires subdomain, api_token, and app_id")
-    base_url = subdomain if subdomain.startswith(("http://", "https://")) else f"https://{subdomain}"
+    base_url = (
+        subdomain if subdomain.startswith(("http://", "https://")) else f"https://{subdomain}"
+    )
     query = urlencode({"app": app_id, "query": f"limit {limit}"})
     url = f"{base_url.rstrip('/')}/k/v1/records.json?{query}"
     raw, _content_type = fetch_url(
@@ -520,9 +525,7 @@ def _confluence_documents(
     email = _str_value(body, config, ("email", "username", "user"))
     api_token = _str_value(body, config, ("api_token", "token"))
     if not site_url or not space_key or not email or not api_token:
-        raise ValueError(
-            "Confluence datasource requires site_url, space_key, email, and api_token"
-        )
+        raise ValueError("Confluence datasource requires site_url, space_key, email, and api_token")
     base = site_url.rstrip("/")
     auth = base64.b64encode(f"{email}:{api_token}".encode("utf-8")).decode("ascii")
     headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
@@ -547,7 +550,11 @@ def _confluence_documents(
         storage = page.get("body") or {}
         storage = storage.get("storage") if isinstance(storage, dict) else {}
         storage_html = (storage or {}).get("value") if isinstance(storage, dict) else ""
-        webui = ((page.get("_links") or {}).get("webui")) if isinstance(page.get("_links"), dict) else ""
+        webui = (
+            ((page.get("_links") or {}).get("webui"))
+            if isinstance(page.get("_links"), dict)
+            else ""
+        )
         webui = webui or f"/pages/{page_id}"
         ref = f"{base}{webui}" if webui.startswith("/") else webui
         # Emit text/html so the existing HtmlTextParser strips Confluence storage markup at ingest.
@@ -640,7 +647,9 @@ def _box_documents(
     token = _str_value(body, config, ("access_token", "developer_token", "token", "api_token"))
     folder_id = _str_value(body, config, ("folder_id", "folder")) or "0"
     if not token:
-        raise ValueError("Box datasource requires access_token (folder_id defaults to the root folder)")
+        raise ValueError(
+            "Box datasource requires access_token (folder_id defaults to the root folder)"
+        )
     list_headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     query = urlencode({"limit": min(max(limit, 1) * 4, 1000), "fields": "id,name,type"})
     raw, _ct = fetch_url(
@@ -709,7 +718,9 @@ def _gdrive_documents(
         raise ValueError(
             "Google Drive datasource requires an active OAuth connection (reconnect required)"
         )
-    folder_id = _gdrive_folder_id(_str_value(body, config, ("folder_id", "folder", "target_folder")))
+    folder_id = _gdrive_folder_id(
+        _str_value(body, config, ("folder_id", "folder", "target_folder"))
+    )
     auth_header = {"Authorization": f"Bearer {token}"}
     list_headers = {**auth_header, "Accept": "application/json"}
     page_size = min(max(limit, 1) * 2, 1000)

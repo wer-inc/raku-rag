@@ -184,9 +184,7 @@ class TestIngestionWorkerQueue(unittest.TestCase):
         self.assertEqual(doc.metadata["async_provider"], "fake_document_ai")
         self.assertTrue(doc.metadata["visual_asset_ids"][0].startswith("asset_p1_"))
         visual_chunks = [
-            chunk
-            for chunk, _vector in self.sys.store.iter_items()
-            if chunk.document_id == "doc1"
+            chunk for chunk, _vector in self.sys.store.iter_items() if chunk.document_id == "doc1"
         ]
         self.assertEqual(
             {chunk.metadata["asset_id"] for chunk in visual_chunks},

@@ -9,8 +9,8 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-from raku_rag.core.config import Settings
-from raku_rag.persistence.secret_store import (
+from raku_rag.core.config import Settings  # noqa: E402
+from raku_rag.persistence.secret_store import (  # noqa: E402
     FileSecretStore,
     InMemorySecretStore,
     SecretNotFoundError,

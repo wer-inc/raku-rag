@@ -73,9 +73,7 @@ def embedding_provider_from_settings(settings) -> EmbeddingProvider:
         "hashing_bow_v1",
         "local",
     }:
-        allow_hashing = bool(
-            getattr(settings, "allow_hashing_embeddings_in_production", False)
-        )
+        allow_hashing = bool(getattr(settings, "allow_hashing_embeddings_in_production", False))
         if not allow_hashing:
             provider_name = "openai_text_embedding_3_small"
             if dim != 256:

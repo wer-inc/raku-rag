@@ -102,7 +102,9 @@ class TestSyncApprovalPolicy(unittest.TestCase):
         status, source, eff = self.server._approval_from_datasource_policy(ds)
         self.assertEqual(status, "approved")
         self.assertEqual(source, "imported")
-        self.assertTrue(eff, "trusted source must carry an effective_date so it is approved+effective")
+        self.assertTrue(
+            eff, "trusted source must carry an effective_date so it is approved+effective"
+        )
 
     def test_trusted_datasource_honors_explicit_effective_date(self) -> None:
         ds = {"config": {"approval_policy": "trusted", "approval_effective_date": "2026-01-01"}}

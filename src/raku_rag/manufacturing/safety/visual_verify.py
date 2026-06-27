@@ -188,7 +188,9 @@ def verify_visual_primary_evidence(
                 reason_code="verifier_error",
             )
         if not verdict.provider_family:
-            verdict = _with_provider(verdict, provider_family=getattr(verifier, "provider_family", ""))
+            verdict = _with_provider(
+                verdict, provider_family=getattr(verifier, "provider_family", "")
+            )
         if not verdict.model_id:
             verdict = _with_provider(verdict, model_id=getattr(verifier, "model_id", ""))
         key = (verdict.provider_family, verdict.model_id)
@@ -222,10 +224,7 @@ def verify_visual_primary_evidence(
         return False, tuple(verdicts)
 
     families = {v.provider_family or v.verifier_id for v in passed_vlm}
-    if (
-        not settings.visual_verifier_allow_same_family_distinct_models
-        and len(families) < quorum
-    ):
+    if not settings.visual_verifier_allow_same_family_distinct_models and len(families) < quorum:
         verdicts.append(
             VerifierVerdict(
                 verifier_id="visual_verifier_quorum",
