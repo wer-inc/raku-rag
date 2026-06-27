@@ -162,8 +162,10 @@ class SecretsManagerSecretStore(SecretStore):
                 raise RuntimeError(
                     "boto3 is required for SecretsManagerSecretStore without an injected client"
                 ) from exc
-            region = region_name or os.environ.get("AWS_REGION") or os.environ.get(
-                "AWS_DEFAULT_REGION", "us-east-1"
+            region = (
+                region_name
+                or os.environ.get("AWS_REGION")
+                or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
             )
             self._client = boto3.client("secretsmanager", region_name=region)
 

@@ -186,7 +186,9 @@ class TextractStructuredExtractor:
     def __init__(self, *, region: str = _DEFAULT_REGION) -> None:
         self.region = region
 
-    def extract(self, regions: Sequence[LayoutRegion], *args: Any, **kwargs: Any) -> tuple[dict, ...]:
+    def extract(
+        self, regions: Sequence[LayoutRegion], *args: Any, **kwargs: Any
+    ) -> tuple[dict, ...]:
         structured: list[dict] = []
         for region in regions:
             if region.region_type in {"table", "form_field"} or region.metadata.get(

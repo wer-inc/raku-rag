@@ -28,7 +28,8 @@ def new_connection_id() -> str:
 
 def secret_ref_for(connection_id: str) -> str:
     """SecretStore name for a connection's refresh token. Tenant is applied by the store, so it is
-    intentionally NOT part of this ref (avoids double-encoding the tenant in the physical secret id)."""
+    intentionally NOT part of this ref (avoids double-encoding the tenant in the physical secret id).
+    """
     return f"gdrive/{connection_id}"
 
 
@@ -97,9 +98,7 @@ class InMemoryOAuthConnectionStore:
     def get_by_source(self, tenant_id: str, source_id: str) -> OAuthConnection | None:
         # Most-recent wins if a source were re-connected.
         matches = [
-            c
-            for (t, _cid), c in self._items.items()
-            if t == tenant_id and c.source_id == source_id
+            c for (t, _cid), c in self._items.items() if t == tenant_id and c.source_id == source_id
         ]
         if not matches:
             return None

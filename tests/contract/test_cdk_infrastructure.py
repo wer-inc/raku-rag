@@ -149,9 +149,7 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)
         # the durable (forward-looking) connection table migration + its down ship together
-        self.assertTrue(
-            (ROOT / "infra/db/migrations/postgres/0012_data_source_oauth.sql").exists()
-        )
+        self.assertTrue((ROOT / "infra/db/migrations/postgres/0012_data_source_oauth.sql").exists())
         self.assertTrue(
             (ROOT / "infra/db/migrations/postgres/0012_data_source_oauth.down.sql").exists()
         )

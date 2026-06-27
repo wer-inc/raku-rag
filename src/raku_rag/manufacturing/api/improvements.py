@@ -5,7 +5,7 @@ Single source of truth: the shared ``AuditLogWriter``. No parallel feedback stor
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from raku_rag.domain.models import IdentityClaims

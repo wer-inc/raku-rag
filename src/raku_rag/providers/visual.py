@@ -131,9 +131,7 @@ class InvokerVLMProvider:
 class InvokerVisualEmbeddingProvider:
     model_version = "external-visual-embedding-v1"
 
-    def __init__(
-        self, *, provider_id: str, invoker: VisualEmbeddingInvoker | None = None
-    ) -> None:
+    def __init__(self, *, provider_id: str, invoker: VisualEmbeddingInvoker | None = None) -> None:
         self.provider_id = provider_id
         self._invoker = invoker
         self.model_version = provider_id
@@ -144,9 +142,7 @@ class InvokerVisualEmbeddingProvider:
         return list(self._invoker(regions))
 
 
-def ocr_from_settings(
-    settings: Settings, *, invoker: OcrInvoker | None = None
-) -> object:
+def ocr_from_settings(settings: Settings, *, invoker: OcrInvoker | None = None) -> object:
     provider = _selected_visual_provider(settings, settings.ocr_provider)
     if provider == "deterministic":
         return DeterministicOcrEngine()
@@ -170,9 +166,7 @@ def async_document_analyzer_from_settings(settings: Settings) -> object | None:
     raise ValueError(f"unknown async visual document provider: {settings.ocr_provider}")
 
 
-def layout_from_settings(
-    settings: Settings, *, invoker: LayoutInvoker | None = None
-) -> object:
+def layout_from_settings(settings: Settings, *, invoker: LayoutInvoker | None = None) -> object:
     provider = _selected_visual_provider(settings, settings.layout_provider)
     if provider == "deterministic":
         return DeterministicLayoutExtractor()
@@ -229,9 +223,7 @@ def captioning_from_settings(
     raise ValueError(f"unknown captioning_provider: {settings.captioning_provider}")
 
 
-def vlm_from_settings(
-    settings: Settings, *, invoker: VlmInvoker | None = None
-) -> object:
+def vlm_from_settings(settings: Settings, *, invoker: VlmInvoker | None = None) -> object:
     provider = _selected_visual_provider(settings, settings.vlm_provider)
     if provider == "deterministic":
         return ExtractiveVLMProvider()
@@ -256,7 +248,9 @@ def visual_embedding_from_settings(
     if provider == "deterministic":
         return HashingVisualEmbeddingProvider(dim=settings.embedding_dim)
     if provider in {"titan_multimodal", "bedrock_titan_multimodal", "vertex_embeddings"}:
-        provider_id = "bedrock" if provider in {"titan_multimodal", "bedrock_titan_multimodal"} else provider
+        provider_id = (
+            "bedrock" if provider in {"titan_multimodal", "bedrock_titan_multimodal"} else provider
+        )
         return InvokerVisualEmbeddingProvider(provider_id=provider_id, invoker=invoker)
     raise ValueError(f"unknown visual_embedding_provider: {settings.visual_embedding_provider}")
 

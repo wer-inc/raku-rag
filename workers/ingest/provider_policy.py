@@ -120,12 +120,14 @@ class ProviderPolicy:
             no_train_required=bool(value.get("no_train_required", True)),
             customer_opt_in_required=bool(value.get("customer_opt_in_required", True)),
             customer_opt_in_status=str(value.get("customer_opt_in_status") or "pending"),
-            opt_in_status_by_family={
-                str(key): str(status)
-                for key, status in dict(value.get("opt_in_status_by_family") or {}).items()
-            }
-            if isinstance(value.get("opt_in_status_by_family"), Mapping)
-            else {},
+            opt_in_status_by_family=(
+                {
+                    str(key): str(status)
+                    for key, status in dict(value.get("opt_in_status_by_family") or {}).items()
+                }
+                if isinstance(value.get("opt_in_status_by_family"), Mapping)
+                else {}
+            ),
             fallback_policy=fallback_policy,
         )
 

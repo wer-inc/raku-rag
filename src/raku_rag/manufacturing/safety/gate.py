@@ -42,9 +42,7 @@ def is_promotable_evidence(metadata: Mapping[str, object] | None) -> bool:
 
     if not metadata:
         return False
-    source = str(
-        metadata.get("primary_evidence_source") or metadata.get("extraction_source") or ""
-    )
+    source = str(metadata.get("primary_evidence_source") or metadata.get("extraction_source") or "")
     return source in PROMOTABLE_EXTRACTION_SOURCES
 
 
@@ -95,8 +93,7 @@ def citation_is_approved_effective(
     if not is_promotable_evidence(getattr(citation, "metadata", None)):
         return False
     pixel_derived = bool(
-        getattr(citation, "pixel_derived", False)
-        or citation.kind in VISUAL_DERIVED_CITATION_KINDS
+        getattr(citation, "pixel_derived", False) or citation.kind in VISUAL_DERIVED_CITATION_KINDS
     )
     if pixel_derived:
         return bool(visual_evidence_promotion and citation.visual_evidence_verified)

@@ -230,6 +230,26 @@ class AnswerService:
                     span.finish("ok", answer_status=status, reason="citation_revalidation")
                 return Answer(status=status, used_chunks=(), correlation_id=cid)
 
+            evidence = self._narrow_evidence_to_query_identifiers(evidence, query, cid)
+            if len(evidence) < profile.minimum_evidence_count:
+                log("answer.insufficient_identifier_evidence", correlation_id=cid)
+                status = AnswerStatus.INSUFFICIENT_EVIDENCE.value
+                self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
+                self._record_audit(principal, cid, "answer", status, reason="identifier_evidence")
+                context_tokens = self._evidence_token_count(evidence)
+                self._record_hot_path(
+                    principal,
+                    cid,
+                    profile,
+                    status,
+                    total_started=total_started,
+                    context_tokens=context_tokens,
+                    prompt_tokens=_token_count(query) + context_tokens,
+                )
+                if hasattr(span, "finish"):
+                    span.finish("ok", answer_status=status, reason="identifier_evidence")
+                return Answer(status=status, used_chunks=(), correlation_id=cid)
+
             # P1-2 prompt-injection defense (defense-in-depth; never widens ACL/groundedness). Both
             # the user query and the retrieved context are untrusted. A query that tries to override
             # the system is REFUSED; instructions embedded in retrieved chunks are NEUTRALIZED before
@@ -689,6 +709,62 @@ class AnswerService:
                 continue
             self._record_citation_revalidation_drop(principal, correlation_id, profile, chunk)
         return visible
+
+    def _narrow_evidence_to_query_identifiers(
+        self, evidence: Sequence[ScoredChunk], query: str, correlation_id: str
+    ) -> list[ScoredChunk]:
+        """Prefer evidence for the exact business identifier named in the query.
+
+        Mixed text/visual result sets are common after a broad collection has many manuals. Without
+        this narrowing, one unrelated visual chunk can route the whole answer through the VLM and
+        ignore the matching text evidence. The filter is only activated when at least one authorized
+        evidence item carries a query identifier in its text or metadata; otherwise retrieval order is
+        preserved.
+        """
+        identifiers = _identifier_anchors(query)
+        if not identifiers:
+            return list(evidence)
+        matched = [
+            item
+            for item in evidence
+            if _has_identifier(self._chunk_identifier_surface(item.chunk), identifiers)
+        ]
+        if not matched:
+            return list(evidence)
+        if len(matched) != len(evidence):
+            log(
+                "answer.identifier_evidence_narrowed",
+                correlation_id=correlation_id,
+                before=len(evidence),
+                after=len(matched),
+            )
+        return matched
+
+    def _chunk_identifier_surface(self, chunk: Chunk) -> str:
+        parts = [chunk.text]
+        parts.extend(self._metadata_strings(chunk.metadata))
+        return " ".join(part for part in parts if part)
+
+    def _metadata_strings(self, value: object) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, dict):
+            out: list[str] = []
+            for item in value.values():
+                out.extend(self._metadata_strings(item))
+            return out
+        if isinstance(value, (list, tuple, set)):
+            out: list[str] = []
+            for item in value:
+                out.extend(self._metadata_strings(item))
+            return out
+        if hasattr(value, "__dict__"):
+            return self._metadata_strings(vars(value))
+        if value is None:
+            return []
+        if isinstance(value, (int, float, bool)):
+            return [str(value)]
+        return []
 
     def _citation_still_visible(
         self, principal: IdentityClaims, chunk: Chunk, doc: Document | None

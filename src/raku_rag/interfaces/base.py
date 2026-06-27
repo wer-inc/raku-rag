@@ -5,8 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Callable, Protocol, Sequence
 
-from raku_rag.domain.models import Chunk, LayoutRegion, OcrTextRegion, ScoredChunk
-from raku_rag.interfaces.visual import (
+from raku_rag.domain.models import Chunk, LayoutRegion, OcrTextRegion, ScoredChunk  # noqa: F401
+from raku_rag.interfaces.visual import (  # noqa: F401  (re-export surface for interfaces/__init__)
     AsyncDocumentAnalyzer,
     AsyncJobStatus,
     AsyncSubmitRequest,

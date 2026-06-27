@@ -6,7 +6,7 @@ import unittest
 
 from raku_rag.domain.models import ScopeType, SubjectType
 from raku_rag.manufacturing.domain.draft import DraftStatus, DraftType
-from raku_rag.manufacturing.domain.metadata import ApprovalStatus, ManufacturingDocumentMetadata
+from raku_rag.manufacturing.domain.metadata import ApprovalStatus
 from tests.manufacturing.helpers import T, claims, fresh, mfg_meta
 
 
@@ -122,7 +122,9 @@ class TestMvpCompletionApi(unittest.TestCase):
             collection_id="manuals",
             document_id="mfg-file-1",
             path=path,
-            metadata=mfg_meta(tenant_id=T, document_id="mfg-file-1", approval_status=ApprovalStatus.APPROVED),
+            metadata=mfg_meta(
+                tenant_id=T, document_id="mfg-file-1", approval_status=ApprovalStatus.APPROVED
+            ),
         )
         payload = self.sys.get_document_file(self.admin, "mfg-file-1")
         self.assertIsNotNone(payload)

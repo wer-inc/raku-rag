@@ -117,7 +117,9 @@ class AwsVisualProviderTest(unittest.TestCase):
         self.assertEqual(analysis.pages[0].page_number, 2)
         self.assertEqual(analysis.pages[0].ocr_regions[0].text, "Alarm AL-42")
 
-    def test_production_visual_factories_select_aws_adapters_without_injected_invokers(self) -> None:
+    def test_production_visual_factories_select_aws_adapters_without_injected_invokers(
+        self,
+    ) -> None:
         settings = Settings(
             runtime_profile="production",
             ocr_provider="aws_textract",

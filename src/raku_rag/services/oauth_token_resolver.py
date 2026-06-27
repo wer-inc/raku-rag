@@ -51,7 +51,9 @@ def _client_credentials(env: Mapping[str, str]) -> tuple[str, str]:
     client_id = str(env.get("GOOGLE_OAUTH_CLIENT_ID", ""))
     client_secret = str(env.get("GOOGLE_OAUTH_CLIENT_SECRET", ""))
     if not client_id or not client_secret:
-        raise OAuthConfigError("GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET are not configured")
+        raise OAuthConfigError(
+            "GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET are not configured"
+        )
     return client_id, client_secret
 
 

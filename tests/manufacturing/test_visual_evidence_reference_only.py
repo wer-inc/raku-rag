@@ -200,9 +200,7 @@ class TestVisualEvidenceReferenceOnly(unittest.TestCase):
         self.assertEqual(visual_evidence[0]["approval_status_at_use"], "approved")
         self.assertIn(visual_evidence[0]["grounding_method"], {"ocr_subset", "ocr_verbatim"})
         self.assertEqual(visual_evidence[0]["quorum"], 2)
-        reason_codes = {
-            verdict["reason_code"] for verdict in visual_evidence[0]["verifiers"]
-        }
+        reason_codes = {verdict["reason_code"] for verdict in visual_evidence[0]["verifiers"]}
         self.assertIn("verifier_quorum_not_met", reason_codes)
         serialized = str(visual_evidence)
         self.assertNotIn("emergency stop", serialized)

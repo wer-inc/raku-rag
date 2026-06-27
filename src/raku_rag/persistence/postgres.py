@@ -144,7 +144,9 @@ def _repair_reset_schema(cur: "psycopg.Cursor", existing: set[str]) -> None:
     """
 
     if "source_sync_states" in existing:
-        cur.execute("ALTER TABLE source_sync_states DROP CONSTRAINT IF EXISTS source_sync_states_pkey")
+        cur.execute(
+            "ALTER TABLE source_sync_states DROP CONSTRAINT IF EXISTS source_sync_states_pkey"
+        )
         cur.execute(
             "ALTER TABLE source_sync_states "
             "ADD CONSTRAINT source_sync_states_pkey PRIMARY KEY (tenant_id, source_id)"
@@ -1286,9 +1288,7 @@ class PostgresIngestionRunStore:
                 "SELECT tenant_id, document_id, ingestion_run_id, collection_id, source_id, status, "
                 "content_checksum, parser_version, chunking_config_version, embedding_model_version, "
                 "chunk_count, failure_reason, updated_at "
-                "FROM document_processing_states"
-                + where
-                + " ORDER BY updated_at DESC",
+                "FROM document_processing_states" + where + " ORDER BY updated_at DESC",
                 params,
             )
             return [_row_to_processing_state(row) for row in cur.fetchall()]
@@ -1399,9 +1399,7 @@ class PostgresIngestionRunStore:
                 "failed_count": state.failed_count,
             },
             documents=documents,
-            asset_materializations=self.list_asset_materializations(
-                tenant_id, source_id=source_id
-            ),
+            asset_materializations=self.list_asset_materializations(tenant_id, source_id=source_id),
             dagster_run_id=dagster_run_id,
             dagster_run_url=(
                 dagster_run_url(dagster_base_url, dagster_run_id)
@@ -1530,9 +1528,7 @@ class PostgresIngestionRunStore:
             )
         run.sqs_message_id = message_id
 
-    def mark_async_job(
-        self, run: IngestionRun, *, provider: str, job_id: str, status: str
-    ) -> None:
+    def mark_async_job(self, run: IngestionRun, *, provider: str, job_id: str, status: str) -> None:
         _use_tenant(self._conn, run.tenant_id)
         with self._conn.cursor() as cur:
             cur.execute(

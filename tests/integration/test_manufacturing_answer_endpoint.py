@@ -19,6 +19,7 @@ from raku_rag.manufacturing.domain.metadata import (
     ManufacturingDocumentMetadata,
 )
 from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY
+
 # Build the answer service from the wiring module directly: the deployed answer-service route now
 # goes through the AUDITED manufacturing_system.answer path (FR-MFG-021) and no longer imports the
 # build_manufacturing_answer_service overlay, so this serialization test sources it from wiring.

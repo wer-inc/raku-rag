@@ -297,9 +297,7 @@ def sanitize_audit_log_entry(
         for name in _REDACT_TEXT_FIELDS
         if isinstance((value := getattr(entry, name)), str)
     }
-    safe_metadata = {
-        k: _redact_metadata_value(v, red) for k, v in entry.client_metadata.items()
-    }
+    safe_metadata = {k: _redact_metadata_value(v, red) for k, v in entry.client_metadata.items()}
     return replace(entry, client_metadata=safe_metadata, **text_patch)
 
 

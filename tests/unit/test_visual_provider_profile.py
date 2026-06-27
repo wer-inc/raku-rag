@@ -104,7 +104,9 @@ class VisualProviderProfileTest(unittest.TestCase):
         self.assertIsInstance(structured_from_settings(settings), DeterministicStructuredExtractor)
         self.assertIsInstance(captioning_from_settings(settings), DeterministicCaptioningProvider)
         self.assertIsInstance(vlm_from_settings(settings), ExtractiveVLMProvider)
-        self.assertIsInstance(visual_embedding_from_settings(settings), HashingVisualEmbeddingProvider)
+        self.assertIsInstance(
+            visual_embedding_from_settings(settings), HashingVisualEmbeddingProvider
+        )
 
     def test_deterministic_profile_ignores_explicit_real_visual_provider(self) -> None:
         settings = replace(
@@ -122,7 +124,9 @@ class VisualProviderProfileTest(unittest.TestCase):
         self.assertIsInstance(structured_from_settings(settings), DeterministicStructuredExtractor)
         self.assertIsInstance(captioning_from_settings(settings), DeterministicCaptioningProvider)
         self.assertIsInstance(vlm_from_settings(settings), ExtractiveVLMProvider)
-        self.assertIsInstance(visual_embedding_from_settings(settings), HashingVisualEmbeddingProvider)
+        self.assertIsInstance(
+            visual_embedding_from_settings(settings), HashingVisualEmbeddingProvider
+        )
 
     def test_force_deterministic_overrides_explicit_production_visual_provider(self) -> None:
         settings = replace(
@@ -142,7 +146,9 @@ class VisualProviderProfileTest(unittest.TestCase):
         self.assertIsInstance(structured_from_settings(settings), DeterministicStructuredExtractor)
         self.assertIsInstance(captioning_from_settings(settings), DeterministicCaptioningProvider)
         self.assertIsInstance(vlm_from_settings(settings), ExtractiveVLMProvider)
-        self.assertIsInstance(visual_embedding_from_settings(settings), HashingVisualEmbeddingProvider)
+        self.assertIsInstance(
+            visual_embedding_from_settings(settings), HashingVisualEmbeddingProvider
+        )
 
     def test_explicit_production_visual_provider_uses_injected_invoker(self) -> None:
         settings = replace(
@@ -186,7 +192,9 @@ class VisualProviderProfileTest(unittest.TestCase):
             "panel AL-42",
         )
         self.assertIsInstance(structured, InvokerStructuredExtractor)
-        self.assertEqual(structured.extract((_region("panel AL-42", page_number=1),)), {"regions": 1})
+        self.assertEqual(
+            structured.extract((_region("panel AL-42", page_number=1),)), {"regions": 1}
+        )
         self.assertIsInstance(vlm, InvokerVLMProvider)
         self.assertEqual(
             vlm.generate("q", visual_regions=[_region("panel AL-42", page_number=1)]),
@@ -247,10 +255,14 @@ class VisualProviderProfileTest(unittest.TestCase):
             document_ref=request.document_ref,
             analysis=analysis,
         )
-        chunks = tuple(chunk for result in results for chunk in visual_chunks_from_ingestion(result))
+        chunks = tuple(
+            chunk for result in results for chunk in visual_chunks_from_ingestion(result)
+        )
 
         self.assertEqual(len(chunks), 2)
-        self.assertEqual({chunk.chunk_id for chunk in chunks}, {"doc_pdf:visual:1:0", "doc_pdf:visual:2:0"})
+        self.assertEqual(
+            {chunk.chunk_id for chunk in chunks}, {"doc_pdf:visual:1:0", "doc_pdf:visual:2:0"}
+        )
         self.assertIn("AL-42", chunks[1].text)
 
     def test_page_aware_visual_chunk_ids_do_not_collide_across_page_results(self) -> None:
