@@ -55,6 +55,8 @@ Compare p95/p99 to `Settings.target_p95_latency_ms` (2000ms) / `min_throughput_q
 
 ## 4. Deploy + supply-chain gates
 - Configure GitHub OIDC + `vars.AWS_DEPLOY_ROLE_ARN` / `vars.AWS_REGION`; run `deploy.yml` (dry-run first).
+- For a paid-pilot candidate, configure the smoke Environment secrets/vars in `infra/cdk/DEPLOY-CI.md`
+  and run `deploy.yml` with `run_live_smoke=true`. The smoke must finish with zero skips for promotion.
 - Build/push images (Dockerfiles for api/web/worker) to ECR; `deploy-checks.yml` emits SBOM + Trivy.
 - **Trivy → blocking: ✅ DONE.** OS layers 0 HIGH/CRITICAL; prod-only installs remove dev CVEs; Next.js
   advisories are fixed; NestJS 11 removes prod picomatch exposure. The only accepted runtime HIGH family
@@ -83,6 +85,10 @@ ACL/tenant/deletion leakage · high-risk safety gate green · p95/p99 in budget 
 logging violations 0 · SLO/incident thresholds accepted · all §1.2 human boxes checked · open Critical/High `risk-register.md` PRs not
 regressed (note **PR-003/PR-016 → Fixed repo-side** but confirm the deployed stack is running those
 gates).
+
+Record the evidence in `docs/production-readiness/evidence/` and keep `Status: pending` until the live
+command output or human signature exists. Do not move the paid-pilot gate by editing statuses ahead of
+evidence.
 
 ---
 

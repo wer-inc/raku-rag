@@ -49,6 +49,48 @@ skip() {
   skips=$((skips + 1))
 }
 
+dump_failure_response() {
+  local name="$1" file="$2"
+  if [[ "${RAKU_PROD_SMOKE_PRINT_RESPONSES:-}" == "yes" ]]; then
+    echo "response for $name:" >&2
+    python3 -m json.tool "$file" >&2 || cat "$file" >&2
+    return
+  fi
+  echo "response summary for $name (set RAKU_PROD_SMOKE_PRINT_RESPONSES=yes to print full JSON):" >&2
+  python3 - "$file" <<'PY' >&2
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+
+summary = {}
+for key in ("status", "reason", "trace_id", "correlation_id", "safety_block_reason"):
+    if data.get(key) is not None:
+        summary[key] = data.get(key)
+manufacturing = data.get("manufacturing")
+if isinstance(manufacturing, dict):
+    summary["manufacturing"] = {
+        key: manufacturing.get(key)
+        for key in ("status", "high_risk", "safety_block_reason")
+        if manufacturing.get(key) is not None
+    }
+citations = data.get("citations")
+if isinstance(citations, list):
+    summary["citations"] = [
+        {
+            key: citation.get(key)
+            for key in ("document_id", "chunk_id", "source_id")
+            if isinstance(citation, dict) and citation.get(key) is not None
+        }
+        for citation in citations[:5]
+        if isinstance(citation, dict)
+    ]
+print(json.dumps(summary or {"keys": sorted(data.keys())}, ensure_ascii=False, indent=2))
+PY
+}
+
 payload() {
   python3 - "$1" "$2" <<'PY'
 import json
@@ -91,8 +133,7 @@ PY
   then
     pass "$name"
   else
-    echo "response for $name:" >&2
-    python3 -m json.tool "$file" >&2 || cat "$file" >&2
+    dump_failure_response "$name" "$file"
     fail "$name"
   fi
 }

@@ -55,9 +55,50 @@ npx aws-cdk@2 bootstrap aws://<ACCOUNT_ID>/ap-northeast-1
 | frontend | `aws-nextjs`（web+API同一オリジン） |
 | domain_name | 空（まずHTTPで疎通／後でドメイン追加） |
 | run_migrate_seed | ✅（スキーマ＋デモKB投入まで自動） |
+| run_live_smoke | 初回はOFF。Environment secrets/vars を入れた後にON |
 | **dry_run** | **まず `true`**（synthのみ・無変更で配線確認）→ OKなら `false` で本番実行 |
 
 完了後、ワークフローの **Summary に公開URL（`http://<ALB>`）** が出ます。ブラウザで開いて回答が返ればOK。
+
+### Post-deploy live smoke
+
+`run_live_smoke=true` にすると、deploy 後に Cognito で smoke user の JWT を発行し、
+`scripts/prod-smoke.sh` を実行します。Paid pilot promotion では skips なしが条件です。
+
+GitHub Environment の Secrets:
+
+- `RAKU_SMOKE_USERNAME`
+- `RAKU_SMOKE_PASSWORD`
+- `RAKU_SMOKE_OTHER_USERNAME` / `RAKU_SMOKE_OTHER_PASSWORD`（cross-tenant probe 用）
+- `RAKU_SMOKE_LANGFUSE_TRACE_CHECK_URL`
+- `RAKU_SMOKE_DLQ_CHECK_URL`
+
+GitHub Environment の Variables:
+
+- `RAKU_SMOKE_COLLECTION_ID`
+- `RAKU_SMOKE_GROUNDED_QUERY`
+- `RAKU_SMOKE_HIGH_RISK_QUERY`
+- `RAKU_SMOKE_POISON_QUERY`
+- `RAKU_SMOKE_ACL_QUERY`
+- `RAKU_SMOKE_FORBIDDEN_DOCUMENT_ID`
+- `RAKU_SMOKE_DELETED_QUERY`
+- `RAKU_SMOKE_DELETED_DOCUMENT_ID`
+- `RAKU_PROD_SMOKE_ALLOW_SKIPS`（diagnostics のみ `yes`。promotion では空）
+
+ローカルで同じ smoke を走らせる場合:
+
+```bash
+RAKU_PROD_SMOKE_APPROVED=yes \
+  RAKU_SMOKE_USERNAME='<redacted>' \
+  RAKU_SMOKE_PASSWORD='<redacted>' \
+  RAKU_SMOKE_COLLECTION_ID='<collection>' \
+  RAKU_SMOKE_GROUNDED_QUERY='<query>' \
+  RAKU_SMOKE_HIGH_RISK_QUERY='<query>' \
+  RAKU_SMOKE_POISON_QUERY='<query>' \
+  STACK=RakuRag-sales \
+  AWS_REGION=ap-northeast-1 \
+  bash scripts/aws/run-prod-smoke-from-stack.sh
+```
 
 ## TLS/ドメインを足すとき
 `domain_name=demo.example.com` で再実行 → ACM(DNS検証)＋HTTPS＋80→443リダイレクトが入る。デプロイ中に

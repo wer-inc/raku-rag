@@ -52,7 +52,8 @@ The high-signal evidence is:
 - Local and CI gates on the release commit.
 - Real Bedrock generation, rerank, and Guardrails checks.
 - OpenAI 256 reindex completion evidence.
-- Production smoke with zero skips.
+- Production smoke with zero skips, run by `deploy.yml` `run_live_smoke=true` or by
+  `scripts/aws/run-prod-smoke-from-stack.sh`.
 - ACL cross-tenant probe, deletion/tombstone probe, source poisoning refusal, and high-risk refusal.
 - Langfuse trace existence with sanitized payload.
 - CloudWatch alarm action wiring.
@@ -67,4 +68,3 @@ The high-signal evidence is:
 - Do not treat all-high-risk classifier behavior as a safety pass.
 - Do not sell as production ready while rollback/restore evidence is missing.
 - Do not include `goal.md`, local notes, or generated CDK context files as release evidence.
-
