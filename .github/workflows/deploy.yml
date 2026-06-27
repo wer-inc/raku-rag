@@ -12,9 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: CDK stage (sales = cheap/throwaway, prod = HA/retained)
+        description: CDK stage (sales = cheap/throwaway, stg = staging, prod = HA/retained)
         type: choice
-        options: [sales, prod]
+        options: [sales, stg, prod]
         default: sales
       frontend:
         description: Frontend hosting (aws-nextjs = same-origin web+API on one ALB)
@@ -58,6 +58,11 @@ on:
         type: choice
         options: [extractive, bedrock]
         default: extractive
+      visual_provider_profile:
+        description: Visual/PDF providers (promotion remains off unless CDK context explicitly enables it)
+        type: choice
+        options: [default, aws-textract-bedrock]
+        default: default
       dry_run:
         description: Synth/plan only (no AWS changes)
         type: boolean
@@ -84,6 +89,7 @@ jobs:
       BASIC_AUTH_USER: ${{ inputs.basic_auth_user }}
       EMBEDDING_PROVIDER: ${{ inputs.embedding_provider }}
       ANSWER_LLM: ${{ inputs.answer_llm }}
+      VISUAL_PROVIDER_PROFILE: ${{ inputs.visual_provider_profile }}
       ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
       AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
@@ -111,7 +117,14 @@ jobs:
             echo "::error::basic_auth_user must be 1-128 chars: A-Za-z0-9._@+-"
             exit 1
           fi
-          echo "stage=${STAGE} frontend=${FRONTEND} auth=${AUTH_MODE} domain='${DOMAIN_NAME}' region=${AWS_REGION}"
+          case "${VISUAL_PROVIDER_PROFILE}" in
+            default|aws-textract-bedrock) ;;
+            *)
+              echo "::error::visual_provider_profile must be default or aws-textract-bedrock."
+              exit 1
+              ;;
+          esac
+          echo "stage=${STAGE} frontend=${FRONTEND} auth=${AUTH_MODE} visual=${VISUAL_PROVIDER_PROFILE} domain='${DOMAIN_NAME}' region=${AWS_REGION}"
 
       - name: Install + build CDK app
         working-directory: infra/cdk
@@ -126,6 +139,9 @@ jobs:
           if [ "${BASIC_AUTH}" = "true" ]; then CTX="${CTX} --context basicAuthUser=${BASIC_AUTH_USER}"; fi
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
           if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
+          if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
+            CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock"
+          fi
           npx cdk synth ${CTX} --quiet
 
       - name: Configure AWS credentials (OIDC)
@@ -148,6 +164,9 @@ jobs:
           if [ "${BASIC_AUTH}" = "true" ]; then CTX="${CTX} --context basicAuthUser=${BASIC_AUTH_USER}"; fi
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
           if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
+          if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
+            CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock"
+          fi
           npx cdk deploy --require-approval never ${CTX}
 
       - name: Migrate + seed (in-VPC one-off task)
