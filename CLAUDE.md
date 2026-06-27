@@ -87,3 +87,15 @@ is NOT reflected there:
   the running stack (`scripts/demo/quality_scorecard.sh`).
 - **Sellable PoC demo package**: `scripts/demo/` (curated JP KB, `demo_up.sh` one-command boot,
   `DEMO.md` runbook).
+
+## Code Review (レビュー方針)
+
+RAG SaaS のコードレビューは3モードのスキルで実施する。共通原則・正解情報の所在(実パス)・
+レイヤ↔実ディレクトリ対応・運用フローの **SSOT は `docs/code-review/policy.md`**。
+
+- **`/review-map`** — モード1 マッピング(フェーズ0、最初に1回。構造把握のみ、バグ指摘禁止)
+- **`/boundary-audit`** — モード2 境界監査(FE↔BE↔infra の契約点を境界 / モジュール単位で繰り返し)
+- **`/tenant-audit`** — モード3 テナント分離 / RAG 品質の網羅監査(「1箇所漏れたら全部漏れる」前提)
+
+フロー: モード1 → モード2(境界ごと反復)→ モード3。全指摘に `file:line` 根拠、各回末尾で
+「見た／見ていない」カバレッジ自己チェック必須。スキル定義は `.claude/skills/{review-map,boundary-audit,tenant-audit}/SKILL.md`。
