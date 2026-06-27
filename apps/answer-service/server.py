@@ -918,6 +918,39 @@ def _source_sync_state_json(state) -> dict:
     }
 
 
+def _manufacturing_source_sync_status_json(
+    runs: IngestionRunStore, tenant_id: str, source_id: str
+) -> dict:
+    projection = runs.source_sync_status(tenant_id, source_id)
+    if projection is None:
+        return {
+            "tenant_id": tenant_id,
+            "source_id": source_id,
+            "status": "not_found",
+            "summary": {},
+            "documents": [],
+            "asset_materializations": [],
+        }
+    payload = projection.to_dict()
+    payload.pop("dagster_run_id", None)
+    payload.pop("dagster_run_url", None)
+    for document in payload.get("documents", []):
+        document.pop("dagster_run_id", None)
+        document["status"] = (
+            document.get("index_status")
+            or document.get("embedding_status")
+            or document.get("chunk_status")
+            or document.get("parse_status")
+            or "unknown"
+        )
+    payload["manufacturing_metadata"] = {
+        "approval_metadata_checksum_observed": True,
+        "metadata_only_updates_supported": True,
+        "dagster_run_fields_internal_only": True,
+    }
+    return payload
+
+
 def _ingest_response_json(job) -> dict:
     return {
         "ingestion_run_id": job.ingestion_run_id,
@@ -1414,10 +1447,10 @@ def make_handler(system: ProductionSystem):
                 ):
                     self._send(
                         200,
-                        _jsonable(
-                            manufacturing_system.source_sync_status(
-                                _claims_from_headers(self.headers), parts[3]
-                            )
+                        _manufacturing_source_sync_status_json(
+                            system.ingestion_runs,
+                            self._tenant_header(),
+                            parts[3],
                         ),
                     )
                 elif len(parts) == 4 and parts[:3] == [
@@ -1704,21 +1737,37 @@ def make_handler(system: ProductionSystem):
                     and parts[:3] == ["internal", "manufacturing", "sources"]
                     and parts[4] == "sync"
                 ):
-                    principal = _claims_from_headers(self.headers)
-                    self._send(
-                        202,
-                        _jsonable(
-                            manufacturing_system.request_source_sync(
-                                principal,
-                                parts[3],
-                                collection_id=str(body.get("collection_id") or "manufacturing"),
-                                document_id=str(body.get("document_id") or ""),
-                                document_ref=str(body.get("document_ref") or ""),
-                                content_type=str(body.get("content_type") or "text/plain"),
-                                idempotency_key=str(body.get("idempotency_key") or ""),
-                            )
-                        ),
-                    )
+                    tenant_id = self._tenant_header()
+                    source_id = parts[3]
+                    try:
+                        response, message, created = source_sync_service.request_source_sync(
+                            tenant_id=tenant_id,
+                            source_id=source_id,
+                            body=body,
+                            requested_by=self.headers.get("x-raku-user-id") or "",
+                        )
+                    except KeyError:
+                        self._send(404, {"error": "datasource not found"})
+                        return
+                    if source_sync_queue is not None:
+                        if created:
+                            message_id = source_sync_queue.enqueue_message(message.to_dict())
+                            run = runs.get_for_tenant(tenant_id, response["sync_run_id"])
+                            if run is not None:
+                                runs.mark_message_id(run, message_id)
+                            response["sqs_message_id"] = message_id
+                        response["queued"] = True
+                        response["status_url"] = (
+                            f"/v1/manufacturing/ingestion-runs/{response['sync_run_id']}"
+                        )
+                        self._send(202, response)
+                    else:
+                        executed = source_sync_service.execute_source_sync(message)
+                        executed["queued"] = False
+                        executed["status_url"] = (
+                            f"/v1/manufacturing/ingestion-runs/{executed['sync_run_id']}"
+                        )
+                        self._send(202, executed)
                 elif (
                     len(parts) == 5
                     and parts[:3] == ["internal", "manufacturing", "documents"]
