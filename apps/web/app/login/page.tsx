@@ -112,6 +112,27 @@ export default function LoginPage() {
           <p>
             製造手順・規格・トラブル事例を横断検索。安全分類と出典の有効期限つきで回答します。
           </p>
+          <ul className="auth-hero-points">
+            <li className="auth-hero-point">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="m4 12 5 5L20 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>承認済みかつ有効な根拠だけを引用します。</span>
+            </li>
+            <li className="auth-hero-point">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+              </svg>
+              <span>安全分類で、高リスクな回答を保護します。</span>
+            </li>
+            <li className="auth-hero-point">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                <path d="M12 7v5l3 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>出典には有効期限。古い根拠は警告します。</span>
+            </li>
+          </ul>
         </div>
         <div className="auth-hero-footer">© 2026 Raku RAG, Inc.</div>
       </section>
