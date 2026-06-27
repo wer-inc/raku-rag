@@ -400,14 +400,25 @@ class AnswerService:
 
             ans_terms = _terms(text)
             citation_overlap_threshold = self._citation_overlap_threshold(ans_terms, evidence)
+            query_anchor_terms = self._query_anchor_terms(query)
+            citation_anchor_threshold = self._citation_anchor_threshold(
+                query_anchor_terms, evidence
+            )
             citations: list[Citation] = []
             used: list[str] = []
             freshness: list[Freshness] = []
             for s in evidence:
                 c = s.chunk
-                if len(ans_terms & _terms(c.text)) < citation_overlap_threshold:
+                chunk_terms = _terms(c.text)
+                if len(ans_terms & chunk_terms) < citation_overlap_threshold:
                     continue  # cite only chunks that actually support the answer (FR-012)
                 doc = self._get_document(c.tenant_id, c.document_id)
+                if (
+                    citation_anchor_threshold
+                    and len(query_anchor_terms & chunk_terms) < citation_anchor_threshold
+                    and not self._must_expose_for_approval_gate(doc)
+                ):
+                    continue
                 if not self._citation_still_visible(principal, c, doc):
                     self._record_citation_revalidation_drop(principal, cid, profile, c)
                     continue
@@ -715,6 +726,54 @@ class AnswerService:
         if best <= 1:
             return 1
         return max(2, best // 3)
+
+    def _query_anchor_terms(self, query: str) -> set[str]:
+        """Specific query terms that should remain present in citations when available.
+
+        Answer overlap alone can cite a different equipment record that shares fields like
+        "担当部署" and "記録先". Digit-bearing anchors catch equipment IDs, part numbers, dates,
+        and similar business identifiers without making ordinary Japanese/English questions stricter.
+        """
+        anchors: set[str] = set()
+        for term in _terms(query):
+            if any(ch.isdigit() for ch in term):
+                anchors.add(term)
+        return anchors
+
+    def _citation_anchor_threshold(
+        self, query_anchor_terms: set[str], evidence: Sequence[ScoredChunk]
+    ) -> int:
+        if not query_anchor_terms:
+            return 0
+        overlaps = [len(query_anchor_terms & _terms(item.chunk.text)) for item in evidence]
+        return max(overlaps, default=0)
+
+    def _must_expose_for_approval_gate(self, doc: Document | None) -> bool:
+        status = self._approval_status(doc)
+        return status in {"draft", "pending_review", "obsolete"}
+
+    def _approval_status(self, doc: Document | None) -> str | None:
+        if doc is None:
+            return None
+        candidates = [
+            doc.metadata.get("_mfg_meta"),
+            doc.metadata.get("manufacturing"),
+            doc.metadata,
+        ]
+        for candidate in candidates:
+            value = self._metadata_value(candidate, "approval_status")
+            if value:
+                return value
+        return None
+
+    def _metadata_value(self, metadata: object, key: str) -> str:
+        if isinstance(metadata, dict):
+            value = metadata.get(key)
+        else:
+            value = getattr(metadata, key, None)
+        if hasattr(value, "value"):
+            value = getattr(value, "value")
+        return value.strip().lower() if isinstance(value, str) else ""
 
     def _record_hot_path(
         self,

@@ -19,13 +19,25 @@ from raku_rag.interfaces.base import LLMProvider
 _SENT = re.compile(r"[^。．.!?！？\n]+[。．.!?！？]?")
 
 
+def _anchor_terms(query: str) -> set[str]:
+    return {term for term in _terms(query) if any(ch.isdigit() for ch in term)}
+
+
 class ExtractiveLLMProvider(LLMProvider):
     model = "extractive-mvp"
 
     def generate(self, query: str, context: Sequence[Chunk]) -> str:
         q = _terms(query)
+        anchors = _anchor_terms(query)
+        anchor_threshold = 0
+        if anchors:
+            anchor_threshold = max(
+                (len(anchors & _terms(chunk.text)) for chunk in context), default=0
+            )
         best: list[tuple[int, int, int, str]] = []
         for chunk_index, chunk in enumerate(context):
+            if anchor_threshold and len(anchors & _terms(chunk.text)) < anchor_threshold:
+                continue
             for sentence_index, sent in enumerate(_SENT.findall(chunk.text)):
                 s = sent.strip()
                 if not s:

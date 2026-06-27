@@ -115,6 +115,25 @@ class TestMetadataLookupUsesApprovedEvidence(unittest.TestCase):
                 equipment_id=equipment_id,
             ),
         )
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="manuals",
+            document_id="biz-other-approved",
+            text=(
+                "設備 CL-BIZ-E2E-OTHER は第一工場の別設備です。"
+                "承認済み台帳では、担当部署は品質保証部、設置ラインはA3、"
+                "記録先は保全台帳 MNT-77 です。"
+                "月次レビューでは異音なし、温度上昇なし、次回の点検計画日は2026-07-15です。"
+            ),
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="biz-other-approved",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-06-27",
+                document_kind=DocumentKind.WORK_INSTRUCTION,
+                equipment_id="CL-BIZ-E2E-OTHER",
+            ),
+        )
         sys.grant(T, ScopeType.COLLECTION, "manuals", SubjectType.USER, "op")
 
         ans = sys.answer(
