@@ -55,6 +55,19 @@ class TestEmbeddingConfiguration(unittest.TestCase):
         self.assertEqual(provider.model, "text-embedding-3-small")
         self.assertEqual(provider.dimensions, 256)
 
+    def test_production_profile_can_explicitly_allow_hashing_for_staging(self) -> None:
+        provider = embedding_provider_from_settings(
+            Settings(
+                runtime_profile="production",
+                embedding_provider="hashing",
+                embedding_dim=256,
+                allow_hashing_embeddings_in_production=True,
+            )
+        )
+
+        self.assertIsInstance(provider, HashingEmbeddingProvider)
+        self.assertEqual(embedding_dimension(provider), 256)
+
     def test_production_profile_rejects_non_256_openai_default(self) -> None:
         with self.assertRaises(ValueError):
             embedding_provider_from_settings(

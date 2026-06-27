@@ -32,6 +32,9 @@ class Settings:
     # OpenAI text-embedding-3 API key (empty unless the provider is selected). Read from OPENAI_API_KEY;
     # never logged. Only used when embedding_provider is an openai_text_embedding_3_* variant.
     openai_api_key: str = ""
+    # Staging/demo escape hatch: production profile normally upgrades hashing embeddings to a real
+    # provider. This explicit opt-in keeps hashing for non-paid staging stacks without weakening prod.
+    allow_hashing_embeddings_in_production: bool = False
     aws_region: str = "ap-northeast-1"
     # Google Drive connector OAuth (021-gdrive-oauth). client_id is public (also read by the API to
     # build the consent URL); client_secret is read ONLY by the answer-service for code/refresh
@@ -173,6 +176,10 @@ def settings_from_env(env: dict | None = None) -> Settings:
         embedding_provider=_get("RAKU_EMBEDDING_PROVIDER", Settings.embedding_provider),
         embedding_dim=int(_parse("RAKU_EMBEDDING_DIM", Settings.embedding_dim, int)),
         openai_api_key=_get("OPENAI_API_KEY", Settings.openai_api_key),
+        allow_hashing_embeddings_in_production=_bool(
+            "RAKU_ALLOW_HASHING_EMBEDDINGS_IN_PRODUCTION",
+            Settings.allow_hashing_embeddings_in_production,
+        ),
         aws_region=_get("RAKU_AWS_REGION", _get("AWS_DEFAULT_REGION", Settings.aws_region)),
         google_oauth_client_id=_get("GOOGLE_OAUTH_CLIENT_ID", Settings.google_oauth_client_id),
         google_oauth_client_secret=_get(

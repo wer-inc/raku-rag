@@ -65,7 +65,11 @@ export class RakuRagStack extends cdk.Stack {
       : undefined;
     const embeddingEnvironment: Record<string, string> = useOpenAiEmbeddings
       ? { RAKU_EMBEDDING_PROVIDER: "openai_text_embedding_3_small", RAKU_EMBEDDING_DIM: "256" }
-      : {};
+      : {
+          RAKU_EMBEDDING_PROVIDER: "hashing",
+          RAKU_EMBEDDING_DIM: "256",
+          RAKU_ALLOW_HASHING_EMBEDDINGS_IN_PRODUCTION: "1"
+        };
     const embeddingSecrets: Record<string, ecs.Secret> = openAiSecret
       ? { OPENAI_API_KEY: ecs.Secret.fromSecretsManager(openAiSecret) }
       : {};
