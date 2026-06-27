@@ -38,3 +38,11 @@ Thumbs.db
 # Kakuto landing page — the 7.2MB self-contained source bundle is the regen source for the
 # deployable index.html + assets/ (via LP/unpack_bundle.py); keep the bundle out of git history.
 LP/Kakuto LP (standalone).html
+# Agent skills installed via `npx skills` (manifest: skills-lock.json; restore: npx skills experimental_install).
+# The hand-written review skills (review-map/boundary-audit/tenant-audit) are committed normally; only the
+# npx-materialised symlinks and their .agents/ store are ignored.
+/.agents/
+/.claude/skills/frontend-design
+/.claude/skills/baseline-ui
+/.claude/skills/fixing-accessibility
+/.claude/skills/fixing-motion-performance
