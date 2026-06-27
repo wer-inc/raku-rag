@@ -927,6 +927,8 @@ class PostgresProviderPolicyRepository:
         "provider_policy_id",
         "tenant_id",
         "collection_id",
+        "name",
+        "status",
         "parser_mode",
         "allowed_parser_providers",
         "allowed_ocr_providers",
@@ -947,18 +949,59 @@ class PostgresProviderPolicyRepository:
         "opt_in_status_by_family",
         "fallback_policy",
     )
+    _json_columns = {"opt_in_status_by_family", "fallback_policy"}
 
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
 
-    def get(
+    def _row_to_mapping(self, row) -> dict[str, object]:
+        data = dict(zip(self._columns, row))
+        for column in self._json_columns:
+            data[column] = _json_mapping(data.get(column))
+        return data
+
+    def _default_mapping(
+        self,
+        tenant_id: str,
+        provider_policy_id: str = "default",
+        collection_id: str = "",
+    ) -> dict[str, object]:
+        from workers.ingest.provider_policy import ProviderPolicy
+
+        policy = ProviderPolicy(tenant_id=tenant_id, provider_policy_id=provider_policy_id)
+        return {
+            "provider_policy_id": provider_policy_id,
+            "tenant_id": tenant_id,
+            "collection_id": collection_id or None,
+            "name": "Default provider policy",
+            "status": "active",
+            "parser_mode": policy.parser_mode,
+            "allowed_parser_providers": list(policy.allowed_parser_providers),
+            "allowed_ocr_providers": list(policy.allowed_ocr_providers),
+            "allowed_layout_providers": list(policy.allowed_layout_providers),
+            "allowed_structured_providers": list(policy.allowed_structured_providers),
+            "allowed_llm_providers": list(policy.allowed_llm_providers),
+            "allowed_embedding_providers": list(policy.allowed_embedding_providers),
+            "allowed_visual_embedding_providers": list(policy.allowed_visual_embedding_providers),
+            "allowed_vlm_providers": list(policy.allowed_vlm_providers),
+            "allowed_caption_providers": list(policy.allowed_caption_providers),
+            "allowed_rerank_providers": list(policy.allowed_rerank_providers),
+            "allowed_regions": list(policy.allowed_regions),
+            "zero_retention_required": policy.zero_retention_required,
+            "no_train_required": policy.no_train_required,
+            "cross_cloud_processing_allowed": policy.cross_cloud_processing_allowed,
+            "customer_opt_in_required": policy.customer_opt_in_required,
+            "customer_opt_in_status": policy.customer_opt_in_status,
+            "opt_in_status_by_family": dict(policy.opt_in_status_by_family),
+            "fallback_policy": dict(policy.fallback_policy),
+        }
+
+    def get_mapping(
         self,
         tenant_id: str,
         collection_id: str = "",
         provider_policy_id: str = "default",
-    ):
-        from workers.ingest.provider_policy import ProviderPolicy
-
+    ) -> dict[str, object]:
         _use_tenant(self._conn, tenant_id)
         columns = ", ".join(self._columns)
         try:
@@ -983,13 +1026,89 @@ class PostgresProviderPolicyRepository:
                 )
                 row = cur.fetchone()
         except Exception:
-            return ProviderPolicy(tenant_id=tenant_id, provider_policy_id=provider_policy_id)
+            return self._default_mapping(tenant_id, provider_policy_id, collection_id)
         if row is None:
-            return ProviderPolicy(tenant_id=tenant_id, provider_policy_id=provider_policy_id)
-        data = dict(zip(self._columns, row))
-        data["opt_in_status_by_family"] = _json_mapping(data.get("opt_in_status_by_family"))
-        data["fallback_policy"] = _json_mapping(data.get("fallback_policy"))
-        return ProviderPolicy.from_mapping(data)
+            return self._default_mapping(tenant_id, provider_policy_id, collection_id)
+        return self._row_to_mapping(row)
+
+    def list_mappings(self, tenant_id: str, collection_id: str = "") -> list[dict[str, object]]:
+        _use_tenant(self._conn, tenant_id)
+        columns = ", ".join(self._columns)
+        try:
+            with self._conn.cursor() as cur:
+                if collection_id:
+                    cur.execute(
+                        f"SELECT {columns} FROM provider_policies "
+                        "WHERE tenant_id = %s AND collection_id = %s "
+                        "ORDER BY updated_at DESC",
+                        (tenant_id, collection_id),
+                    )
+                else:
+                    cur.execute(
+                        f"SELECT {columns} FROM provider_policies "
+                        "WHERE tenant_id = %s ORDER BY updated_at DESC",
+                        (tenant_id,),
+                    )
+                rows = cur.fetchall()
+        except Exception:
+            return []
+        return [self._row_to_mapping(row) for row in rows]
+
+    def upsert(
+        self,
+        tenant_id: str,
+        provider_policy_id: str,
+        body: Mapping[str, object],
+    ) -> dict[str, object]:
+        _use_tenant(self._conn, tenant_id)
+        existing = self.get_mapping(
+            tenant_id,
+            str(body.get("collection_id") or ""),
+            provider_policy_id,
+        )
+        item = {**existing, **dict(body)}
+        item["tenant_id"] = tenant_id
+        item["provider_policy_id"] = provider_policy_id
+
+        columns = self._columns
+        values = []
+        for column in columns:
+            value = item.get(column)
+            if column in self._json_columns:
+                value = Json(dict(value or {}))
+            values.append(value)
+        placeholders = ", ".join(["%s"] * len(columns))
+        assignments = ", ".join(
+            f"{column}=EXCLUDED.{column}"
+            for column in columns
+            if column not in {"provider_policy_id", "tenant_id"}
+        )
+        with self._conn.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO provider_policies ({', '.join(columns)}) "
+                f"VALUES ({placeholders}) "
+                "ON CONFLICT (provider_policy_id) DO UPDATE SET "
+                f"{assignments}, updated_at = now() "
+                "WHERE provider_policies.tenant_id = EXCLUDED.tenant_id "
+                f"RETURNING {', '.join(columns)}",
+                values,
+            )
+            row = cur.fetchone()
+        if row is None:
+            raise ValueError("provider_policy_id already belongs to another tenant")
+        return self._row_to_mapping(row)
+
+    def get(
+        self,
+        tenant_id: str,
+        collection_id: str = "",
+        provider_policy_id: str = "default",
+    ):
+        from workers.ingest.provider_policy import ProviderPolicy
+
+        return ProviderPolicy.from_mapping(
+            self.get_mapping(tenant_id, collection_id, provider_policy_id)
+        )
 
 
 class PostgresIngestionRunStore:

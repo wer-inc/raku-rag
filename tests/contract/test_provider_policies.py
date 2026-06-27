@@ -123,6 +123,65 @@ class ProviderPolicyContractTest(unittest.TestCase):
         self.assertFalse(aws_default["allowed"])
         self.assertIn("customer opt-in is required", " ".join(aws_default["reasons"]))
 
+    def test_answer_service_provider_policy_upsert_updates_runtime_repository(self) -> None:
+        module = load_answer_service_module()
+
+        class RuntimePolicyRepo:
+            def __init__(self) -> None:
+                self.items: dict[str, dict] = {}
+
+            def get_mapping(
+                self, tenant_id: str, collection_id: str = "", provider_policy_id: str = "default"
+            ) -> dict:
+                return self.items.get(
+                    provider_policy_id,
+                    {
+                        "tenant_id": tenant_id,
+                        "provider_policy_id": provider_policy_id,
+                        "customer_opt_in_required": True,
+                        "customer_opt_in_status": "pending",
+                        "opt_in_status_by_family": {},
+                    },
+                )
+
+            def list_mappings(self, tenant_id: str, collection_id: str = "") -> list[dict]:
+                return list(self.items.values())
+
+            def upsert(
+                self, tenant_id: str, provider_policy_id: str, body: dict
+            ) -> dict:
+                item = {
+                    **self.get_mapping(tenant_id, "", provider_policy_id),
+                    **body,
+                    "tenant_id": tenant_id,
+                    "provider_policy_id": provider_policy_id,
+                }
+                self.items[provider_policy_id] = item
+                return item
+
+        repo = RuntimePolicyRepo()
+        store = module._AdminSettingsStore(MvpSystem(), provider_policy_repo=repo)
+
+        store.upsert_resource(
+            "tenant_a",
+            "provider-policies",
+            "default",
+            {
+                "customer_opt_in_status": "granted",
+                "opt_in_status_by_family": {"aws": "granted"},
+                "reason": "contract approved",
+            },
+            actor="ops",
+        )
+        decision = store.validate_provider_policy(
+            "tenant_a",
+            "default",
+            {"operation": "ocr", "provider": "aws_textract"},
+        )
+
+        self.assertEqual(repo.items["default"]["customer_opt_in_status"], "granted")
+        self.assertTrue(decision["allowed"], decision["reasons"])
+
     def test_default_capabilities_are_japan_region_and_cross_cloud_fail_closed(self) -> None:
         self.assertEqual(capability_for("aws_textract").region, "ap-northeast-1")
         self.assertEqual(capability_for("bedrock").region, "ap-northeast-1")
