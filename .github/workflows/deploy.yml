@@ -90,6 +90,10 @@ jobs:
       EMBEDDING_PROVIDER: ${{ inputs.embedding_provider }}
       ANSWER_LLM: ${{ inputs.answer_llm }}
       VISUAL_PROVIDER_PROFILE: ${{ inputs.visual_provider_profile }}
+      # Textract is not available in every AWS region where the app can run (for example Tokyo).
+      # Keep the app stack regional, but route Textract OCR/layout calls to a supported region by
+      # default. Override with repo/environment Variable TEXTRACT_REGION if residency requires it.
+      TEXTRACT_REGION: ${{ vars.TEXTRACT_REGION || 'ap-southeast-1' }}
       ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
       AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
@@ -140,7 +144,7 @@ jobs:
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
           if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
           if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
-            CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock"
+            CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock --context textractRegion=${TEXTRACT_REGION} --context ocrRegion=${TEXTRACT_REGION}"
           fi
           npx cdk synth ${CTX} --quiet
 
@@ -165,7 +169,7 @@ jobs:
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
           if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
           if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
-            CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock"
+            CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock --context textractRegion=${TEXTRACT_REGION} --context ocrRegion=${TEXTRACT_REGION}"
           fi
           npx cdk deploy --require-approval never ${CTX}
 
