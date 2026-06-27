@@ -122,6 +122,7 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             "RAKU_INGEST_CONNECTOR",
             "S3_BUCKET",
             "grantTextractDocumentAnalysis",
+            "this.grantTextractDocumentAnalysis(answerTask.taskRole)",
             "textract:AnalyzeDocument",
             "textract:StartDocumentAnalysis",
             "textract:GetDocumentAnalysis",
