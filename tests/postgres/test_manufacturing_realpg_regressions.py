@@ -132,6 +132,41 @@ class TestManufacturingRealPgRegressions(unittest.TestCase):
         chunk, _vec = items[0]
         self.assertEqual(chunk.tenant_id, T, "iter_items is RLS-scoped to the current tenant")
 
+    # --- bug 3: deployed source detail route needs a Postgres-backed status projection -----------
+    def test_postgres_ingestion_store_projects_source_sync_status(self) -> None:
+        from raku_rag.workers.ingestion import SourceSyncState
+
+        run = self.sys.ingest_document(
+            tenant_id=T,
+            collection_id="manuals",
+            source_id="source_sync_realpg",
+            document_id="doc_sync_realpg",
+            document_ref="mem://doc_sync_realpg",
+            raw=b"Real Postgres sync status projection smoke.",
+            content_type="text/plain",
+        )
+        self.sys.ingestion_runs.upsert_source_sync_state(
+            SourceSyncState(
+                tenant_id=T,
+                collection_id="manuals",
+                source_id="source_sync_realpg",
+                status="succeeded",
+                last_ingestion_run_id=run.ingestion_run_id,
+                observed_count=1,
+                changed_count=1,
+                last_synced_at=run.finished_at,
+            )
+        )
+
+        projection = self.sys.ingestion_runs.source_sync_status(T, "source_sync_realpg")
+        self.assertIsNotNone(projection)
+        payload = projection.to_dict()
+        self.assertEqual(payload["status"], "succeeded")
+        self.assertEqual(payload["summary"]["changed_count"], 1)
+        self.assertEqual(payload["correlation_id"], run.ingestion_run_id)
+        self.assertEqual(payload["documents"][0]["document_id"], "doc_sync_realpg")
+        self.assertEqual(payload["documents"][0]["index_status"], "succeeded")
+
 
 if __name__ == "__main__":
     unittest.main()

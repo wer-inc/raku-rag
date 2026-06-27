@@ -52,8 +52,15 @@ from raku_rag.domain.models import (
     ScoredChunk,
     SubjectType,
 )
+from raku_rag.dagster.run_url import dagster_run_url
 from raku_rag.interfaces.base import Vector, VectorStore, VisibilityPredicate
 from raku_rag.observability.audit import AuditEvent, sanitize_audit_event
+from raku_rag.persistence.control_plane import (
+    AssetMaterializationRef,
+    DocumentProcessingProjection,
+    SourceSyncStatusProjection,
+)
+from raku_rag.services.sync import SourceDocumentManifest
 from raku_rag.workers.ingestion import (
     DocumentProcessingState,
     IngestionJobMessage,
@@ -1011,6 +1018,191 @@ class PostgresIngestionRunStore:
             last_synced_at=next((r.finished_at for r in runs if r.status == "succeeded"), ""),
             created_at=latest.created_at,
             updated_at=latest.updated_at,
+        )
+
+    def list_processing_states(
+        self, tenant_id: str, *, collection_id: str = "", source_id: str = ""
+    ) -> list[DocumentProcessingState]:
+        _use_tenant(self._conn, tenant_id)
+        clauses: list[str] = []
+        params: list[object] = []
+        if collection_id:
+            clauses.append("collection_id = %s")
+            params.append(collection_id)
+        if source_id:
+            clauses.append("source_id = %s")
+            params.append(source_id)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT tenant_id, document_id, ingestion_run_id, collection_id, source_id, status, "
+                "content_checksum, parser_version, chunking_config_version, embedding_model_version, "
+                "chunk_count, failure_reason, updated_at "
+                "FROM document_processing_states"
+                + where
+                + " ORDER BY updated_at DESC",
+                params,
+            )
+            return [_row_to_processing_state(row) for row in cur.fetchall()]
+
+    def list_source_document_manifests(
+        self, tenant_id: str, source_id: str
+    ) -> tuple[SourceDocumentManifest, ...]:
+        _use_tenant(self._conn, tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT tenant_id, collection_id, source_id, source_document_id, document_id, "
+                "content_checksum, metadata, status, created_at, updated_at "
+                "FROM source_document_manifests WHERE source_id = %s ORDER BY updated_at DESC",
+                (source_id,),
+            )
+            rows = cur.fetchall()
+        return tuple(
+            SourceDocumentManifest(
+                tenant_id=row[0],
+                collection_id=row[1],
+                source_id=row[2],
+                source_document_id=row[3],
+                document_id=row[4],
+                content_checksum=row[5] or "",
+                metadata=_load_jsonish(row[6]) or {},
+                deleted_in_source=row[7] == "deleted",
+                observed_at=_iso(row[9] or row[8]),
+            )
+            for row in rows
+        )
+
+    def list_asset_materializations(
+        self, tenant_id: str, *, source_id: str = "", sync_run_id: str = ""
+    ) -> tuple[AssetMaterializationRef, ...]:
+        _use_tenant(self._conn, tenant_id)
+        clauses: list[str] = []
+        params: list[object] = []
+        if source_id:
+            clauses.append("source_id = %s")
+            params.append(source_id)
+        if sync_run_id:
+            clauses.append("sync_run_id = %s")
+            params.append(sync_run_id)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT tenant_id, collection_id, source_id, sync_run_id, dagster_asset_key, "
+                "partition_key, asset_materialization_id, document_id, chunk_ids, storage_uri, "
+                "dagster_run_id, created_at FROM asset_materialization_refs"
+                + where
+                + " ORDER BY created_at DESC",
+                params,
+            )
+            rows = cur.fetchall()
+        return tuple(
+            AssetMaterializationRef(
+                tenant_id=row[0],
+                collection_id=row[1],
+                source_id=row[2],
+                sync_run_id=row[3],
+                dagster_asset_key=row[4],
+                partition_key=row[5],
+                asset_materialization_id=row[6],
+                document_id=row[7] or "",
+                chunk_ids=tuple(row[8] or ()),
+                storage_uri=row[9] or "",
+                dagster_run_id=row[10] or "",
+                created_at=_iso(row[11]),
+            )
+            for row in rows
+        )
+
+    def source_sync_status(
+        self,
+        tenant_id: str,
+        source_id: str,
+        *,
+        dagster_base_url: str = "",
+    ) -> SourceSyncStatusProjection | None:
+        state = self.source_sync_state(tenant_id, source_id)
+        if state is None:
+            return None
+        runs = self.list_runs(tenant_id, source_id=source_id)
+        latest_run = runs[0] if runs else None
+        manifests = self.list_source_document_manifests(tenant_id, source_id)
+        if manifests:
+            documents = tuple(
+                self._project_manifest_document(manifest, latest_run) for manifest in manifests
+            )
+        else:
+            documents = tuple(
+                self._project_processing_state(state)
+                for state in self.list_processing_states(tenant_id, source_id=source_id)
+                if state.document_id != f"{source_id}::__source_sync__"
+            )
+        dagster_run_id = latest_run.dagster_run_id if latest_run else ""
+        return SourceSyncStatusProjection(
+            tenant_id=state.tenant_id,
+            source_id=state.source_id,
+            collection_id=state.collection_id,
+            status=state.status,
+            last_manifest_checksum=state.last_manifest_checksum,
+            summary={
+                "observed_count": state.observed_count,
+                "changed_count": state.changed_count,
+                "deleted_count": state.deleted_count,
+                "skipped_count": state.skipped_count,
+                "failed_count": state.failed_count,
+            },
+            documents=documents,
+            asset_materializations=self.list_asset_materializations(
+                tenant_id, source_id=source_id
+            ),
+            dagster_run_id=dagster_run_id,
+            dagster_run_url=(
+                dagster_run_url(dagster_base_url, dagster_run_id)
+                if dagster_base_url and dagster_run_id
+                else ""
+            ),
+            correlation_id=state.last_ingestion_run_id,
+        )
+
+    def _project_manifest_document(
+        self, manifest: SourceDocumentManifest, latest_run: IngestionRun | None
+    ) -> DocumentProcessingProjection:
+        state = self.processing_state(manifest.tenant_id, manifest.target_document_id)
+        dagster_run_id = latest_run.dagster_run_id if latest_run else ""
+        if state is None:
+            return DocumentProcessingProjection(
+                document_id=manifest.target_document_id,
+                source_document_id=manifest.source_document_id,
+                content_checksum=manifest.content_checksum,
+                parser_version=manifest.parser_version,
+                chunking_config_version=manifest.chunking_config_version,
+                embedding_model_version=manifest.embedding_model_version,
+                parse_status="pending",
+                chunk_status="pending",
+                embedding_status="pending",
+                index_status="pending",
+                dagster_run_id=dagster_run_id,
+            )
+        return self._project_processing_state(state, source_document_id=manifest.source_document_id)
+
+    def _project_processing_state(
+        self,
+        state: DocumentProcessingState,
+        *,
+        source_document_id: str = "",
+    ) -> DocumentProcessingProjection:
+        return DocumentProcessingProjection(
+            document_id=state.document_id,
+            source_document_id=source_document_id or state.document_id,
+            content_checksum=state.content_checksum,
+            parser_version=state.parser_version,
+            chunking_config_version=state.chunking_config_version,
+            embedding_model_version=state.embedding_model_version,
+            parse_status=state.status,
+            chunk_status=state.status,
+            embedding_status=state.status,
+            index_status=state.status,
+            last_indexed_at=state.updated_at if state.status == "succeeded" else "",
+            last_error=state.failure_reason,
         )
 
     def upsert_source_sync_state(self, state: SourceSyncState) -> SourceSyncState:

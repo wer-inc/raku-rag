@@ -147,6 +147,20 @@ class TestControlPlaneStateRepository(unittest.TestCase):
         self.assertEqual(states[0].document_id, "doc2")
         self.assertEqual(states[0].failure_reason, "parser failed")
 
+    def test_postgres_run_store_exposes_source_sync_status_projection(self) -> None:
+        from raku_rag.persistence.postgres import PostgresIngestionRunStore
+
+        for method in (
+            "source_sync_status",
+            "list_processing_states",
+            "list_source_document_manifests",
+            "list_asset_materializations",
+        ):
+            self.assertTrue(
+                callable(getattr(PostgresIngestionRunStore, method, None)),
+                f"PostgresIngestionRunStore must expose {method}",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
