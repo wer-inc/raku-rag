@@ -1,8 +1,8 @@
-# syntax=docker/dockerfile:1
 # Python ingestion worker (parser/OCR/embedding host). Build with context = repo ROOT:
 #   docker build -f workers/ingest/Dockerfile -t raku-rag-worker .
 # It needs both src/ (the raku_rag package) and workers/ (the worker runtime host).
-FROM python:3.12-slim AS runtime
+ARG PYTHON_BASE_IMAGE=public.ecr.aws/docker/library/python:3.12-slim
+FROM ${PYTHON_BASE_IMAGE} AS runtime
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \

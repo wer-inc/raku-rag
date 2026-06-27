@@ -1,7 +1,7 @@
-# syntax=docker/dockerfile:1
 # Next.js web client. Build with context = repo ROOT (npm workspaces):
 #   docker build -f apps/web/Dockerfile -t raku-rag-web .
-FROM node:22-slim AS build
+ARG NODE_BASE_IMAGE=public.ecr.aws/docker/library/node:22-slim
+FROM ${NODE_BASE_IMAGE} AS build
 WORKDIR /repo
 # NEXT_PUBLIC_* is inlined into the client bundle at BUILD time. Default "/v1" = same-origin relative
 # (web + API behind one ALB); override with --build-arg NEXT_PUBLIC_API_BASE=https://api.example.com/v1
@@ -28,7 +28,7 @@ RUN npm ci \
  && rm -rf node_modules \
  && npm ci --omit=dev
 
-FROM node:22-slim AS runtime
+FROM ${NODE_BASE_IMAGE} AS runtime
 WORKDIR /repo
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1

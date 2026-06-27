@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Python answer-service — the internal HTTP boundary (/internal/*) over the Postgres-backed
 # ProductionSystem (retrieval / ACL / ranking / manufacturing safety overlay). Build with context = repo
 # ROOT (needs src/ = the raku_rag package, workers/ = provider_policy, and apps/answer-service):
@@ -6,7 +5,8 @@
 #
 # Production serves only (no --reset-demo-db / --seed; the reset guard refuses non-local DBs anyway).
 # Apply schema migrations and seed via one-off tasks, not here.
-FROM python:3.12-slim AS runtime
+ARG PYTHON_BASE_IMAGE=public.ecr.aws/docker/library/python:3.12-slim
+FROM ${PYTHON_BASE_IMAGE} AS runtime
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \

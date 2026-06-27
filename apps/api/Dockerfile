@@ -1,7 +1,7 @@
-# syntax=docker/dockerfile:1
 # NestJS API facade. Build with context = repo ROOT (npm workspaces + the @raku-rag/shared package):
 #   docker build -f apps/api/Dockerfile -t raku-rag-api .
-FROM node:22-slim AS build
+ARG NODE_BASE_IMAGE=public.ecr.aws/docker/library/node:22-slim
+FROM ${NODE_BASE_IMAGE} AS build
 WORKDIR /repo
 ENV NEXT_TELEMETRY_DISABLED=1
 # .dockerignore keeps node_modules/dist/.next out of the context; copy sources then install+build.
@@ -16,7 +16,7 @@ RUN npm ci \
  && rm -rf node_modules \
  && npm ci --omit=dev
 
-FROM node:22-slim AS runtime
+FROM ${NODE_BASE_IMAGE} AS runtime
 WORKDIR /repo
 ENV NODE_ENV=production
 COPY --from=build /repo/node_modules ./node_modules
