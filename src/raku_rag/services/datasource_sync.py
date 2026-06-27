@@ -315,7 +315,7 @@ def _url_documents(
                 document_id=_document_id(source_id, url),
                 document_ref=url,
                 raw=raw,
-                content_type=content_type if content_type in {"text/html", "text/plain"} else "text/plain",
+                content_type=content_type if content_type in _PARSEABLE_CONTENT_TYPES else "text/plain",
             )
         )
         if current_depth < depth and "html" in content_type:

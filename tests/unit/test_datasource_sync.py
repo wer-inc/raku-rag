@@ -164,6 +164,21 @@ class TestDatasourceSync(unittest.TestCase):
         self.assertEqual(docs[0].content_type, "text/html")
         self.assertEqual(docs[1].raw, b"next page")
 
+    def test_url_datasource_preserves_csv_content_type_for_mapping_preview(self) -> None:
+        def fetch(url: str):
+            self.assertEqual(url, "https://example.test/faq.csv")
+            return (b"question,answer\nQ,A\n", "text/csv")
+
+        docs = build_sync_documents(
+            "faq-url",
+            {"config": {"source_type": "url", "target_url": "https://example.test/faq.csv"}},
+            limit=1,
+            fetch_url=fetch,
+        )
+
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(docs[0].content_type, "text/csv")
+
     def test_db_mysql_uses_backtick_quoting_and_explicit_engine(self) -> None:
         sink: list = []
         rows = [{"id": 1, "summary": "alpha"}, {"id": 2, "summary": "beta"}]
