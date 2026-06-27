@@ -4422,8 +4422,15 @@ interface ProviderPolicy {
   name?: string;
   status?: string;
   parser_mode?: string;
+  allowed_parser_providers?: string[];
+  allowed_ocr_providers?: string[];
+  allowed_layout_providers?: string[];
+  allowed_structured_providers?: string[];
   allowed_llm_providers?: string[];
   allowed_embedding_providers?: string[];
+  allowed_visual_embedding_providers?: string[];
+  allowed_vlm_providers?: string[];
+  allowed_caption_providers?: string[];
   allowed_rerank_providers?: string[];
   allowed_regions?: string[];
   data_residency_requirement?: string;
@@ -4493,8 +4500,15 @@ function ProviderPolicyBody() {
               ["クロスクラウド処理", p.cross_cloud_processing_allowed ? "許可" : "不許可"],
               ["ゼロ保持要件", p.zero_retention_required ? "必須" : "—"],
               ["許可リージョン", (p.allowed_regions ?? []).join(", ") || "—"],
+              ["パーサー", (p.allowed_parser_providers ?? []).join(", ") || "—"],
+              ["OCR", (p.allowed_ocr_providers ?? []).join(", ") || "—"],
+              ["レイアウト解析", (p.allowed_layout_providers ?? []).join(", ") || "—"],
+              ["構造抽出", (p.allowed_structured_providers ?? []).join(", ") || "—"],
               ["LLM プロバイダ", (p.allowed_llm_providers ?? []).join(", ") || "—"],
               ["埋め込みプロバイダ", (p.allowed_embedding_providers ?? []).join(", ") || "—"],
+              ["画像埋め込み", (p.allowed_visual_embedding_providers ?? []).join(", ") || "—"],
+              ["画像理解", (p.allowed_vlm_providers ?? []).join(", ") || "—"],
+              ["キャプション", (p.allowed_caption_providers ?? []).join(", ") || "—"],
               ["リランカー", (p.allowed_rerank_providers ?? []).join(", ") || "—"],
             ]}
           />

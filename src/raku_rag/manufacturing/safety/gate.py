@@ -22,15 +22,30 @@ stdlib only; frozen value objects from ``manufacturing.domain.safety``.
 from __future__ import annotations
 
 from datetime import date
-from typing import Sequence
+from typing import Mapping, Sequence
 
-from raku_rag.domain.models import Citation
+from raku_rag.domain.models import Citation, PROMOTABLE_EXTRACTION_SOURCES
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus, ManufacturingDocumentMetadata
 from raku_rag.manufacturing.domain.safety import (
     HighRiskClassification,
     SafetyBlockReason,
     SafetyDecision,
 )
+
+VISUAL_DERIVED_CITATION_KINDS = frozenset(
+    {"visual", "table_row", "form_field", "chart_series", "figure_caption"}
+)
+
+
+def is_promotable_evidence(metadata: Mapping[str, object] | None) -> bool:
+    """True when non-text evidence carries transcription provenance eligible for primary use."""
+
+    if not metadata:
+        return False
+    source = str(
+        metadata.get("primary_evidence_source") or metadata.get("extraction_source") or ""
+    )
+    return source in PROMOTABLE_EXTRACTION_SOURCES
 
 
 def is_effective(effective_date: str | None, *, today: date | None = None) -> bool:
@@ -59,6 +74,35 @@ def is_approved_effective(
     return is_effective(meta.effective_date, today=today)
 
 
+def citation_is_approved_effective(
+    citation: Citation,
+    meta: ManufacturingDocumentMetadata | None,
+    *,
+    today: date | None = None,
+    visual_evidence_promotion: bool = False,
+) -> bool:
+    """True when a citation may satisfy the high-risk approved/effective requirement.
+
+    Text citations keep the existing approved/effective rule. Non-text citations must carry
+    promotable transcription provenance, and pixel-derived citations also need the visual verifier
+    path when promotion is explicitly enabled.
+    """
+
+    if not is_approved_effective(meta, today=today):
+        return False
+    if citation.kind == "text":
+        return True
+    if not is_promotable_evidence(getattr(citation, "metadata", None)):
+        return False
+    pixel_derived = bool(
+        getattr(citation, "pixel_derived", False)
+        or citation.kind in VISUAL_DERIVED_CITATION_KINDS
+    )
+    if pixel_derived:
+        return bool(visual_evidence_promotion and citation.visual_evidence_verified)
+    return True
+
+
 class ManufacturingSafetyGate:
     """Concrete SafetyGate overlay (structurally satisfies interfaces.SafetyGate).
 
@@ -66,9 +110,15 @@ class ManufacturingSafetyGate:
     returned ``SafetyDecision`` to shape the final ``ManufacturingAnswer``.
     """
 
-    def __init__(self, *, today: date | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        today: date | None = None,
+        visual_evidence_promotion: bool = False,
+    ) -> None:
         # Injectable clock for deterministic tests; defaults to the real today at evaluate-time.
         self._today = today
+        self._visual_evidence_promotion = visual_evidence_promotion
 
     def evaluate(
         self,
@@ -82,7 +132,12 @@ class ManufacturingSafetyGate:
 
         # Approval/state survey over the candidate evidence (what 001 would otherwise cite).
         has_approved_effective = any(
-            is_approved_effective(by_doc.get(c.document_id), today=today)
+            citation_is_approved_effective(
+                c,
+                by_doc.get(c.document_id),
+                today=today,
+                visual_evidence_promotion=self._visual_evidence_promotion,
+            )
             for c in candidate_citations
         )
         has_obsolete = any(
@@ -108,7 +163,12 @@ class ManufacturingSafetyGate:
         approval_status_at_use: str | None = None
         for c in candidate_citations:
             m = by_doc.get(c.document_id)
-            if m is not None and is_approved_effective(m, today=today):
+            if citation_is_approved_effective(
+                c,
+                m,
+                today=today,
+                visual_evidence_promotion=self._visual_evidence_promotion,
+            ):
                 approval_status_at_use = ApprovalStatus.APPROVED.value
                 break
 

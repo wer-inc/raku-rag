@@ -33,6 +33,7 @@ DEFAULT_MIN_METRICS: dict[str, float] = {
     "visual_citation_accuracy": 1.0,
     "bbox_iou": 0.95,
     "visual_groundedness": 1.0,
+    "visual_grounding_subset_rate": 1.0,
 }
 
 DEFAULT_MAX_METRICS: dict[str, float] = {

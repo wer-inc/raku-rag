@@ -96,13 +96,53 @@ export class RakuRagStack extends cdk.Stack {
         "prod Bedrock answer path requires --context bedrockGuardrailId and bedrockGuardrailVersion"
       );
     }
+    const contextString = (name: string) => String(this.node.tryGetContext(name) ?? "").trim();
+    const ocrProviderCtx = contextString("ocrProvider");
+    const layoutProviderCtx = contextString("layoutProvider");
+    const structuredProviderCtx = contextString("structuredProvider");
+    const vlmProviderCtx = contextString("vlmProvider");
+    const captioningProviderCtx = contextString("captioningProvider");
+    const visualEmbeddingProviderCtx = contextString("visualEmbeddingProvider");
+    const textractRegionCtx = contextString("textractRegion");
+    const ocrRegionCtx = contextString("ocrRegion");
+    const vlmRegionCtx = contextString("vlmRegion");
+    const vlmModelIdCtx = contextString("vlmModelId");
+    const captionModelIdCtx = contextString("captionModelId");
+    const maxInlineOcrBytesCtx = contextString("maxInlineOcrBytes");
+    const forceDeterministicCtx = contextString("forceDeterministic");
+    const visualEvidencePromotionCtx = contextString("visualEvidencePromotion");
+    const visualProviderEnvironment: Record<string, string> = {
+      ...(ocrProviderCtx ? { RAKU_OCR_PROVIDER: ocrProviderCtx } : {}),
+      ...(layoutProviderCtx ? { RAKU_LAYOUT_PROVIDER: layoutProviderCtx } : {}),
+      ...(structuredProviderCtx ? { RAKU_STRUCTURED_PROVIDER: structuredProviderCtx } : {}),
+      ...(vlmProviderCtx ? { RAKU_VLM_PROVIDER: vlmProviderCtx } : {}),
+      ...(captioningProviderCtx ? { RAKU_CAPTIONING_PROVIDER: captioningProviderCtx } : {}),
+      ...(visualEmbeddingProviderCtx
+        ? { RAKU_VISUAL_EMBEDDING_PROVIDER: visualEmbeddingProviderCtx }
+        : {}),
+      ...(textractRegionCtx ? { RAKU_TEXTRACT_REGION: textractRegionCtx } : {}),
+      ...(ocrRegionCtx ? { RAKU_OCR_REGION: ocrRegionCtx } : {}),
+      ...(vlmRegionCtx ? { RAKU_VLM_REGION: vlmRegionCtx } : {}),
+      ...(vlmModelIdCtx ? { RAKU_VLM_MODEL_ID: vlmModelIdCtx } : {}),
+      ...(captionModelIdCtx ? { RAKU_CAPTION_MODEL_ID: captionModelIdCtx } : {}),
+      ...(maxInlineOcrBytesCtx ? { RAKU_MAX_INLINE_OCR_BYTES: maxInlineOcrBytesCtx } : {}),
+      ...(forceDeterministicCtx ? { RAKU_FORCE_DETERMINISTIC: forceDeterministicCtx } : {}),
+      ...(visualEvidencePromotionCtx
+        ? { RAKU_VISUAL_EVIDENCE_PROMOTION: visualEvidencePromotionCtx }
+        : {})
+    };
+    const visualProvidersConfigured = Object.keys(visualProviderEnvironment).length > 0;
     const productionRuntimeEnvironment: Record<string, string> =
-      useBedrockAnswerLlm && bedrockGuardrailIdCtx && bedrockGuardrailVersionCtx
+      visualProvidersConfigured || (useBedrockAnswerLlm && bedrockGuardrailIdCtx && bedrockGuardrailVersionCtx)
         ? {
             RAKU_RUNTIME_PROFILE: "production",
-            RAKU_BEDROCK_GUARDRAIL_ID: bedrockGuardrailIdCtx,
-            RAKU_BEDROCK_GUARDRAIL_VERSION: bedrockGuardrailVersionCtx,
-            AWS_DEFAULT_REGION: cdk.Stack.of(this).region
+            AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
+            ...(bedrockGuardrailIdCtx && bedrockGuardrailVersionCtx
+              ? {
+                  RAKU_BEDROCK_GUARDRAIL_ID: bedrockGuardrailIdCtx,
+                  RAKU_BEDROCK_GUARDRAIL_VERSION: bedrockGuardrailVersionCtx
+                }
+              : {})
           }
         : {};
     // Frontend hosting shape (resolved early — it decides who owns the public ALB):
@@ -172,6 +212,9 @@ export class RakuRagStack extends cdk.Stack {
       versioned: true,
       removalPolicy
     });
+    const visualStorageEnvironment: Record<string, string> = visualProvidersConfigured
+      ? { RAKU_CROP_STORAGE_URI: `s3://${documentBucket.bucketName}/visual-crops` }
+      : {};
 
     const deadLetterQueue = new sqs.Queue(this, "IngestionDeadLetterQueue", {
       queueName: `${servicePrefix}-ingestion-dlq`,
@@ -693,6 +736,7 @@ export class RakuRagStack extends cdk.Stack {
     openAiSecret?.grantRead(workerTask.taskRole);
 
     this.grantBedrockInvoke(workerTask.taskRole);
+    this.grantTextractDocumentAnalysis(workerTask.taskRole);
     workerTask.addContainer("PythonIngestWorkerContainer", {
       image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "workers/ingest/Dockerfile" }),
       entryPoint: ["/bin/sh", "-c"],
@@ -704,6 +748,9 @@ export class RakuRagStack extends cdk.Stack {
       }),
       environment: {
         ...embeddingEnvironment,
+        ...productionRuntimeEnvironment,
+        ...visualProviderEnvironment,
+        ...visualStorageEnvironment,
         STAGE_NAME: props.stageName,
         RAKU_WORKER_BACKEND: "postgres",
         DOCUMENT_BUCKET: documentBucket.bucketName,
@@ -790,6 +837,8 @@ export class RakuRagStack extends cdk.Stack {
         ...embeddingEnvironment,
         ...answerLlmEnvironment,
         ...productionRuntimeEnvironment,
+        ...visualProviderEnvironment,
+        ...visualStorageEnvironment,
         STAGE_NAME: props.stageName,
         // Listen on all interfaces so the internal ALB health check reaches the task ENI (the default
         // 127.0.0.1 bind is loopback-only → failed ELB health checks → ECS kills the task).
@@ -1211,6 +1260,20 @@ export class RakuRagStack extends cdk.Stack {
           `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:inference-profile/*`,
           `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:guardrail/*`
         ]
+      })
+    );
+  }
+
+  private grantTextractDocumentAnalysis(taskRole: iam.IRole): void {
+    taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "textract:AnalyzeDocument",
+          "textract:DetectDocumentText",
+          "textract:StartDocumentAnalysis",
+          "textract:GetDocumentAnalysis"
+        ],
+        resources: ["*"]
       })
     );
   }

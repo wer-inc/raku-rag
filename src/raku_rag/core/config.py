@@ -32,7 +32,7 @@ class Settings:
     # OpenAI text-embedding-3 API key (empty unless the provider is selected). Read from OPENAI_API_KEY;
     # never logged. Only used when embedding_provider is an openai_text_embedding_3_* variant.
     openai_api_key: str = ""
-    aws_region: str = "us-east-1"
+    aws_region: str = "ap-northeast-1"
     # Google Drive connector OAuth (021-gdrive-oauth). client_id is public (also read by the API to
     # build the consent URL); client_secret is read ONLY by the answer-service for code/refresh
     # exchange and is never sent to the browser or logged. Empty unless the connector is configured.
@@ -43,6 +43,31 @@ class Settings:
     # P1 production profile: "deterministic" (default — Tier-A fast loop, in-memory/extractive stack)
     # vs "production" (settings-selected real adapters; fails closed when a real adapter is unconfigured).
     runtime_profile: str = "deterministic"
+    # Visual/PDF understanding providers. Empty/``deterministic`` keeps the offline stack selected.
+    # Production still requires explicit provider settings; runtime_profile alone never upgrades these.
+    ocr_provider: str = "deterministic"
+    layout_provider: str = "deterministic"
+    structured_provider: str = "deterministic"
+    vlm_provider: str = "deterministic"
+    captioning_provider: str = "deterministic"
+    visual_embedding_provider: str = "deterministic"
+    vlm_model_id: str = ""
+    caption_model_id: str = ""
+    textract_region: str = "ap-northeast-1"
+    ocr_region: str = ""
+    vlm_region: str = ""
+    gcp_project_id: str = ""
+    gcp_location: str = "asia-northeast1"
+    gcp_workload_identity_provider: str = ""
+    gcp_workload_identity_sa_email: str = ""
+    crop_storage_uri: str = ""
+    visual_evidence_promotion: bool = False
+    visual_evidence_verifier_quorum: int = 2
+    visual_evidence_verifier_providers: tuple[str, ...] = ()
+    visual_verifier_allow_same_family_distinct_models: bool = False
+    max_inline_ocr_bytes: int = 5_000_000
+    max_regions_verified_per_answer: int = 3
+    force_deterministic: bool = False
     # Answer-generation LLM override, independent of runtime_profile. "" = use the profile default
     # (deterministic→extractive). "bedrock_claude" = real Bedrock Claude (needs Bedrock model access +
     # IAM). Lets the answer text come from Claude without flipping guardrail/reranker to production.
@@ -99,6 +124,12 @@ def settings_from_env(env: dict | None = None) -> Settings:
             return default
         return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
+    def _csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+        raw = src.get(name)
+        if raw in (None, ""):
+            return default
+        return tuple(part.strip() for part in str(raw).split(",") if part.strip())
+
     return Settings(
         token_signing_secret=_get("RAKU_TOKEN_SIGNING_SECRET", Settings.token_signing_secret),
         default_score_threshold=float(
@@ -142,7 +173,7 @@ def settings_from_env(env: dict | None = None) -> Settings:
         embedding_provider=_get("RAKU_EMBEDDING_PROVIDER", Settings.embedding_provider),
         embedding_dim=int(_parse("RAKU_EMBEDDING_DIM", Settings.embedding_dim, int)),
         openai_api_key=_get("OPENAI_API_KEY", Settings.openai_api_key),
-        aws_region=_get("AWS_DEFAULT_REGION", Settings.aws_region),
+        aws_region=_get("RAKU_AWS_REGION", _get("AWS_DEFAULT_REGION", Settings.aws_region)),
         google_oauth_client_id=_get("GOOGLE_OAUTH_CLIENT_ID", Settings.google_oauth_client_id),
         google_oauth_client_secret=_get(
             "GOOGLE_OAUTH_CLIENT_SECRET", Settings.google_oauth_client_secret
@@ -151,6 +182,62 @@ def settings_from_env(env: dict | None = None) -> Settings:
             "AWS_SECRETS_MANAGER_KMS_KEY_ID", Settings.secrets_manager_kms_key_id
         ),
         runtime_profile=_get("RAKU_RUNTIME_PROFILE", Settings.runtime_profile),
+        ocr_provider=_get("RAKU_OCR_PROVIDER", Settings.ocr_provider),
+        layout_provider=_get("RAKU_LAYOUT_PROVIDER", Settings.layout_provider),
+        structured_provider=_get("RAKU_STRUCTURED_PROVIDER", Settings.structured_provider),
+        vlm_provider=_get("RAKU_VLM_PROVIDER", Settings.vlm_provider),
+        captioning_provider=_get("RAKU_CAPTIONING_PROVIDER", Settings.captioning_provider),
+        visual_embedding_provider=_get(
+            "RAKU_VISUAL_EMBEDDING_PROVIDER", Settings.visual_embedding_provider
+        ),
+        vlm_model_id=_get("RAKU_VLM_MODEL_ID", Settings.vlm_model_id),
+        caption_model_id=_get("RAKU_CAPTION_MODEL_ID", Settings.caption_model_id),
+        textract_region=_get("RAKU_TEXTRACT_REGION", Settings.textract_region),
+        ocr_region=_get("RAKU_OCR_REGION", Settings.ocr_region),
+        vlm_region=_get("RAKU_VLM_REGION", Settings.vlm_region),
+        gcp_project_id=_get("RAKU_GCP_PROJECT_ID", Settings.gcp_project_id),
+        gcp_location=_get("RAKU_GCP_LOCATION", Settings.gcp_location),
+        gcp_workload_identity_provider=_get(
+            "RAKU_GCP_WORKLOAD_IDENTITY_PROVIDER",
+            Settings.gcp_workload_identity_provider,
+        ),
+        gcp_workload_identity_sa_email=_get(
+            "RAKU_GCP_WORKLOAD_IDENTITY_SA_EMAIL",
+            Settings.gcp_workload_identity_sa_email,
+        ),
+        crop_storage_uri=_get("RAKU_CROP_STORAGE_URI", Settings.crop_storage_uri),
+        visual_evidence_promotion=_bool(
+            "RAKU_VISUAL_EVIDENCE_PROMOTION", Settings.visual_evidence_promotion
+        ),
+        visual_evidence_verifier_quorum=int(
+            _parse(
+                "RAKU_VISUAL_EVIDENCE_VERIFIER_QUORUM",
+                Settings.visual_evidence_verifier_quorum,
+                int,
+            )
+        ),
+        visual_evidence_verifier_providers=_csv(
+            "RAKU_VISUAL_EVIDENCE_VERIFIERS",
+            _csv(
+                "RAKU_VISUAL_EVIDENCE_VERIFIER_PROVIDERS",
+                Settings.visual_evidence_verifier_providers,
+            ),
+        ),
+        visual_verifier_allow_same_family_distinct_models=_bool(
+            "RAKU_VISUAL_VERIFIER_ALLOW_SAME_FAMILY_DISTINCT_MODELS",
+            Settings.visual_verifier_allow_same_family_distinct_models,
+        ),
+        max_inline_ocr_bytes=int(
+            _parse("RAKU_MAX_INLINE_OCR_BYTES", Settings.max_inline_ocr_bytes, int)
+        ),
+        max_regions_verified_per_answer=int(
+            _parse(
+                "RAKU_MAX_REGIONS_VERIFIED_PER_ANSWER",
+                Settings.max_regions_verified_per_answer,
+                int,
+            )
+        ),
+        force_deterministic=_bool("RAKU_FORCE_DETERMINISTIC", Settings.force_deterministic),
         llm_provider=_get("RAKU_LLM_PROVIDER", Settings.llm_provider),
         bedrock_claude_model_id=_get(
             "RAKU_BEDROCK_CLAUDE_MODEL_ID", Settings.bedrock_claude_model_id

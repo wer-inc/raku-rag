@@ -109,7 +109,11 @@ class ProviderPolicyContractTest(unittest.TestCase):
             {
                 "operation": "parse",
                 "provider": "aws_textract",
-                "capability": {"region": "us-east-1", "zero_retention": True, "no_train": True},
+                "capability": {
+                    "region": "ap-northeast-1",
+                    "zero_retention": True,
+                    "no_train": True,
+                },
             },
         )
 
@@ -118,6 +122,87 @@ class ProviderPolicyContractTest(unittest.TestCase):
         self.assertEqual(azure["fallback_provider"], "aws_textract")
         self.assertFalse(aws_default["allowed"])
         self.assertIn("customer opt-in is required", " ".join(aws_default["reasons"]))
+
+    def test_default_capabilities_are_japan_region_and_cross_cloud_fail_closed(self) -> None:
+        self.assertEqual(capability_for("aws_textract").region, "ap-northeast-1")
+        self.assertEqual(capability_for("bedrock").region, "ap-northeast-1")
+        self.assertEqual(capability_for("google_document_ai").region, "asia-northeast1")
+        self.assertFalse(capability_for("google_document_ai").zero_retention)
+        self.assertFalse(capability_for("azure_document_intelligence").no_train)
+
+    def test_visual_operations_share_provider_policy_allowlists(self) -> None:
+        policy = ProviderPolicy(
+            tenant_id="tenant_a",
+            customer_opt_in_status="granted",
+            allowed_vlm_providers=(),
+            allowed_caption_providers=("bedrock",),
+            allowed_layout_providers=("aws_textract",),
+            allowed_structured_providers=("aws_textract",),
+            allowed_visual_embedding_providers=(),
+        )
+
+        vlm = self.enforcer.evaluate(
+            policy,
+            ProviderRequest(
+                operation="vlm",
+                provider="bedrock",
+                capability=capability_for("bedrock"),
+            ),
+        )
+        caption = self.enforcer.evaluate(
+            policy,
+            ProviderRequest(
+                operation="caption",
+                provider="bedrock",
+                capability=capability_for("bedrock"),
+            ),
+        )
+        layout = self.enforcer.evaluate(
+            policy,
+            ProviderRequest(
+                operation="layout",
+                provider="aws_textract",
+                capability=capability_for("aws_textract"),
+            ),
+        )
+        visual_embedding = self.enforcer.evaluate(
+            policy,
+            ProviderRequest(
+                operation="visual_embedding",
+                provider="bedrock",
+                capability=capability_for("bedrock"),
+            ),
+        )
+
+        self.assertFalse(vlm.allowed)
+        self.assertIn("bedrock is not allowed for vlm", " ".join(vlm.reasons))
+        self.assertTrue(caption.allowed)
+        self.assertTrue(layout.allowed)
+        self.assertFalse(visual_embedding.allowed)
+
+    def test_family_specific_opt_in_can_deny_cross_cloud_vlm_before_egress(self) -> None:
+        policy = ProviderPolicy(
+            tenant_id="tenant_a",
+            allowed_vlm_providers=("google_gemini", "customer_managed"),
+            allowed_regions=("asia-northeast1",),
+            cross_cloud_processing_allowed=True,
+            zero_retention_required=False,
+            no_train_required=False,
+            customer_opt_in_status="granted",
+            opt_in_status_by_family={"google": "pending"},
+        )
+
+        decision = self.enforcer.evaluate(
+            policy,
+            ProviderRequest(
+                operation="vlm",
+                provider="google_gemini",
+                capability=capability_for("google_gemini"),
+            ),
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("customer opt-in is required", " ".join(decision.reasons))
 
     def test_api_surface_has_dedicated_provider_policy_controller_and_ocr_contract(self) -> None:
         controller = (ROOT / "apps/api/src/admin/provider-policies.controller.ts").read_text(
@@ -128,7 +213,10 @@ class ProviderPolicyContractTest(unittest.TestCase):
         )
         shared = (ROOT / "packages/shared/src/dto/admin-settings.ts").read_text(encoding="utf-8")
 
-        self.assertIn('@Controller({ path: "admin/provider-policies", version: "1" })', controller)
+        self.assertIn(
+            '@Controller({ path: "admin/provider-policies", version: "1" })',
+            controller,
+        )
         self.assertIn("ProviderPolicyService", service)
         self.assertIn('"ocr"', shared)
         self.assertIn("ProviderPolicyValidationResponse", shared)

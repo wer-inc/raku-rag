@@ -11,8 +11,14 @@ import unittest
 from raku_rag.app import MvpSystem
 from raku_rag.domain.models import JobStatus
 from raku_rag.providers.connectors import MemoryConnector
+from raku_rag.providers.mock.visual import FakeAsyncDocumentAnalyzer, page_with_text
 from raku_rag.providers.task_queue import InMemoryMessageQueue
-from raku_rag.workers.ingestion import IngestionJobMessage, IngestionRunStore, IngestionWorker
+from raku_rag.workers.ingestion import (
+    IngestionExecutor,
+    IngestionJobMessage,
+    IngestionRunStore,
+    IngestionWorker,
+)
 
 
 class TestIngestionWorkerQueue(unittest.TestCase):
@@ -120,10 +126,79 @@ class TestIngestionWorkerQueue(unittest.TestCase):
         self.assertIsNotNone(state)
         self.assertEqual(run.status, JobStatus.DEAD_LETTER.value)
         self.assertEqual(state.status, JobStatus.DEAD_LETTER.value)
-        self.assertIn("unsupported content_type", state.failure_reason)
+        self.assertIn("visual async document analyzer is not configured", state.failure_reason)
         self.assertTrue(state.content_checksum)
-        self.assertEqual(state.parser_version, "text-parser-v1")
+        self.assertEqual(state.parser_version, "visual-document-analysis-v1")
         self.assertEqual(self.queue.dlq_count, 1)
+
+    def test_pdf_worker_uses_fake_async_visual_analyzer_and_indexes_visual_chunks(self) -> None:
+        self.connector.put("mem://manual.pdf", b"%PDF fixture bytes")
+        analyzer = FakeAsyncDocumentAnalyzer(
+            pages=(
+                page_with_text(
+                    text="PDF page 1 pump alarm AL-41",
+                    page_number=1,
+                    tenant_id="tenant_a",
+                    collection_id="manuals",
+                    document_id="doc1",
+                ),
+                page_with_text(
+                    text="PDF page 2 pump alarm AL-42",
+                    page_number=2,
+                    tenant_id="tenant_a",
+                    collection_id="manuals",
+                    document_id="doc1",
+                ),
+            )
+        )
+        worker = IngestionWorker(
+            queue=self.queue,
+            connector=self.connector,
+            ingestion=self.sys.ingestion,
+            runs=self.runs,
+            executor=IngestionExecutor(
+                self.sys.ingestion,
+                async_document_analyzer=analyzer,
+            ),
+        )
+        run = worker.enqueue(
+            self._message(
+                key="pdf-ok",
+                ref="mem://manual.pdf",
+                content_type="application/pdf",
+            )
+        )
+
+        worker.drain()
+
+        run = self.runs.get(run.ingestion_run_id)
+        state = self.runs.processing_state("tenant_a", "doc1")
+        doc = self.sys.registry.get("tenant_a", "doc1")
+        self.assertIsNotNone(run)
+        self.assertIsNotNone(state)
+        self.assertIsNotNone(doc)
+        self.assertEqual(run.status, JobStatus.SUCCEEDED.value)
+        self.assertEqual(run.async_provider, "fake_document_ai")
+        self.assertEqual(run.async_job_status, "SUCCEEDED")
+        self.assertEqual(state.parser_version, "visual-document-analysis-v1")
+        self.assertEqual(doc.metadata["async_provider"], "fake_document_ai")
+        self.assertTrue(doc.metadata["visual_asset_ids"][0].startswith("asset_p1_"))
+        visual_chunks = [
+            chunk
+            for chunk, _vector in self.sys.store.iter_items()
+            if chunk.document_id == "doc1"
+        ]
+        self.assertEqual(
+            {chunk.metadata["asset_id"] for chunk in visual_chunks},
+            set(doc.metadata["visual_asset_ids"]),
+        )
+        self.assertTrue(
+            all(
+                chunk.metadata["region_id"].startswith(chunk.metadata["asset_id"])
+                for chunk in visual_chunks
+            )
+        )
+        self.assertEqual(worker.stats.processed, 1)
 
 
 if __name__ == "__main__":

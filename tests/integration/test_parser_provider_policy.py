@@ -159,7 +159,7 @@ class ParserProviderPolicyIntegrationTest(unittest.TestCase):
         policy = ProviderPolicy(
             tenant_id="tenant_a",
             allowed_parser_providers=("aws_textract", "customer_managed"),
-            allowed_regions=("us-east-1",),
+            allowed_regions=("ap-northeast-1",),
             customer_opt_in_status="granted",
         )
 

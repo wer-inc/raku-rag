@@ -102,6 +102,30 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)
 
+    def test_visual_provider_runtime_context_and_iam_are_wired(self) -> None:
+        for token in (
+            'contextString("ocrProvider")',
+            'contextString("layoutProvider")',
+            'contextString("structuredProvider")',
+            'contextString("vlmProvider")',
+            'contextString("captioningProvider")',
+            'contextString("visualEmbeddingProvider")',
+            "RAKU_OCR_PROVIDER",
+            "RAKU_LAYOUT_PROVIDER",
+            "RAKU_STRUCTURED_PROVIDER",
+            "RAKU_VLM_PROVIDER",
+            "RAKU_CAPTIONING_PROVIDER",
+            "RAKU_VISUAL_EMBEDDING_PROVIDER",
+            "RAKU_RUNTIME_PROFILE",
+            "RAKU_CROP_STORAGE_URI",
+            "grantTextractDocumentAnalysis",
+            "textract:AnalyzeDocument",
+            "textract:StartDocumentAnalysis",
+            "textract:GetDocumentAnalysis",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.stack)
+
     def test_gdrive_oauth_secrets_and_grants_are_wired(self) -> None:
         # 021-gdrive: a Google OAuth config secret (KMS-encrypted), per-tenant connector-secret grants
         # scoped to the raku/${stage}/* prefix, the durable refresh-token store env, and the output the

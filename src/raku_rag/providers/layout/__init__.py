@@ -40,6 +40,8 @@ class DeterministicLayoutExtractor:
                 region_type="text",
                 heading_path=("visual",),
                 ocr_text=region.text,
+                extraction_source=region.extraction_source,
+                transcription_confidence=region.confidence,
             )
             for idx, region in enumerate(regions, start=1)
         )

@@ -116,6 +116,7 @@ class MvpSystem:
             self.audit,
             self.vlm,
             structured_tool=self.structured_tool,
+            settings=self.settings,
         )
         self.deletion = DeletionService(
             self.store, self.registry, self.cache, crop_store=self.crops.store

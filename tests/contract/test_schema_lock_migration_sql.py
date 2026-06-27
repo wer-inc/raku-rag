@@ -101,6 +101,56 @@ class SchemaLockMigrationSqlTest(unittest.TestCase):
         self.assertIn("partially_succeeded", datasource_sync)
         self.assertIn("source_sync_states_status_check", datasource_sync_down)
 
+    def test_visual_understanding_async_state_and_indexes_have_down_migration(self) -> None:
+        visual = (MIGRATIONS / "0014_visual_understanding.sql").read_text(encoding="utf-8")
+        visual_down = (MIGRATIONS / "0014_visual_understanding.down.sql").read_text(
+            encoding="utf-8"
+        )
+
+        for token in (
+            "async_provider",
+            "async_job_id",
+            "async_job_status",
+            "extractor_version",
+            "idx_layout_regions_structured",
+            "idx_chunks_structured_kind",
+            "idx_chunks_structured_parent",
+            "PRIMARY KEY (tenant_id, source_id)",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, visual)
+        for token in (
+            "DROP INDEX IF EXISTS idx_chunks_structured_parent",
+            "DROP INDEX IF EXISTS idx_chunks_structured_kind",
+            "DROP INDEX IF EXISTS idx_layout_regions_structured",
+            "DROP COLUMN IF EXISTS extractor_version",
+            "DROP COLUMN IF EXISTS async_job_status",
+            "DROP COLUMN IF EXISTS async_job_id",
+            "DROP COLUMN IF EXISTS async_provider",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, visual_down)
+
+    def test_visual_provider_policy_columns_have_down_migration(self) -> None:
+        visual_policy = (MIGRATIONS / "0015_visual_provider_policy.sql").read_text(
+            encoding="utf-8"
+        )
+        visual_policy_down = (
+            MIGRATIONS / "0015_visual_provider_policy.down.sql"
+        ).read_text(encoding="utf-8")
+
+        for token in (
+            "allowed_layout_providers",
+            "allowed_structured_providers",
+            "allowed_visual_embedding_providers",
+            "allowed_vlm_providers",
+            "allowed_caption_providers",
+            "opt_in_status_by_family",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, visual_policy)
+                self.assertIn(f"DROP COLUMN IF EXISTS {token}", visual_policy_down)
+
     def test_evaluation_run_version_registry_has_down_migration(self) -> None:
         down = (MIGRATIONS / "0011_eval_version_registry.down.sql").read_text(encoding="utf-8")
         self.assertIn("DROP COLUMN IF EXISTS version_registry", down)

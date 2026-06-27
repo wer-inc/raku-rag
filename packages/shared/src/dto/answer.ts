@@ -1,4 +1,5 @@
 import type { Freshness } from "./search.js";
+import type { BoundingBoxDto } from "./assets.js";
 
 export type AnswerStatus =
   | "ok"
@@ -7,7 +8,14 @@ export type AnswerStatus =
   | "temporarily_unavailable";
 
 export interface Citation {
-  kind: "text" | "visual" | "spreadsheet";
+  kind:
+    | "text"
+    | "visual"
+    | "spreadsheet"
+    | "table_row"
+    | "form_field"
+    | "chart_series"
+    | "figure_caption";
   document_id: string;
   chunk_id: string | null;
   source_id: string;
@@ -15,9 +23,23 @@ export interface Citation {
   /** [start, end) code-point offsets in the source for text citations */
   text_range?: [number, number];
   retrieval_score: number;
+  asset_id?: string | null;
+  page_number?: number | null;
+  region_id?: string | null;
+  bbox?: BoundingBoxDto | null;
   sheet_name?: string | null;
   cell_range?: string | null;
   row_id?: string | null;
+  table_id?: string | null;
+  form_id?: string | null;
+  field_name?: string | null;
+  chart_id?: string | null;
+  series_name?: string | null;
+  point_index?: number | null;
+  column_name?: string | null;
+  pixel_derived?: boolean;
+  visual_evidence_verified?: boolean;
+  visual_verifier_verdicts?: Array<Record<string, unknown>>;
   approval_status?: "draft" | "pending_review" | "approved" | "obsolete" | string;
   effective_date?: string | null;
   approval_source?: string | null;

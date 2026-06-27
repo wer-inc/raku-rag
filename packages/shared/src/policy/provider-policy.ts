@@ -17,8 +17,13 @@ export interface ProviderPolicy extends PolicyLifecycle {
   parser_mode: ParserMode;
   allowed_parser_providers?: string[];
   allowed_ocr_providers?: string[];
+  allowed_layout_providers?: string[];
+  allowed_structured_providers?: string[];
   allowed_llm_providers?: string[];
   allowed_embedding_providers?: string[];
+  allowed_visual_embedding_providers?: string[];
+  allowed_vlm_providers?: string[];
+  allowed_caption_providers?: string[];
   allowed_rerank_providers?: string[];
   allowed_regions?: string[];
   no_train_required: boolean;
@@ -26,5 +31,6 @@ export interface ProviderPolicy extends PolicyLifecycle {
   cross_cloud_processing_allowed: boolean;
   customer_opt_in_required: boolean;
   customer_opt_in_status?: "pending" | "granted" | "revoked";
+  opt_in_status_by_family?: Record<string, "pending" | "granted" | "revoked" | string>;
   fallback_policy?: Record<string, unknown>;
 }

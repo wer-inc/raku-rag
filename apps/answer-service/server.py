@@ -115,6 +115,14 @@ class _AdminSettingsStore:
         "parser_mode",
         "allowed_parser_providers",
         "allowed_ocr_providers",
+        "allowed_layout_providers",
+        "allowed_structured_providers",
+        "allowed_vlm_providers",
+        "allowed_caption_providers",
+        "allowed_llm_providers",
+        "allowed_embedding_providers",
+        "allowed_visual_embedding_providers",
+        "allowed_rerank_providers",
         "fallback_policy",
     }
     _residency_policy_keys = {
@@ -123,7 +131,11 @@ class _AdminSettingsStore:
         "data_residency_requirement",
         "cross_cloud_processing_allowed",
     }
-    _opt_in_policy_keys = {"customer_opt_in_required", "customer_opt_in_status"}
+    _opt_in_policy_keys = {
+        "customer_opt_in_required",
+        "customer_opt_in_status",
+        "opt_in_status_by_family",
+    }
     _model_policy_keys = {"embedding_provider", "llm_provider", "llm_model"}
 
     def __init__(self, system: ProductionSystem, *, datasource_repo: object | None = None) -> None:
@@ -226,8 +238,13 @@ class _AdminSettingsStore:
             "parser_mode": "aws_only",
             "allowed_parser_providers": ["aws_textract", "tesseract"],
             "allowed_ocr_providers": ["aws_textract", "tesseract"],
+            "allowed_layout_providers": ["aws_textract", "tesseract"],
+            "allowed_structured_providers": ["aws_textract", "customer_managed"],
             "allowed_llm_providers": ["bedrock", "customer_managed"],
             "allowed_embedding_providers": ["bedrock", "customer_managed"],
+            "allowed_visual_embedding_providers": ["bedrock", "customer_managed"],
+            "allowed_vlm_providers": ["bedrock", "customer_managed"],
+            "allowed_caption_providers": ["bedrock", "customer_managed"],
             "allowed_rerank_providers": ["bedrock", "customer_managed"],
             "allowed_regions": [],
             "provider_regions": {},
@@ -237,6 +254,7 @@ class _AdminSettingsStore:
             "no_train_required": True,
             "customer_opt_in_required": True,
             "customer_opt_in_status": "pending",
+            "opt_in_status_by_family": {},
             "provider_contract_refs": [],
             "provider_capability_snapshot": {},
             "fallback_policy": {
@@ -436,9 +454,17 @@ class _AdminSettingsStore:
         return decision.to_dict()
 
     def _default_provider_for_operation(self, operation: str) -> str:
-        if operation in {"parse", "ocr"}:
+        if operation in {"parse", "ocr", "layout", "structured"}:
             return "aws_textract"
-        if operation in {"embed", "embedding", "rerank", "llm"}:
+        if operation in {
+            "embed",
+            "embedding",
+            "visual_embedding",
+            "rerank",
+            "llm",
+            "vlm",
+            "caption",
+        }:
             return "bedrock"
         return "customer_managed"
 
@@ -695,26 +721,54 @@ def _query_time_range(qs: dict[str, list[str]]) -> tuple[str, str] | None:
     return (start, end) if start and end else None
 
 
+def _citation_json(c, *, include_approval: bool = False) -> dict:
+    item = {
+        "kind": c.kind,
+        "document_id": c.document_id,
+        "chunk_id": c.chunk_id,
+        "source_id": c.source_id,
+        "version": c.version,
+        "text_range": list(c.text_range) if getattr(c, "text_range", None) else None,
+        "retrieval_score": c.retrieval_score,
+        "asset_id": getattr(c, "asset_id", "") or None,
+        "page_number": getattr(c, "page_number", 0) or None,
+        "region_id": getattr(c, "region_id", "") or None,
+        "bbox": _jsonable(getattr(c, "bbox", None)),
+        "sheet_name": getattr(c, "sheet_name", "") or None,
+        "cell_range": getattr(c, "cell_range", "") or None,
+        "row_id": getattr(c, "row_id", "") or None,
+        "table_id": getattr(c, "table_id", "") or None,
+        "form_id": getattr(c, "form_id", "") or None,
+        "field_name": getattr(c, "field_name", "") or None,
+        "chart_id": getattr(c, "chart_id", "") or None,
+        "series_name": getattr(c, "series_name", "") or None,
+        "point_index": (
+            getattr(c, "point_index", -1) if getattr(c, "point_index", -1) >= 0 else None
+        ),
+        "column_name": getattr(c, "column_name", "") or None,
+        "pixel_derived": bool(getattr(c, "pixel_derived", False)),
+        "visual_evidence_verified": bool(getattr(c, "visual_evidence_verified", False)),
+        "visual_verifier_verdicts": _jsonable(
+            getattr(c, "visual_verifier_verdicts", ())
+        ),
+    }
+    if include_approval:
+        item.update(
+            {
+                "approval_status": getattr(c, "approval_status", None),
+                "effective_date": getattr(c, "effective_date", None),
+                "approval_source": getattr(c, "approval_source", None),
+            }
+        )
+    return item
+
+
 def _answer_json(ans) -> dict:
     return {
         "status": ans.status,
         "text": ans.text,
         **answer_format_metadata(ans),
-        "citations": [
-            {
-                "kind": c.kind,
-                "document_id": c.document_id,
-                "chunk_id": c.chunk_id,
-                "source_id": c.source_id,
-                "version": c.version,
-                "text_range": list(c.text_range) if c.text_range else None,
-                "retrieval_score": c.retrieval_score,
-                "sheet_name": getattr(c, "sheet_name", "") or None,
-                "cell_range": getattr(c, "cell_range", "") or None,
-                "row_id": getattr(c, "row_id", "") or None,
-            }
-            for c in ans.citations
-        ],
+        "citations": [_citation_json(c) for c in ans.citations],
         "used_chunks": [
             {"chunk_id": cid, "document_id": cid.split(":")[0], "retrieval_score": 0.0}
             for cid in ans.used_chunks
@@ -743,20 +797,7 @@ def _manufacturing_answer_json(ans) -> dict:
         "text": ans.text,
         **answer_format_metadata(ans),
         "confidence": ans.confidence,
-        "citations": [
-            {
-                "kind": c.kind,
-                "document_id": c.document_id,
-                "chunk_id": c.chunk_id,
-                "source_id": c.source_id,
-                "version": c.version,
-                "retrieval_score": c.retrieval_score,
-                "approval_status": c.approval_status,
-                "effective_date": c.effective_date,
-                "approval_source": c.approval_source,
-            }
-            for c in ans.citations
-        ],
+        "citations": [_citation_json(c, include_approval=True) for c in ans.citations],
         "used_chunks": list(ans.used_chunks),
         "correlation_id": ans.correlation_id,
         "manufacturing": {

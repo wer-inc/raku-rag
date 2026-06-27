@@ -171,6 +171,33 @@ class TestSourcePoisoningHighRisk(unittest.TestCase):
         self.assertEqual(ans.citations[0].approval_status, "approved")
         self.assertTrue(ans.text)
 
+    def test_high_risk_generation_prefilters_to_approved_effective_evidence(self) -> None:
+        sys = fresh()
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="c",
+            document_id="approved_safe",
+            text=_APPROVED_DENSE_TEXT,
+            metadata=_safety_meta("approved_safe", ApprovalStatus.APPROVED, "2026-01-10"),
+        )
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="c",
+            document_id="poison_draft",
+            text=_POISON_TEXT,
+            metadata=_safety_meta("poison_draft", ApprovalStatus.DRAFT, None),
+        )
+        sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "op")
+
+        ans = sys.answer(claims(T, "op"), _HIGH_RISK_QUERY)
+
+        self.assertTrue(ans.high_risk)
+        self.assertEqual(ans.status, "ok")
+        self.assertTrue(ans.citations)
+        self.assertTrue(all(c.approval_status == "approved" for c in ans.citations))
+        self.assertNotIn("poison_draft", {c.document_id for c in ans.citations})
+        self.assertNotIn("skip lockout tagout", ans.text or "")
+
 
 if __name__ == "__main__":
     unittest.main()

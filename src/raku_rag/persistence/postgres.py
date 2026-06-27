@@ -21,7 +21,7 @@ import hashlib
 import os
 import time
 import uuid
-from typing import Sequence
+from typing import Mapping, Sequence
 
 try:
     # psycopg is a production-adapter dependency. The stdlib-only Tier A gate imports this module
@@ -130,8 +130,56 @@ def connect(dsn: str, *, reset: bool = False) -> psycopg.Connection:
             reset_tables = [t for t in _CORE_TABLES if t in existing]
             if reset_tables:
                 cur.execute("TRUNCATE " + ", ".join(reset_tables) + " CASCADE")
+            _repair_reset_schema(cur, existing)
         _set_app_role(conn, cur)
     return conn
+
+
+def _repair_reset_schema(cur: "psycopg.Cursor", existing: set[str]) -> None:
+    """Keep reset=True test databases compatible with additive migration drift.
+
+    Local Tier-B databases can outlive migration edits. Because reset=True already truncates the core
+    tables, it is safe to re-assert compatibility constraints before dropping to the RLS app role.
+    Production still relies on migrations; this helper only runs on explicit test resets.
+    """
+
+    if "source_sync_states" in existing:
+        cur.execute("ALTER TABLE source_sync_states DROP CONSTRAINT IF EXISTS source_sync_states_pkey")
+        cur.execute(
+            "ALTER TABLE source_sync_states "
+            "ADD CONSTRAINT source_sync_states_pkey PRIMARY KEY (tenant_id, source_id)"
+        )
+        cur.execute(
+            "ALTER TABLE source_sync_states "
+            "DROP CONSTRAINT IF EXISTS source_sync_states_status_check"
+        )
+        cur.execute(
+            "ALTER TABLE source_sync_states ADD CONSTRAINT source_sync_states_status_check "
+            "CHECK (status IN ('idle', 'queued', 'observing', 'syncing', 'succeeded', "
+            "'partially_succeeded', 'failed'))"
+        )
+    if "ingestion_runs" in existing:
+        cur.execute(
+            "ALTER TABLE ingestion_runs "
+            "ADD COLUMN IF NOT EXISTS async_provider text NOT NULL DEFAULT '', "
+            "ADD COLUMN IF NOT EXISTS async_job_id text NOT NULL DEFAULT '', "
+            "ADD COLUMN IF NOT EXISTS async_job_status text NOT NULL DEFAULT ''"
+        )
+    if "provider_policies" in existing:
+        cur.execute(
+            "ALTER TABLE provider_policies "
+            "ADD COLUMN IF NOT EXISTS allowed_layout_providers text[] NOT NULL "
+            "DEFAULT ARRAY['aws_textract','tesseract','customer_managed']::text[], "
+            "ADD COLUMN IF NOT EXISTS allowed_structured_providers text[] NOT NULL "
+            "DEFAULT ARRAY['aws_textract','customer_managed']::text[], "
+            "ADD COLUMN IF NOT EXISTS allowed_visual_embedding_providers text[] NOT NULL "
+            "DEFAULT ARRAY['bedrock','customer_managed']::text[], "
+            "ADD COLUMN IF NOT EXISTS allowed_vlm_providers text[] NOT NULL "
+            "DEFAULT ARRAY['bedrock','customer_managed']::text[], "
+            "ADD COLUMN IF NOT EXISTS allowed_caption_providers text[] NOT NULL "
+            "DEFAULT ARRAY['bedrock','customer_managed']::text[], "
+            "ADD COLUMN IF NOT EXISTS opt_in_status_by_family jsonb NOT NULL DEFAULT '{}'::jsonb"
+        )
 
 
 def _set_app_role(conn: "psycopg.Connection", cur: "psycopg.Cursor") -> None:
@@ -216,6 +264,11 @@ def _load_jsonish(value):
     if value is None:
         return None
     return json.loads(value) if isinstance(value, str) else value
+
+
+def _json_mapping(value) -> Mapping[str, object]:
+    loaded = _load_jsonish(value)
+    return loaded if isinstance(loaded, Mapping) else {}
 
 
 def _load_offset_mapping(value):
@@ -863,6 +916,82 @@ class PostgresAclPolicy(AclPolicy):
         return super().can_read_document(p, doc)
 
 
+class PostgresProviderPolicyRepository:
+    """Read tenant-scoped ProviderPolicy rows for runtime provider gates.
+
+    Missing rows intentionally resolve to the dataclass default with opt-in pending, so production
+    provider routers fail closed before external OCR/VLM calls.
+    """
+
+    _columns = (
+        "provider_policy_id",
+        "tenant_id",
+        "collection_id",
+        "parser_mode",
+        "allowed_parser_providers",
+        "allowed_ocr_providers",
+        "allowed_layout_providers",
+        "allowed_structured_providers",
+        "allowed_llm_providers",
+        "allowed_embedding_providers",
+        "allowed_visual_embedding_providers",
+        "allowed_vlm_providers",
+        "allowed_caption_providers",
+        "allowed_rerank_providers",
+        "allowed_regions",
+        "zero_retention_required",
+        "no_train_required",
+        "cross_cloud_processing_allowed",
+        "customer_opt_in_required",
+        "customer_opt_in_status",
+        "opt_in_status_by_family",
+        "fallback_policy",
+    )
+
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    def get(
+        self,
+        tenant_id: str,
+        collection_id: str = "",
+        provider_policy_id: str = "default",
+    ):
+        from workers.ingest.provider_policy import ProviderPolicy
+
+        _use_tenant(self._conn, tenant_id)
+        columns = ", ".join(self._columns)
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {columns} FROM provider_policies "
+                    "WHERE tenant_id = %s AND status = 'active' "
+                    "AND (provider_policy_id = %s OR provider_policy_id = 'default') "
+                    "AND (collection_id = %s OR collection_id IS NULL OR collection_id = '') "
+                    "ORDER BY "
+                    "CASE WHEN collection_id = %s THEN 0 ELSE 1 END, "
+                    "CASE WHEN provider_policy_id = %s THEN 0 ELSE 1 END, "
+                    "updated_at DESC "
+                    "LIMIT 1",
+                    (
+                        tenant_id,
+                        provider_policy_id,
+                        collection_id,
+                        collection_id,
+                        provider_policy_id,
+                    ),
+                )
+                row = cur.fetchone()
+        except Exception:
+            return ProviderPolicy(tenant_id=tenant_id, provider_policy_id=provider_policy_id)
+        if row is None:
+            return ProviderPolicy(tenant_id=tenant_id, provider_policy_id=provider_policy_id)
+        data = dict(zip(self._columns, row))
+        data["opt_in_status_by_family"] = _json_mapping(data.get("opt_in_status_by_family"))
+        data["fallback_policy"] = _json_mapping(data.get("fallback_policy"))
+        return ProviderPolicy.from_mapping(data)
+
+
 class PostgresIngestionRunStore:
     """Postgres-backed store with the same surface as ``IngestionRunStore``.
 
@@ -1215,7 +1344,7 @@ class PostgresIngestionRunStore:
                 "last_ingestion_run_id, observed_count, changed_count, deleted_count, skipped_count, "
                 "failed_count, last_synced_at) "
                 "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, NULLIF(%s, '' )::timestamptz) "
-                "ON CONFLICT (tenant_id, source_id) DO UPDATE SET "
+                "ON CONFLICT ON CONSTRAINT source_sync_states_pkey DO UPDATE SET "
                 "collection_id=EXCLUDED.collection_id, status=EXCLUDED.status, "
                 "last_manifest_checksum=EXCLUDED.last_manifest_checksum, "
                 "last_ingestion_run_id=EXCLUDED.last_ingestion_run_id, "
@@ -1281,6 +1410,20 @@ class PostgresIngestionRunStore:
                 (message_id, run.ingestion_run_id),
             )
         run.sqs_message_id = message_id
+
+    def mark_async_job(
+        self, run: IngestionRun, *, provider: str, job_id: str, status: str
+    ) -> None:
+        _use_tenant(self._conn, run.tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE ingestion_runs SET async_provider = %s, async_job_id = %s, "
+                "async_job_status = %s, updated_at = now() WHERE ingestion_run_id = %s",
+                (provider, job_id, status, run.ingestion_run_id),
+            )
+        run.async_provider = provider
+        run.async_job_id = job_id
+        run.async_job_status = status
 
     def mark_running(self, run: IngestionRun) -> None:
         self._mark(run, "running", started=True)

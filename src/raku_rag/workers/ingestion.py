@@ -12,10 +12,21 @@ from datetime import datetime, timezone
 import hashlib
 from typing import Protocol
 
-from raku_rag.domain.models import JobStatus, LayoutRegion, VisualAsset
+from raku_rag.domain.models import BoundingBox, Document, JobStatus, LayoutRegion, VisualAsset
 from raku_rag.interfaces.base import Connector, Vector
+from raku_rag.interfaces.visual import (
+    AsyncDocumentAnalyzer,
+    AsyncJobStatus,
+    AsyncSubmitRequest,
+    CaptioningProvider,
+    DocumentAnalysis,
+    IngestContext,
+    LayoutExtractor,
+    OcrEngine,
+)
 from raku_rag.observability.redaction import Redactor
 from raku_rag.providers.captioning import CaptioningResult, DeterministicCaptioningProvider
+from raku_rag.providers.embeddings import embedding_dimension
 from raku_rag.providers.layout import DeterministicLayoutExtractor
 from raku_rag.providers.ocr import DeterministicOcrEngine
 from raku_rag.providers.task_queue import QueueEnvelope
@@ -136,6 +147,9 @@ class IngestionRun:
     retry_count: int = 0
     sqs_message_id: str = ""
     dagster_run_id: str = ""
+    async_provider: str = ""
+    async_job_id: str = ""
+    async_job_status: str = ""
     started_at: str = ""
     finished_at: str = ""
     created_at: str = field(default_factory=_now)
@@ -322,6 +336,14 @@ class IngestionRunStore:
         run.sqs_message_id = message_id
         run.updated_at = _now()
 
+    def mark_async_job(
+        self, run: IngestionRun, *, provider: str, job_id: str, status: str
+    ) -> None:
+        run.async_provider = provider
+        run.async_job_id = job_id
+        run.async_job_status = status
+        run.updated_at = _now()
+
     def mark_running(self, run: IngestionRun) -> None:
         run.status = JobStatus.RUNNING.value
         run.started_at = run.started_at or _now()
@@ -478,6 +500,9 @@ class IngestionExecutionResult:
     parser_version: str = ""
     chunking_config_version: str = ""
     embedding_model_version: str = ""
+    async_provider: str = ""
+    async_job_id: str = ""
+    async_job_status: str = ""
 
 
 @dataclass(frozen=True)
@@ -507,9 +532,9 @@ class VisualIngestionExecutor:
     def __init__(
         self,
         *,
-        ocr: DeterministicOcrEngine | None = None,
-        layout: DeterministicLayoutExtractor | None = None,
-        captioning: DeterministicCaptioningProvider | None = None,
+        ocr: OcrEngine | None = None,
+        layout: LayoutExtractor | None = None,
+        captioning: CaptioningProvider | None = None,
         visual_embedder: HashingVisualEmbeddingProvider | None = None,
         redactor: Redactor | None = None,
         cost: CostService | None = None,
@@ -563,7 +588,13 @@ class VisualIngestionExecutor:
             unit="bytes",
         )
 
-        raw_ocr_regions = self.ocr.extract(image)
+        raw_ocr_regions = self.ocr.extract(
+            image,
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            document_id=document_id,
+            asset_id=asset_id,
+        )
         ocr_sensitive_labels = tuple(
             _sensitive_labels(self.redactor, region.text) for region in raw_ocr_regions
         )
@@ -600,7 +631,14 @@ class VisualIngestionExecutor:
 
         caption_result = CaptioningResult(status="not_requested")
         if options.captioning_enabled:
-            caption_result = self.captioning.caption(image)
+            caption_result = self.captioning.caption(
+                image,
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                document_id=document_id,
+                asset_id=asset_id,
+                content_type=options.content_type,
+            )
             self._record_visual_cost(
                 tenant_id,
                 "captioning_cost",
@@ -612,17 +650,24 @@ class VisualIngestionExecutor:
             )
             if caption_result.status == "succeeded":
                 regions = tuple(
-                    replace(region, generated_caption_text=caption_result.generated_caption_text)
+                    replace(
+                        region,
+                        generated_caption_text=caption_result.generated_caption_text,
+                        caption_source=caption_result.caption_source,
+                    )
                     for region in regions
                 )
         regions = tuple(
             replace(
                 region,
-                metadata=_visual_region_redaction_metadata(
-                    region,
-                    ocr_labels=ocr_sensitive_labels[idx] if idx < len(ocr_sensitive_labels) else (),
-                    caption_labels=caption_result.sensitive_detection_labels,
-                ),
+                metadata={
+                    **_visual_region_provenance_metadata(region),
+                    **_visual_region_redaction_metadata(
+                        region,
+                        ocr_labels=ocr_sensitive_labels[idx] if idx < len(ocr_sensitive_labels) else (),
+                        caption_labels=caption_result.sensitive_detection_labels,
+                    ),
+                },
             )
             for idx, region in enumerate(regions)
         )
@@ -631,7 +676,16 @@ class VisualIngestionExecutor:
             f"{region.ocr_text}\n{region.generated_caption_text}".encode("utf-8")
             for region in regions
         ]
-        vectors = tuple(tuple(vec) for vec in self.visual_embedder.embed(embedding_inputs))
+        if hasattr(self.visual_embedder, "policy_resolver"):
+            raw_vectors = self.visual_embedder.embed(
+                embedding_inputs,
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                document_id=document_id,
+            )
+        else:
+            raw_vectors = self.visual_embedder.embed(embedding_inputs)
+        vectors = tuple(tuple(vec) for vec in raw_vectors)
         self._record_visual_cost(
             tenant_id,
             "visual_embedding_cost",
@@ -648,6 +702,146 @@ class VisualIngestionExecutor:
             caption_status=caption_result.status,
             caption_failure_reason=caption_result.failure_reason,
             exif_removed_keys=exif.removed_keys,
+        )
+
+    def execute_document_analysis(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_id: str,
+        document_id: str,
+        document_ref: str,
+        analysis: DocumentAnalysis,
+        job_id: str = "",
+        trace_id: str = "",
+    ) -> tuple[VisualIngestionResult, ...]:
+        """Convert neutral async document analysis into page-scoped visual ingestion results."""
+
+        results: list[VisualIngestionResult] = []
+        for page in analysis.pages:
+            raw_regions = page.layout_regions or tuple(
+                LayoutRegion(
+                    tenant_id=tenant_id,
+                    collection_id=collection_id,
+                    document_id=document_id,
+                    asset_id=f"asset_p{page.page_number}",
+                    region_id=f"asset_p{page.page_number}:region:{idx}",
+                    bbox=ocr.bbox,
+                    page_number=page.page_number,
+                    region_type="text",
+                    heading_path=("visual",),
+                    ocr_text=ocr.text,
+                    extraction_source=ocr.extraction_source,
+                    transcription_confidence=ocr.confidence,
+                )
+                for idx, ocr in enumerate(page.ocr_regions, start=1)
+            )
+            page_text = "\n".join(region.ocr_text for region in raw_regions)
+            checksum = hashlib.sha256(
+                f"{document_ref}:{page.page_number}:{page_text}".encode("utf-8")
+            ).hexdigest()
+            asset_id = f"asset_p{page.page_number}_{checksum[:8]}"
+            asset = VisualAsset(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                document_id=document_id,
+                asset_id=asset_id,
+                storage_uri=document_ref,
+                checksum=checksum,
+                content_type="application/pdf-page",
+                page_number=page.page_number,
+                metadata={
+                    "source_id": source_id,
+                    "async_provider": analysis.provider,
+                    "async_job_id": analysis.job_id,
+                    "extractor_version": analysis.metadata.get("extractor_version", ""),
+                    "visual_embedding_model_version": self.visual_embedder.model_version,
+                },
+            )
+            regions = tuple(
+                self._normalize_analyzed_region(
+                    region,
+                    tenant_id=tenant_id,
+                    collection_id=collection_id,
+                    document_id=document_id,
+                    asset_id=asset_id,
+                    page_number=page.page_number,
+                    region_index=idx,
+                )
+                for idx, region in enumerate(raw_regions, start=1)
+            )
+            embedding_inputs = [
+                f"{region.ocr_text}\n{region.generated_caption_text}".encode("utf-8")
+                for region in regions
+            ]
+            if hasattr(self.visual_embedder, "policy_resolver"):
+                raw_vectors = self.visual_embedder.embed(
+                    embedding_inputs,
+                    tenant_id=tenant_id,
+                    collection_id=collection_id,
+                    document_id=document_id,
+                )
+            else:
+                raw_vectors = self.visual_embedder.embed(embedding_inputs)
+            vectors = tuple(tuple(vec) for vec in raw_vectors)
+            self._record_visual_cost(
+                tenant_id,
+                "visual_embedding_cost",
+                collection_id=collection_id,
+                job_id=job_id,
+                trace_id=trace_id,
+                quantity=len(vectors),
+                unit="regions",
+            )
+            results.append(
+                VisualIngestionResult(
+                    asset=asset,
+                    regions=regions,
+                    visual_vectors=vectors,
+                    caption_status="not_requested",
+                )
+            )
+        return tuple(results)
+
+    def _normalize_analyzed_region(
+        self,
+        region: LayoutRegion,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        document_id: str,
+        asset_id: str,
+        page_number: int,
+        region_index: int,
+    ) -> LayoutRegion:
+        bbox = region.bbox or BoundingBox(0.0, 0.0, 1.0, 1.0)
+        ocr_text = self.redactor.redact_visual_text(region.ocr_text)
+        caption = self.redactor.redact_visual_text(region.generated_caption_text)
+        labels = tuple(
+            sorted(
+                {
+                    label
+                    for text in (region.ocr_text, region.generated_caption_text)
+                    for label, _start, _end in self.redactor.classify(text)
+                }
+            )
+        )
+        return replace(
+            region,
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            document_id=document_id,
+            asset_id=asset_id,
+            region_id=f"{asset_id}:region:{region_index}",
+            bbox=bbox,
+            page_number=page_number,
+            ocr_text=ocr_text,
+            generated_caption_text=caption,
+            metadata={
+                **_visual_region_provenance_metadata(region),
+                **_visual_region_redaction_metadata(region, ocr_labels=labels, caption_labels=()),
+            },
         )
 
     def _record_visual_cost(
@@ -678,6 +872,20 @@ class VisualIngestionExecutor:
 
 def _sensitive_labels(redactor: Redactor, text: str) -> tuple[str, ...]:
     return tuple(sorted({label for label, _start, _end in redactor.classify(text)}))
+
+
+def _visual_region_provenance_metadata(region: LayoutRegion) -> dict:
+    extraction_source = str(region.extraction_source or region.metadata.get("extraction_source") or "")
+    caption_source = str(region.caption_source or region.metadata.get("caption_source") or "")
+    metadata: dict = {}
+    if extraction_source:
+        metadata["extraction_source"] = extraction_source
+        metadata["primary_evidence_source"] = extraction_source
+    if caption_source:
+        metadata["caption_source"] = caption_source
+    if region.transcription_confidence is not None:
+        metadata["transcription_confidence"] = region.transcription_confidence
+    return metadata
 
 
 def _visual_region_redaction_metadata(
@@ -716,9 +924,21 @@ class IngestionExecutor:
 
     parser_version = "text-parser-v1"
     chunking_config_version = "sentence-chunker-v1"
+    visual_parser_version = "visual-document-analysis-v1"
+    visual_chunking_config_version = "visual-region-chunker-v1"
 
-    def __init__(self, ingestion: IngestionService) -> None:
+    def __init__(
+        self,
+        ingestion: IngestionService,
+        *,
+        visual_executor: VisualIngestionExecutor | None = None,
+        async_document_analyzer: AsyncDocumentAnalyzer | None = None,
+    ) -> None:
         self.ingestion = ingestion
+        self.visual_executor = visual_executor or VisualIngestionExecutor(
+            visual_embedder=HashingVisualEmbeddingProvider(dim=_embedding_dim(ingestion))
+        )
+        self.async_document_analyzer = async_document_analyzer
 
     def execute_document(
         self,
@@ -729,7 +949,27 @@ class IngestionExecutor:
         document_id: str,
         raw: bytes,
         content_type: str = "text/plain",
+        document_ref: str = "",
     ) -> IngestionExecutionResult:
+        if _is_image_content_type(content_type):
+            return self.execute_visual_image(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                source_id=source_id,
+                document_id=document_id,
+                raw=raw,
+                content_type=content_type,
+            )
+        if _is_pdf_content_type(content_type):
+            return self.execute_visual_document(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                source_id=source_id,
+                document_id=document_id,
+                raw=raw,
+                content_type=content_type,
+                document_ref=document_ref,
+            )
         content_checksum = hashlib.sha256(raw).hexdigest()
         job = self.ingestion.ingest(
             tenant_id=tenant_id,
@@ -751,6 +991,178 @@ class IngestionExecutor:
             chunking_config_version=self.chunking_config_version,
             embedding_model_version=getattr(embedder, "model_version", ""),
         )
+
+    def execute_visual_image(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_id: str,
+        document_id: str,
+        raw: bytes,
+        content_type: str,
+    ) -> IngestionExecutionResult:
+        result = self.visual_executor.execute_image(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            image=raw,
+            options=VisualIngestionOptions(content_type=content_type),
+            job_id=f"visual:{document_id}",
+        )
+        chunk_count = self._persist_visual_results(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            checksum=hashlib.sha256(raw).hexdigest(),
+            content_type=content_type,
+            results=(result,),
+        )
+        return IngestionExecutionResult(
+            status=JobStatus.SUCCEEDED.value,
+            document_id=document_id,
+            chunk_count=chunk_count,
+            content_checksum=hashlib.sha256(raw).hexdigest(),
+            parser_version=self.visual_parser_version,
+            chunking_config_version=self.visual_chunking_config_version,
+            embedding_model_version=result.asset.metadata.get("visual_embedding_model_version", ""),
+        )
+
+    def execute_visual_document(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_id: str,
+        document_id: str,
+        raw: bytes,
+        content_type: str,
+        document_ref: str,
+    ) -> IngestionExecutionResult:
+        if self.async_document_analyzer is None:
+            checksum = hashlib.sha256(raw).hexdigest()
+            return IngestionExecutionResult(
+                status=JobStatus.FAILED.value,
+                document_id=document_id,
+                failure_reason="visual async document analyzer is not configured",
+                content_checksum=checksum,
+                parser_version=self.visual_parser_version,
+                chunking_config_version=self.visual_chunking_config_version,
+            )
+        context = IngestContext(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            content_type=content_type,
+        )
+        request = AsyncSubmitRequest(document_ref=document_ref, context=context)
+        handle = self.async_document_analyzer.submit(request)
+        analysis = self.async_document_analyzer.poll(handle)
+        if analysis.status != AsyncJobStatus.SUCCEEDED:
+            return IngestionExecutionResult(
+                status=JobStatus.FAILED.value,
+                document_id=document_id,
+                failure_reason=analysis.failure_reason
+                or f"visual document analysis ended with {analysis.status.value}",
+                content_checksum=hashlib.sha256(raw).hexdigest(),
+                parser_version=self.visual_parser_version,
+                chunking_config_version=self.visual_chunking_config_version,
+                async_provider=analysis.provider or handle.provider,
+                async_job_id=analysis.job_id or handle.token,
+                async_job_status=analysis.status.value,
+            )
+        results = self.visual_executor.execute_document_analysis(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            document_ref=document_ref,
+            analysis=analysis,
+            job_id=analysis.job_id,
+        )
+        chunk_count = self._persist_visual_results(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            checksum=hashlib.sha256(raw).hexdigest(),
+            content_type=content_type,
+            results=results,
+            async_provider=analysis.provider,
+            async_job_id=analysis.job_id,
+            async_job_status=analysis.status.value,
+        )
+        embedding_version = (
+            results[0].asset.metadata.get("visual_embedding_model_version", "") if results else ""
+        )
+        return IngestionExecutionResult(
+            status=JobStatus.SUCCEEDED.value,
+            document_id=document_id,
+            chunk_count=chunk_count,
+            content_checksum=hashlib.sha256(raw).hexdigest(),
+            parser_version=self.visual_parser_version,
+            chunking_config_version=self.visual_chunking_config_version,
+            embedding_model_version=embedding_version,
+            async_provider=analysis.provider,
+            async_job_id=analysis.job_id,
+            async_job_status=analysis.status.value,
+        )
+
+    def _persist_visual_results(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_id: str,
+        document_id: str,
+        checksum: str,
+        content_type: str,
+        results: tuple[VisualIngestionResult, ...],
+        async_provider: str = "",
+        async_job_id: str = "",
+        async_job_status: str = "",
+    ) -> int:
+        from raku_rag.services.visual import visual_chunks_from_ingestion
+
+        chunks = tuple(chunk for result in results for chunk in visual_chunks_from_ingestion(result))
+        vectors = tuple(vector for result in results for vector in result.visual_vectors)
+        self.ingestion._store.purge(tenant_id, document_id)
+        self.ingestion._store.upsert(list(zip(chunks, vectors)))
+        existing = self.ingestion._registry.get(tenant_id, document_id)
+        asset_ids = [result.asset.asset_id for result in results]
+        first_asset = results[0].asset if results else None
+        metadata = dict(existing.metadata) if existing else {}
+        metadata.update(
+            {
+                "content_type": content_type,
+                "visual_asset_ids": asset_ids,
+                "visual_asset_storage_uri": first_asset.storage_uri if first_asset else "",
+                "visual_asset_content_type": first_asset.content_type if first_asset else "",
+                "caption_status": ",".join(result.caption_status for result in results),
+                "async_provider": async_provider,
+                "async_job_id": async_job_id,
+                "async_job_status": async_job_status,
+            }
+        )
+        self.ingestion._registry.put(
+            Document(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                document_id=document_id,
+                source_id=source_id,
+                version=(existing.version + 1) if existing else 1,
+                checksum=checksum,
+                metadata=metadata,
+                created_at=existing.created_at if existing else _now(),
+                updated_at=_now(),
+                indexed_at=_now(),
+                tombstone=False,
+            )
+        )
+        return len(chunks)
 
 
 class IngestionWorker:
@@ -810,7 +1222,15 @@ class IngestionWorker:
                 document_id=message.document_id,
                 raw=raw,
                 content_type=message.content_type,
+                document_ref=message.document_ref,
             )
+            if result.async_provider or result.async_job_id or result.async_job_status:
+                self.runs.mark_async_job(
+                    run,
+                    provider=result.async_provider,
+                    job_id=result.async_job_id,
+                    status=result.async_job_status,
+                )
             if result.status == JobStatus.SUCCEEDED.value:
                 self.runs.mark_succeeded(
                     run,
@@ -886,3 +1306,16 @@ class IngestionWorker:
             self.runs.mark_failed(
                 run, reason=reason, retry_count=envelope.receive_count, **metadata
             )
+
+
+def _embedding_dim(ingestion: IngestionService) -> int:
+    embedder = getattr(ingestion, "_embedder", None)
+    return embedding_dimension(embedder) if embedder is not None else 32
+
+
+def _is_image_content_type(content_type: str) -> bool:
+    return content_type.lower().split(";", 1)[0].strip().startswith("image/")
+
+
+def _is_pdf_content_type(content_type: str) -> bool:
+    return content_type.lower().split(";", 1)[0].strip() == "application/pdf"

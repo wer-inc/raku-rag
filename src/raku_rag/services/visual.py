@@ -19,10 +19,14 @@ def visual_chunks_from_ingestion(result: VisualIngestionResult) -> tuple[Chunk, 
     for idx, region in enumerate(result.regions):
         text = visual_chunk_text(region)
         redaction_metadata = _visual_redaction_metadata(region)
+        primary_evidence_source = str(
+            region.extraction_source or region.metadata.get("extraction_source") or ""
+        )
+        caption_source = str(region.caption_source or region.metadata.get("caption_source") or "")
         chunks.append(
             Chunk(
                 tenant_id=region.tenant_id,
-                chunk_id=f"{region.document_id}:visual:{idx}",
+                chunk_id=f"{region.document_id}:visual:{region.page_number}:{idx}",
                 document_id=region.document_id,
                 collection_id=region.collection_id,
                 text=text,
@@ -48,6 +52,8 @@ def visual_chunks_from_ingestion(result: VisualIngestionResult) -> tuple[Chunk, 
                     "ocr_text": region.ocr_text,
                     "generated_caption_text": region.generated_caption_text,
                     "primary_evidence_text": region.ocr_text,
+                    "primary_evidence_source": primary_evidence_source,
+                    "caption_source": caption_source,
                     **redaction_metadata,
                 },
             )

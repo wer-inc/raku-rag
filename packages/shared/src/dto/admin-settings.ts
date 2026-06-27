@@ -139,8 +139,14 @@ export interface QueryProfileUpsertRequest extends Partial<QueryProfileSettings>
 
 export interface ProviderPolicySettings extends ProviderPolicy {
   allowed_parser_providers?: string[];
+  allowed_ocr_providers?: string[];
+  allowed_layout_providers?: string[];
+  allowed_structured_providers?: string[];
   allowed_llm_providers?: string[];
   allowed_embedding_providers?: string[];
+  allowed_visual_embedding_providers?: string[];
+  allowed_vlm_providers?: string[];
+  allowed_caption_providers?: string[];
   allowed_rerank_providers?: string[];
   provider_regions?: Record<string, unknown>;
   data_residency_requirement?: string;
@@ -157,7 +163,19 @@ export interface ProviderPolicyUpsertRequest extends Partial<ProviderPolicySetti
 export interface ProviderPolicyValidationRequest {
   collection_id?: string;
   document_sample_refs?: string[];
-  operation: "parse" | "ocr" | "embed" | "rerank" | "llm" | "log";
+  operation:
+    | "parse"
+    | "ocr"
+    | "layout"
+    | "structured"
+    | "embed"
+    | "embedding"
+    | "visual_embedding"
+    | "rerank"
+    | "llm"
+    | "vlm"
+    | "caption"
+    | "log";
   provider?: string;
 }
 

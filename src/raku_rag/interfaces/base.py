@@ -6,6 +6,20 @@ from abc import ABC, abstractmethod
 from typing import Callable, Protocol, Sequence
 
 from raku_rag.domain.models import Chunk, LayoutRegion, OcrTextRegion, ScoredChunk
+from raku_rag.interfaces.visual import (
+    AsyncDocumentAnalyzer,
+    AsyncJobStatus,
+    AsyncSubmitRequest,
+    CaptioningProvider,
+    DocumentAnalysis,
+    DocumentAnalysisPage,
+    IngestContext,
+    JobHandle,
+    LayoutExtractor,
+    OcrEngine,
+    StructuredExtractor,
+    VLMProvider,
+)
 
 # A pre-filter predicate: given a candidate chunk, may it be retrieved for this principal?
 # Used by VectorStore.search to enforce ACL/tenant/tombstone BEFORE scoring (FR-022, pre-filter).
@@ -85,26 +99,5 @@ class TaskQueue(ABC):
     def enqueue(self, fn: Callable[..., object], *args, **kwargs) -> object: ...
 
 
-# --- US6 (out of MVP scope): declared for interface completeness, not implemented here ---
-
-
-class OcrEngine(Protocol):
-    def extract(self, image: bytes) -> tuple[OcrTextRegion, ...]: ...
-
-
-class LayoutExtractor(Protocol):
-    def extract(self, image: bytes) -> tuple[LayoutRegion, ...]: ...
-
-
-class CaptioningProvider(Protocol):
-    """optional enrichment; search aid only, never primary evidence (FR-048)."""
-
-    def caption(self, image: bytes) -> object: ...
-
-
 class VisualEmbeddingProvider(Protocol):
     def embed(self, regions: Sequence[bytes]) -> list[Vector]: ...
-
-
-class VLMProvider(Protocol):
-    def generate(self, query: str, *, visual_regions: Sequence[LayoutRegion]) -> str: ...

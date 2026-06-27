@@ -14,6 +14,7 @@ import time
 from dataclasses import replace
 from typing import Callable, Sequence
 
+from raku_rag.core.config import Settings
 from raku_rag.core.errors import AnswerStatus, ProviderUnavailable
 from raku_rag.core.text import content_terms as _terms
 from raku_rag.domain.models import (
@@ -34,6 +35,10 @@ from raku_rag.observability.audit import AuditEvent, AuditSink
 from raku_rag.observability.logging import log, new_correlation_id
 from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.tracing import InMemoryTracer
+from raku_rag.manufacturing.safety.visual_verify import (
+    VisualEvidenceVerifier,
+    verify_visual_primary_evidence,
+)
 from raku_rag.services.cost import CostService
 from raku_rag.services.groundedness import GroundednessGate
 from raku_rag.services.injection import PromptInjectionGuard
@@ -42,6 +47,7 @@ from raku_rag.services.structured_query import classify_structured_query
 
 _EST_QUERY_COST = 1.0
 _IDENTIFIER = re.compile(r"\b[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+){2,}\b")
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?。！？])\s+|[\r\n]+")
 
 GetDocument = Callable[[str, str], Document | None]  # (tenant_id, document_id) -> Document
 
@@ -78,6 +84,8 @@ class AnswerService:
         injection_guard: PromptInjectionGuard | None = None,
         output_guardrail: object | None = None,
         structured_tool: object | None = None,
+        settings: Settings | None = None,
+        visual_verifiers: Sequence[VisualEvidenceVerifier] = (),
     ) -> None:
         self._retrieval = retrieval
         self._llm = llm
@@ -92,6 +100,8 @@ class AnswerService:
         self._injection_guard = injection_guard or PromptInjectionGuard()
         self._output_guardrail = output_guardrail
         self._structured_tool = structured_tool
+        self._settings = settings or Settings()
+        self._visual_verifiers = tuple(visual_verifiers)
 
     def answer(
         self,
@@ -289,7 +299,16 @@ class AnswerService:
             try:
                 with generation_cm as generation_span:
                     if use_vlm and self._vlm is not None:
-                        text = self._vlm.generate(query, visual_regions=visual_regions)
+                        if hasattr(self._vlm, "policy_resolver"):
+                            text = self._vlm.generate(
+                                query,
+                                visual_regions=visual_regions,
+                                tenant_id=principal.tenant_id,
+                                collection_id=visual_regions[0].collection_id,
+                                document_id=visual_regions[0].document_id,
+                            )
+                        else:
+                            text = self._vlm.generate(query, visual_regions=visual_regions)
                     else:
                         text = self._llm.generate(query, context)
                     if hasattr(generation_span, "finish"):
@@ -427,6 +446,10 @@ class AnswerService:
             citations: list[Citation] = []
             used: list[str] = []
             freshness: list[Freshness] = []
+            visual_verifications_attempted = 0
+            max_visual_verifications = max(
+                0, int(self._settings.max_regions_verified_per_answer)
+            )
             for s in evidence:
                 c = s.chunk
                 chunk_terms = _terms(c.text)
@@ -449,6 +472,34 @@ class AnswerService:
                     self._record_citation_revalidation_drop(principal, cid, profile, c)
                     continue
                 is_visual = c.modality == Modality.VISUAL
+                visual_verified = bool(c.metadata.get("visual_evidence_verified"))
+                visual_verdicts = tuple(
+                    item
+                    for item in c.metadata.get("visual_verifier_verdicts", ())
+                    if isinstance(item, dict)
+                )
+                if is_visual and self._settings.visual_evidence_promotion:
+                    if visual_verifications_attempted < max_visual_verifications:
+                        visual_verifications_attempted += 1
+                        visual_verified, verifier_verdicts = verify_visual_primary_evidence(
+                            assertion=self._attributed_text_for_chunk(text, c),
+                            region=self._layout_region_from_chunk(c),
+                            verifiers=self._visual_verifiers,
+                            settings=self._settings,
+                        )
+                        visual_verdicts = tuple(
+                            verdict.to_mapping() for verdict in verifier_verdicts
+                        )
+                    else:
+                        visual_verified = False
+                        visual_verdicts = (
+                            {
+                                "verifier_id": "visual_verifier_budget",
+                                "verifier_kind": "policy",
+                                "passed": False,
+                                "reason_code": "max_regions_verified_per_answer_exceeded",
+                            },
+                        )
                 citations.append(
                     Citation(
                         kind="visual" if is_visual else "text",
@@ -463,6 +514,17 @@ class AnswerService:
                         region_id=str(c.metadata.get("region_id", "")) if is_visual else "",
                         bbox=self._bbox_from_metadata(c) if is_visual else None,
                         crop_uri=str(c.metadata.get("crop_uri", "")) if is_visual else "",
+                        table_id=str(c.metadata.get("table_id", "")),
+                        form_id=str(c.metadata.get("form_id", "")),
+                        field_name=str(c.metadata.get("field_name", "")),
+                        chart_id=str(c.metadata.get("chart_id", "")),
+                        series_name=str(c.metadata.get("series_name", "")),
+                        point_index=int(c.metadata.get("point_index", -1) or -1),
+                        column_name=str(c.metadata.get("column_name", "")),
+                        pixel_derived=is_visual,
+                        visual_evidence_verified=visual_verified,
+                        visual_verifier_verdicts=visual_verdicts,
+                        metadata=dict(c.metadata),
                     )
                 )
                 used.append(c.chunk_id)
@@ -689,6 +751,27 @@ class AnswerService:
             metadata=dict(chunk.metadata),
             tombstone=chunk.tombstone,
         )
+
+    def _attributed_text_for_chunk(self, answer_text: str, chunk: Chunk) -> str:
+        """Sentence-scoped assertion text for visual grounding.
+
+        A visual region should verify only the answer sentence(s) it actually supports. Running OCR
+        subset checks over a whole multi-sentence answer would turn useful visual evidence into a
+        near-universal false negative.
+        """
+        evidence_text = str(chunk.metadata.get("primary_evidence_text") or chunk.text or "")
+        evidence_terms = _terms(evidence_text)
+        sentences = [
+            sentence.strip()
+            for sentence in _SENTENCE_SPLIT.split(answer_text or "")
+            if sentence.strip()
+        ]
+        if not sentences or not evidence_terms:
+            return answer_text
+        attributed = [
+            sentence for sentence in sentences if _terms(sentence).intersection(evidence_terms)
+        ]
+        return " ".join(attributed) if attributed else answer_text
 
     def _bbox_from_metadata(self, chunk: Chunk) -> BoundingBox | None:
         raw = chunk.metadata.get("bbox")

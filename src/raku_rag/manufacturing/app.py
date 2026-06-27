@@ -179,7 +179,10 @@ class ManufacturingSystem:
                 self._mvp.settings, self._mvp.llm
             ),
         )
-        safety_gate = ManufacturingSafetyGate(today=today)
+        safety_gate = ManufacturingSafetyGate(
+            today=today,
+            visual_evidence_promotion=self._mvp.settings.visual_evidence_promotion,
+        )
         self._answer = ManufacturingAnswerService(
             retrieval=self._mvp.retrieval,
             groundedness=self._mvp.gate,
@@ -189,6 +192,7 @@ class ManufacturingSystem:
             safety_gate=safety_gate,
             get_document=self._mvp.registry.get,
             today=today,
+            visual_evidence_promotion=self._mvp.settings.visual_evidence_promotion,
         )
         self._search = ManufacturingSearchService(
             retrieval=self._mvp.retrieval, get_mfg_meta=self.get_mfg_meta
@@ -816,6 +820,11 @@ class ManufacturingSystem:
             principal=principal,
             factory_id=factory_id,
             collection_id=collection_id,  # FR-MFG-030 collection axis (None = cross-collection answer)
+            extra_client_metadata=(
+                {"visual_evidence": list(ans.visual_evidence_audit)}
+                if ans.visual_evidence_audit
+                else None
+            ),
         )
         # T061 — citation-access auditing (FR-MFG-021): when the answer path retrieves and SURVEYS
         # candidate citations as evidence (asserted citations, else the surveyed candidate documents),
