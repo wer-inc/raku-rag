@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 _WORD = re.compile(r"\w+", re.UNICODE)
+_CJK = re.compile(r"[぀-ヿ㐀-鿿豈-﫿]")
 
 # Minimal English stopword set (function words). Japanese content is not space-split by \w+,
 # so particle filtering is unnecessary for the MVP.
@@ -90,15 +91,6 @@ def content_tokens(text: str) -> list[str]:
     return [t for t in _WORD.findall(text.lower()) if t not in _STOPWORDS]
 
 
-def content_terms(text: str) -> set[str]:
-    return set(content_tokens(text))
-
-
-# CJK ranges (Hiragana, Katakana, CJK Unified incl. ext-A). Used ONLY by retrieval_tokens — the safety
-# classifier keeps using content_tokens, so this never changes high-risk keyword matching.
-_CJK = re.compile(r"[぀-ヿ㐀-鿿豈-﫿]")
-
-
 def retrieval_tokens(text: str) -> list[str]:
     """Tokens for retrieval (embedding + lexical), Japanese-aware.
 
@@ -119,3 +111,14 @@ def retrieval_tokens(text: str) -> list[str]:
         elif tok not in _STOPWORDS:
             out.append(tok)
     return out
+
+
+def content_terms(text: str) -> set[str]:
+    """Terms used for grounding and extractive answers.
+
+    Keep the original word tokens, then add the same CJK bigrams used by retrieval so Japanese
+    evidence such as "担当部署は..." still supports a query containing "担当部署".
+    Safety classification intentionally calls ``content_tokens`` directly, so this does not broaden
+    high-risk keyword matching.
+    """
+    return set(content_tokens(text)) | set(retrieval_tokens(text))

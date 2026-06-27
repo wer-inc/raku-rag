@@ -11,6 +11,7 @@ import type {
   GovernanceStatus,
   KnowledgeOpsDashboard,
   ManufacturingAnswerResponse,
+  ManufacturingDocumentSummary,
   ManufacturingIngestionRun,
   ManufacturingKpi,
   ManufacturingSourceSyncStatus,
@@ -908,10 +909,18 @@ const SOURCE_SYNC_STATUS: Record<string, { label: string; key: string }> = {
   failed: { label: "失敗", key: "bad" },
 };
 
-type SourceListRow = { source: AdminDataSource; sync: ManufacturingSourceSyncStatus | null };
+type SourceListRow = {
+  source: AdminDataSource;
+  sync: ManufacturingSourceSyncStatus | null;
+  origin: "registered" | "documents";
+  documentCount: number | null;
+  approvedCount: number | null;
+  pendingCount: number | null;
+};
 
 function sourceFreshness(row: SourceListRow): string {
   const at = row.source.last_synced_at;
+  if (row.origin === "documents" && !at) return "取込済み";
   if (!at) return "未同期";
   const parsed = new Date(at);
   return Number.isNaN(parsed.getTime()) ? at : parsed.toLocaleString("ja-JP");
@@ -926,8 +935,31 @@ function valueLabel(value: unknown): string {
 
 async function loadSourceListRows(): Promise<SourceListRow[]> {
   const token = await getSessionToken();
-  const sources = await adminDataSources(token);
-  return Promise.all(
+  const [sources, documents] = await Promise.all([
+    adminDataSources(token),
+    manufacturingDocuments(token).catch(() => [] as ManufacturingDocumentSummary[]),
+  ]);
+  const docStats = new Map<
+    string,
+    { sourceId: string; collectionId: string; documentCount: number; approvedCount: number; pendingCount: number }
+  >();
+  for (const doc of documents) {
+    const sourceId = doc.source_id || "upload";
+    const current =
+      docStats.get(sourceId) ??
+      {
+        approvedCount: 0,
+        collectionId: doc.collection_id || DEMO_COLLECTION,
+        documentCount: 0,
+        pendingCount: 0,
+        sourceId,
+      };
+    current.documentCount += 1;
+    if (doc.approval_status === "approved") current.approvedCount += 1;
+    if (doc.approval_status === "pending_review") current.pendingCount += 1;
+    docStats.set(sourceId, current);
+  }
+  const registered = await Promise.all(
     sources.map(async (source) => {
       let sync: ManufacturingSourceSyncStatus | null = null;
       try {
@@ -935,9 +967,40 @@ async function loadSourceListRows(): Promise<SourceListRow[]> {
       } catch {
         sync = null;
       }
-      return { source, sync };
+      const stat = docStats.get(source.source_id);
+      docStats.delete(source.source_id);
+      return {
+        approvedCount: stat?.approvedCount ?? null,
+        documentCount: stat?.documentCount ?? null,
+        origin: "registered" as const,
+        pendingCount: stat?.pendingCount ?? null,
+        source,
+        sync,
+      };
     }),
   );
+  const fromDocuments: SourceListRow[] = [...docStats.values()]
+    .sort((a, b) => a.sourceId.localeCompare(b.sourceId))
+    .map((stat) => ({
+      approvedCount: stat.approvedCount,
+      documentCount: stat.documentCount,
+      origin: "documents",
+      pendingCount: stat.pendingCount,
+      source: {
+        audit_events: [],
+        collection_id: stat.collectionId,
+        config: {
+          display_name: stat.sourceId === "upload" ? "ファイルアップロード" : stat.sourceId,
+          source_type: "upload",
+        },
+        source_id: stat.sourceId,
+        status: "active",
+        tenant_id: "",
+        type: "upload",
+      },
+      sync: null,
+    }));
+  return [...registered, ...fromDocuments];
 }
 
 function SourceListBody() {
@@ -986,23 +1049,32 @@ function SourceListBody() {
               <div>ソース</div>
               <div>種別</div>
               <div>ステータス</div>
-              <div className="is-right">変更数</div>
+              <div className="is-right">文書数</div>
               <div className="is-right">最終同期</div>
               <div>コレクション</div>
-              <div>取込前確認</div>
+              <div>承認内訳</div>
             </div>
-            {state.data.map(({ source, sync }) => {
+            {state.data.map((row) => {
+              const { source, sync } = row;
               const config = (source.config ?? {}) as Record<string, unknown>;
               const name = (config.display_name as string) || source.source_id;
               const kind = (config.source_type as string) || source.type;
-              const status = sync?.status
-                ? SOURCE_SYNC_STATUS[sync.status] ?? { label: sync.status, key: "wait" }
-                : { label: "未同期", key: "wait" };
-              const changed = sync?.summary?.changed_count;
+              const status =
+                row.origin === "documents" && !sync
+                  ? { label: "取込済み", key: "ok" }
+                  : sync?.status
+                    ? SOURCE_SYNC_STATUS[sync.status] ?? { label: sync.status, key: "wait" }
+                    : { label: "未同期", key: "wait" };
+              const changed = row.documentCount ?? sync?.summary?.changed_count;
+              const approval =
+                row.documentCount != null
+                  ? `承認済み ${row.approvedCount ?? 0} / 承認待ち ${row.pendingCount ?? 0}`
+                  : "プレビュー";
+              const href = row.origin === "documents" ? "/documents" : `/sources/${source.source_id}`;
               return (
                 <Link
                   key={source.source_id}
-                  href={`/sources/${source.source_id}`}
+                  href={href}
                   className="standalone-table-row"
                 >
                   <div className="standalone-source-cell">
@@ -1014,10 +1086,10 @@ function SourceListBody() {
                     <span className={`standalone-status ${status.key}`}>{status.label}</span>
                   </div>
                   <div className="is-right mono">{changed ?? "—"}</div>
-                  <div className="is-right muted">{sourceFreshness({ source, sync })}</div>
+                  <div className="is-right muted">{sourceFreshness(row)}</div>
                   <div className="muted">{source.collection_id}</div>
                   <div>
-                    <span className="standalone-status wait">プレビュー</span>
+                    <span className="standalone-status wait">{approval}</span>
                   </div>
                 </Link>
               );

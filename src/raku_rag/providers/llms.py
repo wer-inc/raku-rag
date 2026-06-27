@@ -24,20 +24,26 @@ class ExtractiveLLMProvider(LLMProvider):
 
     def generate(self, query: str, context: Sequence[Chunk]) -> str:
         q = _terms(query)
-        best: list[tuple[int, str]] = []
-        for chunk in context:
-            for sent in _SENT.findall(chunk.text):
+        best: list[tuple[int, int, int, str]] = []
+        for chunk_index, chunk in enumerate(context):
+            for sentence_index, sent in enumerate(_SENT.findall(chunk.text)):
                 s = sent.strip()
                 if not s:
                     continue
                 overlap = len(q & _terms(s))
                 if overlap:
-                    best.append((overlap, s))
+                    best.append((overlap, chunk_index, sentence_index, s))
         if not best:
             # No supporting sentence in authorized context → empty (gate will catch it).
             return ""
-        best.sort(key=lambda t: t[0], reverse=True)
-        return " ".join(s for _, s in best[:2])
+        best_overlap = max(overlap for overlap, _, _, _ in best)
+        min_overlap = max(1, best_overlap // 3)
+        selected = sorted(
+            (item for item in best if item[0] >= min_overlap),
+            key=lambda t: (-t[0], t[1], t[2]),
+        )[:4]
+        selected.sort(key=lambda t: (t[1], t[2]))
+        return " ".join(s for _, _, _, s in selected)
 
 
 # Invoker seam: a callable that performs the actual Bedrock InvokeModel/Converse round-trip and returns

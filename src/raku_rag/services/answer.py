@@ -399,12 +399,13 @@ class AnswerService:
                     return Answer(status=status, used_chunks=(), correlation_id=cid)
 
             ans_terms = _terms(text)
+            citation_overlap_threshold = self._citation_overlap_threshold(ans_terms, evidence)
             citations: list[Citation] = []
             used: list[str] = []
             freshness: list[Freshness] = []
             for s in evidence:
                 c = s.chunk
-                if not (ans_terms & _terms(c.text)):
+                if len(ans_terms & _terms(c.text)) < citation_overlap_threshold:
                     continue  # cite only chunks that actually support the answer (FR-012)
                 doc = self._get_document(c.tenant_id, c.document_id)
                 if not self._citation_still_visible(principal, c, doc):
@@ -705,6 +706,15 @@ class AnswerService:
 
     def _evidence_token_count(self, evidence: Sequence[ScoredChunk]) -> int:
         return sum(_token_count(item.chunk.text) for item in evidence)
+
+    def _citation_overlap_threshold(
+        self, answer_terms: set[str], evidence: Sequence[ScoredChunk]
+    ) -> int:
+        overlaps = [len(answer_terms & _terms(item.chunk.text)) for item in evidence]
+        best = max(overlaps, default=0)
+        if best <= 1:
+            return 1
+        return max(2, best // 3)
 
     def _record_hot_path(
         self,

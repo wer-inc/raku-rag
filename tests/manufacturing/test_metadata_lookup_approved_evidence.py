@@ -79,6 +79,57 @@ class TestMetadataLookupUsesApprovedEvidence(unittest.TestCase):
         self.assertEqual({c.approval_status for c in ans.citations}, {"approved"})
         self.assertTrue(ans.obsolete_warning, "obsolete matches are still surfaced as a warning")
 
+    def test_japanese_multi_field_lookup_answers_requested_fields(self) -> None:
+        sys = fresh()
+        equipment_id = "CL-BIZ-E2E-20260627"
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="manuals",
+            document_id="biz-approved",
+            text=(
+                f"設備 {equipment_id} は第一工場の業務検証用ポンプです。"
+                "承認済み台帳では、担当部署は品質保証部、設置ラインはA3、"
+                "記録先は保全台帳 MNT-77 です。"
+                "月次レビューでは異音なし、温度上昇なし、次回の点検計画日は2026-07-15です。"
+            ),
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="biz-approved",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-06-27",
+                document_kind=DocumentKind.WORK_INSTRUCTION,
+                equipment_id=equipment_id,
+            ),
+        )
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="manuals",
+            document_id="biz-pending-noise",
+            text=f"Reference code {equipment_id}. This pending note is not approved evidence.",
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="biz-pending-noise",
+                approval_status=ApprovalStatus.PENDING_REVIEW,
+                effective_date="2026-06-27",
+                document_kind=DocumentKind.WORK_INSTRUCTION,
+                equipment_id=equipment_id,
+            ),
+        )
+        sys.grant(T, ScopeType.COLLECTION, "manuals", SubjectType.USER, "op")
+
+        ans = sys.answer(
+            claims(T, "op"),
+            f"設備 {equipment_id} の担当部署、設置ライン、記録先、次回点検計画日を教えて",
+        )
+
+        self.assertEqual(ans.status, "ok")
+        self.assertTrue(ans.text)
+        for expected in ("品質保証部", "A3", "MNT-77", "2026-07-15"):
+            self.assertIn(expected, ans.text)
+        self.assertTrue(ans.citations)
+        self.assertEqual({c.document_id for c in ans.citations}, {"biz-approved"})
+        self.assertEqual({c.approval_status for c in ans.citations}, {"approved"})
+
 
 if __name__ == "__main__":
     unittest.main()
