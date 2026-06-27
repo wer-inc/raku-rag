@@ -13,13 +13,13 @@ Parameters:
   GitHubRepo:
     Type: String
     Default: raku-rag
-  GitHubRefFilter:
-    Type: String
-    Default: "ref:refs/heads/develop"
+  GitHubSubjectFilters:
+    Type: CommaDelimitedList
+    Default: "repo:wer-inc/raku-rag:environment:sales,repo:wer-inc/raku-rag:environment:stg"
     Description: >
-      Which git ref may assume the role. Default = the develop integration branch only. "*" (ANY
-      branch) is UNSAFE — a pushed/PR branch could then assume this role. Tighten further with
-      "environment:prod" if you add a GitHub Environment gate.
+      Which GitHub OIDC subjects may assume the role. Environment-scoped subjects are used because
+      deploy.yml attaches the job to a GitHub Environment. "*" (ANY branch/environment) is UNSAFE.
+      Add repo:<org>/<repo>:environment:prod only after the GitHub prod Environment has reviewers.
   PermissionsMode:
     Type: String
     AllowedValues: ["cdk-scoped", "admin"]
@@ -69,7 +69,7 @@ Resources:
               StringEquals:
                 "token.actions.githubusercontent.com:aud": sts.amazonaws.com
               StringLike:
-                "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/${GitHubRepo}:${GitHubRefFilter}"
+                "token.actions.githubusercontent.com:sub": !Ref GitHubSubjectFilters
       # admin mode only: account-wide (opt-in escape hatch).
       ManagedPolicyArns: !If
         - IsAdmin

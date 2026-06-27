@@ -27,8 +27,10 @@ GitHub Actions の runner には Docker があるので、**イメージのビ�
 > 「CDKのbootstrapロールをassume」＋「migrate-seedタスク実行」しかできません（アカウント全権は持たない。
 > 実際のデプロイ権限は CloudFormation 実行ロール側＝CloudFormationだけがassume可能）。万一スコープ不足で
 > デプロイが失敗したら、一時的に `PermissionsMode=admin`（AdministratorAccess）にして通し、後で戻せます。
-> **信頼範囲**: `GitHubRefFilter` 既定は **`ref:refs/heads/develop`**（`develop`ブランチで実行した時だけ
-> assume可。`*`=全ブランチは危険なので使わない）。ワークフローは必ず **develop** ブランチで実行してください。
+> **信頼範囲**: `GitHubSubjectFilters` 既定は
+> **`repo:wer-inc/raku-rag:environment:sales,repo:wer-inc/raku-rag:environment:stg`** です。
+> deploy workflow は GitHub Environment を使うため OIDC の `sub` も environment 形式になります。
+> `*`=全ブランチ/全環境は危険なので使わないでください。ワークフローは必ず **develop** ブランチで実行してください。
 
 ### 2. 一回だけ：CDK bootstrap（AWS CloudShell・Docker不要）
 `cdk-scoped` ロールは bootstrap できない設計なので、bootstrap は管理者セッションで一度だけ行います。
