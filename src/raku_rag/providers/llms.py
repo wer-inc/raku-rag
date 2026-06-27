@@ -201,6 +201,8 @@ def llm_provider_from_settings(settings, *, invoker: BedrockInvoker | None = Non
         getattr(settings, "bedrock_claude_model_id", "") or _DEFAULT_BEDROCK_CLAUDE_MODEL_ID
     )
     llm_name = str(getattr(settings, "llm_provider", "") or "").strip().lower().replace("-", "_")
+    if llm_name in {"extractive", "extractive_mvp", "deterministic", "local"}:
+        return ExtractiveLLMProvider()
     if llm_name in {"bedrock_claude", "claude_bedrock", "bedrock_claude_sonnet"}:
         return BedrockClaudeLLMProvider(
             model_id=model_id,

@@ -93,6 +93,16 @@ def build_bedrock_guardrail_invoker(
 def guardrail_from_settings(settings, *, invoker: GuardrailInvoker | None = None):
     """Select the output guardrail by runtime profile (P1-4). deterministic -> None (stdlib
     PromptInjectionGuard still runs in the answer flow); production -> BedrockGuardrailProvider."""
+    provider_name = (
+        str(getattr(settings, "output_guardrail_provider", "") or "")
+        .strip()
+        .lower()
+        .replace("-", "_")
+    )
+    if provider_name in {"none", "disabled", "off"}:
+        return None
+    if provider_name and provider_name not in {"bedrock", "bedrock_guardrail", "bedrock_guardrails"}:
+        raise ValueError(f"unsupported output_guardrail_provider: {provider_name!r}")
     profile = str(getattr(settings, "runtime_profile", "deterministic") or "deterministic")
     profile = profile.strip().lower()
     if profile in {"deterministic", "mvp", "offline", ""}:

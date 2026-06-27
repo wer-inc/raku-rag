@@ -75,6 +75,9 @@ class Settings:
     # (deterministic→extractive). "bedrock_claude" = real Bedrock Claude (needs Bedrock model access +
     # IAM). Lets the answer text come from Claude without flipping guardrail/reranker to production.
     llm_provider: str = ""
+    # Output guardrail override. "" = runtime-profile default, "none" = explicitly disabled,
+    # "bedrock_guardrail" = real Bedrock Guardrails.
+    output_guardrail_provider: str = ""
     bedrock_claude_model_id: str = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
     bedrock_guardrail_id: str = ""
     bedrock_guardrail_version: str = ""
@@ -246,6 +249,10 @@ def settings_from_env(env: dict | None = None) -> Settings:
         ),
         force_deterministic=_bool("RAKU_FORCE_DETERMINISTIC", Settings.force_deterministic),
         llm_provider=_get("RAKU_LLM_PROVIDER", Settings.llm_provider),
+        output_guardrail_provider=_get(
+            "RAKU_OUTPUT_GUARDRAIL_PROVIDER",
+            Settings.output_guardrail_provider,
+        ),
         bedrock_claude_model_id=_get(
             "RAKU_BEDROCK_CLAUDE_MODEL_ID", Settings.bedrock_claude_model_id
         ),

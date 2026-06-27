@@ -95,6 +95,13 @@ class TestLlmProviderSelection(unittest.TestCase):
         self.assertIsInstance(provider, BedrockClaudeLLMProvider)
         self.assertEqual(provider.model, "jp.anthropic.x")
 
+    def test_llm_provider_extractive_override_beats_production_profile(self) -> None:
+        settings = Settings(llm_provider="extractive", runtime_profile="production")
+
+        provider = llm_provider_from_settings(settings)
+
+        self.assertIsInstance(provider, ExtractiveLLMProvider)
+
     def test_llm_provider_override_beats_deterministic_profile(self) -> None:
         # llm_provider takes effect even when runtime_profile stays deterministic.
         settings = Settings(llm_provider="bedrock_claude", runtime_profile="deterministic")

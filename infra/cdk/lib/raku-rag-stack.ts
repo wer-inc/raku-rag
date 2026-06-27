@@ -88,7 +88,10 @@ export class RakuRagStack extends cdk.Stack {
           AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
           ...(bedrockModelIdCtx ? { RAKU_BEDROCK_CLAUDE_MODEL_ID: bedrockModelIdCtx } : {})
         }
-      : {};
+      : {
+          RAKU_LLM_PROVIDER: "extractive",
+          RAKU_OUTPUT_GUARDRAIL_PROVIDER: "none"
+        };
     const bedrockGuardrailIdCtx = this.node.tryGetContext("bedrockGuardrailId") as
       | string
       | undefined;
