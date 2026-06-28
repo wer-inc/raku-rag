@@ -31,7 +31,7 @@ class TestWorkerRuntime(unittest.TestCase):
 
         env = {
             "RAKU_WORKER_BACKEND": "postgres",
-            "POSTGRES_URL": "postgresql://raku:raku@db/raku",
+            "POSTGRES_URL": "postgresql://raku@db/raku",
             "RAKU_CROP_STORAGE_URI": "s3://bucket/visual-crops",
             "RAKU_VISUAL_EVIDENCE_PROMOTION": "true",
         }
