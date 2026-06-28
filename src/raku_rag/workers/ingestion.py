@@ -1004,6 +1004,97 @@ def _render_pdf_pages(raw_pdf: bytes, page_numbers: list[int]) -> dict[int, byte
     return rendered
 
 
+def _render_all_pdf_pages(raw_pdf: bytes) -> dict[int, bytes]:
+    if not raw_pdf:
+        return {}
+    try:
+        import pypdfium2 as pdfium  # type: ignore
+    except Exception:  # pragma: no cover - optional production dependency
+        return {}
+    rendered: dict[int, bytes] = {}
+    try:
+        pdf = pdfium.PdfDocument(raw_pdf)
+        for page_index in range(len(pdf)):
+            page = pdf[page_index]
+            bitmap = page.render(scale=2)
+            image = bitmap.to_pil()
+            output = BytesIO()
+            image.save(output, format="PNG")
+            rendered[page_index + 1] = output.getvalue()
+    except Exception:
+        return rendered
+    return rendered
+
+
+def _with_pdf_page_number(
+    result: VisualIngestionResult,
+    *,
+    page_number: int,
+    document_ref: str,
+    fallback_reason: str,
+) -> VisualIngestionResult:
+    asset_metadata = dict(result.asset.metadata)
+    asset_metadata.update(
+        {
+            "source_pdf_ref": document_ref,
+            "pdf_page_fallback": True,
+            "pdf_page_fallback_reason": _safe_failure_code(fallback_reason),
+        }
+    )
+    asset = replace(
+        result.asset,
+        storage_uri=document_ref,
+        content_type="application/pdf-page",
+        page_number=page_number,
+        metadata=asset_metadata,
+    )
+    regions = tuple(
+        replace(
+            region,
+            page_number=page_number,
+            metadata={
+                **region.metadata,
+                "source_pdf_ref": document_ref,
+                "pdf_page_fallback": True,
+                "pdf_page_fallback_reason": _safe_failure_code(fallback_reason),
+            },
+        )
+        for region in result.regions
+    )
+    return replace(result, asset=asset, regions=regions)
+
+
+def _safe_failure_code(reason: str) -> str:
+    lowered = (reason or "").lower()
+    if "invalids3object" in lowered:
+        return "textract_s3_object_unavailable"
+    if "not configured" in lowered:
+        return "async_analyzer_not_configured"
+    if "access" in lowered or "permission" in lowered or "denied" in lowered:
+        return "async_analyzer_access_denied"
+    if not reason:
+        return ""
+    return "async_analyzer_failed"
+
+
+def _failed_visual_document_result(
+    *,
+    document_id: str,
+    raw: bytes,
+    reason: str,
+    parser_version: str,
+    chunking_config_version: str,
+) -> IngestionExecutionResult:
+    return IngestionExecutionResult(
+        status=JobStatus.FAILED.value,
+        document_id=document_id,
+        failure_reason=reason,
+        content_checksum=hashlib.sha256(raw).hexdigest(),
+        parser_version=parser_version,
+        chunking_config_version=chunking_config_version,
+    )
+
+
 def _visual_region_provenance_metadata(region: LayoutRegion) -> dict:
     extraction_source = str(
         region.extraction_source or region.metadata.get("extraction_source") or ""
@@ -1180,12 +1271,22 @@ class IngestionExecutor:
         async_job_id: str = "",
     ) -> IngestionExecutionResult:
         if self.async_document_analyzer is None:
-            checksum = hashlib.sha256(raw).hexdigest()
-            return IngestionExecutionResult(
-                status=JobStatus.FAILED.value,
+            fallback = self._execute_visual_pdf_page_fallback(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                source_id=source_id,
                 document_id=document_id,
+                raw=raw,
+                content_type=content_type,
+                document_ref=document_ref,
                 failure_reason="visual async document analyzer is not configured",
-                content_checksum=checksum,
+            )
+            if fallback is not None:
+                return fallback
+            return _failed_visual_document_result(
+                document_id=document_id,
+                raw=raw,
+                reason="visual async document analyzer is not configured",
                 parser_version=self.visual_parser_version,
                 chunking_config_version=self.visual_chunking_config_version,
             )
@@ -1196,18 +1297,39 @@ class IngestionExecutor:
             document_id=document_id,
             content_type=content_type,
         )
-        if async_job_id:
-            handle = JobHandle(
-                provider=async_provider
-                or str(getattr(self.async_document_analyzer, "provider_id", "")),
-                token=async_job_id,
+        try:
+            if async_job_id:
+                handle = JobHandle(
+                    provider=async_provider
+                    or str(getattr(self.async_document_analyzer, "provider_id", "")),
+                    token=async_job_id,
+                    document_ref=document_ref,
+                    status=AsyncJobStatus.PENDING,
+                )
+            else:
+                request = AsyncSubmitRequest(document_ref=document_ref, context=context)
+                handle = self.async_document_analyzer.submit(request)
+            analysis = self.async_document_analyzer.poll(handle)
+        except Exception as exc:
+            fallback = self._execute_visual_pdf_page_fallback(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                source_id=source_id,
+                document_id=document_id,
+                raw=raw,
+                content_type=content_type,
                 document_ref=document_ref,
-                status=AsyncJobStatus.PENDING,
+                failure_reason=str(exc),
             )
-        else:
-            request = AsyncSubmitRequest(document_ref=document_ref, context=context)
-            handle = self.async_document_analyzer.submit(request)
-        analysis = self.async_document_analyzer.poll(handle)
+            if fallback is not None:
+                return fallback
+            return _failed_visual_document_result(
+                document_id=document_id,
+                raw=raw,
+                reason=str(exc),
+                parser_version=self.visual_parser_version,
+                chunking_config_version=self.visual_chunking_config_version,
+            )
         if analysis.status in {AsyncJobStatus.PENDING, AsyncJobStatus.MORE_AVAILABLE}:
             return IngestionExecutionResult(
                 status=JobStatus.RUNNING.value,
@@ -1220,6 +1342,19 @@ class IngestionExecutor:
                 async_job_status=analysis.status.value,
             )
         if analysis.status != AsyncJobStatus.SUCCEEDED:
+            fallback = self._execute_visual_pdf_page_fallback(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                source_id=source_id,
+                document_id=document_id,
+                raw=raw,
+                content_type=content_type,
+                document_ref=document_ref,
+                failure_reason=analysis.failure_reason
+                or f"visual document analysis ended with {analysis.status.value}",
+            )
+            if fallback is not None:
+                return fallback
             return IngestionExecutionResult(
                 status=JobStatus.FAILED.value,
                 document_id=document_id,
@@ -1268,6 +1403,69 @@ class IngestionExecutor:
             async_provider=analysis.provider,
             async_job_id=analysis.job_id,
             async_job_status=analysis.status.value,
+        )
+
+    def _execute_visual_pdf_page_fallback(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_id: str,
+        document_id: str,
+        raw: bytes,
+        content_type: str,
+        document_ref: str,
+        failure_reason: str,
+    ) -> IngestionExecutionResult | None:
+        rendered = _render_all_pdf_pages(raw)
+        if not rendered:
+            return None
+        results = tuple(
+            _with_pdf_page_number(
+                self.visual_executor.execute_image(
+                    tenant_id=tenant_id,
+                    collection_id=collection_id,
+                    source_id=source_id,
+                    document_id=document_id,
+                    image=image,
+                    options=VisualIngestionOptions(
+                        captioning_enabled=True,
+                        content_type="image/png",
+                    ),
+                    job_id=f"visual-pdf-page:{document_id}:{page_number}",
+                ),
+                page_number=page_number,
+                document_ref=document_ref,
+                fallback_reason=failure_reason,
+            )
+            for page_number, image in sorted(rendered.items())
+        )
+        if not any(result.regions for result in results):
+            return None
+        chunk_count = self._persist_visual_results(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            checksum=hashlib.sha256(raw).hexdigest(),
+            content_type=content_type,
+            results=results,
+            async_provider="sync_page_image_fallback",
+            async_job_status=AsyncJobStatus.SUCCEEDED.value,
+        )
+        embedding_version = (
+            results[0].asset.metadata.get("visual_embedding_model_version", "") if results else ""
+        )
+        return IngestionExecutionResult(
+            status=JobStatus.SUCCEEDED.value,
+            document_id=document_id,
+            chunk_count=chunk_count,
+            content_checksum=hashlib.sha256(raw).hexdigest(),
+            parser_version=self.visual_parser_version,
+            chunking_config_version=self.visual_chunking_config_version,
+            embedding_model_version=embedding_version,
+            async_provider="sync_page_image_fallback",
+            async_job_status=AsyncJobStatus.SUCCEEDED.value,
         )
 
     def _persist_visual_results(

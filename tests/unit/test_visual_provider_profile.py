@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 
+from raku_rag.app import MvpSystem
 from raku_rag.core.config import Settings, settings_from_env
 from raku_rag.domain.models import BoundingBox, LayoutRegion, OcrTextRegion, VisualAsset
 from raku_rag.interfaces.visual import AsyncJobStatus, AsyncSubmitRequest, IngestContext
@@ -28,7 +29,12 @@ from raku_rag.providers.visual import (
 from raku_rag.providers.visual_embeddings import HashingVisualEmbeddingProvider
 from raku_rag.providers.vlms import ExtractiveVLMProvider
 from raku_rag.services.visual import visual_chunks_from_ingestion
-from raku_rag.workers.ingestion import VisualIngestionExecutor, VisualIngestionResult
+from raku_rag.workers import ingestion as ingestion_worker
+from raku_rag.workers.ingestion import (
+    IngestionExecutor,
+    VisualIngestionExecutor,
+    VisualIngestionResult,
+)
 
 
 class VisualProviderProfileTest(unittest.TestCase):
@@ -286,6 +292,40 @@ class VisualProviderProfileTest(unittest.TestCase):
 
         self.assertEqual(ids, {"doc_pdf:visual:1:0", "doc_pdf:visual:2:0"})
 
+    def test_pdf_worker_falls_back_to_sync_page_images_when_async_s3_unavailable(self) -> None:
+        system = MvpSystem()
+        executor = IngestionExecutor(
+            system.ingestion,
+            async_document_analyzer=_FailingAsyncAnalyzer(),
+        )
+        original = ingestion_worker._render_all_pdf_pages
+        ingestion_worker._render_all_pdf_pages = lambda raw: {
+            1: b"OCR: PDF fallback page one VIS-PDF-FALLBACK\ncaption: fallback caption",
+            2: b"OCR: PDF fallback page two shelf F-22\ncaption: fallback caption",
+        }
+        try:
+            result = executor.execute_document(
+                tenant_id="tenant_a",
+                collection_id="manuals",
+                source_id="upload",
+                document_id="doc_pdf",
+                raw=b"%PDF fake",
+                content_type="application/pdf",
+                document_ref="s3://tokyo-bucket/doc.pdf",
+            )
+        finally:
+            ingestion_worker._render_all_pdf_pages = original
+
+        self.assertEqual(result.status, "succeeded")
+        self.assertEqual(result.async_provider, "sync_page_image_fallback")
+        chunks = [chunk for chunk, _vector in system.store.iter_items()]
+        self.assertEqual(
+            {chunk.chunk_id for chunk in chunks},
+            {"doc_pdf:visual:1:0", "doc_pdf:visual:2:0"},
+        )
+        self.assertTrue(all(chunk.metadata["pdf_page_fallback"] for chunk in chunks))
+        self.assertIn("VIS-PDF-FALLBACK", chunks[0].text)
+
 
 def _asset(document_id: str, *, page_number: int) -> VisualAsset:
     return VisualAsset(
@@ -313,6 +353,13 @@ def _region(text: str, *, page_number: int) -> LayoutRegion:
         region_type="text",
         ocr_text=text,
     )
+
+
+class _FailingAsyncAnalyzer:
+    provider_id = "aws_textract"
+
+    def submit(self, request: AsyncSubmitRequest):
+        raise RuntimeError("InvalidS3ObjectException: Unable to get object metadata from S3")
 
 
 if __name__ == "__main__":

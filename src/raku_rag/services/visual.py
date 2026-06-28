@@ -58,6 +58,7 @@ def visual_chunks_from_ingestion(result: VisualIngestionResult) -> tuple[Chunk, 
                     "primary_evidence_text": region.ocr_text,
                     "primary_evidence_source": primary_evidence_source,
                     "caption_source": caption_source,
+                    **_visual_pdf_fallback_metadata(region),
                     **redaction_metadata,
                 },
             )
@@ -85,4 +86,14 @@ def _visual_redaction_metadata(region: LayoutRegion) -> dict:
         "visual_redaction_policy_ref": str(
             region.metadata.get("visual_redaction_policy_ref") or ""
         ),
+    }
+
+
+def _visual_pdf_fallback_metadata(region: LayoutRegion) -> dict:
+    if not region.metadata.get("pdf_page_fallback"):
+        return {}
+    return {
+        "pdf_page_fallback": True,
+        "pdf_page_fallback_reason": str(region.metadata.get("pdf_page_fallback_reason") or ""),
+        "source_pdf_ref": str(region.metadata.get("source_pdf_ref") or ""),
     }
