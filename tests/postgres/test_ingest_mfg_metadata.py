@@ -100,6 +100,37 @@ class TestIngestMfgMetadataWritePath(unittest.TestCase):
         self.assertEqual(resolved.approval_status, ApprovalStatus.APPROVED)
         self.assertEqual(resolved.safety_category, "lockout_tagout")
 
+    def test_idempotent_reseed_repairs_missing_metadata(self) -> None:
+        document_id = "idempotent_draft_doc"
+        raw = _SAFETY_TEXT.encode("utf-8")
+        initial = self.sys.ingest_document(
+            tenant_id=self.T,
+            collection_id="c",
+            source_id="src",
+            document_id=document_id,
+            document_ref=f"inline:{document_id}",
+            raw=raw,
+            content_type="text/plain",
+        )
+        self.assertEqual(initial.status, "succeeded")
+        self.assertIsNone(registry_mfg_meta_resolver(self.sys)(self.T, document_id))
+
+        reseed = self.sys.ingest_document(
+            tenant_id=self.T,
+            collection_id="c",
+            source_id="src",
+            document_id=document_id,
+            document_ref=f"inline:{document_id}",
+            raw=raw,
+            content_type="text/plain",
+            manufacturing_metadata=_meta(self.T, document_id, ApprovalStatus.DRAFT, None),
+        )
+
+        self.assertEqual(reseed.status, "succeeded")
+        resolved = registry_mfg_meta_resolver(self.sys)(self.T, document_id)
+        self.assertIsNotNone(resolved, "idempotent reseed must backfill mfg metadata")
+        self.assertEqual(resolved.approval_status, ApprovalStatus.DRAFT)
+
     def test_ingest_without_metadata_persists_none(self) -> None:
         run = self.sys.ingest_document(
             tenant_id=self.T,

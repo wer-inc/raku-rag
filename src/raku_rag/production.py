@@ -259,6 +259,8 @@ class ProductionSystem(MvpSystem):
         )
         run, created = self.ingestion_runs.create_queued(message, trigger="api")
         if not created and run.status == JobStatus.SUCCEEDED.value:
+            if manufacturing_metadata is not None:
+                self.attach_manufacturing_metadata(tenant_id, document_id, manufacturing_metadata)
             return run
         if _is_pdf_content_type(content_type):
             # Multi-page PDFs are async: the API creates the run and the worker owns submit/poll/persist.
