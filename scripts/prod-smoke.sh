@@ -10,8 +10,8 @@ set -euo pipefail
 #   RAKU_PROD_BEARER_TOKEN=<Cognito JWT obtained through Hosted UI>
 #   RAKU_SMOKE_COLLECTION_ID=<collection>
 #   RAKU_SMOKE_GROUNDED_QUERY=<query expected to answer with citations>
-#   RAKU_SMOKE_HIGH_RISK_QUERY=<query expected to be high-risk refused by manufacturing gate>
-#   RAKU_SMOKE_POISON_QUERY=<query expected to refuse source-poisoned evidence>
+#   RAKU_SMOKE_HIGH_RISK_QUERY=<approved/effective high-risk query expected to answer with citations>
+#   RAKU_SMOKE_POISON_QUERY=<query expected to refuse draft/obsolete/source-poisoned evidence>
 #
 # Optional but required for a no-skip promotion run:
 #   RAKU_PROD_OTHER_BEARER_TOKEN=<Cognito JWT for a different tenant>
@@ -127,7 +127,13 @@ import sys
 path, expr = sys.argv[1], sys.argv[2]
 with open(path, encoding="utf-8") as handle:
     data = json.load(handle)
-ok = bool(eval(expr, {"__builtins__": {}}, {"data": data, "len": len, "isinstance": isinstance}))
+ok = bool(
+    eval(
+        expr,
+        {"__builtins__": {}},
+        {"data": data, "len": len, "isinstance": isinstance, "bool": bool},
+    )
+)
 raise SystemExit(0 if ok else 1)
 PY
   then
@@ -163,9 +169,9 @@ fi
 high_risk_query="${RAKU_SMOKE_HIGH_RISK_QUERY:?set RAKU_SMOKE_HIGH_RISK_QUERY}"
 high_risk="$tmpdir/high-risk.json"
 if request_json POST /manufacturing/answer "$TOKEN" "$(payload "$high_risk_query" "$COLLECTION_ID")" "$high_risk"; then
-  check_json "high-risk refusal" "$high_risk" 'data.get("status") != "ok" and data.get("manufacturing", {}).get("high_risk") is True'
+  check_json "approved high-risk answer" "$high_risk" 'data.get("status") == "ok" and data.get("manufacturing", {}).get("high_risk") is True and len(data.get("citations") or []) > 0'
 else
-  fail "high-risk refusal request"
+  fail "approved high-risk answer request"
 fi
 
 poison_query="${RAKU_SMOKE_POISON_QUERY:?set RAKU_SMOKE_POISON_QUERY}"

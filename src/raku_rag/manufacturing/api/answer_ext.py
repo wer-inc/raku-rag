@@ -22,6 +22,7 @@ stdlib only.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Callable, Sequence
@@ -162,6 +163,12 @@ GetMfgMeta = Callable[[str, str], ManufacturingDocumentMetadata | None]
 
 _METADATA_RISK_REASON_PREFIX = "metadata:"
 _METADATA_RISK_REASON_CODES = {"hazard_tag"}
+_IDENTIFIER_RE = re.compile(
+    r"(?<![A-Za-z0-9])(?:"
+    r"[A-Za-z]{1,12}(?:-[A-Za-z0-9]{1,16})+"
+    r"|[A-Za-z]{2,12}[0-9]{2,}(?:-[A-Za-z0-9]{1,16})*"
+    r")(?![A-Za-z0-9])"
+)
 
 
 class _PreselectedRetrieval:
@@ -285,6 +292,64 @@ def _should_defer_visual_promotion(
         and is_promotable_evidence(getattr(c, "metadata", None))
         for c in candidate_citations
     )
+
+
+def _normalize_identifier(value: str) -> str:
+    return "".join(ch.lower() for ch in value if ch.isalnum())
+
+
+def _query_identifiers(query: str) -> tuple[str, ...]:
+    seen: set[str] = set()
+    identifiers: list[str] = []
+    for match in _IDENTIFIER_RE.finditer(query or ""):
+        normalized = _normalize_identifier(match.group(0))
+        if len(normalized) < 3 or normalized in seen:
+            continue
+        seen.add(normalized)
+        identifiers.append(normalized)
+    return tuple(identifiers)
+
+
+def _evidence_identifier_blob(
+    evidence: Sequence[ScoredChunk],
+    metadata: Sequence[ManufacturingDocumentMetadata],
+) -> str:
+    parts: list[str] = []
+    for scored in evidence:
+        chunk = scored.chunk
+        parts.extend(
+            [
+                chunk.document_id,
+                chunk.chunk_id,
+                chunk.text,
+            ]
+        )
+        parts.extend(str(value) for value in chunk.metadata.values() if value is not None)
+    for meta in metadata:
+        parts.extend(
+            str(value)
+            for value in (
+                meta.document_id,
+                getattr(meta, "equipment_id", None),
+                getattr(meta, "factory_id", None),
+                getattr(meta, "line_id", None),
+                getattr(meta, "process_id", None),
+            )
+            if value
+        )
+    return _normalize_identifier(" ".join(parts))
+
+
+def _missing_query_identifiers(
+    query: str,
+    evidence: Sequence[ScoredChunk],
+    metadata: Sequence[ManufacturingDocumentMetadata],
+) -> tuple[str, ...]:
+    identifiers = _query_identifiers(query)
+    if not identifiers:
+        return ()
+    blob = _evidence_identifier_blob(evidence, metadata)
+    return tuple(identifier for identifier in identifiers if identifier not in blob)
 
 
 def _visual_grounding_method(verdicts: Sequence[dict]) -> str:
@@ -412,6 +477,7 @@ class ManufacturingAnswerService:
                 candidate_meta.append(m)
 
         candidate_citations = [self._candidate_citation(s) for s in evidence]
+        missing_identifiers = _missing_query_identifiers(query, evidence, candidate_meta)
 
         # (4) high-risk classification over query + candidate metadata.
         classification = self._classifier.classify(query, candidate_meta, intent_hint=intent_hint)
@@ -427,6 +493,22 @@ class ManufacturingAnswerService:
         )
 
         notice = ONSITE_CONFIRMATION_NOTICE if decision.requires_onsite_confirmation else None
+
+        if missing_identifiers:
+            blocked = ManufacturingAnswer(
+                status=AnswerStatus.INSUFFICIENT_EVIDENCE.value,
+                text=None,
+                citations=(),
+                used_chunks=(),
+                correlation_id="",
+                high_risk=classification.is_high_risk,
+                high_risk_reason_codes=classification.reason_codes,
+                safety_block_reason=SafetyBlockReason.INSUFFICIENT_EVIDENCE.value,
+                obsolete_warning=decision.obsolete_warning,
+                requires_onsite_confirmation=decision.requires_onsite_confirmation,
+                notice=notice,
+            )
+            return blocked, classification, decision, tuple(candidate_doc_ids)
 
         # (6) blocked => MUST NOT assert (FR-MFG-005).
         if decision.blocked and not deferred_visual_promotion:
@@ -459,6 +541,34 @@ class ManufacturingAnswerService:
             evidence=evidence,
         )
         if approved_lookup_evidence:
+            approved_lookup_meta = [
+                m
+                for s in approved_lookup_evidence
+                if (
+                    m := self._get_mfg_meta(principal.tenant_id, s.chunk.document_id)
+                )
+                is not None
+            ]
+            if _missing_query_identifiers(query, approved_lookup_evidence, approved_lookup_meta):
+                block_reason = (
+                    SafetyBlockReason.APPROVED_CITATION_MISSING
+                    if classification.is_high_risk
+                    else SafetyBlockReason.INSUFFICIENT_EVIDENCE
+                )
+                blocked = ManufacturingAnswer(
+                    status=AnswerStatus.INSUFFICIENT_EVIDENCE.value,
+                    text=None,
+                    citations=(),
+                    used_chunks=(),
+                    correlation_id="",
+                    high_risk=classification.is_high_risk,
+                    high_risk_reason_codes=classification.reason_codes,
+                    safety_block_reason=block_reason.value,
+                    obsolete_warning=decision.obsolete_warning,
+                    requires_onsite_confirmation=decision.requires_onsite_confirmation,
+                    notice=notice,
+                )
+                return blocked, classification, decision, tuple(candidate_doc_ids)
             filtered_citations = [self._candidate_citation(s) for s in approved_lookup_evidence]
             filtered_meta = [
                 m
