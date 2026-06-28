@@ -46,7 +46,12 @@ from raku_rag.services.retrieval import RetrievalService
 from raku_rag.services.structured_query import classify_structured_query
 
 _EST_QUERY_COST = 1.0
-_IDENTIFIER = re.compile(r"\b[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+){2,}\b")
+_IDENTIFIER = re.compile(
+    r"(?<![A-Za-z0-9])(?:"
+    r"[A-Za-z]{1,12}(?:[-_][A-Za-z0-9]{1,16})+"
+    r"|[A-Za-z]{2,12}[0-9]{2,}(?:[-_][A-Za-z0-9]{1,16})*"
+    r")(?![A-Za-z0-9])"
+)
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?。！？])\s+|[\r\n]+")
 
 GetDocument = Callable[[str, str], Document | None]  # (tenant_id, document_id) -> Document
@@ -67,6 +72,11 @@ def _identifier_anchors(text: str) -> set[str]:
 def _has_identifier(text: str, identifiers: set[str]) -> bool:
     haystack = (text or "").lower()
     return any(identifier in haystack for identifier in identifiers)
+
+
+def _identifier_hit_count(text: str, identifiers: set[str]) -> int:
+    haystack = (text or "").lower()
+    return sum(1 for identifier in identifiers if identifier in haystack)
 
 
 class AnswerService:
@@ -722,10 +732,22 @@ class AnswerService:
         identifiers = _identifier_anchors(query)
         if not identifiers:
             return list(evidence)
+        hit_counts = [
+            _identifier_hit_count(self._chunk_identifier_surface(item.chunk), identifiers)
+            for item in evidence
+        ]
+        best_hits = max(hit_counts, default=0)
+        if best_hits <= 0:
+            return list(evidence)
+        matching_documents = {
+            item.chunk.document_id
+            for item, hits in zip(evidence, hit_counts)
+            if hits == best_hits
+        }
         matched = [
             item
-            for item in evidence
-            if _has_identifier(self._chunk_identifier_surface(item.chunk), identifiers)
+            for item, hits in zip(evidence, hit_counts)
+            if item.chunk.document_id in matching_documents or hits == best_hits
         ]
         if not matched:
             return list(evidence)

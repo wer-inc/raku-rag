@@ -16,8 +16,13 @@ from raku_rag.core.text import content_terms as _terms
 from raku_rag.domain.models import Chunk
 from raku_rag.interfaces.base import LLMProvider
 
-_SENT = re.compile(r"[^。．.!?！？\n]+[。．.!?！？]?")
-_IDENTIFIER = re.compile(r"\b[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+){2,}\b")
+_SENT = re.compile(r".+?(?:[。．！？]|(?<!\d)[.!?](?!\d)|\n|$)")
+_IDENTIFIER = re.compile(
+    r"(?<![A-Za-z0-9])(?:"
+    r"[A-Za-z]{1,12}(?:[-_][A-Za-z0-9]{1,16})+"
+    r"|[A-Za-z]{2,12}[0-9]{2,}(?:[-_][A-Za-z0-9]{1,16})*"
+    r")(?![A-Za-z0-9])"
+)
 
 
 def _identifier_anchors(text: str) -> set[str]:
@@ -31,6 +36,37 @@ def _identifier_anchors(text: str) -> set[str]:
 def _has_identifier(text: str, identifiers: set[str]) -> bool:
     haystack = (text or "").lower()
     return any(identifier in haystack for identifier in identifiers)
+
+
+def _identifier_hit_count(text: str, identifiers: set[str]) -> int:
+    haystack = (text or "").lower()
+    return sum(1 for identifier in identifiers if identifier in haystack)
+
+
+def _context_identifier_surface(chunk: Chunk) -> str:
+    parts = [chunk.text, chunk.document_id, chunk.chunk_id]
+    parts.extend(_metadata_strings(chunk.metadata))
+    return " ".join(part for part in parts if part)
+
+
+def _metadata_strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        out: list[str] = []
+        for item in value.values():
+            out.extend(_metadata_strings(item))
+        return out
+    if isinstance(value, (list, tuple, set)):
+        out: list[str] = []
+        for item in value:
+            out.extend(_metadata_strings(item))
+        return out
+    if value is None:
+        return []
+    if isinstance(value, (int, float, bool)):
+        return [str(value)]
+    return []
 
 
 def _anchor_terms(query: str) -> set[str]:
@@ -59,11 +95,29 @@ class ExtractiveLLMProvider(LLMProvider):
     def generate(self, query: str, context: Sequence[Chunk]) -> str:
         q = _terms(query)
         identifiers = _identifier_anchors(query)
-        if identifiers and any(_has_identifier(chunk.text, identifiers) for chunk in context):
-            context = [chunk for chunk in context if _has_identifier(chunk.text, identifiers)]
+        if identifiers:
+            identifier_hits = [
+                _identifier_hit_count(_context_identifier_surface(chunk), identifiers)
+                for chunk in context
+            ]
+            best_identifier_hits = max(identifier_hits, default=0)
+        else:
+            identifier_hits = []
+            best_identifier_hits = 0
+        if best_identifier_hits > 0:
+            matching_documents = {
+                chunk.document_id
+                for chunk, hits in zip(context, identifier_hits)
+                if hits == best_identifier_hits
+            }
+            context = [
+                chunk
+                for chunk, hits in zip(context, identifier_hits)
+                if chunk.document_id in matching_documents or hits == best_identifier_hits
+            ]
         anchors = _anchor_terms(query)
         anchor_threshold = 0
-        if anchors:
+        if anchors and not identifiers:
             anchor_threshold = max(
                 (len(anchors & _terms(chunk.text)) for chunk in context), default=0
             )

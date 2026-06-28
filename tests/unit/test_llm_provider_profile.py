@@ -21,15 +21,22 @@ from raku_rag.providers.llms import (
 )
 
 
-def _chunk(text: str) -> Chunk:
+def _chunk(
+    text: str,
+    *,
+    chunk_id: str = "c1",
+    document_id: str = "d1",
+    metadata: dict | None = None,
+) -> Chunk:
     return Chunk(
         tenant_id="t",
-        chunk_id="c1",
-        document_id="d1",
+        chunk_id=chunk_id,
+        document_id=document_id,
         collection_id="col",
         text=text,
         position=0,
         modality=Modality.TEXT,
+        metadata=metadata or {},
     )
 
 
@@ -82,6 +89,49 @@ class LlmProviderProfileTest(unittest.TestCase):
             "pump interval", [_chunk("The pump interval is 90 days. Unrelated sentence.")]
         )
         self.assertIn("pump interval is 90 days", out)
+
+    def test_identifier_match_keeps_same_document_detail_chunks(self) -> None:
+        out = ExtractiveLLMProvider().generate(
+            "PRESS-07 の始業前点検で油圧計の確認範囲は何 MPa ですか",
+            [
+                _chunk(
+                    "第一工場 A3 ラインの PRESS-07 における始業前点検。",
+                    chunk_id="doc-a:0",
+                    document_id="doc-a",
+                ),
+                _chunk(
+                    "油圧計が 8.0 MPa から 9.5 MPa の範囲にあることを確認する。",
+                    chunk_id="doc-a:1",
+                    document_id="doc-a",
+                ),
+                _chunk(
+                    "PRESS-99 の油圧計は 1.0 MPa です。",
+                    chunk_id="doc-b:0",
+                    document_id="doc-b",
+                ),
+            ],
+        )
+        self.assertIn("8.0 MPa から 9.5 MPa", out)
+        self.assertNotIn("1.0 MPa", out)
+
+    def test_multiple_identifiers_prefer_document_matching_all_ids(self) -> None:
+        out = ExtractiveLLMProvider().generate(
+            "What does alarm E-142 on press EQ-PRESS-100 indicate?",
+            [
+                _chunk(
+                    "Press machine EQ-PRESS-100 alarm E-142 indicates a temperature sensor overheat.",
+                    chunk_id="e142:0",
+                    document_id="e142",
+                ),
+                _chunk(
+                    "Press machine EQ-PRESS-100 alarm E-200 indicates a hydraulic pressure drop.",
+                    chunk_id="e200:0",
+                    document_id="e200",
+                ),
+            ],
+        )
+        self.assertIn("temperature sensor overheat", out)
+        self.assertNotIn("hydraulic pressure drop", out)
 
 
 if __name__ == "__main__":
