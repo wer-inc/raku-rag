@@ -408,6 +408,44 @@ def _visual_evidence_audit_payload(
     return tuple(payload)
 
 
+def _visual_page_key(citation: ManufacturingCitation) -> tuple[str, int, str]:
+    return (citation.document_id, int(citation.page_number or 0), citation.asset_id or "")
+
+
+def _collapse_visual_page_citations(
+    citations: Sequence[ManufacturingCitation],
+) -> tuple[ManufacturingCitation, ...]:
+    """Use verified page-level visual evidence as the primary citation for same-page line crops.
+
+    OCR line regions are still useful for retrieval, but a high-risk manufacturing assertion may
+    span several lines. When a verified, promotable page aggregate exists for the same document page
+    and asset, the aggregate is the evidence reviewed by the verifier; same-page line crops become
+    redundant and should not make the post-answer safety gate fail as unverified secondary citations.
+    """
+
+    verified_page_keys = {
+        _visual_page_key(citation)
+        for citation in citations
+        if citation.kind in VISUAL_DERIVED_CITATION_KINDS
+        and citation.visual_evidence_verified
+        and bool(citation.metadata.get("page_aggregate"))
+        and is_promotable_evidence(citation.metadata)
+    }
+    if not verified_page_keys:
+        return tuple(citations)
+
+    collapsed: list[ManufacturingCitation] = []
+    for citation in citations:
+        if (
+            citation.kind in VISUAL_DERIVED_CITATION_KINDS
+            and not bool(citation.metadata.get("page_aggregate"))
+            and _visual_page_key(citation) in verified_page_keys
+        ):
+            continue
+        collapsed.append(citation)
+    return tuple(collapsed)
+
+
 class ManufacturingAnswerService:
     """Overlay service composing 001 services with the manufacturing safety gate."""
 
@@ -592,6 +630,14 @@ class ManufacturingAnswerService:
             ManufacturingCitation.from_base(c, self._get_mfg_meta(tenant, c.document_id))
             for c in base.citations
         )
+        final_citations = (
+            _collapse_visual_page_citations(mfg_citations)
+            if classification.is_high_risk and self._visual_evidence_promotion
+            else mfg_citations
+        )
+        final_used_chunks = tuple(
+            c.chunk_id for c in final_citations if c.chunk_id is not None
+        ) or base.used_chunks
 
         # (FR-MFG-006 / SC-MFG-011) T066 integration glue: the pre-gate ``has_usable_primary`` check
         # confirms SOME candidate is non-draft/non-obsolete, but the REUSED 001 answer path may still
@@ -612,8 +658,8 @@ class ManufacturingAnswerService:
         #    still contaminate a high-risk answer's text and citation list (source poisoning via a
         #    SECONDARY citation, even when an approved doc is primary). Demote to insufficient_evidence
         #    unless EVERY cited source is approved+effective.
-        if base.status == AnswerStatus.OK.value and mfg_citations:
-            primary = mfg_citations[0]
+        if base.status == AnswerStatus.OK.value and final_citations:
+            primary = final_citations[0]
             cited_approved_effective = [
                 citation_is_approved_effective(
                     c,
@@ -621,7 +667,7 @@ class ManufacturingAnswerService:
                     today=self._today,
                     visual_evidence_promotion=self._visual_evidence_promotion,
                 )
-                for c in mfg_citations
+                for c in final_citations
             ]
             cited_has_approved_effective = any(cited_approved_effective)
             high_risk_unsupported = classification.is_high_risk and not all(
@@ -653,7 +699,7 @@ class ManufacturingAnswerService:
                     requires_onsite_confirmation=decision.requires_onsite_confirmation,
                     notice=notice,
                     visual_evidence_audit=_visual_evidence_audit_payload(
-                        mfg_citations,
+                        final_citations,
                         quorum=self._answer_service._settings.visual_evidence_verifier_quorum,
                     ),
                 )
@@ -678,8 +724,8 @@ class ManufacturingAnswerService:
             status=base.status,
             text=base.text,
             confidence=base.confidence,
-            citations=mfg_citations,
-            used_chunks=base.used_chunks,
+            citations=final_citations,
+            used_chunks=final_used_chunks,
             used_modalities=base.used_modalities,
             freshness=base.freshness,
             cost=base.cost,
@@ -691,7 +737,7 @@ class ManufacturingAnswerService:
             requires_onsite_confirmation=decision.requires_onsite_confirmation,
             notice=notice if base.status == AnswerStatus.OK.value else notice,
             visual_evidence_audit=_visual_evidence_audit_payload(
-                mfg_citations,
+                final_citations,
                 quorum=self._answer_service._settings.visual_evidence_verifier_quorum,
             ),
         )

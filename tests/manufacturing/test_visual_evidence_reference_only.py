@@ -8,6 +8,10 @@ from datetime import date
 from raku_rag.core.config import Settings
 from raku_rag.domain.models import Citation, ExtractionSource, ScopeType, SubjectType
 from raku_rag.manufacturing.app import ManufacturingSystem
+from raku_rag.manufacturing.api.answer_ext import (
+    ManufacturingCitation,
+    _collapse_visual_page_citations,
+)
 from raku_rag.manufacturing.domain.metadata import (
     ApprovalStatus,
     DocumentKind,
@@ -206,6 +210,58 @@ class TestVisualEvidenceReferenceOnly(unittest.TestCase):
         self.assertNotIn("emergency stop", serialized)
         self.assertNotIn("pump stop procedure", serialized)
         self.assertNotIn("s3://", serialized)
+
+    def test_verified_page_visual_citation_replaces_same_page_line_citations(self) -> None:
+        line = ManufacturingCitation(
+            kind="visual",
+            document_id="visual_doc",
+            source_id="camera_upload",
+            version=1,
+            retrieval_score=0.91,
+            chunk_id="line-1",
+            asset_id="asset-1",
+            page_number=1,
+            region_id="line-1",
+            pixel_derived=True,
+            visual_evidence_verified=False,
+            metadata=dict(PROMOTABLE_VISUAL_METADATA, region_type="line"),
+        )
+        page = ManufacturingCitation(
+            kind="visual",
+            document_id="visual_doc",
+            source_id="camera_upload",
+            version=1,
+            retrieval_score=0.95,
+            chunk_id="page-1",
+            asset_id="asset-1",
+            page_number=1,
+            region_id="page-1",
+            pixel_derived=True,
+            visual_evidence_verified=True,
+            metadata=dict(
+                PROMOTABLE_VISUAL_METADATA,
+                page_aggregate=True,
+                region_type="page",
+            ),
+        )
+        other_page_line = ManufacturingCitation(
+            kind="visual",
+            document_id="visual_doc",
+            source_id="camera_upload",
+            version=1,
+            retrieval_score=0.89,
+            chunk_id="line-2",
+            asset_id="asset-1",
+            page_number=2,
+            region_id="line-2",
+            pixel_derived=True,
+            visual_evidence_verified=False,
+            metadata=dict(PROMOTABLE_VISUAL_METADATA, region_type="line"),
+        )
+
+        collapsed = _collapse_visual_page_citations((line, page, other_page_line))
+
+        self.assertEqual(tuple(c.chunk_id for c in collapsed), ("page-1", "line-2"))
 
 
 if __name__ == "__main__":
