@@ -840,10 +840,10 @@ function screenTitle(screen: ManifestScreen): string {
     "ingestion-runs": "取り込み実行",
     "document-list": "ドキュメント",
     "document-detail": "ドキュメント詳細",
-    "review-queue": "レビューキュー",
-    "review-detail": "レビュー詳細",
-    "approval-workflow-settings": "承認ルール",
-    "document-approval-queue": "文書承認キュー",
+    "review-queue": "AIドラフトレビュー",
+    "review-detail": "AIドラフト詳細",
+    "approval-workflow-settings": "同期・承認ポリシー",
+    "document-approval-queue": "根拠文書レビュー",
     "operations-dashboard": "運用ダッシュボード",
     "safety-telemetry": "安全テレメトリ",
     "quality-kpi": "品質・KPI",
@@ -1635,12 +1635,12 @@ function HomeDashboardBody() {
         <div className="home-task-grid">
           <Link href="/reviews" className="home-task-card">
             <div className="home-task-head">
-              <span className="home-task-label">レビュー待ち</span>
+              <span className="home-task-label">AIドラフト</span>
               <span className="home-task-dot" />
             </div>
             <strong>{dashboard.unanswered_question_count}</strong>
             <span>未回答の質問</span>
-            <span className="home-task-cta">ドラフト確認</span>
+            <span className="home-task-cta">レビューへ</span>
           </Link>
           <Link href="/operations/safety" className="home-task-card">
             <div className="home-task-head">
@@ -1683,7 +1683,7 @@ function HomeDashboardBody() {
               <span>接続済みソースと同期状態を確認する</span>
             </Link>
             <Link href="/reviews" className="action-card">
-              <strong>レビュー</strong>
+              <strong>AIドラフトレビュー</strong>
               <span>AI ドラフトを確認する</span>
             </Link>
             <Link href="/operations" className="action-card">
@@ -1698,7 +1698,7 @@ function HomeDashboardBody() {
               ["ポリシー版本", String(governance.policy_version)],
               ["No-train デフォルト", governance.no_train.no_train_default ? "はい" : "いいえ"],
               ["提供元 no-train 必須", governance.no_train.provider_no_train_required ? "はい" : "いいえ"],
-              ["高リスクは承認済み引用必須", governance.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
+              ["高リスク回答は承認済み根拠が必須", governance.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
               ["引用必須", governance.groundedness.citation_required ? "はい" : "いいえ"],
             ]}
           />
@@ -1919,10 +1919,10 @@ function DocumentApprovalQueueBody() {
     <>
       <p className="src-warning">
         取り込んだ文書は、ここで承認するまで正式な根拠になりません。AIドラフトのレビュー（
-        <Link href="/reviews">レビューキュー</Link>）とは別キューです。
+        <Link href="/reviews">AIドラフトレビュー</Link>）とは別キューです。
       </p>
       <Section
-        title="文書承認キュー"
+        title="根拠文書レビュー"
         note={`テナント ${merged.length} 件（承認待ち相当 ${pending.length} 件）。承認すると質問の正式な根拠になります。`}
       >
         {merged.length === 0 ? (
@@ -2150,7 +2150,7 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
         </div>
       </Section>
 
-      <Section title="文書承認">
+      <Section title="根拠文書レビュー">
         <div className="form-grid">
           <input value={docId} onChange={(e) => setDocId(e.target.value)} placeholder="document_id" aria-label="ドキュメントID" />
           <select value={approvalState} onChange={(e) => setApprovalState(e.target.value)} aria-label="承認状態">
@@ -2265,9 +2265,9 @@ function ReviewQueueBody() {
         AI 出力は常にドラフトです。人手レビューで承認されるまで、正式な知識にはなりません（自動承認は禁止）。
       </p>
       <div className="reviews-layout standalone-reviews-layout">
-        <section className="review-queue-panel" aria-label="Drafts">
+        <section className="review-queue-panel" aria-label="AIドラフトレビュー">
           <div className="review-queue-head">
-            <h3>レビューキュー</h3>
+            <h3>AIドラフトレビュー</h3>
             <span className="review-queue-count">{drafts.length}</span>
           </div>
           {drafts.length === 0 ? (
@@ -3436,7 +3436,7 @@ function AddSourceBody() {
       const policyNote =
         approvalPolicy === "trusted"
           ? `${sync.changed_count ?? 0} 件を「承認済み（信頼ソース）」として取り込みました。`
-          : `${sync.changed_count ?? 0} 件を「承認待ち（pending_review）」として取り込みました。レビューキューで承認すると正式な根拠になります。`;
+          : `${sync.changed_count ?? 0} 件を「承認待ち（pending_review）」として取り込みました。根拠文書レビューで承認すると正式な根拠になります。`;
       setConfigMessage(`${selectedSourceDef.name} の同期を開始しました。${policyNote}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "同期開始に失敗しました");
@@ -3756,7 +3756,7 @@ function AddSourceBody() {
             <p className="ops-note">
               {approvalPolicy === "trusted"
                 ? "信頼ソース: 同期した全ファイルを承認済み（source-of-truth）として取り込みます。1件ずつのレビューは行いません。"
-                : "既定: 同期した全ファイルは pending_review で取り込まれ、レビューキューで承認するまで高リスク回答の正式な根拠にはなりません。"}
+                : "既定: 同期した全ファイルは pending_review で取り込まれ、根拠文書レビューで承認するまで高リスク回答の正式な根拠にはなりません。"}
             </p>
 
             <div className="screen-actions">
@@ -4072,7 +4072,6 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
 }
 
 function ApprovalWorkflowBody() {
-  const [memo, setMemo] = useState("Review flow is controlled by governance status.");
   const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
     return manufacturingGovernanceStatus(token);
@@ -4081,18 +4080,23 @@ function ApprovalWorkflowBody() {
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   return (
     <>
-      <Section title="ガバナンスベースの承認ルール">
+      <Section title="ガバナンスベースのポリシー">
         <FieldGrid
           rows={[
-            ["AI 出力は常にドラフト", state.data.draft_review.ai_output_always_draft ? "はい" : "いいえ"],
-            ["レビュー担当必須", state.data.draft_review.reviewer_required_for_approval ? "はい" : "いいえ"],
-            ["高リスクは承認済み引用必須", state.data.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
+            ["AI生成物はドラフト固定", state.data.draft_review.ai_output_always_draft ? "はい" : "いいえ"],
+            ["AIドラフト承認に担当者必須", state.data.draft_review.reviewer_required_for_approval ? "はい" : "いいえ"],
+            ["高リスク回答は承認済み根拠が必須", state.data.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
           ]}
         />
       </Section>
-      <Section title="設計メモ">
-        <textarea value={memo} onChange={(e) => setMemo(e.target.value)} rows={5} aria-label="メモ" />
-        <p className="ops-note">承認ルールはガバナンス設定に基づいて表示しています。</p>
+      <Section title="同期・承認ポリシー">
+        <textarea
+          value="現在の画面では、ガバナンス設定とデータソースの信頼ポリシーを表示します。同期元を信頼するか、根拠文書レビューに回すかはデータソース追加時に選択します。"
+          readOnly
+          rows={5}
+          aria-label="同期・承認ポリシーの説明"
+        />
+        <p className="ops-note">この画面のポリシー編集 API は未接続です。</p>
       </Section>
     </>
   );
@@ -4214,8 +4218,8 @@ function GenericOpsOverview() {
             ["ポリシー版本", String(state.data.governance.policy_version)],
             ["No-train デフォルト", state.data.governance.no_train.no_train_default ? "はい" : "いいえ"],
             ["安全ゲート有効", state.data.governance.safety_gate.enabled ? "はい" : "いいえ"],
-            ["高リスクは承認済み引用必須", state.data.governance.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
-            ["AI 出力は常にドラフト", state.data.governance.draft_review.ai_output_always_draft ? "はい" : "いいえ"],
+            ["高リスク回答は承認済み根拠が必須", state.data.governance.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
+            ["AI生成物はドラフト固定", state.data.governance.draft_review.ai_output_always_draft ? "はい" : "いいえ"],
           ]}
         />
       </section>

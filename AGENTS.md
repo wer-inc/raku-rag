@@ -41,6 +41,15 @@ branches and matching `specs/NNN-*` directories.
    user explicitly asks.
 5. Keep changes narrowly scoped to the request and to the owning module.
 
+## Issue Capture Rule
+
+When a new product, QA, production-smoke, demo, UX, security, or architecture issue is discovered
+during work, add it to `issues/` in the same turn unless the user explicitly asks not to. Use the
+next available `NNNN-short-slug.md` number and follow `issues/ISSUE_TEMPLATE.md`. Each issue must
+capture what the issue is, where it happened, why it matters, how it should be solved, the QA
+checklist, DoD, scope exclusions, and references such as run ids, correlation ids, screenshots, or
+code paths. Do not include secrets, tokens, raw private data, or unrelated logs.
+
 ## Non-Negotiable Safety Rules
 
 - Keep Tier A fast and stdlib-only. Do not add Docker, network, cloud, database, or heavy

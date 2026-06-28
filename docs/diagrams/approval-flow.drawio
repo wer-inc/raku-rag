@@ -1,0 +1,162 @@
+<mxfile host="app.diagrams.net" agent="raku-rag claude-code" version="24.0.0">
+  <diagram name="1. 全体像・認可経路" id="page1">
+    <mxGraphModel dx="1000" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="820" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="p1_title" value="製造業RAG 承認フロー 全体像（系統①②③ + 認可経路）" style="text;html=1;fontSize=18;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="40" y="10" width="900" height="30" as="geometry"/></mxCell>
+
+        <mxCell id="p1_bandA" value="① UI 層 — apps/web (Next.js)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#cccccc;verticalAlign=top;fontStyle=1;align=left;spacingLeft=8;spacingTop=4;" vertex="1" parent="1"><mxGeometry x="40" y="50" width="1180" height="120" as="geometry"/></mxCell>
+        <mxCell id="p1_bandB" value="② API 層 — apps/api (NestJS facade) ＝ 唯一のロールゲート" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#cccccc;verticalAlign=top;fontStyle=1;align=left;spacingLeft=8;spacingTop=4;" vertex="1" parent="1"><mxGeometry x="40" y="200" width="1180" height="100" as="geometry"/></mxCell>
+        <mxCell id="p1_bandC" value="③ 回答/承認サービス — apps/answer-service (Python・内部HTTP)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#cccccc;verticalAlign=top;fontStyle=1;align=left;spacingLeft=8;spacingTop=4;" vertex="1" parent="1"><mxGeometry x="40" y="330" width="1180" height="110" as="geometry"/></mxCell>
+        <mxCell id="p1_bandD" value="④ ドメイン層 — src/raku_rag/manufacturing" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#cccccc;verticalAlign=top;fontStyle=1;align=left;spacingLeft=8;spacingTop=4;" vertex="1" parent="1"><mxGeometry x="40" y="470" width="1180" height="120" as="geometry"/></mxCell>
+        <mxCell id="p1_bandE" value="⑤ 永続化・監査" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#cccccc;verticalAlign=top;fontStyle=1;align=left;spacingLeft=8;spacingTop=4;" vertex="1" parent="1"><mxGeometry x="40" y="620" width="1180" height="110" as="geometry"/></mxCell>
+
+        <mxCell id="p1_ui_queue" value="レビューキュー /reviews&#10;ReviewQueueBody" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="70" y="90" width="220" height="60" as="geometry"/></mxCell>
+        <mxCell id="p1_ui_detail" value="レビュー詳細 /reviews/:id&#10;ReviewDetailBody" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="320" y="90" width="220" height="60" as="geometry"/></mxCell>
+        <mxCell id="p1_ui_docs" value="文書承認 /reviews/documents&#10;DocumentApprovalQueueBody" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="570" y="90" width="240" height="60" as="geometry"/></mxCell>
+        <mxCell id="p1_ui_settings" value="承認ルール /reviews/settings&#10;ApprovalWorkflowBody（表示のみ）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="840" y="90" width="240" height="60" as="geometry"/></mxCell>
+
+        <mxCell id="p1_api" value="manufacturing.controller&#10;assertAdminMutationAllowed（admin / tenant_admin / owner のみ）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1"><mxGeometry x="320" y="230" width="560" height="60" as="geometry"/></mxCell>
+
+        <mxCell id="p1_as" value="internal ルート（X-Internal-Auth 共有秘密のみ）&#10;身元 = x-raku-* ヘッダ／ロール再検査なし" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="320" y="360" width="500" height="60" as="geometry"/></mxCell>
+        <mxCell id="p1_sg" value="回答時：ManufacturingSafetyGate&#10;承認状態で高リスク回答を制御&#10;→『4. 安全ゲート』ページ参照" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="900" y="355" width="290" height="70" as="geometry"/></mxCell>
+
+        <mxCell id="p1_draft" value="DraftService → ReviewWorkflow&#10;系統① AIドラフト承認" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="70" y="510" width="290" height="60" as="geometry"/></mxCell>
+        <mxCell id="p1_appr" value="ApprovalWorkflow&#10;系統② 文書承認" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="430" y="510" width="290" height="60" as="geometry"/></mxCell>
+        <mxCell id="p1_gov" value="GovernanceService&#10;系統③ ガバナンス/ポリシー（表示）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="790" y="510" width="290" height="60" as="geometry"/></mxCell>
+
+        <mxCell id="p1_store" value="DraftService._store（インメモリ dict）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1"><mxGeometry x="70" y="655" width="290" height="55" as="geometry"/></mxCell>
+        <mxCell id="p1_meta" value="文書メタデータ（Postgres registry）&#10;approval_status を保持" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="430" y="655" width="290" height="55" as="geometry"/></mxCell>
+        <mxCell id="p1_audit" value="AuditLogWriter（ハッシュ連鎖・Postgres）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="790" y="655" width="290" height="55" as="geometry"/></mxCell>
+
+        <mxCell id="p1_e1" value="承認/却下" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p1_ui_detail" target="p1_api"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e2" value="文書 承認/旧版化" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p1_ui_docs" target="p1_api"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e3" value="一覧/詳細 GET（gate なし）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;" edge="1" parent="1" source="p1_ui_queue" target="p1_api"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e4" value="承認系（admin 通過後のみ）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p1_api" target="p1_as"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e5" value="assign / review" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p1_as" target="p1_draft"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e6" value="documents/:id/approval" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p1_as" target="p1_appr"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e7" value="governance_status (GET)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;" edge="1" parent="1" source="p1_ui_settings" target="p1_gov"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e8" value="drafts 保存/取得" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p1_draft" target="p1_store"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e9" value="generate/assign/review 記録" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p1_draft" target="p1_audit"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e10" value="set_meta（approval_status）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p1_appr" target="p1_meta"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e11" value="transition/import 記録" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p1_appr" target="p1_audit"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p1_e12" value="approval_status 参照" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;" edge="1" parent="1" source="p1_sg" target="p1_meta"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="p1_i11" value="⚠0011 reviewer / ops_owner は承認系で 403（純粋 reviewer は承認不可）" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="900" y="225" width="300" height="50" as="geometry"/></mxCell>
+        <mxCell id="p1_i14" value="⚠0014 編集不可・保存されない（GET/PUT 未実装）" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1100" y="92" width="110" height="56" as="geometry"/></mxCell>
+        <mxCell id="p1_i16" value="⚠0016 内部境界でロール未検証（facade のみが gate）" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="70" y="360" width="230" height="50" as="geometry"/></mxCell>
+        <mxCell id="p1_i17" value="⚠0017 approved+effective 判定に穴（失効/復活/自己申告/stale）" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="900" y="440" width="290" height="50" as="geometry"/></mxCell>
+        <mxCell id="p1_i12" value="⚠0012 再起動で消失・複数インスタンス非共有（専用テーブルが在るのに未使用）" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="70" y="725" width="290" height="50" as="geometry"/></mxCell>
+
+        <mxCell id="p1_legend" value="凡例：　青=処理/画面　緑=ドメイン　橙=ロールゲート　黄=安全判定　赤=課題/要注意　実線=書込/変更　破線=参照/GET　⚠00XX=issues/ の課題番号" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fillColor=#ffffff;strokeColor=#cccccc;" vertex="1" parent="1"><mxGeometry x="40" y="745" width="1180" height="30" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram name="2. ① AIドラフト レビュー状態機械" id="page2">
+    <mxGraphModel dx="1000" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="780" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="p2_title" value="系統① AIドラフトの審査（ReviewWorkflow / DraftService）　draft → in_review → approved | rejected | archived" style="text;html=1;fontSize=16;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="40" y="10" width="1100" height="30" as="geometry"/></mxCell>
+
+        <mxCell id="p2_create" value="作成 create()&#10;DraftGenerator" style="ellipse;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="60" y="250" width="120" height="80" as="geometry"/></mxCell>
+        <mxCell id="p2_draft" value="draft&#10;（created_by=ai・既定）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="260" y="255" width="180" height="70" as="geometry"/></mxCell>
+        <mxCell id="p2_inreview" value="in_review&#10;（レビュー中・担当割当済）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="540" y="255" width="180" height="70" as="geometry"/></mxCell>
+        <mxCell id="p2_approved" value="approved（承認済み）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="860" y="110" width="180" height="60" as="geometry"/></mxCell>
+        <mxCell id="p2_rejected" value="rejected（却下）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="860" y="260" width="180" height="60" as="geometry"/></mxCell>
+        <mxCell id="p2_archived" value="archived（アーカイブ）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="860" y="410" width="180" height="60" as="geometry"/></mxCell>
+
+        <mxCell id="p2_ec" value="create()&#10;常に status=draft" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p2_create" target="p2_draft"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2_e_assign" value="assign(reviewer_id | reviewer_group)&#10;〔draft | in_review から〕" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p2_draft" target="p2_inreview"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2_e_reassign" value="再割当（冪等）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;curved=1;" edge="1" parent="1" source="p2_inreview" target="p2_inreview"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="630" y="210"/></Array></mxGeometry></mxCell>
+        <mxCell id="p2_e_approve" value="review(approved)&#10;★人手レビューア必須（AI自己承認不可・SC-MFG-007）&#10;〔in_review 前提〕" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#82b366;strokeWidth=2;" edge="1" parent="1" source="p2_inreview" target="p2_approved"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2_e_reject" value="review(rejected)〔in_review から〕" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p2_inreview" target="p2_rejected"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2_e_arch1" value="review(archived)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p2_inreview" target="p2_archived"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p2_e_arch2" value="review(archived)〔draft から直接〕" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;" edge="1" parent="1" source="p2_draft" target="p2_archived"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="350" y="560"/><mxPoint x="950" y="560"/></Array></mxGeometry></mxCell>
+
+        <mxCell id="p2_inv" value="中核不変条件（SC-MFG-007 / Hard Rule 1）&#10;approved への唯一経路＝帰属可能な人手レビューア。&#10;reviewer 不在の approve は PermissionError、artifact は draft のまま。&#10;created_by=ai は承認で書き換えない。" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="1"><mxGeometry x="540" y="70" width="280" height="110" as="geometry"/></mxCell>
+        <mxCell id="p2_actors" value="誰が実行できるか（現状）&#10;・作成 create：任意のテナント principal（gate なし）&#10;・割当/承認/却下：facade は admin 級のみ（→⚠0011）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="1"><mxGeometry x="60" y="400" width="370" height="90" as="geometry"/></mxCell>
+
+        <mxCell id="p2_i11" value="⚠0011 reviewer ロールだと facade で 403（承認不可）" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="600" y="360" width="220" height="50" as="geometry"/></mxCell>
+        <mxCell id="p2_i15" value="⚠0015 UI は draft でも『承認』活性→ 409。担当割当を先に促さない" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="300" y="130" width="220" height="60" as="geometry"/></mxCell>
+        <mxCell id="p2_i18" value="⚠0018 却下理由が監査に残らない / assign の実行者を誤記録" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1080" y="105" width="200" height="60" as="geometry"/></mxCell>
+        <mxCell id="p2_i19" value="⚠0019 approved でも公開/知識化されない（『公開できます』は誇大）" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1080" y="180" width="200" height="60" as="geometry"/></mxCell>
+        <mxCell id="p2_i12" value="⚠0012 状態はインメモリ（再起動で消失）" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="260" y="350" width="200" height="40" as="geometry"/></mxCell>
+        <mxCell id="p2_i16b" value="⚠0016 reject/archive は実行者必須でない（actor 欠落あり）" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="1080" y="400" width="200" height="60" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram name="3. ② 文書承認 状態機械" id="page3">
+    <mxGraphModel dx="1000" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="p3_title" value="系統② 文書承認（ApprovalWorkflow）　軽量・前進専用：draft → pending_review → approved → obsolete（rank 0→1→2→3）" style="text;html=1;fontSize=16;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="40" y="10" width="1200" height="30" as="geometry"/></mxCell>
+
+        <mxCell id="p3_draft" value="draft（rank0）&#10;参照のみ" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="80" y="300" width="190" height="70" as="geometry"/></mxCell>
+        <mxCell id="p3_pending" value="pending_review（rank1）&#10;承認待ち" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="380" y="300" width="190" height="70" as="geometry"/></mxCell>
+        <mxCell id="p3_approved" value="approved（rank2）&#10;発効中なら高リスク回答の正式根拠" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="680" y="300" width="200" height="70" as="geometry"/></mxCell>
+        <mxCell id="p3_obsolete" value="obsolete（rank3）&#10;旧版・参照のみ + 警告" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="980" y="300" width="200" height="70" as="geometry"/></mxCell>
+
+        <mxCell id="p3_e1" value="transition(pending_review)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p3_draft" target="p3_pending"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3_e2" value="transition(approved)&#10;approved_by/at, effective_date 既定=today" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p3_pending" target="p3_approved"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3_e3" value="transition(obsolete) / supersede(superseded_by)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p3_approved" target="p3_obsolete"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3_skip" value="transition(approved)【skip-ahead 可】pending_review を飛ばせる" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#d79b00;dashed=1;" edge="1" parent="1" source="p3_draft" target="p3_approved"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="175" y="230"/><mxPoint x="780" y="230"/></Array></mxGeometry></mxCell>
+        <mxCell id="p3_back" value="後退は不可（ValueError・前進専用）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#b85450;dashed=1;startArrow=cross;" edge="1" parent="1" source="p3_approved" target="p3_pending"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="775" y="430"/><mxPoint x="475" y="430"/></Array></mxGeometry></mxCell>
+
+        <mxCell id="p3_import" value="import_external（外部承認＝SSOT）&#10;forward guard をバイパス" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="980" y="120" width="200" height="70" as="geometry"/></mxCell>
+        <mxCell id="p3_e_import" value="空/部分ボディは既定 approved&#10;→ obsolete を approved に復活し得る" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#b85450;strokeWidth=2;" edge="1" parent="1" source="p3_import" target="p3_obsolete"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p3_e_import2" value="任意状態を上書き" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;strokeColor=#9673a6;" edge="1" parent="1" source="p3_import" target="p3_approved"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="p3_use" value="承認状態の使われ方（回答時）&#10;・approved かつ effective_date 有効 のみ高リスク回答の一次根拠&#10;・draft / obsolete は決して一次根拠にしない（obsolete は警告表示）&#10;　→『4. 安全ゲート』参照" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="1"><mxGeometry x="80" y="470" width="500" height="100" as="geometry"/></mxCell>
+
+        <mxCell id="p3_i16" value="⚠0016 skip-ahead で未レビュー文書を一発承認できる / WF 層でロール未検証" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="300" y="170" width="260" height="60" as="geometry"/></mxCell>
+        <mxCell id="p3_i17a" value="⚠0017 失効(valid_until)未実装：発効済みなら何年前に失効していても『発効中』扱い" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="640" y="470" width="280" height="70" as="geometry"/></mxCell>
+        <mxCell id="p3_i17b" value="⚠0017 import_external で obsolete 復活・自己申告承認（SSOT が無検証）" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="960" y="200" width="260" height="60" as="geometry"/></mxCell>
+        <mxCell id="p3_i15" value="⚠0015 UI は確認/発効日入力なし・後退選択肢を提示" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="980" y="470" width="240" height="60" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <diagram name="4. 安全ゲート（回答時）" id="page4">
+    <mxGraphModel dx="1000" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="820" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="p4_title" value="安全ゲート（ManufacturingSafetyGate）— 回答時に承認状態で断定可否を決める（001 GroundednessGate の後段）" style="text;html=1;fontSize=16;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1"><mxGeometry x="40" y="10" width="1200" height="30" as="geometry"/></mxCell>
+
+        <mxCell id="p4_q" value="質問（回答リクエスト）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="60" y="120" width="180" height="50" as="geometry"/></mxCell>
+        <mxCell id="p4_ret" value="候補引用 + 承認メタ取得&#10;（001 検索 + 文書 approval_status）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="60" y="220" width="180" height="60" as="geometry"/></mxCell>
+        <mxCell id="p4_class" value="高リスク？&#10;(safety/quality/equipment)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="80" y="340" width="160" height="100" as="geometry"/></mxCell>
+
+        <mxCell id="p4_hasapp" value="approved + effective&#10;な引用あり？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="420" y="100" width="170" height="110" as="geometry"/></mxCell>
+        <mxCell id="p4_usable" value="一次利用可能な証拠あり？&#10;（draft/obsolete 以外）" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="420" y="470" width="170" height="110" as="geometry"/></mxCell>
+
+        <mxCell id="p4_block_hr" value="■ ブロック（高リスク）&#10;APPROVED_CITATION_MISSING&#10;= insufficient_evidence・断定しない&#10;requires_onsite_confirmation = true" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="760" y="60" width="280" height="90" as="geometry"/></mxCell>
+        <mxCell id="p4_allow_hr" value="□ 許可（高リスク）&#10;approval_status_at_use = approved&#10;requires_onsite_confirmation = true" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="760" y="190" width="280" height="80" as="geometry"/></mxCell>
+        <mxCell id="p4_block_lr" value="■ ブロック（非高リスク）&#10;insufficient_evidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="760" y="440" width="280" height="70" as="geometry"/></mxCell>
+        <mxCell id="p4_allow_lr" value="□ 許可（非高リスク）&#10;approved / pending_review / 無分類で回答" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="760" y="540" width="280" height="70" as="geometry"/></mxCell>
+
+        <mxCell id="p4_ea" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p4_q" target="p4_ret"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4_eb" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p4_ret" target="p4_class"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4_ec" value="はい" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p4_class" target="p4_hasapp"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4_ed" value="いいえ" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;" edge="1" parent="1" source="p4_class" target="p4_usable"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4_ee" value="いいえ → 断定不可" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#b85450;" edge="1" parent="1" source="p4_hasapp" target="p4_block_hr"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4_ef" value="はい" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#82b366;" edge="1" parent="1" source="p4_hasapp" target="p4_allow_hr"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4_eg" value="いいえ" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#b85450;" edge="1" parent="1" source="p4_usable" target="p4_block_lr"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="p4_eh" value="はい" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#82b366;" edge="1" parent="1" source="p4_usable" target="p4_allow_lr"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+        <mxCell id="p4_rules" value="不変ルール&#10;・高リスクは approved+effective 必須（FR-MFG-005）&#10;・draft / obsolete は決して一次根拠にしない（FR-MFG-006）&#10;・候補に obsolete があれば obsolete_warning=true（一次根拠でなくても警告）&#10;・1ブロック=1要因に正規化（approved_citation_missing &gt; insufficient_evidence &gt; other）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=8;fontSize=11;" vertex="1" parent="1"><mxGeometry x="60" y="600" width="560" height="130" as="geometry"/></mxCell>
+
+        <mxCell id="p4_i17" value="⚠0017 この『approved+effective』判定に穴：失効を見ない / import で obsolete 復活 / 呼び出し側の自己申告 / メタの stale キャッシュ。判定式は堅牢だが“入力”の妥当性が崩れる。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;size=14;fontSize=10;" vertex="1" parent="1"><mxGeometry x="420" y="230" width="300" height="120" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -57,6 +57,33 @@
 現行の **020-prod-readiness ループ(ledger SSOT: `specs/prod-readiness/ledger.json`)を 0001–0004 に
 照準し直し、stop-line([0005](0005-non-goals-stop-line.md))を ledger に明記**するのが最短。
 
+## 関連クラスタ — 承認 / 文書承認 / レビューキュー(0010–0019)
+
+基盤(0000–0005)とは別テーマの、**製造業 RAG の「承認まわり」3 系統**(AI ドラフトのレビュー / 文書承認 /
+承認ルール設定)+ 安全ゲートの監査結果を [0010](0010-approval-review-overview.md) に集約。最優先は
+[0011](0011-rbac-reviewer-cannot-approve.md)(reviewer ロールが承認できない RBAC 矛盾)・
+[0017](0017-safety-gate-evidence-validity.md)(安全ゲートが誤った承認状態の証拠を使い得る)・
+[0012](0012-draft-review-queue-not-persisted.md)(レビューキュー非永続)。
+
+## 関連クラスタ — visual/PDF production evidence(0020)
+
+`RAKU_VISUAL_EVIDENCE_PROMOTION=true` の AWS stg live 検証で、画像/PDF の evidence promotion は成立した一方、短い汎用質問だけでは対象PDFが retrieval 上位に来ない課題を [0020-visual-pdf-retrieval-targeting.md](0020-visual-pdf-retrieval-targeting.md) に登録した。これは verifier / safety gate ではなく、retrieval / ranking / target selection UX の課題として扱う。
+
+## 課題登録ルール(今後の自動運用)
+
+新しい課題を検出したら、同じタイミングで `issues/NNNN-short-slug.md` を追加する。番号は既存の最大番号 + 1 とし、営業デモ・AWS stg・Playwright・API smoke・コードレビューのどこで見つかった課題でも、この台帳に残す。
+
+各 issue には最低限、以下を含める。
+
+- どんな課題か
+- どこで起きたか(画面/API/コード/環境/run id/correlation id)
+- なぜ重要か
+- どう解決すべきか
+- QA checklist
+- 受け入れ条件(DoD)
+- スコープ外
+- 参照
+
 ## 2026-06-28 repo-side 対応
 
 - 0001: `gate.yml` の Tier B を常時実行に変更し、`tests/postgres/test_multitenant_release_soak.py`

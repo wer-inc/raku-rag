@@ -29,7 +29,7 @@ export const WORKSPACE_IDENTITY = {
   userInitial: "田",
 } as const;
 
-// Count shown on the レビューキュー nav badge (pending review drafts).
+// Count shown on the AIドラフトレビュー nav badge (pending review drafts).
 // Matches the workspace default; replace with a live count once
 // `GET /v1/manufacturing/drafts` exists (see specs/full-saas/gaps.md).
 export const REVIEW_BADGE_COUNT = 2;
@@ -77,9 +77,9 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "レビュー",
     items: [
-      { href: "/reviews", label: "レビューキュー", icon: "reviewqueue", badge: "review" },
-      { href: "/reviews/documents", label: "文書承認", icon: "documents" },
-      { href: "/reviews/settings", label: "承認ルール", icon: "approvalsettings" },
+      { href: "/reviews", label: "AIドラフトレビュー", icon: "reviewqueue", badge: "review" },
+      { href: "/reviews/documents", label: "根拠文書レビュー", icon: "documents" },
+      { href: "/reviews/settings", label: "同期・承認ポリシー", icon: "approvalsettings" },
     ],
   },
   {
