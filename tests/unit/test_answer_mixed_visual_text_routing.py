@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from typing import Sequence
 
+from raku_rag.core.config import Settings
 from raku_rag.core.errors import AnswerStatus
 from raku_rag.domain.models import (
     Chunk,
@@ -95,6 +96,54 @@ class MixedVisualTextRoutingTest(unittest.TestCase):
         self.assertNotIn("AL-42", ans.text or "")
         self.assertEqual(ans.used_chunks, ("text-manual:0",))
         self.assertEqual([c.kind for c in ans.citations], ["text"])
+
+    def test_visual_promotion_generates_from_ocr_primary_text_not_caption_or_vlm(self) -> None:
+        visual_chunk = Chunk(
+            tenant_id=T,
+            collection_id="manuals",
+            document_id="visual-stop",
+            chunk_id="visual-stop:visual:1:0",
+            text=(
+                "To stop the pump safely, press the emergency stop.\n"
+                "Generated caption says use the blue reset button."
+            ),
+            modality=Modality.VISUAL,
+            metadata={
+                "asset_id": "asset-1",
+                "region_id": "region-1",
+                "page_number": 1,
+                "ocr_text": "To stop the pump safely, press the emergency stop.",
+                "primary_evidence_text": "To stop the pump safely, press the emergency stop.",
+                "generated_caption_text": "Generated caption says use the blue reset button.",
+                "crop_uri": "s3://visual-crops/tenant/visual-stop/region.png",
+                "primary_evidence_source": "deterministic_ocr",
+                "extraction_source": "deterministic_ocr",
+            },
+        )
+        docs = {"visual-stop": Document(T, "manuals", "visual-stop", "visual-source")}
+        service = AnswerService(
+            _FakeRetrieval(
+                (ScoredChunk(chunk=visual_chunk, retrieval_score=1.1),)
+            ),  # type: ignore[arg-type]
+            ExtractiveLLMProvider(),
+            GroundednessGate(),
+            CostService(),
+            lambda _tenant_id, document_id: docs.get(document_id),
+            vlm=_FailingVLM(),  # type: ignore[arg-type]
+            settings=Settings(visual_evidence_promotion=True),
+        )
+
+        ans = service.answer(
+            IdentityClaims(tenant_id=T, user_id="alice"),
+            "How do I stop the pump safely?",
+            QueryProfile(top_k=1, minimum_evidence_count=1),
+        )
+
+        self.assertEqual(ans.status, AnswerStatus.OK.value)
+        self.assertIn("emergency stop", ans.text or "")
+        self.assertNotIn("blue reset", ans.text or "")
+        self.assertEqual(ans.used_chunks, ("visual-stop:visual:1:0",))
+        self.assertEqual([c.kind for c in ans.citations], ["visual"])
 
 
 if __name__ == "__main__":

@@ -278,9 +278,12 @@ class AnswerService:
             context_injection = 0
             context: list[Chunk] = []
             for s in evidence:
-                sanitized, neutralized = self._injection_guard.neutralize(s.chunk.text)
+                generation_chunk = self._chunk_for_generation(s.chunk)
+                sanitized, neutralized = self._injection_guard.neutralize(generation_chunk.text)
                 context_injection += neutralized
-                context.append(replace(s.chunk, text=sanitized) if neutralized else s.chunk)
+                context.append(
+                    replace(generation_chunk, text=sanitized) if neutralized else generation_chunk
+                )
             if context_injection:
                 # The injected instruction is neutralized, not obeyed; the answer stays grounded in
                 # the legitimate content. Recorded so the event is not a silent pass (cf. P1-8) — at
@@ -311,7 +314,11 @@ class AnswerService:
             visual_regions = tuple(
                 self._layout_region_from_chunk(c) for c in context if c.modality == Modality.VISUAL
             )
-            use_vlm = bool(visual_regions) and self._vlm is not None
+            use_vlm = (
+                bool(visual_regions)
+                and self._vlm is not None
+                and not self._settings.visual_evidence_promotion
+            )
 
             generation_started = time.perf_counter()
             generation_cm = (
@@ -632,6 +639,18 @@ class AnswerService:
                 correlation_id=cid,
                 route="rag",
             )
+
+    def _chunk_for_generation(self, chunk: Chunk) -> Chunk:
+        """Return the chunk surface that is safe to use as answer-generation evidence."""
+
+        if not self._settings.visual_evidence_promotion or chunk.modality != Modality.VISUAL:
+            return chunk
+        primary = str(
+            chunk.metadata.get("primary_evidence_text") or chunk.metadata.get("ocr_text") or ""
+        ).strip()
+        if not primary:
+            return chunk
+        return replace(chunk, text=primary, token_count=_token_count(primary))
 
     def _answer_with_structured_tool(
         self,
