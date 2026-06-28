@@ -122,10 +122,16 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             "RAKU_INGEST_CONNECTOR",
             "S3_BUCKET",
             "grantTextractDocumentAnalysis",
+            "grantTextractServiceReadDocuments",
+            "AllowTextractReadDocumentObjects",
+            "AllowTextractDecryptDocumentObjects",
+            'new iam.ServicePrincipal("textract.amazonaws.com")',
             "this.grantTextractDocumentAnalysis(answerTask.taskRole)",
             "textract:AnalyzeDocument",
             "textract:StartDocumentAnalysis",
             "textract:GetDocumentAnalysis",
+            "s3:GetObjectVersion",
+            "kms:Decrypt",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)

@@ -240,6 +240,7 @@ export class RakuRagStack extends cdk.Stack {
       versioned: true,
       removalPolicy
     });
+    this.grantTextractServiceReadDocuments(documentBucket, dataKey);
     const ingestConnectorEnvironment: Record<string, string> = {
       RAKU_INGEST_CONNECTOR: "s3",
       S3_BUCKET: documentBucket.bucketName
@@ -1312,6 +1313,36 @@ export class RakuRagStack extends cdk.Stack {
           "textract:GetDocumentAnalysis"
         ],
         resources: ["*"]
+      })
+    );
+  }
+
+  private grantTextractServiceReadDocuments(documentBucket: s3.IBucket, dataKey: kms.IKey): void {
+    const textractService = new iam.ServicePrincipal("textract.amazonaws.com");
+    documentBucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: "AllowTextractReadDocumentObjects",
+        principals: [textractService],
+        actions: ["s3:GetObject", "s3:GetObjectVersion"],
+        resources: [documentBucket.arnForObjects("*")],
+        conditions: {
+          StringEquals: {
+            "aws:SourceAccount": cdk.Aws.ACCOUNT_ID
+          }
+        }
+      })
+    );
+    dataKey.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: "AllowTextractDecryptDocumentObjects",
+        principals: [textractService],
+        actions: ["kms:Decrypt", "kms:DescribeKey", "kms:GenerateDataKey"],
+        resources: ["*"],
+        conditions: {
+          StringEquals: {
+            "aws:SourceAccount": cdk.Aws.ACCOUNT_ID
+          }
+        }
       })
     );
   }
