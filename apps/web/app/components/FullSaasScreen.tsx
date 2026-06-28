@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type {
   AdminDataSource,
@@ -76,6 +76,7 @@ import {
 } from "../../lib/session";
 import { missingApis, type ManifestScreen } from "../../lib/full-saas";
 import CitationViewer, { type CitationViewTarget } from "./CitationViewer";
+import { useDialog } from "../../lib/use-dialog";
 import {
   clearAnswerHistory,
   loadAnswerHistory,
@@ -1981,15 +1982,28 @@ function DocumentApprovalQueueBody() {
 
 function ReviewDetailBody({ artifactId }: { artifactId: string }) {
   const [draftState, setDraftState] = useState<ViewState<DraftArtifact>>({ state: "loading" });
-  const [reviewerId, setReviewerId] = useState("alice");
+  const [reviewerId, setReviewerId] = useState("");
   const [comment, setComment] = useState("");
   const [docId, setDocId] = useState("");
   const [approvalState, setApprovalState] = useState("pending_review");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  // The pending approve/reject awaiting confirmation (null = no dialog open). Approval is irreversible
+  // and audited, so it always passes through a confirm step. (issue 0015)
+  const [confirmKind, setConfirmKind] = useState<"approved" | "rejected" | null>(null);
 
   useEffect(() => {
     let active = true;
     setDraftState({ state: "loading" });
+    // Reset all per-draft action/form state so a confirm dialog or in-flight flag can't carry over to a
+    // DIFFERENT draft (e.g. via browser back/forward) and act on the wrong artifact — approval is
+    // irreversible and audited. (issue 0015)
+    setConfirmKind(null);
+    setSaving(false);
+    setActionError(null);
+    setComment("");
+    setReviewerId("");
+    setDocId("");
     runWithToken((token) => manufacturingGetDraft(artifactId, token))
       .then((data) => active && setDraftState({ state: "ready", data }))
       .catch((err) => {
@@ -2002,8 +2016,9 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
   }, [artifactId]);
 
   async function onAssign() {
-    if (draftState.state !== "ready") return;
+    if (draftState.state !== "ready" || saving) return;
     setActionError(null);
+    setSaving(true);
     try {
       await runWithToken((token) => manufacturingAssignReviewer(artifactId, { reviewer_id: reviewerId }, token));
       const refreshed = await runWithToken((token) => manufacturingGetDraft(artifactId, token));
@@ -2011,12 +2026,22 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
       updateDraftRecord(artifactId, { status: refreshed.status, reviewer_id: refreshed.reviewer_id });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "リクエストに失敗しました");
+    } finally {
+      setSaving(false);
     }
   }
 
   async function onReview(decision: "approved" | "rejected") {
-    if (draftState.state !== "ready") return;
+    if (draftState.state !== "ready" || saving) return;
+    // A rejection must carry a reason for the audit trail (HR5). Defense in depth — the reject button
+    // is also disabled while the comment is empty. (issue 0015)
+    if (decision === "rejected" && !comment.trim()) {
+      setActionError("却下にはレビューコメント(理由)が必要です。");
+      setConfirmKind(null);
+      return;
+    }
     setActionError(null);
+    setSaving(true);
     try {
       await runWithToken((token) =>
         manufacturingReviewDraft(artifactId, { decision, comment: comment.trim() || undefined }, token),
@@ -2026,16 +2051,22 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
       updateDraftRecord(artifactId, { status: refreshed.status });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "リクエストに失敗しました");
+    } finally {
+      setSaving(false);
+      setConfirmKind(null);
     }
   }
 
   async function onApproveDocument() {
-    if (!docId.trim()) return;
+    if (!docId.trim() || saving) return;
     setActionError(null);
+    setSaving(true);
     try {
       await runWithToken((token) => manufacturingDocumentApproval(docId.trim(), { to_status: approvalState }, token));
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "リクエストに失敗しました");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -2070,12 +2101,12 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
         </p>
       )}
       {draft.status === "approved" && (
-        <p className="ops-note" style={{ color: "#15803d", fontWeight: 600 }}>
+        <p className="ops-note" role="status" aria-live="polite" style={{ color: "#15803d", fontWeight: 600 }}>
           承認済み — このドラフトは正式に公開できます。
         </p>
       )}
       {draft.status === "rejected" && (
-        <p className="ops-note" style={{ color: "#be123c", fontWeight: 600 }}>
+        <p className="ops-note" role="status" aria-live="polite" style={{ color: "#be123c", fontWeight: 600 }}>
           却下 — 修正のうえ再生成が必要です。
         </p>
       )}
@@ -2086,9 +2117,17 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
             ["ドラフト ID", draft.artifact_id],
             ["種別", draftKindLabel(draft.type)],
             ["状態", st.label],
-            ["作成者", draft.created_by === "ai" ? "AI" : (draft.created_by ?? "—")],
+            [
+              "作成者",
+              draft.created_by === "ai" ? "AI" : draft.created_by === "user" ? "担当者" : (draft.created_by ?? "—"),
+            ],
             ["レビュー担当", draft.reviewer_id ?? "未割当"],
-            ["決定", draft.approval_decision ?? "—"],
+            [
+              "決定",
+              draft.approval_decision
+                ? (APPROVAL_DECISION_LABEL[draft.approval_decision] ?? draft.approval_decision)
+                : "—",
+            ],
             ["根拠ドキュメント", draft.source_document_ids.length ? draft.source_document_ids.join(", ") : "—"],
             ["監査参照", draft.audit_log_ref ?? "—"],
           ]}
@@ -2126,27 +2165,53 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
       <Section title="レビュー操作" note={terminal ? "このドラフトは終了状態です。" : undefined}>
         <div className="form-grid">
           <div className="review-assign-row">
-            <input value={reviewerId} onChange={(e) => setReviewerId(e.target.value)} placeholder="reviewer_id" aria-label="レビュー担当者ID" />
-            <button type="button" onClick={() => void onAssign()} disabled={terminal || !reviewerId.trim()}>
-              担当に割り当て
+            <input
+              value={reviewerId}
+              onChange={(e) => setReviewerId(e.target.value)}
+              placeholder="reviewer_id（担当者ID）"
+              aria-label="レビュー担当者ID"
+              disabled={terminal || saving}
+            />
+            <button type="button" onClick={() => void onAssign()} disabled={terminal || saving || !reviewerId.trim()}>
+              {saving ? "処理中…" : "担当に割り当て"}
             </button>
           </div>
+          {draft.status === "draft" && (
+            <p className="ops-note" role="note">
+              承認・却下の前に、まず担当者を割り当ててレビューを開始してください。
+            </p>
+          )}
           <textarea
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             aria-label="レビューコメント"
-            placeholder="レビューコメント（任意）"
+            placeholder={draft.status === "in_review" ? "レビューコメント（却下時は理由が必須）" : "レビューコメント（任意）"}
             rows={3}
-            disabled={terminal}
+            disabled={terminal || saving}
           />
           <div className="review-decide">
-            <button type="button" className="btn-approve" onClick={() => void onReview("approved")} disabled={terminal}>
+            <button
+              type="button"
+              className="btn-approve"
+              onClick={() => setConfirmKind("approved")}
+              disabled={saving || draft.status !== "in_review"}
+            >
               承認・公開
             </button>
-            <button type="button" className="btn-reject" onClick={() => void onReview("rejected")} disabled={terminal}>
+            <button
+              type="button"
+              className="btn-reject"
+              onClick={() => setConfirmKind("rejected")}
+              disabled={saving || draft.status !== "in_review" || !comment.trim()}
+            >
               却下
             </button>
           </div>
+          {draft.status === "in_review" && !comment.trim() && (
+            <p className="ops-note" role="note">
+              却下する場合はレビューコメント（理由）が必須です。
+            </p>
+          )}
         </div>
       </Section>
 
@@ -2159,12 +2224,31 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
             <option value="obsolete">obsolete</option>
             <option value="draft">draft</option>
           </select>
-          <button type="button" onClick={() => void onApproveDocument()} disabled={!docId.trim()}>
-            変更
+          <button type="button" onClick={() => void onApproveDocument()} disabled={!docId.trim() || saving}>
+            {saving ? "処理中…" : "変更"}
           </button>
         </div>
       </Section>
-      {actionError && <ScreenLoadError error={actionError} />}
+      {actionError && (
+        <p className="src-warning" role="alert">
+          {actionError}
+        </p>
+      )}
+      {confirmKind && (
+        <ConfirmDialog
+          title={confirmKind === "approved" ? "このドラフトを承認しますか？" : "このドラフトを却下しますか？"}
+          body={
+            confirmKind === "approved"
+              ? "承認すると正式なレビュー結果として監査に記録されます。この操作は取り消せません。"
+              : "却下するとこのドラフトは終了状態になります。この操作は取り消せません。"
+          }
+          confirmLabel={confirmKind === "approved" ? "承認する" : "却下する"}
+          danger={confirmKind === "rejected"}
+          busy={saving}
+          onCancel={() => setConfirmKind(null)}
+          onConfirm={() => void onReview(confirmKind)}
+        />
+      )}
     </>
   );
 }
@@ -2184,6 +2268,80 @@ const DRAFT_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
   rejected: { label: "却下", cls: "approval-obsolete" },
   archived: { label: "アーカイブ", cls: "approval-obsolete" },
 };
+
+const APPROVAL_DECISION_LABEL: Record<string, string> = {
+  approved: "承認",
+  rejected: "却下",
+  archived: "アーカイブ",
+};
+
+// Confirmation dialog for irreversible, audited review actions (approve / reject). Reuses the Citation
+// Viewer modal styles and the useDialog hook (focus trap, Escape-to-close, focus restore). (issue 0015)
+function ConfirmDialog({
+  title,
+  body,
+  confirmLabel,
+  danger,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  danger?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Stay focus-trapped while open; ignore Escape/backdrop/cancel while a request is in flight.
+  const cancel = () => {
+    if (!busy) onCancel();
+  };
+  useDialog(true, cancel, panelRef);
+  return (
+    <div className="cv-overlay" onClick={cancel}>
+      <div
+        className="cv-panel"
+        ref={panelRef}
+        tabIndex={-1}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+        aria-describedby="confirm-dialog-body"
+        aria-busy={busy}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="cv-head">
+          <div className="cv-head-titles">
+            <span className="cv-eyebrow">確認</span>
+            <h3 id="confirm-dialog-title">{title}</h3>
+          </div>
+          <button type="button" className="cv-close" onClick={cancel} disabled={busy} aria-label="閉じる">
+            ×
+          </button>
+        </div>
+        <p className="ops-note" id="confirm-dialog-body">
+          {body}
+        </p>
+        <div className="review-decide">
+          <button
+            type="button"
+            className={danger ? "btn-reject" : "btn-approve"}
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            {busy ? "処理中…" : confirmLabel}
+          </button>
+          <button type="button" onClick={cancel} disabled={busy}>
+            キャンセル
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function draftStatusLabel(status: string): { label: string; cls: string } {
   return DRAFT_STATUS_LABEL[status] ?? { label: status, cls: "approval-draft" };

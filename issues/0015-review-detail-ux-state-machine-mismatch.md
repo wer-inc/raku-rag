@@ -1,6 +1,10 @@
 # 0015 — レビュー詳細の操作が状態機械とズレ／重複・確認/二重送信なし(系統 ①②)
 
-> Priority: **P2 / Medium** / Status: Open / Labels: `frontend`, `ux`, `review`, `a11y`, `safety-critical`
+> Priority: **P2 / Medium** / Status: **一部対応(ReviewDetailBody・コミット待ち, 2026-06-28)** / Labels: `frontend`, `ux`, `review`, `a11y`, `safety-critical`
+>
+> **対応済み(ReviewDetailBody, 安全クリティカル中核):** (1) 承認・却下を `status==='in_review'` のときのみ活性化、`draft` 時は「先に担当者を割り当て」インライン誘導。(2) 全ミューテーション(assign/review/doc-approval)に `saving` フラグで二重送信ガード+「処理中…」表示。(3) 承認・却下に**確認ダイアログ**(`ConfirmDialog`、`useDialog` の focus trap/Esc/フォーカス復帰、「取り消せません」明記、`role="dialog"`/`aria-modal`)。(4) 却下は理由必須(ボタン無効+ガード+ヒント)。(6 一部) 既定レビューア "alice" を撤去(未割当)。(8) `approval_decision`/`created_by` を日本語ラベル化。(10 一部) actionError を `ScreenLoadError`(誤見出し)→ `role="alert"` に。**敵対的レビューで安全クリティカル退行(別ドラフトを誤承認する「幽霊」確認ダイアログ)を検出 → `artifactId` 変更時に confirm/saving/入力 state をリセットして是正。**ダイアログを `role="alertdialog"` + `aria-labelledby`/`aria-describedby` + `aria-busy`、承認/却下成功を `role="status"` 告知に強化。web typecheck+build 緑。
+>
+> **未対応(別スライス/別コンポーネント):** (5) 埋め込み「根拠文書レビュー」フォームの削除・/reviews/documents 誘導(0019/0021 と連動)、(6 完全) reviewer ピッカー(要 reviewers API)、(7) DocumentApprovalQueueBody の発効日/確認/理由、(9) 両キューのローディング・スケルトン、(10 完全) キュー行の aria-label、(11) インライン hex のトークン化(baseline-ui)。
 
 ## 背景(なぜ今)
 
