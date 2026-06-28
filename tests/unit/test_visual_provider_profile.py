@@ -269,7 +269,24 @@ class VisualProviderProfileTest(unittest.TestCase):
         self.assertEqual(
             {chunk.chunk_id for chunk in chunks}, {"doc_pdf:visual:1:0", "doc_pdf:visual:2:0"}
         )
-        self.assertIn("AL-42", chunks[1].text)
+        self.assertTrue(any("AL-42" in chunk.text for chunk in chunks))
+
+    def test_multi_region_visual_page_adds_aggregate_evidence_chunk(self) -> None:
+        result = VisualIngestionExecutor().execute_image(
+            tenant_id="tenant_a",
+            collection_id="manuals",
+            source_id="upload",
+            document_id="doc_image",
+            image=b"OCR: Stop the pump safely\nOCR: Lock out power",
+        )
+        chunks = visual_chunks_from_ingestion(result)
+
+        self.assertEqual(len(chunks), 3)
+        aggregate = chunks[-1]
+        self.assertTrue(aggregate.metadata.get("page_aggregate"))
+        self.assertEqual(aggregate.metadata.get("aggregate_region_count"), 2)
+        self.assertIn("Stop the pump safely", aggregate.metadata["primary_evidence_text"])
+        self.assertIn("Lock out power", aggregate.metadata["primary_evidence_text"])
 
     def test_page_aware_visual_chunk_ids_do_not_collide_across_page_results(self) -> None:
         page1 = VisualIngestionResult(

@@ -690,6 +690,13 @@ class VisualIngestionExecutor:
             )
             for idx, region in enumerate(regions)
         )
+        regions = _append_page_aggregate_regions(
+            regions,
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            document_id=document_id,
+            asset_id=asset_id,
+        )
         regions = self._materialize_crops(
             regions,
             raw_bytes=image,
@@ -794,6 +801,13 @@ class VisualIngestionExecutor:
                     region_index=idx,
                 )
                 for idx, region in enumerate(raw_regions, start=1)
+            )
+            regions = _append_page_aggregate_regions(
+                regions,
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                document_id=document_id,
+                asset_id=asset_id,
             )
             regions = self._materialize_crops(
                 regions,
@@ -955,6 +969,138 @@ def _page_image_bytes(page: object) -> bytes:
         except Exception:
             return b""
     return b""
+
+
+def _append_page_aggregate_regions(
+    regions: tuple[LayoutRegion, ...],
+    *,
+    tenant_id: str,
+    collection_id: str,
+    document_id: str,
+    asset_id: str,
+) -> tuple[LayoutRegion, ...]:
+    """Add page-level OCR regions so multi-line visual claims can be verified as one crop."""
+
+    if not regions:
+        return regions
+    grouped: dict[tuple[str, int], list[LayoutRegion]] = {}
+    for region in regions:
+        key = (str(region.asset_id or asset_id), int(region.page_number or 1))
+        grouped.setdefault(key, []).append(region)
+
+    aggregates: list[LayoutRegion] = []
+    for (group_asset_id, page_number), page_regions in grouped.items():
+        if len(page_regions) < 2:
+            continue
+        if any(
+            region.region_type == "page" and region.metadata.get("page_aggregate")
+            for region in page_regions
+        ):
+            continue
+        page_text = "\n".join(
+            region.ocr_text.strip() for region in page_regions if region.ocr_text.strip()
+        )
+        if not page_text:
+            continue
+        extraction_source = _first_metadata_value(
+            page_regions, "extraction_source", "primary_evidence_source"
+        )
+        caption_source = _first_metadata_value(page_regions, "caption_source")
+        caption = _first_region_value(page_regions, "generated_caption_text")
+        confidence_values = [
+            float(region.transcription_confidence)
+            for region in page_regions
+            if region.transcription_confidence is not None
+        ]
+        confidence = (
+            sum(confidence_values) / len(confidence_values) if confidence_values else None
+        )
+        labels = sorted(
+            {
+                str(label)
+                for region in page_regions
+                for label in _metadata_labels(region.metadata.get("sensitive_detection_labels"))
+            }
+        )
+        redaction_required = any(
+            bool(region.metadata.get("visual_region_redaction_required"))
+            for region in page_regions
+        ) or bool(labels)
+        metadata = {
+            "page_aggregate": True,
+            "aggregate_region_count": len(page_regions),
+            "sensitive_detected": bool(labels),
+            "sensitive_detection_labels": labels,
+            "pii_redaction_applied": any(
+                bool(region.metadata.get("pii_redaction_applied")) for region in page_regions
+            ),
+            "secret_redaction_applied": any(
+                bool(region.metadata.get("secret_redaction_applied")) for region in page_regions
+            ),
+            "visual_region_redaction_required": redaction_required,
+            "visual_region_redaction_status": (
+                "required" if redaction_required else "not_required"
+            ),
+        }
+        if extraction_source:
+            metadata["extraction_source"] = extraction_source
+            metadata["primary_evidence_source"] = extraction_source
+        if caption_source:
+            metadata["caption_source"] = caption_source
+        if any(region.metadata.get("pdf_page_fallback") for region in page_regions):
+            metadata["pdf_page_fallback"] = True
+            metadata["pdf_page_fallback_reason"] = _first_metadata_value(
+                page_regions, "pdf_page_fallback_reason"
+            )
+            metadata["source_pdf_ref"] = _first_metadata_value(page_regions, "source_pdf_ref")
+
+        aggregates.append(
+            LayoutRegion(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                document_id=document_id,
+                asset_id=group_asset_id,
+                region_id=f"{group_asset_id}:page:{page_number}",
+                bbox=BoundingBox(0.0, 0.0, 1.0, 1.0),
+                page_number=page_number,
+                region_type="page",
+                heading_path=("visual", "page"),
+                ocr_text=page_text,
+                generated_caption_text=caption,
+                extraction_source=extraction_source,
+                caption_source=caption_source,
+                transcription_confidence=confidence,
+                metadata=metadata,
+            )
+        )
+    if not aggregates:
+        return regions
+    return (*regions, *aggregates)
+
+
+def _first_metadata_value(regions: list[LayoutRegion], *keys: str) -> str:
+    for region in regions:
+        for key in keys:
+            value = getattr(region, key, "") or region.metadata.get(key)
+            if value:
+                return str(value)
+    return ""
+
+
+def _first_region_value(regions: list[LayoutRegion], attr: str) -> str:
+    for region in regions:
+        value = getattr(region, attr, "")
+        if value:
+            return str(value)
+    return ""
+
+
+def _metadata_labels(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (list, tuple, set)):
+        return tuple(str(item) for item in value)
+    return ()
 
 
 def _analysis_with_rendered_pdf_pages(

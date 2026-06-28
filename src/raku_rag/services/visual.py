@@ -58,6 +58,7 @@ def visual_chunks_from_ingestion(result: VisualIngestionResult) -> tuple[Chunk, 
                     "primary_evidence_text": region.ocr_text,
                     "primary_evidence_source": primary_evidence_source,
                     "caption_source": caption_source,
+                    **_visual_page_aggregate_metadata(region),
                     **_visual_pdf_fallback_metadata(region),
                     **redaction_metadata,
                 },
@@ -86,6 +87,15 @@ def _visual_redaction_metadata(region: LayoutRegion) -> dict:
         "visual_redaction_policy_ref": str(
             region.metadata.get("visual_redaction_policy_ref") or ""
         ),
+    }
+
+
+def _visual_page_aggregate_metadata(region: LayoutRegion) -> dict:
+    if not region.metadata.get("page_aggregate"):
+        return {}
+    return {
+        "page_aggregate": True,
+        "aggregate_region_count": int(region.metadata.get("aggregate_region_count") or 0),
     }
 
 
