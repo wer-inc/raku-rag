@@ -49,13 +49,20 @@ function safeFilename(rawName: string): string {
   return (rawName || "upload.bin").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);
 }
 
+function publicOrigin(req: Request): string {
+  const url = new URL(req.url);
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
+  const proto = req.headers.get("x-forwarded-proto") || url.protocol.replace(/:$/, "") || "http";
+  return `${proto}://${host}`;
+}
+
 async function assertAppSession(req: Request): Promise<Response | null> {
   const authorization = req.headers.get("authorization") || "";
   if (!authorization.toLowerCase().startsWith("bearer ")) {
     return jsonError("Cognito session is missing; sign in again", 401);
   }
 
-  const origin = new URL(req.url).origin;
+  const origin = publicOrigin(req);
   const headers: Record<string, string> = { authorization };
   const userToken = req.headers.get("x-user-token");
   if (userToken) headers["x-user-token"] = userToken;
