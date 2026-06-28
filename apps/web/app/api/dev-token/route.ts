@@ -28,9 +28,14 @@ function enabled(): boolean {
 // Dev-only AUTHORITATIVE role assignment: roles/groups come from this server-side table keyed by
 // user_id, NEVER echoed from the request body. The browser therefore cannot self-assert privileged
 // roles or escalate — the only privilege it can obtain is what the issuer decides for a known
-// identity. (Production swaps this issuer for Cognito/JWKS, where roles come from the IdP.) The demo
-// reviewer is granted tenant_admin so the human review loop (assign/approve, document approval) is
-// usable locally; every other identity gets no roles (reads work; admin mutations are server-rejected).
+// identity. (Production swaps this issuer for Cognito/JWKS, where roles come from the IdP.)
+// `carol` is a PURE reviewer (no tenant_admin): with the facade's reviewer-level approval guard
+// (assertReviewApprovalAllowed) she runs the full review loop — assign/approve/reject and document
+// approval — without any admin role. `alice`/`misaki` keep tenant_admin only because they also use
+// admin-only operations (document metadata PUT, data-use policy PUT), NOT because approval needs it.
+// `dave` (ops_owner) cannot approve by default — the contract (mfg-interfaces.md:141) names only
+// `reviewer`. Un-provisioned identities get no roles (reads of per-doc content work; tenant-wide
+// views and all mutations are server-rejected).
 const DEV_ROLES_BY_USER: Record<string, string[]> = {
   alice: ["tenant_admin", "reviewer"],
   bob: ["field_user"],

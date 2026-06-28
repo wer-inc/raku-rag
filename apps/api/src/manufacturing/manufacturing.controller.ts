@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   HttpCode,
+  HttpException,
   Param,
   Post,
   Put,
@@ -12,7 +13,12 @@ import {
 } from "@nestjs/common";
 import type { Request } from "express";
 import type { ManufacturingAnswerRequest, ManufacturingAnswerResponse } from "@raku-rag/shared";
-import { assertAdminMutationAllowed, assertReadViewAllowed } from "../auth/roles";
+import {
+  assertAdminMutationAllowed,
+  assertReadViewAllowed,
+  assertReviewApprovalAllowed,
+  assertReviewViewAllowed,
+} from "../auth/roles";
 import { internalAuthHeaders } from "../auth/internal-auth";
 
 /**
@@ -92,6 +98,20 @@ export class ManufacturingController {
       throw new BadGatewayException("answer-service unreachable");
     });
     if (!upstream.ok) {
+      // Surface ONLY the answer-service's DOMAIN errors to the client, with their reason, so the UI can
+      // guide the user: 403 authz / 404 not-found / 409 out-of-order lifecycle ("assign first") / 422
+      // invalid input (server.py maps these explicitly). Everything else — internal-boundary faults
+      // (401 internal-auth, 400 missing-header) and upstream 5xx — is a GATEWAY fault: return a generic
+      // 502 and NEVER forward the upstream body, which may carry raw exception text (CWE-209). (0023)
+      const CLIENT_FACING_STATUSES = new Set([403, 404, 409, 422]);
+      if (CLIENT_FACING_STATUSES.has(upstream.status)) {
+        const errorBody = (await upstream.json().catch(() => ({}))) as { error?: unknown };
+        const message =
+          typeof errorBody?.error === "string"
+            ? errorBody.error
+            : `answer-service error: ${upstream.status}`;
+        throw new HttpException({ statusCode: upstream.status, message }, upstream.status);
+      }
       throw new BadGatewayException(`answer-service error: ${upstream.status}`);
     }
     return (await upstream.json()) as T;
@@ -190,7 +210,7 @@ export class ManufacturingController {
     @Param("documentId") documentId: string,
     @Body() body: JsonObject,
   ): Promise<Record<string, unknown>> {
-    assertAdminMutationAllowed(req);
+    assertReviewApprovalAllowed(req);
     return this.requestCore(
       req,
       "POST",
@@ -223,6 +243,7 @@ export class ManufacturingController {
     @Query("status") status?: string,
     @Query("reviewer_id") reviewerId?: string,
   ): Promise<Record<string, unknown>> {
+    assertReviewViewAllowed(req);
     return this.requestCore(
       req,
       "GET",
@@ -235,6 +256,7 @@ export class ManufacturingController {
     @Req() req: Request,
     @Param("artifactId") artifactId: string,
   ): Promise<Record<string, unknown>> {
+    assertReviewViewAllowed(req);
     return this.requestCore(
       req,
       "GET",
@@ -249,7 +271,7 @@ export class ManufacturingController {
     @Param("artifactId") artifactId: string,
     @Body() body: JsonObject,
   ): Promise<Record<string, unknown>> {
-    assertAdminMutationAllowed(req);
+    assertReviewApprovalAllowed(req);
     return this.requestCore(
       req,
       "POST",
@@ -265,7 +287,7 @@ export class ManufacturingController {
     @Param("artifactId") artifactId: string,
     @Body() body: JsonObject,
   ): Promise<Record<string, unknown>> {
-    assertAdminMutationAllowed(req);
+    assertReviewApprovalAllowed(req);
     return this.requestCore(
       req,
       "POST",

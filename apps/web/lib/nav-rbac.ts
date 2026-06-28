@@ -24,11 +24,22 @@ const REVIEWER_HREFS = new Set([
   ...FIELD_USER_HREFS,
   "/reviews",
   "/reviews/documents",
-  "/reviews/settings",
+  // NOTE: /reviews/settings is tenant_admin-only (screens.manifest.json approval-workflow-settings
+  // rbac=[tenant_admin]; see issue 0011 DoD#4 / 0014). It is intentionally NOT granted to reviewer.
 ]);
 
+// Paths only tenant_admin/platform_admin may see, even when a less-privileged role holds the parent
+// path (e.g. a reviewer holds /reviews). Without this, navAllowed's subpath rule would leak
+// /reviews/settings to reviewers. Mirrors screens.manifest.json per-screen rbac.
+const TENANT_ADMIN_ONLY_HREFS = new Set(["/reviews/settings"]);
+
+// ops_owner ("ナレッジ管理者") manages sources/documents/operations but is NOT a review-cluster role:
+// screens.manifest.json review-queue/review-detail/document-approval-queue rbac=[reviewer, tenant_admin]
+// exclude ops_owner, and the API (assertReviewViewAllowed / assertReviewApprovalAllowed) denies it too.
+// So we spread FIELD_USER_HREFS (NOT REVIEWER_HREFS) to keep /reviews* out of the ops_owner nav and
+// avoid a "nav shows it, API 403s it" dead screen. (issue 0011 DoD#4 / 0024)
 const OPS_OWNER_HREFS = new Set([
-  ...REVIEWER_HREFS,
+  ...FIELD_USER_HREFS,
   "/sources/list",
   "/sources",
   "/documents",
@@ -94,6 +105,12 @@ export function navAllowed(href: string, roles: WorkspaceRole[]): boolean {
   const effective = roles.length ? roles : (["field_user"] as WorkspaceRole[]);
   if (effective.some((r) => r === "tenant_admin" || r === "platform_admin")) {
     return true;
+  }
+  // Non-admins never see a tenant_admin-only path OR its children, even when they hold a parent path
+  // (a reviewer holds /reviews but must not get /reviews/settings or /reviews/settings/*). Mirrors
+  // screens.manifest.json per-screen rbac. (tenant_admin/platform_admin already returned true above.)
+  if ([...TENANT_ADMIN_ONLY_HREFS].some((x) => href === x || href.startsWith(`${x}/`))) {
+    return false;
   }
   const union = new Set<string>();
   for (const role of effective) {

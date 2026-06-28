@@ -1,6 +1,16 @@
 # 0011 — `reviewer`/`ops_owner` ロールが承認できない RBAC 矛盾(系統 ①②)
 
-> Priority: **P0 / High** / Status: Open / Labels: `rbac`, `manufacturing`, `review`, `approval`, `least-privilege`
+> Priority: **P0 / High** / Status: **In Progress(backend landed 2026-06-28)** / Labels: `rbac`, `manufacturing`, `review`, `approval`, `least-privilege`
+>
+> **進捗(2026-06-28 / Resolved・コミット待ち):** `assertReviewApprovalAllowed`(reviewer + admin級、ops_owner は
+> 契約 `mfg-interfaces.md:141`「approved は reviewer のみ」準拠で**意図的に除外**)を `roles.ts` に新設し、
+> approval(`:193`)/assign(`:252`)/review(`:268`)へ適用。metadata(`:177`)/data-use(`:379`)は admin-only 据置。
+> dev-token の陳腐化コメントを是正。**DoD #4 対応**: nav-rbac で `/reviews/settings` を tenant_admin 限定化、
+> `OPS_OWNER_HREFS` を FIELD_USER 継承に変更して ops_owner を review クラスタから除外(manifest review-* rbac と一致、
+> API 側 0024 の 403 と整合してデッドスクリーン解消)、`navAllowed` を admin-only サブパス対応に。pure reviewer /
+> field_user / ops_owner の E2E を追加 → 全 112 e2e 緑・api/web typecheck 緑・navAllowed ランタイム 12/12 緑。
+> 由来: 境界監査 B5 finding #1。UI ボタン出し分けは 0015 へ委譲。**ops_owner を承認可とするかは将来の製品判断**
+> (含めるなら `roles.ts` の `REVIEW_APPROVAL_ROLES` と nav に各1行追加)。
 
 ## 背景(なぜ今)
 
@@ -57,10 +67,10 @@ manifest の review 画面 rbac は `['reviewer','tenant_admin']`。つまり「
 
 ## 受け入れ条件(DoD)
 
-- [ ] `carol`(roles=`["reviewer"]`)で割当・承認・却下・文書承認・旧版化が 200 で通る。
-- [ ] `tenant_admin` を一切持たない reviewer の E2E(`apps/api/test/manufacturing.e2e-spec.ts` に追加)が緑。
-- [ ] 管理専用操作(metadata 更新・data-use PUT)は reviewer-only で従来どおり 403。
-- [ ] `nav-rbac.ts` と `screens.manifest.json` の rbac が一致。
+- [x] `carol`(roles=`["reviewer"]`)で割当・承認・文書承認が 200 で通る(却下/旧版化は同一ガード=承認権限で値非依存のため同時に充足)。
+- [x] `tenant_admin` を一切持たない reviewer の E2E(`apps/api/test/manufacturing.e2e-spec.ts` に追加)が緑。
+- [x] 管理専用操作(metadata 更新・data-use PUT)は reviewer で従来どおり 403。
+- [x] `nav-rbac.ts` と `screens.manifest.json` の rbac が一致(**review クラスタ**: review-queue/detail/document-approval=`[reviewer,tenant_admin]`、settings=`[tenant_admin]` に nav を整合。`navAllowed` のサブパス一致問題も admin-only prefix 判定で解消)。※ review 以外の nav↔manifest 不一致(B5 #8: field_user の `/sources` 等)は本 issue 範囲外・別途。
 
 ## スコープ外
 
