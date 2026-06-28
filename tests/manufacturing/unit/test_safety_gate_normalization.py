@@ -100,6 +100,23 @@ class TestIsEffective(unittest.TestCase):
         # Only the leading YYYY-MM-DD is used, so a full ISO timestamp is accepted.
         self.assertTrue(is_effective("2026-01-01T08:30:00Z", today=_TODAY))
 
+    # --- 0017-A: optional expiry (valid_until) ---
+    def test_valid_until_in_future_is_still_effective(self) -> None:
+        self.assertTrue(is_effective("2026-01-01", valid_until="2030-01-01", today=_TODAY))
+
+    def test_expired_valid_until_is_not_effective(self) -> None:
+        self.assertFalse(is_effective("2026-01-01", valid_until="2026-03-01", today=_TODAY))
+
+    def test_valid_until_on_today_is_expired(self) -> None:
+        # valid_until is the first day NO LONGER valid (exclusive upper bound).
+        self.assertFalse(is_effective("2026-01-01", valid_until=_TODAY.isoformat(), today=_TODAY))
+
+    def test_missing_valid_until_never_expires(self) -> None:
+        self.assertTrue(is_effective("2026-01-01", valid_until=None, today=_TODAY))
+
+    def test_malformed_valid_until_fails_safe_to_invalid(self) -> None:
+        self.assertFalse(is_effective("2026-01-01", valid_until="not-a-date", today=_TODAY))
+
 
 class TestIsApprovedEffective(unittest.TestCase):
     """A valid approved citation is approved AND has a valid effective_date."""
@@ -118,6 +135,15 @@ class TestIsApprovedEffective(unittest.TestCase):
 
     def test_none_metadata_invalid(self) -> None:
         self.assertFalse(is_approved_effective(None, today=_TODAY))
+
+    def test_approved_but_expired_invalid(self) -> None:
+        # 0017-A: an approved doc whose valid_until has passed is NO LONGER an approved+effective basis.
+        m = _meta(
+            approval_status=ApprovalStatus.APPROVED,
+            effective_date="2026-01-01",
+            valid_until="2026-03-01",
+        )
+        self.assertFalse(is_approved_effective(m, today=_TODAY))
 
 
 class TestGateEvaluate(unittest.TestCase):

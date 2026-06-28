@@ -282,24 +282,27 @@ class ManufacturingSystem:
         # that has been withdrawn/recalled. A later restore (re-ingest) un-tombstones the registry doc
         # and re-populates the resolver, so this also honors the restore path.
         doc = self._mvp.registry.get(tenant_id, document_id)
-        if doc is not None and doc.tombstone:
+        if doc is None or doc.tombstone:
             return None
-        cached = self._mfg_meta.get((tenant_id, document_id))
-        if cached is not None:
-            return cached
-        if doc is None:
-            return None
+        # Resolve from the registry document (the SSOT) on EVERY call — never from a long-lived
+        # process-local cache. An out-of-band obsolete/approval change (connector sync, re-ingest,
+        # another instance) must be reflected immediately so a stale cached APPROVED+effective entry
+        # cannot confirm a high-risk answer for a document that has since been withdrawn. (0017-D)
         raw = doc.metadata.get(_MFG_META_KEY)
         if raw is None:
             return None
-        meta = ManufacturingDocumentMetadata.from_mapping(raw)
-        self._mfg_meta[(tenant_id, document_id)] = meta
-        return meta
+        return ManufacturingDocumentMetadata.from_mapping(raw)
 
     def _set_mfg_meta(
         self, tenant_id: str, document_id: str, metadata: ManufacturingDocumentMetadata
     ) -> None:
-        """Update the fast resolver map (read by search/answer/classifier/gate)."""
+        """Write manufacturing metadata to the registry document (the SSOT that get_mfg_meta reads).
+
+        Also keeps the legacy ``_mfg_meta`` map in sync — but note that map is NO LONGER the source of
+        truth for the safety path: search/answer/classifier/gate resolve through ``get_mfg_meta``, which
+        reads the registry document on every call (0017-D). ``_mfg_meta`` now only backs aggregate
+        dashboard/KPI iteration.
+        """
         self._mfg_meta[(tenant_id, document_id)] = metadata
         doc = self._mvp.registry.get(tenant_id, document_id)
         if doc is not None:

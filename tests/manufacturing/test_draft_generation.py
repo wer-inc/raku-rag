@@ -190,6 +190,27 @@ class TestSafetyItemWithoutApprovedCitationNotAsserted(unittest.TestCase):
             "rather than silently asserted (FR-MFG-011)",
         )
 
+    def test_caller_cannot_self_attest_approval_via_filters(self) -> None:
+        # 0017-C: a document_id listed in the request body's approved_source_document_ids must NOT
+        # confirm a safety item — only the server-side metadata resolver decides approved+effective.
+        # The cited doc is not in the registry (resolver => None), so self-attestation must be ignored.
+        art = self.sys.generate_draft(
+            principal=self.author,
+            kind="checklist",
+            context_citations=[_citation("unapproved_doc", chunk_id="unapproved_doc#0")],
+            manufacturing_filters={
+                "safety_items": ["release stored hydraulic pressure before removing the guard"],
+                # Caller self-attests this doc as approved — must be IGNORED.
+                "approved_source_document_ids": ["unapproved_doc"],
+            },
+        )
+        blob = _content_blob(art)
+        self.assertNotIn(
+            '"confirmed": true',
+            blob.replace(" ", ""),
+            "0017-C: caller-supplied approved_source_document_ids must not confirm a safety item",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

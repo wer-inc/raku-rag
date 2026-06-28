@@ -125,14 +125,37 @@ class ApprovalWorkflow:
     ) -> ApprovalState:
         """Import an upstream approval as SOURCE OF TRUTH; overrides workflow state. Audited."""
         meta = self._require_meta(tenant_id, document_id)
-        status = self._coerce_status(external.get("approval_status", ApprovalStatus.APPROVED.value))
+        # An import MUST state the approval status explicitly. Defaulting to APPROVED let an empty or
+        # partial body silently (re)approve a document — including reviving an OBSOLETE one with its old
+        # effective_date and stale obsolete markers intact. (0017-B)
+        if "approval_status" not in external:
+            raise ValueError("import_external requires an explicit approval_status")
+        status = self._coerce_status(external["approval_status"])
+        reviving_obsolete = (
+            meta.approval_status == ApprovalStatus.OBSOLETE and status == ApprovalStatus.APPROVED
+        )
+        if reviving_obsolete and "effective_date" not in external:
+            raise ValueError(
+                "reviving an obsolete document via import_external requires a new effective_date"
+            )
+        approving = status == ApprovalStatus.APPROVED
+        # valid_until (0017-A expiry) is part of the imported source-of-truth window. When APPROVING,
+        # the window is defined wholly by THIS import: take the import's valid_until (absent => no
+        # expiry) and never carry a stale expiry from the prior (now-overridden) approval — otherwise a
+        # revival could silently read as approved-but-expired. When not approving, keep the existing.
+        valid_until = external.get("valid_until") if approving else meta.valid_until
         updated = dataclasses.replace(
             meta,
             approval_status=status,
             approval_source=ApprovalSource.IMPORTED,  # imported overrides the workflow (FR-MFG-004a)
             effective_date=external.get("effective_date", meta.effective_date),
+            valid_until=valid_until,
             approved_by=external.get("approved_by", meta.approved_by),
             approved_at=external.get("approved_at", meta.approved_at or _now()),
+            # A document cannot be both APPROVED and obsolete/superseded — clear stale obsolescence
+            # markers when the import results in APPROVED so they cannot linger as misleading evidence.
+            obsolete_at=None if approving else meta.obsolete_at,
+            superseded_by=None if approving else meta.superseded_by,
         )
         self._persist(tenant_id, document_id, updated)
         self._audit_transition(

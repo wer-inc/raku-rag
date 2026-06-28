@@ -161,7 +161,6 @@ class DraftGenerator:
             backed = self._has_approved_effective_evidence(
                 tenant_id=tenant_id,
                 citations=citations,
-                manufacturing_filters=manufacturing_filters,
             )
             for text in safety_items:
                 item = {
@@ -182,21 +181,19 @@ class DraftGenerator:
         *,
         tenant_id: str,
         citations: Sequence[Citation],
-        manufacturing_filters: dict,
     ) -> bool:
         """True iff some grounding citation is an approved+effective basis (US1 reuse, FR-MFG-005).
 
-        The approval state of the evidence comes from (in order): the explicit
-        ``approved_source_document_ids`` hint the caller may pass (modeling which provided sources are
-        approved+effective), then the ManufacturingDocumentMetadata resolver if one was wired. The
-        approved/effective decision itself REUSES ``is_approved_effective`` — no looser local rule.
+        The approved/effective decision is made SERVER-SIDE ONLY, via the ManufacturingDocumentMetadata
+        resolver, reusing ``is_approved_effective`` — no looser local rule. The caller's request body
+        must NOT be able to self-attest a document as approved: the prior ``approved_source_document_ids``
+        short-circuit is intentionally removed (0017-C), so this no longer takes ``manufacturing_filters``
+        at all. With no resolver wired, nothing is treated as approved (fail-safe).
         """
-        approved_ids = set(manufacturing_filters.get("approved_source_document_ids", ()) or ())
+        if self._get_mfg_meta is None:
+            return False
         for c in citations:
-            if c.document_id in approved_ids:
+            meta = self._get_mfg_meta(tenant_id, c.document_id)
+            if is_approved_effective(meta, today=self._today):
                 return True
-            if self._get_mfg_meta is not None:
-                meta = self._get_mfg_meta(tenant_id, c.document_id)
-                if is_approved_effective(meta, today=self._today):
-                    return True
         return False

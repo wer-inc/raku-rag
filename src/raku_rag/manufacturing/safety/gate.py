@@ -46,10 +46,18 @@ def is_promotable_evidence(metadata: Mapping[str, object] | None) -> bool:
     return source in PROMOTABLE_EXTRACTION_SOURCES
 
 
-def is_effective(effective_date: str | None, *, today: date | None = None) -> bool:
-    """An effective_date is VALID iff it is set and not in the future (not-yet-effective => invalid).
+def is_effective(
+    effective_date: str | None,
+    *,
+    valid_until: str | None = None,
+    today: date | None = None,
+) -> bool:
+    """An effective_date is VALID iff it is set, not in the future, AND not expired.
 
     Missing date => invalid (no validity window asserted). A malformed date fails safe to invalid.
+    ``valid_until`` is an OPTIONAL exclusive expiry bound: when set, the window is
+    ``effective_date <= today < valid_until``; absent => never expires. A malformed ``valid_until``
+    fails safe to invalid — an unparseable expiry must never read as "still valid". (0017-A)
     """
     if not effective_date:
         return False
@@ -58,18 +66,27 @@ def is_effective(effective_date: str | None, *, today: date | None = None) -> bo
         eff = date.fromisoformat(effective_date[:10])
     except (ValueError, TypeError):
         return False
-    return eff <= today
+    if eff > today:
+        return False
+    if valid_until:
+        try:
+            until = date.fromisoformat(valid_until[:10])
+        except (ValueError, TypeError):
+            return False
+        if today >= until:  # expired (valid_until is the first day no longer valid)
+            return False
+    return True
 
 
 def is_approved_effective(
     meta: ManufacturingDocumentMetadata | None, *, today: date | None = None
 ) -> bool:
-    """A citation is a VALID approved citation iff approved AND its effective_date is valid."""
+    """A citation is a VALID approved citation iff approved AND its effective window is current."""
     if meta is None:
         return False
     if meta.approval_status != ApprovalStatus.APPROVED:
         return False
-    return is_effective(meta.effective_date, today=today)
+    return is_effective(meta.effective_date, valid_until=meta.valid_until, today=today)
 
 
 def citation_is_approved_effective(

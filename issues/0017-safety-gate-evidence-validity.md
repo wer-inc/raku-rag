@@ -1,6 +1,25 @@
 # 0017 — 安全ゲートが「誤った承認状態の証拠」を使い得る(失効/復活/自己申告/stale)(系統 = gate)
 
-> Priority: **P1 / High** / Status: Open / Labels: `safety`, `manufacturing`, `safety-gate`, `correctness`, `SC-MFG-005/006`
+> Priority: **P1 / High** / Status: **Resolved(BE landed・コミット待ち, 2026-06-28)** / Labels: `safety`, `manufacturing`, `safety-gate`, `correctness`, `SC-MFG-005/006`
+>
+> **対応(4つとも fail-safe 方向で実装):**
+> - **A 失効**: `ManufacturingDocumentMetadata.valid_until`(任意・排他的上限)を追加し round-trip、`is_effective` を
+>   `effective_date <= today < valid_until` に拡張。`valid_until` 不正は invalid に fail-safe、None は無期限。
+> - **B obsolete 復活**: `import_external` は `approval_status` 必須化(省略は raise)、obsolete→approved の復活は
+>   新 `effective_date` 必須、APPROVED 化時は `obsolete_at`/`superseded_by` をクリア。
+> - **C 自己申告**: `DraftGenerator` の `approved_source_document_ids` ショートサーキットを撤去。承認判定は必ず
+>   サーバ側 `get_mfg_meta` + `is_approved_effective`(resolver 無→無承認に fail-safe)。
+> - **D stale キャッシュ**: `get_mfg_meta` を毎回 registry(SSOT)読みに変更し長寿命プロセス内キャッシュを撤去。
+>
+> 回帰テスト 10 本追加(失効/期限/不正、import 必須化・復活・marker クリア、自己申告無効化、out-of-band registry 反映)。
+> 全 1051 unittest 緑・manufacturing 369 緑・ruff 緑。`import_external` の高権限ロール限定は authz 課題(0011/0016)として別途。
+>
+> **追補(敵対的レビュー指摘の取りこぼし配線, 同日):** fix A で追加した `valid_until` を承認ライフサイクル全体へ配線。
+> (i) 同期チェックサム `_approval_metadata_checksum` に `valid_until` を追加(失効のみの変更が SKIP されず再伝播=潜在 fail-open を解消)。
+> (ii) `import_external` が `valid_until` を取込(source-of-truth の有効期限を反映)、APPROVED 復活時は旧 `valid_until` を持ち越さない
+> (黙って approved-but-expired 化を防止)。(iii) `_has_approved_effective_evidence` の死引数 `manufacturing_filters` を撤去(fix C の完全化)。
+> (iv) `_set_mfg_meta` docstring を SSOT=registry に修正。回帰テスト+3(checksum 検知 / import valid_until 取込・非持越)。
+> 残 Low(別課題): 全 safety_items への一括 confirmed 伝播(item 単位接地・既存挙動、draft+人手レビューで緩和)。
 
 ## 背景(なぜ今)
 

@@ -139,10 +139,11 @@ class TestImportExternalSourceOfTruth(unittest.TestCase):
         self.assertEqual(stored.approval_source, ApprovalSource.IMPORTED)
         self.assertEqual(stored.effective_date, "2026-01-10")
 
-    def test_import_defaults_to_approved_when_status_absent(self) -> None:
-        state = self.h.wf.import_external(_T, _DOC, {"effective_date": "2026-01-10"}, _actor())
-        self.assertEqual(state.approval_status, "approved")
-        self.assertEqual(state.approval_source, "imported")
+    def test_import_requires_explicit_approval_status(self) -> None:
+        # 0017-B: an import MUST state approval_status explicitly — no silent default to APPROVED
+        # (an empty/partial body must not be able to (re)approve a document).
+        with self.assertRaises(ValueError):
+            self.h.wf.import_external(_T, _DOC, {"effective_date": "2026-01-10"}, _actor())
 
 
 class TestApprovalAudited(unittest.TestCase):
@@ -203,11 +204,63 @@ class TestForwardOnlyTransitionGuard(unittest.TestCase):
         )
 
     def test_import_external_bypasses_the_forward_guard(self) -> None:
-        # FR-MFG-004a: imported approval is source of truth and MAY resurrect an obsolete doc.
+        # FR-MFG-004a: imported approval is source of truth and MAY resurrect an obsolete doc — but
+        # 0017-B requires a NEW effective_date for the resurrection (so an empty/partial body cannot
+        # silently revive it with a stale date).
         h = _Harness(seed=_meta_at(ApprovalStatus.OBSOLETE))
-        state = h.wf.import_external(_T, _DOC, {"approval_status": "approved"}, _actor())
+        with self.assertRaises(ValueError):
+            h.wf.import_external(_T, _DOC, {"approval_status": "approved"}, _actor())
+        state = h.wf.import_external(
+            _T, _DOC, {"approval_status": "approved", "effective_date": "2026-02-01"}, _actor()
+        )
         self.assertEqual(state.approval_status, "approved")
         self.assertEqual(state.approval_source, "imported")
+        self.assertEqual(state.effective_date, "2026-02-01")
+
+    def test_import_approved_clears_stale_obsolete_markers(self) -> None:
+        # 0017-B: a doc cannot be both APPROVED and obsolete/superseded — reviving via import clears the
+        # stale obsolescence markers so they cannot linger as misleading evidence.
+        seed = ManufacturingDocumentMetadata(
+            tenant_id=_T,
+            document_id=_DOC,
+            approval_status=ApprovalStatus.OBSOLETE,
+            obsolete_at="2026-05-01T00:00:00Z",
+            superseded_by="newer_doc",
+        )
+        h = _Harness(seed=seed)
+        h.wf.import_external(
+            _T, _DOC, {"approval_status": "approved", "effective_date": "2026-06-01"}, _actor()
+        )
+        stored = h.metas[(_T, _DOC)]
+        self.assertEqual(stored.approval_status, ApprovalStatus.APPROVED)
+        self.assertIsNone(stored.obsolete_at)
+        self.assertIsNone(stored.superseded_by)
+
+    def test_import_approved_does_not_carry_stale_valid_until(self) -> None:
+        # 0017-A/B: reviving with a new effective_date must NOT keep the prior approval's expiry, which
+        # would silently read as approved-but-expired. Absent valid_until in the import => no expiry.
+        seed = ManufacturingDocumentMetadata(
+            tenant_id=_T,
+            document_id=_DOC,
+            approval_status=ApprovalStatus.OBSOLETE,
+            valid_until="2026-01-01",  # a now-expired window from the old approval
+        )
+        h = _Harness(seed=seed)
+        h.wf.import_external(
+            _T, _DOC, {"approval_status": "approved", "effective_date": "2026-06-01"}, _actor()
+        )
+        self.assertIsNone(h.metas[(_T, _DOC)].valid_until)
+
+    def test_import_approved_honors_imported_valid_until(self) -> None:
+        # 0017-A: the source-of-truth import may carry an expiry window.
+        h = _Harness(seed=_meta_at(ApprovalStatus.PENDING_REVIEW))
+        h.wf.import_external(
+            _T,
+            _DOC,
+            {"approval_status": "approved", "effective_date": "2026-06-01", "valid_until": "2027-06-01"},
+            _actor(),
+        )
+        self.assertEqual(h.metas[(_T, _DOC)].valid_until, "2027-06-01")
 
 
 class TestSupersede(unittest.TestCase):

@@ -126,6 +126,18 @@ class ManufacturingDagsterAssetsTest(unittest.TestCase):
             {check.name for check in checks},
         )
 
+    def test_approval_checksum_detects_valid_until_change(self) -> None:
+        # 0017-A: an expiry-only change must alter the approval checksum, else a re-sync would SKIP
+        # (DiffAction) and the new/shorter validity window would never re-propagate (latent fail-open).
+        from raku_rag.dagster.assets.manufacturing import _approval_metadata_checksum
+
+        base = mfg_meta(tenant_id=T, document_id="doc_a")
+        expiring = mfg_meta(tenant_id=T, document_id="doc_a", valid_until="2026-01-01")
+        self.assertNotEqual(
+            _approval_metadata_checksum(base),
+            _approval_metadata_checksum(expiring),
+        )
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
