@@ -7,7 +7,11 @@ import { internalAuthHeaders } from "../auth/internal-auth";
  * Step 4a — `/v1/answer` product facade. This is a THIN HTTP boundary: AuthMiddleware authenticates the
  * caller and attaches `req.principal`; this controller forwards the query to the Python answer-service,
  * which owns the RAG truth (retrieval / ACL / ranking) over the Postgres + pgvector + RLS ProductionSystem.
- * No retrieval, ACL, or ranking logic is reimplemented here.
+ * No retrieval, ACL, ranking, or manufacturing safety logic is reimplemented here.
+ *
+ * In the manufacturing product, the legacy generic `/v1/answer` route is a compatibility alias for the
+ * safety-aware answer path. This prevents older clients and smoke tests from bypassing high-risk,
+ * approved-evidence, draft, and obsolete-document gates that `/v1/manufacturing/answer` enforces.
  *
  * Security invariant: tenant + identity come from the SIGNED principal, never from the request body — a
  * body-supplied `tenant_id` is ignored, so a caller can never query another tenant through this facade.
@@ -27,7 +31,7 @@ export class AnswerController {
       query: body?.query ?? "",
       collection_id: body?.collection_id,
     };
-    const upstream = await fetch(`${base}/internal/answer`, {
+    const upstream = await fetch(`${base}/internal/manufacturing/answer`, {
       method: "POST",
       headers: { "content-type": "application/json", ...internalAuthHeaders() },
       body: JSON.stringify(payload),
