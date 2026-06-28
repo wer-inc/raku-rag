@@ -88,6 +88,15 @@ class InMemoryMessageQueue:
             self._available.append(queued)
             return False
 
+    def retry_later(
+        self, envelope: QueueEnvelope, *, delay_seconds: int = 5, reason: str = ""
+    ) -> None:
+        queued = self._inflight.pop(envelope.receipt_handle, None)
+        if queued is None:
+            return
+        queued.last_error = reason
+        self._available.append(queued)
+
     @property
     def available_count(self) -> int:
         return len(self._available)

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from raku_rag.domain.models import JobStatus
+from raku_rag.interfaces.base import Connector
 from raku_rag.persistence.datasources import (
     DataSourceRepository,
     materialize_datasource_credentials,
@@ -36,6 +37,8 @@ class SourceSyncService:
     runs: IngestionRunStore
     datasource_repo: DataSourceRepository
     secret_store: SecretStore
+    child_queue: object | None = None
+    connector: Connector | None = None
     oauth_connections: object | None = None
     oauth_secret_store: SecretStore | None = None
 
@@ -175,17 +178,35 @@ class SourceSyncService:
                 child = self._ingest_document(message, datasource, document)
                 child_runs.append(_ingest_response_json(child))
 
-            failed = [item for item in child_runs if item.get("status") == JobStatus.FAILED.value]
-            if len(failed) == len(child_runs):
+            failed_or_dead = [
+                item
+                for item in child_runs
+                if item.get("status") in {JobStatus.FAILED.value, JobStatus.DEAD_LETTER.value}
+            ]
+            in_progress = [
+                item
+                for item in child_runs
+                if item.get("status") in {JobStatus.QUEUED.value, JobStatus.RUNNING.value}
+            ]
+            if in_progress:
+                final_status = "syncing"
+                chunk_count = sum(int(item.get("chunk_count") or 0) for item in child_runs)
+                # Keep the parent run open while child ingestion jobs finish. The worker refreshes this
+                # state as child runs complete, so source-sync never looks successful while PDFs are
+                # still queued/running.
+                self.runs.mark_running(run)
+            elif len(failed_or_dead) == len(child_runs):
                 final_status = JobStatus.FAILED.value
                 self.runs.mark_failed(run, reason="all synced documents failed", retry_count=0)
             else:
-                final_status = "partially_succeeded" if failed else JobStatus.SUCCEEDED.value
+                final_status = (
+                    "partially_succeeded" if failed_or_dead else JobStatus.SUCCEEDED.value
+                )
                 chunk_count = sum(int(item.get("chunk_count") or 0) for item in child_runs)
-                if failed:
+                if failed_or_dead:
                     self.runs.mark_partially_succeeded(
                         run,
-                        reason=f"{len(failed)} synced document(s) failed",
+                        reason=f"{len(failed_or_dead)} synced document(s) failed",
                         chunk_count=chunk_count,
                         content_checksum=_manifest_checksum(documents),
                     )
@@ -205,9 +226,9 @@ class SourceSyncService:
                     last_manifest_checksum=_manifest_checksum(documents),
                     last_ingestion_run_id=run.ingestion_run_id,
                     observed_count=len(documents),
-                    changed_count=len(child_runs) - len(failed),
-                    failed_count=len(failed),
-                    last_synced_at=_now() if not failed else "",
+                    changed_count=len(child_runs) - len(failed_or_dead) - len(in_progress),
+                    failed_count=len(failed_or_dead),
+                    last_synced_at=_now() if final_status == JobStatus.SUCCEEDED.value else "",
                 )
             )
             return _sync_response(
@@ -216,8 +237,8 @@ class SourceSyncService:
                 status=final_status,
                 run_id=run.ingestion_run_id,
                 observed_count=len(documents),
-                changed_count=len(child_runs) - len(failed),
-                failed_count=len(failed),
+                changed_count=len(child_runs) - len(failed_or_dead) - len(in_progress),
+                failed_count=len(failed_or_dead),
                 runs=child_runs,
                 datasource=datasource,
             )
@@ -271,18 +292,30 @@ class SourceSyncService:
         mfg_meta = _mfg_metadata_for_sync(
             message.scope, datasource, message.tenant_id, document.document_id
         )
+        document_ref = _stage_child_document_ref(
+            self.connector,
+            tenant_id=message.tenant_id,
+            collection_id=message.collection_id,
+            source_id=message.source_id,
+            document_id=document.document_id,
+            document_ref=document.document_ref,
+            raw=document.raw,
+            content_type=document.content_type,
+        )
         ingest_document = getattr(self.system, "ingest_document", None)
         if callable(ingest_document):
-            return ingest_document(
+            child = ingest_document(
                 tenant_id=message.tenant_id,
                 collection_id=message.collection_id,
                 source_id=message.source_id,
                 document_id=document.document_id,
-                document_ref=document.document_ref,
+                document_ref=document_ref,
                 raw=document.raw,
                 content_type=document.content_type,
                 manufacturing_metadata=mfg_meta,
             )
+            self._enqueue_child_if_needed(child)
+            return child
 
         checksum = hashlib.sha256(document.raw).hexdigest()
         child_message = IngestionJobMessage(
@@ -294,7 +327,7 @@ class SourceSyncService:
             collection_id=message.collection_id,
             source_id=message.source_id,
             document_id=document.document_id,
-            document_ref=document.document_ref,
+            document_ref=document_ref,
             content_type=document.content_type,
         )
         child_run, created = self.runs.create_queued(child_message, trigger="sqs")
@@ -317,6 +350,26 @@ class SourceSyncService:
                 child_run, reason=job.failure_reason or "ingestion failed", retry_count=0
             )
         return child_run
+
+    def _enqueue_child_if_needed(self, child: IngestionRun) -> None:
+        if self.child_queue is None:
+            return
+        if child.status != JobStatus.QUEUED.value or child.sqs_message_id:
+            return
+        enqueue = getattr(self.child_queue, "enqueue_message", None)
+        if not callable(enqueue):
+            return
+        message = IngestionJobMessage(
+            idempotency_key=child.idempotency_key,
+            tenant_id=child.tenant_id,
+            collection_id=child.collection_id,
+            source_id=child.source_id,
+            document_id=child.document_id,
+            document_ref=child.document_ref,
+            content_type=child.content_type,
+        )
+        message_id = str(enqueue(message.to_dict()))
+        self.runs.mark_message_id(child, message_id)
 
 
 def _parent_message(
@@ -371,7 +424,59 @@ def _ingest_response_json(run: IngestionRun) -> dict:
         "status_url": f"/v1/admin/ingestion-runs/{run.ingestion_run_id}",
         "failure_reason": run.failure_reason,
         "chunk_count": run.chunk_count,
+        "sqs_message_id": run.sqs_message_id,
     }
+
+
+def _stage_child_document_ref(
+    connector: Connector | None,
+    *,
+    tenant_id: str,
+    collection_id: str,
+    source_id: str,
+    document_id: str,
+    document_ref: str,
+    raw: bytes,
+    content_type: str,
+) -> str:
+    if not _is_visual_content_type(content_type) or document_ref.startswith("s3://"):
+        return document_ref
+    put_bytes = getattr(connector, "put_bytes", None) if connector is not None else None
+    if not callable(put_bytes):
+        return document_ref
+    checksum = hashlib.sha256(raw).hexdigest()
+    key = "/".join(
+        [
+            "source-sync",
+            _safe_key_part(tenant_id),
+            _safe_key_part(collection_id),
+            _safe_key_part(source_id),
+            _safe_key_part(document_id),
+            f"{checksum}{_extension_for_content_type(content_type)}",
+        ]
+    )
+    return str(put_bytes(key, raw, content_type=content_type))
+
+
+def _is_visual_content_type(content_type: str) -> bool:
+    normalized = content_type.lower().split(";", 1)[0].strip()
+    return normalized == "application/pdf" or normalized.startswith("image/")
+
+
+def _extension_for_content_type(content_type: str) -> str:
+    normalized = content_type.lower().split(";", 1)[0].strip()
+    if normalized == "application/pdf":
+        return ".pdf"
+    if normalized in {"image/jpeg", "image/jpg"}:
+        return ".jpg"
+    if normalized == "image/png":
+        return ".png"
+    return ".bin"
+
+
+def _safe_key_part(value: object) -> str:
+    text = str(value or "")
+    return "".join(ch if ch.isalnum() or ch in "._=-" else "-" for ch in text).strip("-")
 
 
 def _manifest_checksum(documents: list[SyncDocument]) -> str:

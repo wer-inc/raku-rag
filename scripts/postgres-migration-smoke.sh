@@ -2,7 +2,7 @@
 #
 # Host-Postgres smoke for RT2/RT3:
 #   - applies pgvector init SQL
-#   - applies 0001/0002/0003/0004/0005/0006/0007 Postgres migrations
+#   - applies every numbered Postgres migration in infra/db/migrations/postgres/
 #   - verifies vector extension, tenant RLS, and the 0007 evaluation_runs columns
 #   - applies down migrations
 #
@@ -28,18 +28,14 @@ trap cleanup EXIT
 as_postgres createdb "$DB"
 
 as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/init/01-extensions.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0001_core_rls.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0002_policy_profile_visual_rls.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0003_industry_framework.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0004_real_estate_domain.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0005_investment_domain.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0006_manufacturing_domain.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0007_eval_run_persistence.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0008_lexical_retrieval_index.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0009_mfg_audit_payload.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0010_mfg_data_use_policy.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0011_eval_version_registry.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f infra/db/migrations/postgres/0013_datasource_sync_runtime.sql
+mapfile -t up_migrations < <(
+  find infra/db/migrations/postgres -maxdepth 1 -type f \
+    -name '[0-9][0-9][0-9][0-9]_*.sql' ! -name '*.down.sql' | sort
+)
+
+for migration in "${up_migrations[@]}"; do
+  as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f "$migration"
+done
 
 vector_version="$(as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -Atc \
   "SELECT extname || ':' || extversion FROM pg_extension WHERE extname = 'vector';")"
@@ -55,10 +51,11 @@ required_table_count="$(as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -Atc \
        'tenants','documents','chunks','embeddings',
 	       'provider_policies','retrieval_profiles','logging_policies',
 	       'industry_profiles','metadata_schemas','draft_artifacts',
-	       'real_estate_properties','investment_funds','manufacturing_document_metadata'
+	     'real_estate_properties','investment_funds','manufacturing_document_metadata',
+       'data_source_oauth'
 	     );")"
-if [[ "$required_table_count" != "13" ]]; then
-  echo "expected 13 required tables, found $required_table_count" >&2
+if [[ "$required_table_count" != "14" ]]; then
+  echo "expected 14 required tables, found $required_table_count" >&2
   exit 1
 fi
 
@@ -73,9 +70,10 @@ if [[ "$eval_run_columns" != "4" ]]; then
 fi
 
 datasource_pk_columns="$(as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -Atc \
-  "SELECT string_agg(a.attname, ',' ORDER BY a.attnum)
+  "SELECT string_agg(a.attname, ',' ORDER BY keys.ord)
    FROM pg_index i
-   JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+   CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS keys(attnum, ord)
+   JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = keys.attnum
    WHERE i.indrelid = 'data_sources'::regclass AND i.indisprimary;")"
 if [[ "$datasource_pk_columns" != "tenant_id,source_id" ]]; then
   echo "expected data_sources primary key tenant_id,source_id; found $datasource_pk_columns" >&2
@@ -124,29 +122,13 @@ SELECT 1 / CASE WHEN count(*) = 0 THEN 1 ELSE 0 END AS tenant_b_cannot_see_doc
 RESET ROLE;
 SQL
 
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0013_datasource_sync_runtime.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0011_eval_version_registry.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0010_mfg_data_use_policy.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0009_mfg_audit_payload.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0008_lexical_retrieval_index.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0007_eval_run_persistence.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0006_manufacturing_domain.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0005_investment_domain.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0004_real_estate_domain.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0003_industry_framework.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0002_policy_profile_visual_rls.down.sql
-as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 \
-  -f infra/db/migrations/postgres/0001_core_rls.down.sql
+for ((i=${#up_migrations[@]} - 1; i >= 0; i--)); do
+  down="${up_migrations[$i]%.sql}.down.sql"
+  if [[ ! -f "$down" ]]; then
+    echo "missing down migration for ${up_migrations[$i]}" >&2
+    exit 1
+  fi
+  as_postgres psql -d "$DB" -v ON_ERROR_STOP=1 -f "$down"
+done
 
 echo "Postgres migration + pgvector smoke GREEN (${vector_version})"

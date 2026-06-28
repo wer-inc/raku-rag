@@ -63,6 +63,19 @@ on:
         type: choice
         options: [default, aws-textract-bedrock]
         default: default
+      visual_evidence_promotion:
+        description: Allow verified visual citations to satisfy high-risk evidence rules
+        type: boolean
+        default: false
+      visual_verifier_models:
+        description: Comma-separated Bedrock verifier model ids, e.g. model-a,model-b
+        type: string
+        required: false
+        default: ""
+      visual_verifier_same_family_attestation:
+        description: Permit same provider family only when two distinct Bedrock models are explicitly attested
+        type: boolean
+        default: false
       dry_run:
         description: Synth/plan only (no AWS changes)
         type: boolean
@@ -90,6 +103,9 @@ jobs:
       EMBEDDING_PROVIDER: ${{ inputs.embedding_provider }}
       ANSWER_LLM: ${{ inputs.answer_llm }}
       VISUAL_PROVIDER_PROFILE: ${{ inputs.visual_provider_profile }}
+      VISUAL_EVIDENCE_PROMOTION: ${{ inputs.visual_evidence_promotion }}
+      VISUAL_VERIFIER_MODELS: ${{ inputs.visual_verifier_models }}
+      VISUAL_VERIFIER_SAME_FAMILY_ATTESTATION: ${{ inputs.visual_verifier_same_family_attestation }}
       # Textract is not available in every AWS region where the app can run (for example Tokyo).
       # Keep the app stack regional, but route Textract OCR/layout calls to a supported region by
       # default. Override with repo/environment Variable TEXTRACT_REGION if residency requires it.
@@ -121,6 +137,10 @@ jobs:
             echo "::error::basic_auth_user must be 1-128 chars: A-Za-z0-9._@+-"
             exit 1
           fi
+          if [ -n "${VISUAL_VERIFIER_MODELS}" ] && ! printf '%s\n' "${VISUAL_VERIFIER_MODELS}" | grep -qE '^[A-Za-z0-9._:/,-]+$'; then
+            echo "::error::visual_verifier_models may contain only A-Za-z0-9._:/,-"
+            exit 1
+          fi
           case "${VISUAL_PROVIDER_PROFILE}" in
             default|aws-textract-bedrock) ;;
             *)
@@ -146,6 +166,16 @@ jobs:
           if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
             CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock --context textractRegion=${TEXTRACT_REGION} --context ocrRegion=${TEXTRACT_REGION}"
           fi
+          if [ "${VISUAL_EVIDENCE_PROMOTION}" = "true" ]; then
+            CTX="${CTX} --context visualEvidencePromotion=true --context visualEvidenceVerifierQuorum=2"
+          fi
+          if [ -n "${VISUAL_VERIFIER_MODELS}" ]; then
+            VERIFIERS="$(printf '%s' "${VISUAL_VERIFIER_MODELS}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sed 's/^/bedrock:/' | paste -sd, -)"
+            CTX="${CTX} --context visualEvidenceVerifiers=${VERIFIERS}"
+          fi
+          if [ "${VISUAL_VERIFIER_SAME_FAMILY_ATTESTATION}" = "true" ]; then
+            CTX="${CTX} --context visualVerifierAllowSameFamilyDistinctModels=true"
+          fi
           npx cdk synth ${CTX} --quiet
 
       - name: Configure AWS credentials (OIDC)
@@ -170,6 +200,16 @@ jobs:
           if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
           if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
             CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock --context textractRegion=${TEXTRACT_REGION} --context ocrRegion=${TEXTRACT_REGION}"
+          fi
+          if [ "${VISUAL_EVIDENCE_PROMOTION}" = "true" ]; then
+            CTX="${CTX} --context visualEvidencePromotion=true --context visualEvidenceVerifierQuorum=2"
+          fi
+          if [ -n "${VISUAL_VERIFIER_MODELS}" ]; then
+            VERIFIERS="$(printf '%s' "${VISUAL_VERIFIER_MODELS}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sed 's/^/bedrock:/' | paste -sd, -)"
+            CTX="${CTX} --context visualEvidenceVerifiers=${VERIFIERS}"
+          fi
+          if [ "${VISUAL_VERIFIER_SAME_FAMILY_ATTESTATION}" = "true" ]; then
+            CTX="${CTX} --context visualVerifierAllowSameFamilyDistinctModels=true"
           fi
           npx cdk deploy --require-approval never ${CTX}
 

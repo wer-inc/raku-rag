@@ -25,7 +25,7 @@ if os.path.isdir(_SRC) and _SRC not in sys.path:
 
 from raku_rag.app import MvpSystem  # noqa: E402
 from raku_rag.core.config import settings_from_env  # noqa: E402
-from raku_rag.providers.connectors import FileConnector  # noqa: E402
+from raku_rag.providers.connectors import default_connector_from_env  # noqa: E402
 from raku_rag.providers.mock import (  # noqa: E402
     MockAuthProvider,
     MockEmbeddingProvider,
@@ -76,7 +76,7 @@ def build_worker_from_env() -> IngestionWorker:
         from raku_rag.persistence.postgres import PostgresIngestionRunStore
         from raku_rag.production import DEFAULT_DSN, ProductionSystem
 
-        system = ProductionSystem(os.environ.get("POSTGRES_URL", DEFAULT_DSN))
+        system = ProductionSystem(os.environ.get("POSTGRES_URL", DEFAULT_DSN), settings=settings)
         runs = PostgresIngestionRunStore(system._conn)
         datasource_repo = PostgresDataSourceRepository(system._conn, secret_store)
     else:
@@ -93,17 +93,21 @@ def build_worker_from_env() -> IngestionWorker:
         if queue_url
         else InMemoryMessageQueue()
     )
+    connector = default_connector_from_env()
     source_sync_service = SourceSyncService(
         system=system,
         runs=runs,
         datasource_repo=datasource_repo,
         secret_store=secret_store,
+        child_queue=queue,
+        connector=connector,
     )
     return IngestionWorker(
         queue=queue,
-        connector=FileConnector(),
+        connector=connector,
         ingestion=system.ingestion,
         runs=runs,
+        executor=getattr(system, "ingestion_executor", None),
         source_sync_service=source_sync_service,
     )
 

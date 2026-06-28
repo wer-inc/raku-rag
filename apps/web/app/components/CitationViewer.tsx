@@ -146,12 +146,20 @@ export default function CitationViewer({
   }
 
   return (
-    <div className="cv-overlay" role="dialog" aria-modal="true" aria-label="引用ビューア" onClick={onClose}>
-      <div ref={panelRef} className="cv-panel" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+    <div className="cv-overlay" onClick={onClose}>
+      <div
+        ref={panelRef}
+        className="cv-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cv-dialog-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="cv-head">
           <div className="cv-head-titles">
             <span className="cv-eyebrow">引用 {index} / 引用ビューア</span>
-            <h3>{citation.document_id}</h3>
+            <h3 id="cv-dialog-title">{citation.document_id}</h3>
           </div>
           <button type="button" className="cv-close" aria-label="閉じる" onClick={onClose}>
             ✕
@@ -197,6 +205,17 @@ export default function CitationViewer({
                 ["列", preview.col ?? "—"],
                 ["範囲", preview.cell_range ?? "—"],
               ]}
+            />
+          </section>
+        )}
+
+        {preview?.crop_url && (
+          <section className="cv-grounded">
+            <h4>引用箇所</h4>
+            <img
+              className="cv-crop-image"
+              src={preview.crop_url}
+              alt={`${citation.document_id} の引用箇所`}
             />
           </section>
         )}

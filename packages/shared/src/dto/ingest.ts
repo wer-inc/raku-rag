@@ -67,6 +67,7 @@ export interface IngestResponse {
   document_id: string;
   status: IngestionRunStatus;
   status_url: string;
+  sqs_message_id?: string;
   failure_reason?: string;
   chunk_count?: number;
 }

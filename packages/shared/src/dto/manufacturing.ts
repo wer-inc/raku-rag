@@ -5,6 +5,7 @@
 // or candidate/reference knowledge — never raw confidential content.
 
 import type { Citation } from "./answer.js";
+import type { BoundingBoxDto } from "./assets.js";
 
 /** GET /v1/manufacturing/dashboard — KnowledgeOpsDashboard (FR-MFG-012). */
 export interface KnowledgeOpsDashboard {
@@ -337,6 +338,12 @@ export interface AuditEventListResponse {
 export interface CitationPreview {
   kind: "text" | "spreadsheet" | "pdf" | "word" | string;
   content_type: string;
+  asset_id?: string;
+  region_id?: string;
+  crop_id?: string;
+  crop_url?: string;
+  redaction_policy_ref?: string;
+  bbox?: BoundingBoxDto;
   sheet_name?: string;
   row?: number;
   col?: number;

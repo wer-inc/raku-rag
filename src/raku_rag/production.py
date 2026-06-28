@@ -11,13 +11,15 @@ gates exercise, so they run against real Postgres+RLS via adapter parity (see ``
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from raku_rag.app import MvpSystem
 from raku_rag.core.config import Settings
 from raku_rag.core.security.token import TokenVerifier
-from raku_rag.domain.models import JobStatus
+from raku_rag.domain.models import Document, JobStatus
 from raku_rag.domain.models import QueryProfile
+from raku_rag.manufacturing.safety.visual_verify import visual_verifiers_from_settings
 from raku_rag.observability.exporters import exporter_from_settings
 from raku_rag.observability.langfuse_client import build_langfuse_client
 from raku_rag.observability.metrics import MetricsRecorder
@@ -55,7 +57,7 @@ from raku_rag.services.answer import AnswerService
 from raku_rag.services.assets import AssetService
 from raku_rag.services.cache import CacheService
 from raku_rag.services.cost import CostService
-from raku_rag.services.crop import CropService
+from raku_rag.services.crop import crop_service_from_settings
 from raku_rag.services.deletion import DeletionService
 from raku_rag.services.groundedness import GroundednessGate
 from raku_rag.services.ingestion import IngestionService
@@ -154,7 +156,7 @@ class ProductionSystem(MvpSystem):
         self.tracer = InMemoryTracer(exporter=self.telemetry_exporter)
         self.audit = PostgresAuditSink(self._conn)
         self.cache = CacheService()
-        self.crops = CropService()
+        self.crops = crop_service_from_settings(self.settings)
         self.profiles = ProfileRegistry(
             QueryProfile(
                 score_threshold=self.settings.default_score_threshold,
@@ -196,6 +198,7 @@ class ProductionSystem(MvpSystem):
             captioning=self.captioning,
             visual_embedder=self.visual_embedder,
             cost=self.cost,
+            crops=self.crops,
         )
         self.ingestion_executor = IngestionExecutor(
             self.ingestion,
@@ -214,6 +217,7 @@ class ProductionSystem(MvpSystem):
             self.vlm,
             output_guardrail=self.guardrail,
             structured_tool=self.structured_tool,
+            visual_verifiers=visual_verifiers_from_settings(self.settings),
             settings=self.settings,
         )
         self.deletion = DeletionService(
@@ -258,6 +262,18 @@ class ProductionSystem(MvpSystem):
             return run
         if _is_pdf_content_type(content_type):
             # Multi-page PDFs are async: the API creates the run and the worker owns submit/poll/persist.
+            if run.status not in {JobStatus.QUEUED.value, JobStatus.RUNNING.value}:
+                self.ingestion_runs.mark_queued(run)
+            self._upsert_pending_document_stub(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                source_id=source_id,
+                document_id=document_id,
+                checksum=checksum,
+                document_ref=document_ref,
+                content_type=content_type,
+                manufacturing_metadata=manufacturing_metadata,
+            )
             return run
 
         self.ingestion_runs.mark_running(run)
@@ -350,6 +366,43 @@ class ProductionSystem(MvpSystem):
         doc.metadata[MFG_META_KEY] = metadata.to_mapping()
         self.registry.put(doc)
         return metadata
+
+    def _upsert_pending_document_stub(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_id: str,
+        document_id: str,
+        checksum: str,
+        document_ref: str,
+        content_type: str,
+        manufacturing_metadata: "ManufacturingDocumentMetadata | None",
+    ) -> None:
+        existing = self.registry.get(tenant_id, document_id)
+        metadata = dict(existing.metadata) if existing else {}
+        metadata["document_ref"] = document_ref
+        metadata["content_type"] = content_type
+        if manufacturing_metadata is not None:
+            from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY
+
+            metadata[MFG_META_KEY] = manufacturing_metadata.to_mapping()
+        now = datetime.now(timezone.utc).isoformat()
+        self.registry.put(
+            Document(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                document_id=document_id,
+                source_id=source_id,
+                version=existing.version if existing else 1,
+                checksum=checksum,
+                metadata=metadata,
+                created_at=existing.created_at if existing else now,
+                updated_at=now,
+                indexed_at=existing.indexed_at if existing else "",
+                tombstone=False,
+            )
+        )
 
     def ingest_manufacturing(
         self,

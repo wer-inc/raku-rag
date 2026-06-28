@@ -11,6 +11,12 @@
     "needs-human": "awaiting a human gate (prod promotion / safety sign-off / billed reindex or load test)",
     "signed": "human gate explicitly approved by a human"
   },
+  "release_gate_policy": {
+    "updated_at": "2026-06-28",
+    "tier_a": "required for inner-loop safety but not sufficient for develop/customer release",
+    "tier_b": "mandatory on every push/PR; real Postgres/pgvector/RLS plus multi-tenant soak must be green before release",
+    "multi_tenant_soak": "ingest -> search -> answer -> delete -> reindex with cross-tenant leakage asserted as zero"
+  },
   "environment_capability_snapshot": {
     "observed_at": "2026-06-22",
     "local_postgres": "reachable on :5432 (db 'raku' absent -> create + apply infra/db/migrations/postgres/0001..0011 for live verify). Tier-B / live-PG verify IS possible locally.",

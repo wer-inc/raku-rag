@@ -73,7 +73,7 @@ from raku_rag.persistence.oauth_connection import (  # noqa: E402
 from raku_rag.persistence.secret_store import secret_store_from_settings  # noqa: E402
 from raku_rag.services import oauth_token_resolver  # noqa: E402
 from raku_rag.providers.connectors import default_connector_from_env  # noqa: E402
-from raku_rag.workers.ingestion import IngestionRunStore  # noqa: E402
+from raku_rag.workers.ingestion import IngestionJobMessage, IngestionRunStore  # noqa: E402
 from raku_rag.workers.queue.sqs import SqsTaskQueue  # noqa: E402
 from workers.ingest.provider_policy import (  # noqa: E402
     ProviderPolicy,
@@ -1020,6 +1020,7 @@ def _ingest_response_json(job) -> dict:
         "document_id": job.document_id,
         "status": job.status,
         "status_url": f"/v1/admin/ingestion-runs/{job.ingestion_run_id}",
+        "sqs_message_id": getattr(job, "sqs_message_id", ""),
         "failure_reason": job.failure_reason,
         "chunk_count": job.chunk_count,
     }
@@ -1318,6 +1319,60 @@ def _source_sync_queue_from_env():
     return SqsTaskQueue(queue_url, dead_letter_queue_url=os.environ.get("SQS_DLQ_URL", ""))
 
 
+def _is_pdf_content_type(content_type: str) -> bool:
+    return content_type.lower().split(";", 1)[0].strip() == "application/pdf"
+
+
+def _safe_s3_key_part(value: object) -> str:
+    text = str(value or "")
+    return "".join(ch if ch.isalnum() or ch in "._=-" else "-" for ch in text).strip("-")
+
+
+def _stage_visual_upload_ref(
+    connector,
+    *,
+    tenant_id: str,
+    collection_id: str,
+    document_id: str,
+    document_ref: str,
+    raw: bytes,
+    content_type: str,
+) -> str:
+    if not _is_pdf_content_type(content_type) or document_ref.startswith("s3://"):
+        return document_ref
+    put_bytes = getattr(connector, "put_bytes", None)
+    if not callable(put_bytes):
+        return document_ref
+    checksum = hashlib.sha256(raw).hexdigest()
+    key = "/".join(
+        (
+            "uploads",
+            _safe_s3_key_part(tenant_id),
+            _safe_s3_key_part(collection_id),
+            _safe_s3_key_part(document_id),
+            f"{checksum}.pdf",
+        )
+    )
+    return str(put_bytes(key, raw, content_type=content_type))
+
+
+def _enqueue_upload_ingest_if_needed(queue, runs, run) -> str:
+    if queue is None or run.status != "queued" or run.sqs_message_id:
+        return ""
+    message = IngestionJobMessage(
+        idempotency_key=run.idempotency_key,
+        tenant_id=run.tenant_id,
+        collection_id=run.collection_id,
+        source_id=run.source_id,
+        document_id=run.document_id,
+        document_ref=run.document_ref,
+        content_type=run.content_type,
+    )
+    message_id = queue.enqueue_message(message.to_dict())
+    runs.mark_message_id(run, message_id)
+    return message_id
+
+
 def make_handler(system: ProductionSystem):
     connector = default_connector_from_env()
     runtime_settings = settings_from_env()
@@ -1331,6 +1386,8 @@ def make_handler(system: ProductionSystem):
         runs=runs,
         datasource_repo=datasource_repo,
         secret_store=secret_store,
+        child_queue=source_sync_queue,
+        connector=connector,
         oauth_connections=oauth_connections,
         oauth_secret_store=secret_store,
     )
@@ -1981,8 +2038,10 @@ def make_handler(system: ProductionSystem):
                     for field in ("collection_id", "source_id", "document_id", "document_ref"):
                         if not body.get(field):
                             raise KeyError(field)
+                    original_ref = str(body["document_ref"])
+                    content_type = str(body.get("content_type") or "text/plain")
                     try:
-                        raw = connector.fetch(str(body["document_ref"]))
+                        raw = connector.fetch(original_ref)
                     except Exception as fetch_exc:
                         # A document_ref the connector can't resolve (e.g. a file:// path from another
                         # container, or a bad data:/s3: ref) is a per-document INGEST failure, not a
@@ -2004,16 +2063,26 @@ def make_handler(system: ProductionSystem):
                     mfg_meta = _mfg_metadata_from_body(
                         body, principal.tenant_id, str(body["document_id"])
                     )
+                    staged_ref = _stage_visual_upload_ref(
+                        connector,
+                        tenant_id=principal.tenant_id,
+                        collection_id=str(body["collection_id"]),
+                        document_id=str(body["document_id"]),
+                        document_ref=original_ref,
+                        raw=raw,
+                        content_type=content_type,
+                    )
                     job = system.ingest_document(
                         tenant_id=principal.tenant_id,
                         collection_id=str(body["collection_id"]),
                         source_id=str(body["source_id"]),
                         document_id=str(body["document_id"]),
-                        document_ref=str(body["document_ref"]),
+                        document_ref=staged_ref,
                         raw=raw,
-                        content_type=str(body.get("content_type") or "text/plain"),
+                        content_type=content_type,
                         manufacturing_metadata=mfg_meta,
                     )
+                    _enqueue_upload_ingest_if_needed(source_sync_queue, runs, job)
                     self._send(
                         202 if job.status in {"queued", "running", "succeeded"} else 200,
                         _ingest_response_json(job),
@@ -2312,6 +2381,7 @@ def make_handler(system: ProductionSystem):
                     if retried is None:
                         self._send(404, {"error": "not found"})
                     else:
+                        _enqueue_upload_ingest_if_needed(source_sync_queue, runs, retried)
                         self._send(
                             202 if retried.status in {"queued", "running", "succeeded"} else 200,
                             _ingest_response_json(retried),

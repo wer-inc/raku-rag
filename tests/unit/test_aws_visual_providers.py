@@ -117,6 +117,30 @@ class AwsVisualProviderTest(unittest.TestCase):
         self.assertEqual(analysis.pages[0].page_number, 2)
         self.assertEqual(analysis.pages[0].ocr_regions[0].text, "Alarm AL-42")
 
+    def test_textract_async_analyzer_collects_paginated_blocks(self) -> None:
+        class PaginatedTextractClient(FakeTextractClient):
+            def get_document_analysis(self, **kwargs):
+                self.get_calls.append(kwargs)
+                if "NextToken" not in kwargs:
+                    return {
+                        "JobStatus": "SUCCEEDED",
+                        "NextToken": "next-1",
+                        **_textract_response(page=1),
+                    }
+                return {"JobStatus": "SUCCEEDED", **_textract_response(page=2)}
+
+        client = PaginatedTextractClient()
+        analyzer = TextractAsyncDocumentAnalyzer(region="ap-northeast-1", client=client)
+        request = AsyncSubmitRequest(
+            document_ref="s3://bucket/manual.pdf",
+            context=IngestContext("tenant_a", "manuals", "upload", "doc_pdf"),
+        )
+
+        analysis = analyzer.poll(analyzer.submit(request))
+
+        self.assertEqual([call.get("NextToken") for call in client.get_calls], [None, "next-1"])
+        self.assertEqual([page.page_number for page in analysis.pages], [1, 2])
+
     def test_production_visual_factories_select_aws_adapters_without_injected_invokers(
         self,
     ) -> None:

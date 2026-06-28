@@ -343,10 +343,13 @@ def _row_to_ingestion_run(row) -> IngestionRun:
         chunk_count=row[13],
         failure_reason=row[14] or "",
         dagster_run_id=row[15] or "",
-        started_at=_iso(row[16]),
-        finished_at=_iso(row[17]),
-        created_at=_iso(row[18]),
-        updated_at=_iso(row[19]),
+        async_provider=row[16] or "",
+        async_job_id=row[17] or "",
+        async_job_status=row[18] or "",
+        started_at=_iso(row[19]),
+        finished_at=_iso(row[20]),
+        created_at=_iso(row[21]),
+        updated_at=_iso(row[22]),
     )
 
 
@@ -1181,7 +1184,8 @@ class PostgresIngestionRunStore:
             cur.execute(
                 "SELECT ingestion_run_id, tenant_id, collection_id, source_id, document_id, type, "
                 "trigger, status, idempotency_key, document_ref, content_type, sqs_message_id, "
-                "retry_count, chunk_count, failure_reason, dagster_run_id, started_at, finished_at, "
+                "retry_count, chunk_count, failure_reason, dagster_run_id, async_provider, "
+                "async_job_id, async_job_status, started_at, finished_at, "
                 "created_at, updated_at "
                 "FROM ingestion_runs WHERE ingestion_run_id = %s",
                 (ingestion_run_id,),
@@ -1199,7 +1203,8 @@ class PostgresIngestionRunStore:
             cur.execute(
                 "SELECT ingestion_run_id, tenant_id, collection_id, source_id, document_id, type, "
                 "trigger, status, idempotency_key, document_ref, content_type, sqs_message_id, "
-                "retry_count, chunk_count, failure_reason, dagster_run_id, started_at, finished_at, "
+                "retry_count, chunk_count, failure_reason, dagster_run_id, async_provider, "
+                "async_job_id, async_job_status, started_at, finished_at, "
                 "created_at, updated_at "
                 "FROM ingestion_runs WHERE idempotency_key = %s",
                 (idempotency_key,),
@@ -1240,7 +1245,8 @@ class PostgresIngestionRunStore:
             cur.execute(
                 "SELECT ingestion_run_id, tenant_id, collection_id, source_id, document_id, type, "
                 "trigger, status, idempotency_key, document_ref, content_type, sqs_message_id, "
-                "retry_count, chunk_count, failure_reason, dagster_run_id, started_at, finished_at, "
+                "retry_count, chunk_count, failure_reason, dagster_run_id, async_provider, "
+                "async_job_id, async_job_status, started_at, finished_at, "
                 "created_at, updated_at "
                 "FROM ingestion_runs WHERE source_id = %s ORDER BY created_at DESC",
                 (source_id,),
@@ -1510,7 +1516,8 @@ class PostgresIngestionRunStore:
             cur.execute(
                 "SELECT ingestion_run_id, tenant_id, collection_id, source_id, document_id, type, "
                 "trigger, status, idempotency_key, document_ref, content_type, sqs_message_id, "
-                "retry_count, chunk_count, failure_reason, dagster_run_id, started_at, finished_at, "
+                "retry_count, chunk_count, failure_reason, dagster_run_id, async_provider, "
+                "async_job_id, async_job_status, started_at, finished_at, "
                 "created_at, updated_at FROM ingestion_runs"
                 + where
                 + " ORDER BY created_at DESC LIMIT %s",
@@ -1527,6 +1534,19 @@ class PostgresIngestionRunStore:
                 (message_id, run.ingestion_run_id),
             )
         run.sqs_message_id = message_id
+
+    def mark_queued(self, run: IngestionRun) -> None:
+        self._mark(run, "queued")
+        _use_tenant(self._conn, run.tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "UPDATE ingestion_runs SET sqs_message_id = '', finished_at = NULL, "
+                "failure_reason = '', updated_at = now() WHERE ingestion_run_id = %s",
+                (run.ingestion_run_id,),
+            )
+        run.sqs_message_id = ""
+        run.failure_reason = ""
+        run.finished_at = ""
 
     def mark_async_job(self, run: IngestionRun, *, provider: str, job_id: str, status: str) -> None:
         _use_tenant(self._conn, run.tenant_id)

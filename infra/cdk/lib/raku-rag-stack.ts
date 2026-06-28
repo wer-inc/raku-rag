@@ -118,6 +118,12 @@ export class RakuRagStack extends cdk.Stack {
     const maxInlineOcrBytesCtx = contextString("maxInlineOcrBytes");
     const forceDeterministicCtx = contextString("forceDeterministic");
     const visualEvidencePromotionCtx = contextString("visualEvidencePromotion");
+    const visualEvidenceVerifierQuorumCtx = contextString("visualEvidenceVerifierQuorum");
+    const visualEvidenceVerifiersCtx = contextString("visualEvidenceVerifiers");
+    const visualVerifierAllowSameFamilyCtx = contextString(
+      "visualVerifierAllowSameFamilyDistinctModels"
+    );
+    const maxRegionsVerifiedPerAnswerCtx = contextString("maxRegionsVerifiedPerAnswer");
     const visualProviderEnvironment: Record<string, string> = {
       ...(ocrProviderCtx ? { RAKU_OCR_PROVIDER: ocrProviderCtx } : {}),
       ...(layoutProviderCtx ? { RAKU_LAYOUT_PROVIDER: layoutProviderCtx } : {}),
@@ -136,6 +142,21 @@ export class RakuRagStack extends cdk.Stack {
       ...(forceDeterministicCtx ? { RAKU_FORCE_DETERMINISTIC: forceDeterministicCtx } : {}),
       ...(visualEvidencePromotionCtx
         ? { RAKU_VISUAL_EVIDENCE_PROMOTION: visualEvidencePromotionCtx }
+        : {}),
+      ...(visualEvidenceVerifierQuorumCtx
+        ? { RAKU_VISUAL_EVIDENCE_VERIFIER_QUORUM: visualEvidenceVerifierQuorumCtx }
+        : {}),
+      ...(visualEvidenceVerifiersCtx
+        ? { RAKU_VISUAL_EVIDENCE_VERIFIERS: visualEvidenceVerifiersCtx }
+        : {}),
+      ...(visualVerifierAllowSameFamilyCtx
+        ? {
+            RAKU_VISUAL_VERIFIER_ALLOW_SAME_FAMILY_DISTINCT_MODELS:
+              visualVerifierAllowSameFamilyCtx
+          }
+        : {}),
+      ...(maxRegionsVerifiedPerAnswerCtx
+        ? { RAKU_MAX_REGIONS_VERIFIED_PER_ANSWER: maxRegionsVerifiedPerAnswerCtx }
         : {})
     };
     const visualProvidersConfigured = Object.keys(visualProviderEnvironment).length > 0;
@@ -223,9 +244,9 @@ export class RakuRagStack extends cdk.Stack {
       RAKU_INGEST_CONNECTOR: "s3",
       S3_BUCKET: documentBucket.bucketName
     };
-    const visualStorageEnvironment: Record<string, string> = visualProvidersConfigured
-      ? { RAKU_CROP_STORAGE_URI: `s3://${documentBucket.bucketName}/visual-crops` }
-      : {};
+    const visualStorageEnvironment: Record<string, string> = {
+      RAKU_CROP_STORAGE_URI: `s3://${documentBucket.bucketName}/visual-crops`
+    };
 
     const deadLetterQueue = new sqs.Queue(this, "IngestionDeadLetterQueue", {
       queueName: `${servicePrefix}-ingestion-dlq`,
@@ -813,6 +834,7 @@ export class RakuRagStack extends cdk.Stack {
       }
     });
     this.attachRuntimePolicies(answerTask.taskRole, documentBucket, dataKey);
+    ingestionQueue.grantSendMessages(answerTask.taskRole);
     this.grantBedrockInvoke(answerTask.taskRole);
     this.grantTextractDocumentAnalysis(answerTask.taskRole);
     internalAuthSecret.grantRead(answerTask.taskRole);
@@ -857,6 +879,8 @@ export class RakuRagStack extends cdk.Stack {
         // Listen on all interfaces so the internal ALB health check reaches the task ENI (the default
         // 127.0.0.1 bind is loopback-only → failed ELB health checks → ECS kills the task).
         ANSWER_SERVICE_HOST: "0.0.0.0",
+        INGESTION_QUEUE_URL: ingestionQueue.queueUrl,
+        SQS_DLQ_URL: deadLetterQueue.queueUrl,
         DATABASE_HOST: database.clusterEndpoint.hostname,
         DATABASE_PORT: database.clusterEndpoint.port.toString(),
         DATABASE_NAME: "raku_rag",

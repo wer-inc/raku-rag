@@ -39,6 +39,17 @@
 
 **ゲート実行コマンド（単一）**: `scripts/gate.sh`（既定で Tier A、4ms・stdlib）。
 
+### 1.1 リリース判定の追加規律（2026-06-28）
+
+`scripts/gate.sh a` / Tier A の緑は、内側ループの安全性を保つための**必要条件**であり、
+`develop` への統合・顧客向け release の**十分条件ではない**。本番相当の release 判断では、
+GitHub Actions `gate.yml` の **Tier B Postgres/pgvector/RLS** job が常時必須で、実 Postgres 上の
+多テナント soak（ingest → search → answer → delete → reindex、クロステナント漏れ 0）まで緑で
+あることを release gate とする。
+
+この規律は Tier A を重くしないためのものでもある。ローカルの高速 TDD は引き続き Tier A、release
+境界では Tier A + Tier B + RT1 + 関連する Tier C/D を見る。
+
 ### ハードゲート一覧（実装状況）
 
 | Gate | SC | 検査の本質 | テストファイル | 状態 |

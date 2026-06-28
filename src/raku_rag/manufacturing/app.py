@@ -491,6 +491,8 @@ class ManufacturingSystem:
                 return None
         primary = chunks[0] if chunks else {}
         preview = self._preview_from_chunk(doc, primary) if doc and primary else {"kind": "text"}
+        if primary:
+            self._attach_visual_preview(principal, primary, preview)
         return {
             "document_id": detail["document_id"],
             "collection_id": detail["collection_id"],
@@ -502,6 +504,41 @@ class ManufacturingSystem:
             "chunks": chunks,
             "preview": preview,
         }
+
+    def _attach_visual_preview(
+        self, principal: IdentityClaims, chunk: dict, preview: dict
+    ) -> None:
+        meta = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+        asset_id = str(meta.get("asset_id") or "")
+        region_id = str(meta.get("region_id") or "")
+        if not asset_id:
+            return
+        preview["asset_id"] = asset_id
+        if region_id:
+            preview["region_id"] = region_id
+        asset_service = getattr(self._mvp, "assets", None)
+        get_visual_asset = getattr(asset_service, "get_visual_asset", None)
+        if not callable(get_visual_asset):
+            return
+        asset = get_visual_asset(principal, asset_id)
+        if not asset:
+            return
+        for region in asset.get("regions", []):
+            if region_id and region.get("region_id") == region_id:
+                preview["bbox"] = region.get("bbox")
+                crop_url = str(region.get("crop_url") or region.get("crop_uri") or "")
+                if crop_url:
+                    preview["crop_url"] = crop_url
+                break
+        for crop in asset.get("crops", []):
+            if region_id and crop.get("region_id") != region_id:
+                continue
+            crop_url = str(crop.get("crop_url") or crop.get("crop_uri") or "")
+            if crop_url:
+                preview["crop_url"] = crop_url
+            preview["crop_id"] = crop.get("crop_id")
+            preview["redaction_policy_ref"] = crop.get("redaction_policy_ref")
+            break
 
     def get_document_file(
         self, principal: IdentityClaims, document_id: str, *, max_bytes: int = 10_485_760

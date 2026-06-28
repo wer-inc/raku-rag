@@ -19,6 +19,8 @@ prod = [
   "psycopg[binary]>=3",
   "pgvector",
   "boto3",
+  "Pillow>=10",
+  "pypdfium2>=4",
   "pymysql",
   "pydantic>=2",
   "arq",

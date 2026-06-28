@@ -2881,7 +2881,7 @@ const APPROVAL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "obsolete", label: "旧版（参照のみ・警告）" },
 ];
 
-const ACCEPT_EXT = ".txt,.md,.markdown,.csv,.html,.htm,.docx,.xlsx";
+const ACCEPT_EXT = ".txt,.md,.markdown,.csv,.html,.htm,.docx,.xlsx,.pdf,.png,.jpg,.jpeg";
 
 type AddSourceTypeId =
   | "file"
@@ -3414,7 +3414,7 @@ function AddSourceBody() {
 
     setSubmitting(true);
     try {
-      // 1) upload to the local sink -> file:// ref the answer-service can read
+      // 1) upload to the local sink -> data: ref the answer-service can read
       const form = new FormData();
       form.append("file", payload);
       const upRes = await fetch("/api/upload", { method: "POST", body: form });
@@ -3501,7 +3501,7 @@ function AddSourceBody() {
 
       {selectedSource === "file" ? (
         <form className="upload-form" onSubmit={onSubmit}>
-        <Section title="ドキュメントを追加" note="対応形式: テキスト / Markdown / HTML / CSV / Word(.docx) / Excel(.xlsx)">
+        <Section title="ドキュメントを追加" note="対応形式: テキスト / Markdown / HTML / CSV / Word(.docx) / Excel(.xlsx) / PDF / 画像">
           <div className="upload-mode-tabs">
             <button
               type="button"
@@ -3530,7 +3530,9 @@ function AddSourceBody() {
               />
               <span className="upload-drop-main">{file ? file.name : "ファイルを選択（または、ここにドロップ）"}</span>
               <span className="upload-drop-sub">
-                {file ? `${(file.size / 1024).toFixed(1)} KB` : ".txt / .md / .csv / .html / .docx / .xlsx・最大10MB"}
+                {file
+                  ? `${(file.size / 1024).toFixed(1)} KB`
+                  : ".txt / .md / .csv / .html / .docx / .xlsx / .pdf / .png / .jpg・最大25MB"}
               </span>
             </label>
           ) : (

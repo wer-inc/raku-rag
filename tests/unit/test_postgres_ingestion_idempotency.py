@@ -38,6 +38,9 @@ def _row(
         0,
         "",
         "",
+        "",
+        "",
+        "",
         None,
         None,
         "2026-06-22T00:00:00Z",
@@ -140,6 +143,8 @@ class TestPostgresIngestionIdempotency(unittest.TestCase):
         sql = "\n".join(statement for statement, _params in conn.executed)
         self.assertIn("ON CONFLICT (tenant_id, idempotency_key) DO NOTHING", sql)
         self.assertIn("RETURNING ingestion_run_id", sql)
+        self.assertEqual(first.async_provider, "")
+        self.assertEqual(first.async_job_id, "")
 
 
 if __name__ == "__main__":

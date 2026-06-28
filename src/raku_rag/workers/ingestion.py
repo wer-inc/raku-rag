@@ -7,9 +7,11 @@ document processing state.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
+from io import BytesIO
 from typing import Protocol
 
 from raku_rag.domain.models import BoundingBox, Document, JobStatus, LayoutRegion, VisualAsset
@@ -21,6 +23,7 @@ from raku_rag.interfaces.visual import (
     CaptioningProvider,
     DocumentAnalysis,
     IngestContext,
+    JobHandle,
     LayoutExtractor,
     OcrEngine,
 )
@@ -32,9 +35,11 @@ from raku_rag.providers.ocr import DeterministicOcrEngine
 from raku_rag.providers.task_queue import QueueEnvelope
 from raku_rag.providers.visual_embeddings import HashingVisualEmbeddingProvider
 from raku_rag.services.cost import CostService
+from raku_rag.services.crop import CropService
 from raku_rag.services.ingestion import IngestionService, PII_REDACTION_POLICY_REF
 
 VISUAL_REGION_REDACTION_REQUIRED_REF = "visual-region-redaction-required"
+ASYNC_ANALYSIS_RETRY_DELAY_SECONDS = 300
 
 
 def _now() -> str:
@@ -200,6 +205,10 @@ class MessageQueue(Protocol):
 
     def fail(self, envelope: QueueEnvelope, reason: str) -> bool: ...
 
+    def retry_later(
+        self, envelope: QueueEnvelope, *, delay_seconds: int = 5, reason: str = ""
+    ) -> None: ...
+
 
 @dataclass
 class IngestionRunStore:
@@ -335,6 +344,14 @@ class IngestionRunStore:
     def mark_message_id(self, run: IngestionRun, message_id: str) -> None:
         run.sqs_message_id = message_id
         run.updated_at = _now()
+
+    def mark_queued(self, run: IngestionRun) -> None:
+        run.status = JobStatus.QUEUED.value
+        run.failure_reason = ""
+        run.sqs_message_id = ""
+        run.finished_at = ""
+        run.updated_at = _now()
+        self._mark_state(run, JobStatus.QUEUED.value)
 
     def mark_async_job(self, run: IngestionRun, *, provider: str, job_id: str, status: str) -> None:
         run.async_provider = provider
@@ -536,6 +553,7 @@ class VisualIngestionExecutor:
         visual_embedder: HashingVisualEmbeddingProvider | None = None,
         redactor: Redactor | None = None,
         cost: CostService | None = None,
+        crops: CropService | None = None,
     ) -> None:
         self.ocr = ocr or DeterministicOcrEngine()
         self.layout = layout or DeterministicLayoutExtractor(self.ocr)
@@ -543,6 +561,7 @@ class VisualIngestionExecutor:
         self.visual_embedder = visual_embedder or HashingVisualEmbeddingProvider()
         self.redactor = redactor or Redactor()
         self.cost = cost
+        self.crops = crops
 
     def execute_image(
         self,
@@ -671,6 +690,11 @@ class VisualIngestionExecutor:
             )
             for idx, region in enumerate(regions)
         )
+        regions = self._materialize_crops(
+            regions,
+            raw_bytes=image,
+            content_type=options.content_type,
+        )
 
         embedding_inputs = [
             f"{region.ocr_text}\n{region.generated_caption_text}".encode("utf-8")
@@ -771,6 +795,12 @@ class VisualIngestionExecutor:
                 )
                 for idx, region in enumerate(raw_regions, start=1)
             )
+            regions = self._materialize_crops(
+                regions,
+                raw_bytes=_page_image_bytes(page),
+                content_type=str(page.metadata.get("page_image_content_type") or "image/png"),
+                require_raw_bytes=True,
+            )
             embedding_inputs = [
                 f"{region.ocr_text}\n{region.generated_caption_text}".encode("utf-8")
                 for region in regions
@@ -844,6 +874,43 @@ class VisualIngestionExecutor:
             },
         )
 
+    def _materialize_crops(
+        self,
+        regions: tuple[LayoutRegion, ...],
+        *,
+        raw_bytes: bytes = b"",
+        content_type: str = "image/png",
+        require_raw_bytes: bool = False,
+    ) -> tuple[LayoutRegion, ...]:
+        if self.crops is None:
+            return regions
+        if require_raw_bytes and not raw_bytes:
+            return regions
+        materialized: list[LayoutRegion] = []
+        for region in regions:
+            crop = self.crops.create_region_crop(
+                region,
+                raw_bytes=raw_bytes,
+                content_type=content_type,
+            )
+            materialized.append(
+                replace(
+                    region,
+                    crop_uri=crop.crop_uri,
+                    metadata={
+                        **region.metadata,
+                        "crop_id": crop.crop_id,
+                        "crop_uri": crop.crop_uri,
+                        "raw_crop_uri": str(crop.metadata.get("raw_crop_uri") or crop.crop_uri),
+                        "redacted_crop_uri": str(crop.metadata.get("redacted_crop_uri") or ""),
+                        "crop_content_type": str(
+                            crop.metadata.get("crop_content_type") or content_type
+                        ),
+                    },
+                )
+            )
+        return tuple(materialized)
+
     def _record_visual_cost(
         self,
         tenant_id: str,
@@ -872,6 +939,69 @@ class VisualIngestionExecutor:
 
 def _sensitive_labels(redactor: Redactor, text: str) -> tuple[str, ...]:
     return tuple(sorted({label for label, _start, _end in redactor.classify(text)}))
+
+
+def _page_image_bytes(page: object) -> bytes:
+    metadata = getattr(page, "metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        return b""
+    raw = metadata.get("page_image_bytes")
+    if isinstance(raw, bytes):
+        return raw
+    encoded = metadata.get("page_image_base64")
+    if isinstance(encoded, str) and encoded:
+        try:
+            return base64.b64decode(encoded)
+        except Exception:
+            return b""
+    return b""
+
+
+def _analysis_with_rendered_pdf_pages(
+    analysis: DocumentAnalysis, raw_pdf: bytes
+) -> DocumentAnalysis:
+    missing_pages = [page.page_number for page in analysis.pages if not _page_image_bytes(page)]
+    if not missing_pages:
+        return analysis
+    rendered = _render_pdf_pages(raw_pdf, missing_pages)
+    if not rendered:
+        return analysis
+    pages = []
+    for page in analysis.pages:
+        image = rendered.get(page.page_number)
+        if not image:
+            pages.append(page)
+            continue
+        metadata = dict(page.metadata)
+        metadata["page_image_bytes"] = image
+        metadata["page_image_content_type"] = "image/png"
+        pages.append(replace(page, metadata=metadata))
+    return replace(analysis, pages=tuple(pages))
+
+
+def _render_pdf_pages(raw_pdf: bytes, page_numbers: list[int]) -> dict[int, bytes]:
+    if not raw_pdf or not page_numbers:
+        return {}
+    try:
+        import pypdfium2 as pdfium  # type: ignore
+    except Exception:  # pragma: no cover - optional production dependency
+        return {}
+    rendered: dict[int, bytes] = {}
+    try:
+        pdf = pdfium.PdfDocument(raw_pdf)
+        for page_number in sorted(set(page_numbers)):
+            page_index = page_number - 1
+            if page_index < 0 or page_index >= len(pdf):
+                continue
+            page = pdf[page_index]
+            bitmap = page.render(scale=2)
+            image = bitmap.to_pil()
+            output = BytesIO()
+            image.save(output, format="PNG")
+            rendered[page_number] = output.getvalue()
+    except Exception:
+        return rendered
+    return rendered
 
 
 def _visual_region_provenance_metadata(region: LayoutRegion) -> dict:
@@ -952,6 +1082,8 @@ class IngestionExecutor:
         raw: bytes,
         content_type: str = "text/plain",
         document_ref: str = "",
+        async_provider: str = "",
+        async_job_id: str = "",
     ) -> IngestionExecutionResult:
         if _is_image_content_type(content_type):
             return self.execute_visual_image(
@@ -971,6 +1103,8 @@ class IngestionExecutor:
                 raw=raw,
                 content_type=content_type,
                 document_ref=document_ref,
+                async_provider=async_provider,
+                async_job_id=async_job_id,
             )
         content_checksum = hashlib.sha256(raw).hexdigest()
         job = self.ingestion.ingest(
@@ -1042,6 +1176,8 @@ class IngestionExecutor:
         raw: bytes,
         content_type: str,
         document_ref: str,
+        async_provider: str = "",
+        async_job_id: str = "",
     ) -> IngestionExecutionResult:
         if self.async_document_analyzer is None:
             checksum = hashlib.sha256(raw).hexdigest()
@@ -1060,9 +1196,29 @@ class IngestionExecutor:
             document_id=document_id,
             content_type=content_type,
         )
-        request = AsyncSubmitRequest(document_ref=document_ref, context=context)
-        handle = self.async_document_analyzer.submit(request)
+        if async_job_id:
+            handle = JobHandle(
+                provider=async_provider
+                or str(getattr(self.async_document_analyzer, "provider_id", "")),
+                token=async_job_id,
+                document_ref=document_ref,
+                status=AsyncJobStatus.PENDING,
+            )
+        else:
+            request = AsyncSubmitRequest(document_ref=document_ref, context=context)
+            handle = self.async_document_analyzer.submit(request)
         analysis = self.async_document_analyzer.poll(handle)
+        if analysis.status in {AsyncJobStatus.PENDING, AsyncJobStatus.MORE_AVAILABLE}:
+            return IngestionExecutionResult(
+                status=JobStatus.RUNNING.value,
+                document_id=document_id,
+                content_checksum=hashlib.sha256(raw).hexdigest(),
+                parser_version=self.visual_parser_version,
+                chunking_config_version=self.visual_chunking_config_version,
+                async_provider=analysis.provider or handle.provider,
+                async_job_id=analysis.job_id or handle.token,
+                async_job_status=analysis.status.value,
+            )
         if analysis.status != AsyncJobStatus.SUCCEEDED:
             return IngestionExecutionResult(
                 status=JobStatus.FAILED.value,
@@ -1076,6 +1232,7 @@ class IngestionExecutor:
                 async_job_id=analysis.job_id or handle.token,
                 async_job_status=analysis.status.value,
             )
+        analysis = _analysis_with_rendered_pdf_pages(analysis, raw)
         results = self.visual_executor.execute_document_analysis(
             tenant_id=tenant_id,
             collection_id=collection_id,
@@ -1227,6 +1384,8 @@ class IngestionWorker:
                 raw=raw,
                 content_type=message.content_type,
                 document_ref=message.document_ref,
+                async_provider=run.async_provider,
+                async_job_id=run.async_job_id,
             )
             if result.async_provider or result.async_job_id or result.async_job_status:
                 self.runs.mark_async_job(
@@ -1244,14 +1403,23 @@ class IngestionWorker:
                     chunking_config_version=result.chunking_config_version,
                     embedding_model_version=result.embedding_model_version,
                 )
+                self._refresh_source_sync_parent(message)
                 self.queue.ack(envelope)
                 self.stats.processed += 1
+            elif result.status == JobStatus.RUNNING.value:
+                self._refresh_source_sync_parent(message)
+                self._retry_later(
+                    envelope,
+                    reason=result.failure_reason or "visual document analysis is still running",
+                )
             else:
                 self._fail(
                     envelope, run, result.failure_reason or "ingestion failed", result=result
                 )
+                self._refresh_source_sync_parent(message)
         except Exception as exc:
             self._fail(envelope, run, str(exc))
+            self._refresh_source_sync_parent(message)
         return True
 
     def _process_source_sync(self, envelope: QueueEnvelope) -> bool:
@@ -1308,6 +1476,85 @@ class IngestionWorker:
             self.runs.mark_failed(
                 run, reason=reason, retry_count=envelope.receive_count, **metadata
             )
+
+    def _retry_later(self, envelope: QueueEnvelope, *, reason: str) -> None:
+        retry = getattr(self.queue, "retry_later", None)
+        if callable(retry):
+            retry(envelope, delay_seconds=ASYNC_ANALYSIS_RETRY_DELAY_SECONDS, reason=reason)
+            return
+        self.queue.fail(envelope, reason)
+
+    def _refresh_source_sync_parent(self, message: IngestionJobMessage) -> None:
+        parent_document_id = f"{message.source_id}::__source_sync__"
+        if message.document_id == parent_document_id:
+            return
+        source_state = self.runs.source_sync_state(message.tenant_id, message.source_id)
+        if source_state is None or not source_state.last_ingestion_run_id:
+            return
+        parent = self.runs.get_for_tenant(message.tenant_id, source_state.last_ingestion_run_id)
+        if parent is None or parent.document_id != parent_document_id:
+            return
+        child_states = [
+            state
+            for state in self.runs.list_processing_states(
+                message.tenant_id,
+                collection_id=message.collection_id,
+                source_id=message.source_id,
+            )
+            if state.document_id != parent_document_id
+        ]
+        observed = max(source_state.observed_count, len(child_states))
+        changed = sum(1 for state in child_states if state.status == JobStatus.SUCCEEDED.value)
+        failed = sum(
+            1
+            for state in child_states
+            if state.status in {JobStatus.FAILED.value, JobStatus.DEAD_LETTER.value}
+        )
+        pending = observed - changed - failed
+        chunk_count = sum(state.chunk_count for state in child_states)
+        manifest_checksum = source_state.last_manifest_checksum
+        if pending > 0:
+            final_status = "syncing"
+            self.runs.mark_running(parent)
+            last_synced_at = ""
+        elif observed > 0 and failed == observed:
+            final_status = JobStatus.FAILED.value
+            self.runs.mark_failed(parent, reason="all synced documents failed", retry_count=0)
+            last_synced_at = ""
+        elif failed:
+            final_status = "partially_succeeded"
+            self.runs.mark_partially_succeeded(
+                parent,
+                reason=f"{failed} synced document(s) failed",
+                chunk_count=chunk_count,
+                content_checksum=manifest_checksum,
+            )
+            last_synced_at = ""
+        else:
+            final_status = JobStatus.SUCCEEDED.value
+            self.runs.mark_succeeded(
+                parent,
+                chunk_count=chunk_count,
+                content_checksum=manifest_checksum,
+            )
+            last_synced_at = _now()
+        self.runs.upsert_source_sync_state(
+            SourceSyncState(
+                tenant_id=source_state.tenant_id,
+                source_id=source_state.source_id,
+                collection_id=source_state.collection_id,
+                status=final_status,
+                last_manifest_checksum=manifest_checksum,
+                last_ingestion_run_id=source_state.last_ingestion_run_id,
+                observed_count=observed,
+                changed_count=changed,
+                deleted_count=source_state.deleted_count,
+                skipped_count=source_state.skipped_count,
+                failed_count=failed,
+                last_synced_at=last_synced_at,
+                created_at=source_state.created_at,
+            )
+        )
 
 
 def _embedding_dim(ingestion: IngestionService) -> int:

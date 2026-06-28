@@ -35,7 +35,9 @@ Any change touching the safety boundary (GAP-S / SC-MFG controls) still needs ex
 ## 1. CI all-green on the runner
 Push triggers `gate.yml` (Tier A + full suite + RT1 compose + §5 separation) and `ci.yml`
 (lint/unit/contract/integration/security-hard-gate/eval-gate) + `security-scan.yml` + `deploy-checks.yml`.
-Confirm every job is green. Tier-B and Tier-D are change-gated and run on the GitHub Docker host.
+Confirm every job is green. Tier-B is mandatory on every push/PR and runs the real
+Postgres/pgvector/RLS release soak on the GitHub Docker host. Tier-D remains change-gated for
+API/frontend contract changes.
 
 ## 2. Tier B — real Postgres + pgvector  (final-criteria: Tier B green)
 ```bash

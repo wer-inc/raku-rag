@@ -23,6 +23,8 @@ class FakeS3Client:
         self.objects = objects
         self.requests: list[dict] = []
         self.list_requests: list[dict] = []
+        self.put_requests: list[dict] = []
+        self.presign_requests: list[dict] = []
 
     def get_object(self, **kwargs):
         self.requests.append(kwargs)
@@ -41,6 +43,17 @@ class FakeS3Client:
             if obj_bucket == bucket and key.startswith(prefix)
         ]
         return {"Contents": contents, "IsTruncated": False}
+
+    def put_object(self, **kwargs):
+        self.put_requests.append(kwargs)
+        self.objects[(kwargs["Bucket"], kwargs["Key"])] = bytes(kwargs["Body"])
+        return {"ETag": "etag"}
+
+    def generate_presigned_url(self, operation, *, Params, ExpiresIn):
+        self.presign_requests.append(
+            {"operation": operation, "Params": Params, "ExpiresIn": ExpiresIn}
+        )
+        return f"https://signed.example/{Params['Bucket']}/{Params['Key']}?ttl={ExpiresIn}"
 
 
 class TestConnectors(unittest.TestCase):
@@ -84,6 +97,18 @@ class TestConnectors(unittest.TestCase):
             connector.list_refs(prefix="manuals/", limit=10),
             ["s3://docs/manuals/a.txt", "s3://docs/manuals/b.txt"],
         )
+
+    def test_s3_connector_puts_bytes_and_presigns_gets(self) -> None:
+        client = FakeS3Client({})
+        connector = S3Connector(bucket="docs", client=client)
+
+        ref = connector.put_bytes("uploads/doc.pdf", b"%PDF", content_type="application/pdf")
+        url = connector.presigned_get_url(ref, expires_in=120)
+
+        self.assertEqual(ref, "s3://docs/uploads/doc.pdf")
+        self.assertEqual(client.objects[("docs", "uploads/doc.pdf")], b"%PDF")
+        self.assertEqual(client.put_requests[0]["ContentType"], "application/pdf")
+        self.assertEqual(url, "https://signed.example/docs/uploads/doc.pdf?ttl=120")
 
 
 class TestDataUriConnector(unittest.TestCase):

@@ -247,7 +247,7 @@ class TextractAsyncDocumentAnalyzer:
     def poll(self, handle: JobHandle) -> DocumentAnalysis:
         response = self._textract().get_document_analysis(JobId=handle.token)  # type: ignore[attr-defined]
         status = str(response.get("JobStatus") or "")
-        if status in {"IN_PROGRESS", "SUCCEEDED_WITH_WARNINGS"}:
+        if status == "IN_PROGRESS":
             return DocumentAnalysis(
                 provider=self.provider_id,
                 job_id=handle.token,
@@ -262,8 +262,17 @@ class TextractAsyncDocumentAnalyzer:
                 failure_reason=str(response.get("StatusMessage") or "textract analysis failed"),
                 metadata={"extractor_version": self.extractor_version},
             )
+        if status == "PARTIAL_SUCCESS":
+            return DocumentAnalysis(
+                provider=self.provider_id,
+                job_id=handle.token,
+                status=AsyncJobStatus.PARTIAL_FAILURE,
+                failure_reason=str(response.get("StatusMessage") or "textract partial success"),
+                metadata={"extractor_version": self.extractor_version},
+            )
+        combined = _collect_textract_pages(self._textract(), handle.token, response)
         pages = document_pages_from_textract(
-            response,
+            combined,
             extractor_version=self.extractor_version,
         )
         return DocumentAnalysis(
@@ -443,6 +452,24 @@ def document_pages_from_textract(
         )
         for page in pages
     )
+
+
+def _collect_textract_pages(
+    client: object, job_id: str, first_response: Mapping[str, object]
+) -> Mapping[str, object]:
+    blocks = list(_blocks(first_response))
+    next_token = first_response.get("NextToken")
+    while next_token:
+        response = client.get_document_analysis(  # type: ignore[attr-defined]
+            JobId=job_id,
+            NextToken=str(next_token),
+        )
+        blocks.extend(_blocks(response))
+        next_token = response.get("NextToken")
+    combined = dict(first_response)
+    combined["Blocks"] = blocks
+    combined.pop("NextToken", None)
+    return combined
 
 
 def _blocks(response: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
