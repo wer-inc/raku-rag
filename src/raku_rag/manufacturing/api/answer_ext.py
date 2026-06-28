@@ -458,6 +458,9 @@ class ManufacturingAnswerService:
                 self._get_mfg_meta(tenant, s.chunk.document_id), manufacturing_filters
             )
         ]
+        candidate_scored = self._with_visual_page_aggregate_candidates(
+            principal, candidate_scored, profile
+        )
 
         # (3) candidate metadata + the citations the 001 path would consider (pre-gate evidence).
         pre = self._groundedness.pre_gate(candidate_scored, profile)
@@ -733,6 +736,56 @@ class ManufacturingAnswerService:
             return self._answer_service, ()
 
         return self._answer_service_for_preselected(pre.evidence)
+
+    def _with_visual_page_aggregate_candidates(
+        self,
+        principal: IdentityClaims,
+        scored: Sequence[ScoredChunk],
+        profile: QueryProfile,
+    ) -> list[ScoredChunk]:
+        """Include page-level visual evidence for retrieved visual line regions.
+
+        Visual search often retrieves line-level OCR regions first. For high-risk promotion, the
+        verifier needs a page-level crop/OCR surface when the asserted procedure spans multiple OCR
+        lines. This only enriches the manufacturing answer path and preserves the same ACL predicate.
+        """
+
+        if not self._visual_evidence_promotion:
+            return list(scored)
+        store = getattr(self._retrieval, "_store", None)
+        get_visual_chunks = getattr(store, "visual_chunks_for_document", None)
+        if not callable(get_visual_chunks):
+            return list(scored)
+        is_visible = getattr(self._retrieval, "is_visible", None)
+        seen: set[str] = set()
+        enriched: list[ScoredChunk] = []
+        aggregate_cache: dict[str, tuple[object, ...]] = {}
+
+        def add(item: ScoredChunk) -> None:
+            if item.chunk.chunk_id in seen:
+                return
+            seen.add(item.chunk.chunk_id)
+            enriched.append(item)
+
+        for item in scored:
+            chunk = item.chunk
+            if chunk.modality == Modality.VISUAL and not chunk.metadata.get("page_aggregate"):
+                siblings = aggregate_cache.get(chunk.document_id)
+                if siblings is None:
+                    siblings = tuple(get_visual_chunks(principal.tenant_id, chunk.document_id))
+                    aggregate_cache[chunk.document_id] = siblings
+                page_number = int(chunk.metadata.get("page_number") or 0)
+                for sibling in siblings:
+                    if not getattr(sibling, "metadata", {}).get("page_aggregate"):
+                        continue
+                    if page_number and int(sibling.metadata.get("page_number") or 0) != page_number:
+                        continue
+                    if callable(is_visible) and not is_visible(principal, sibling):
+                        continue
+                    score = max(item.retrieval_score, profile.score_threshold)
+                    add(ScoredChunk(chunk=sibling, retrieval_score=score))
+            add(item)
+        return enriched
 
     def _answer_service_for_preselected(
         self, evidence: Sequence[ScoredChunk]
