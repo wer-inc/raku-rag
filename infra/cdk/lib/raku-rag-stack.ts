@@ -238,6 +238,15 @@ export class RakuRagStack extends cdk.Stack {
       encryptionKey: dataKey,
       enforceSSL: true,
       versioned: true,
+      cors: [
+        {
+          allowedMethods: [s3.HttpMethods.PUT],
+          allowedOrigins: ["*"],
+          allowedHeaders: ["*"],
+          exposedHeaders: ["ETag"],
+          maxAge: 3000
+        }
+      ],
       removalPolicy
     });
     this.grantTextractServiceReadDocuments(documentBucket, dataKey);
@@ -530,6 +539,7 @@ export class RakuRagStack extends cdk.Stack {
           cpuArchitecture: ecs.CpuArchitecture.X86_64
         }
       });
+      this.attachRuntimePolicies(webTask.taskRole, documentBucket, dataKey);
       appSecret.grantRead(webTask.taskRole);
       webBasicAuthSecret?.grantRead(webTask.taskRole);
       const webContainer = webTask.addContainer("AwsNextjsContainer", {
@@ -553,9 +563,10 @@ export class RakuRagStack extends cdk.Stack {
           WEB_PORT: "3002",
           RAKU_AUTH_MODE: authMode,
           RAKU_ENABLE_DEV_TOKEN_ISSUER: authMode === "dev" ? "1" : "0",
-          // The AWS-hosted demo protects the web entrypoint with HTTP Basic auth, then Cognito for
-          // app identity. Keep the local upload sink available there so /sources/new can hand inline
-          // data: refs to the answer-service across container boundaries.
+          DOCUMENT_BUCKET: documentBucket.bucketName,
+          RAKU_UPLOAD_BUCKET: documentBucket.bucketName,
+          // The AWS-hosted app protects the web entrypoint with HTTP Basic auth, then Cognito for
+          // app identity. Keep upload enabled there; /api/upload/presign stages files directly in S3.
           RAKU_ENABLE_UPLOAD_SINK: basicAuthUser || authMode === "dev" ? "1" : "0",
           COGNITO_DOMAIN: cognitoHostedUiDomain,
           COGNITO_ISSUER: cognitoIssuer,

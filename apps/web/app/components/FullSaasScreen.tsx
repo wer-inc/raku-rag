@@ -31,6 +31,7 @@ import {
   apiGetJson,
   apiPostJson,
   apiPutJson,
+  authHeaders,
   ingestDocument,
   manufacturingAnswer,
   searchChunks,
@@ -3149,6 +3150,64 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+interface UploadForIngestResult {
+  ref: string;
+  filename: string;
+  content_type: string;
+  size?: number;
+  storage?: string;
+}
+
+async function fallbackInlineUpload(file: File): Promise<UploadForIngestResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const upRes = await fetch("/api/upload", { method: "POST", body: form });
+  const up = await upRes.json().catch(() => ({}));
+  if (!upRes.ok) throw new Error(up.error ?? "アップロードに失敗しました");
+  return up as UploadForIngestResult;
+}
+
+async function uploadForIngest(file: File, token: string): Promise<UploadForIngestResult> {
+  const presignRes = await fetch("/api/upload/presign", {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({
+      filename: file.name || "upload.bin",
+      size: file.size,
+      content_type: file.type || "application/octet-stream",
+    }),
+  });
+  const presign = await presignRes.json().catch(() => ({}));
+
+  if (presignRes.ok && typeof presign.upload_url === "string" && typeof presign.ref === "string") {
+    const contentType =
+      typeof presign.content_type === "string"
+        ? presign.content_type
+        : file.type || "application/octet-stream";
+    const uploadRes = await fetch(presign.upload_url, {
+      method: "PUT",
+      headers: { "content-type": contentType },
+      body: file,
+    });
+    if (!uploadRes.ok) throw new Error(`S3 アップロードに失敗しました (HTTP ${uploadRes.status})`);
+    return {
+      ref: presign.ref,
+      filename: typeof presign.filename === "string" ? presign.filename : file.name || "upload.bin",
+      content_type: contentType,
+      size: typeof presign.size === "number" ? presign.size : file.size,
+      storage: "s3",
+    };
+  }
+
+  if (presignRes.status === 403 || presignRes.status === 501) {
+    return fallbackInlineUpload(file);
+  }
+
+  throw new Error(
+    typeof presign.error === "string" ? presign.error : "アップロード URL の発行に失敗しました",
+  );
+}
+
 const GDRIVE_OAUTH_STATE_KEY = "raku.gdrive.oauth.state";
 const GDRIVE_OAUTH_MESSAGE_SOURCE = "raku-gdrive-oauth";
 
@@ -3414,20 +3473,14 @@ function AddSourceBody() {
 
     setSubmitting(true);
     try {
-      // 1) upload to the local sink -> data: ref the answer-service can read
-      const form = new FormData();
-      form.append("file", payload);
-      const upRes = await fetch("/api/upload", { method: "POST", body: form });
-      const up = await upRes.json().catch(() => ({}));
-      if (!upRes.ok) throw new Error(up.error ?? "アップロードに失敗しました");
+      const token = await getSessionToken();
+      const up = await uploadForIngest(payload, token);
 
       const docId =
         documentId.trim() ||
         up.filename.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 80) ||
         `doc-${Date.now().toString(36)}`;
 
-      // 2) ingest -> parse / chunk / embed / store
-      const token = await getSessionToken();
       const ingest = await ingestDocument(
         {
           collection_id: collectionId.trim() || "manuals",

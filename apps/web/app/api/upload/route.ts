@@ -1,12 +1,9 @@
 import path from "path";
 import { NextResponse } from "next/server";
 
-// Upload sink: returns the uploaded bytes as an inline `data:` ref (RFC 2397). The answer-service's
-// DataUriConnector decodes it in-request, so ingestion works even though web and the Python
-// answer-service run as SEPARATE containers with no shared filesystem (a `file://` ref written here
-// would 500 on the answer-service — it can't see this container's disk). The Add Source screen
-// uploads here, then calls POST /v1/ingest with the returned ref. Production deployments must
-// explicitly set RAKU_ENABLE_UPLOAD_SINK.
+// Fallback upload sink: returns the uploaded bytes as an inline `data:` ref (RFC 2397). AWS-hosted
+// deployments use /api/upload/presign so the browser uploads directly to S3 and /v1/ingest receives
+// a small s3:// ref. Keep this route for local/dev deployments where an S3 bucket is absent.
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

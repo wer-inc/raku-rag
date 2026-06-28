@@ -45,7 +45,7 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return body as T;
 }
 
-function authHeaders(userToken: string): Record<string, string> {
+export function authHeaders(userToken: string): Record<string, string> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     authorization: `Bearer ${userToken.split(".").length === 3 ? userToken : "local-dev-key"}`,
