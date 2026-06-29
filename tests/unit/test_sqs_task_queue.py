@@ -88,6 +88,25 @@ class TestSqsTaskQueue(unittest.TestCase):
         self.assertEqual(client.deleted[0]["ReceiptHandle"], "rh-final")
         self.assertEqual(client.visibility, [])
 
+    def test_retry_later_changes_visibility_without_dlq_projection(self) -> None:
+        client = FakeSqsClient()
+        queue = SqsTaskQueue("http://sqs/raku-ingest", client=client)
+        client.messages = [
+            {
+                "MessageId": "m-pending",
+                "ReceiptHandle": "rh-pending",
+                "Body": json.dumps({"idempotency_key": "k", "document_id": "d"}),
+                "Attributes": {"ApproximateReceiveCount": "5"},
+            }
+        ]
+
+        envelope = queue.receive()[0]
+        queue.retry_later(envelope, delay_seconds=30, reason="textract pending")
+
+        self.assertEqual(client.visibility[0]["VisibilityTimeout"], 30)
+        self.assertEqual(client.sent, [])
+        self.assertEqual(client.deleted, [])
+
 
 if __name__ == "__main__":
     unittest.main()

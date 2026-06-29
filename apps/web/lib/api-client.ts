@@ -8,6 +8,14 @@ import type {
   AssignReviewerRequest,
   AuditEventListResponse,
   CitationSourceView,
+  ChatCreateSessionRequest,
+  ChatCreateSessionResponse,
+  ChatHandoffRequest,
+  ChatHandoffResponse,
+  ChatMessageRequest,
+  ChatMessageResponse,
+  ChatMetricsResponse,
+  ChatSessionDetailResponse,
   CreateDraftRequest,
   DocumentFileResponse,
   ImprovementQueueResponse,
@@ -45,7 +53,7 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return body as T;
 }
 
-function authHeaders(userToken: string): Record<string, string> {
+export function authHeaders(userToken: string): Record<string, string> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     authorization: `Bearer ${userToken.split(".").length === 3 ? userToken : "local-dev-key"}`,
@@ -153,6 +161,51 @@ export async function searchChunks(req: SearchRequest, userToken: string): Promi
     body: JSON.stringify(req),
   });
   return jsonOrThrow<SearchResponse>(res);
+}
+
+export async function createChatSession(
+  req: ChatCreateSessionRequest,
+  userToken: string,
+): Promise<ChatCreateSessionResponse> {
+  return apiPostJson<ChatCreateSessionResponse>("/chat/sessions", req, userToken);
+}
+
+export async function sendChatMessage(
+  sessionId: string,
+  req: ChatMessageRequest,
+  userToken: string,
+): Promise<ChatMessageResponse> {
+  return apiPostJson<ChatMessageResponse>(
+    `/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
+    req,
+    userToken,
+  );
+}
+
+export async function requestChatHandoff(
+  sessionId: string,
+  req: ChatHandoffRequest,
+  userToken: string,
+): Promise<ChatHandoffResponse> {
+  return apiPostJson<ChatHandoffResponse>(
+    `/chat/sessions/${encodeURIComponent(sessionId)}/handoff`,
+    req,
+    userToken,
+  );
+}
+
+export async function chatSessionDetail(
+  sessionId: string,
+  userToken: string,
+): Promise<ChatSessionDetailResponse> {
+  return apiGetJson<ChatSessionDetailResponse>(
+    `/chat/sessions/${encodeURIComponent(sessionId)}`,
+    userToken,
+  );
+}
+
+export async function chatMetrics(userToken: string): Promise<ChatMetricsResponse> {
+  return apiGetJson<ChatMetricsResponse>("/chat/metrics", userToken);
 }
 
 /** Record answer/citation feedback (👍/👎, "この引用は正しい/間違い"). */
@@ -275,7 +328,7 @@ export interface QualityEvalResult {
   gate_result: string;
   status: string;
   metrics: { recall_at_k?: number; groundedness?: number; high_risk_recall?: number };
-  security_checks: Record<string, { passed?: boolean } | boolean>;
+  security_checks: Record<string, { passed: boolean; count: number }>;
 }
 
 /** Register a quality eval set and run it against the live answer path, returning the scorecard

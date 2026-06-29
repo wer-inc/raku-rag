@@ -62,6 +62,7 @@ def build_manufacturing_answer_service(
         ),
         get_document=system.registry.get,
         today=today,
+        visual_evidence_promotion=system.settings.visual_evidence_promotion,
     )
 
 

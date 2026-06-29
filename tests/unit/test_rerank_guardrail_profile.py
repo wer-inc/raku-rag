@@ -71,6 +71,16 @@ class GuardrailProfileTest(unittest.TestCase):
         g = guardrail_from_settings(replace(Settings(), runtime_profile="production"))
         self.assertIsInstance(g, BedrockGuardrailProvider)
 
+    def test_guardrail_can_be_explicitly_disabled_for_staging(self) -> None:
+        g = guardrail_from_settings(
+            replace(
+                Settings(),
+                runtime_profile="production",
+                output_guardrail_provider="none",
+            )
+        )
+        self.assertIsNone(g)
+
     def test_production_guardrail_returns_verdict_via_invoker(self) -> None:
         def invoker(*, text: str):
             return {"action": "BLOCK", "reason": "unsafe_instruction"}

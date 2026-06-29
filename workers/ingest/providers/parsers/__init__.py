@@ -189,7 +189,7 @@ class TextractParserAdapter(ParserProviderAdapter):
         self,
         *,
         client: ParserClient | None = None,
-        region: str = "us-east-1",
+        region: str = "ap-northeast-1",
         zero_retention: bool = True,
         no_train: bool = True,
     ) -> None:
@@ -211,7 +211,7 @@ class AzureDocumentIntelligenceParserAdapter(ParserProviderAdapter):
         self,
         *,
         client: ParserClient | None = None,
-        region: str = "eastus",
+        region: str = "japaneast",
         zero_retention: bool = False,
         no_train: bool = False,
     ) -> None:
@@ -233,7 +233,7 @@ class GoogleDocumentAIParserAdapter(ParserProviderAdapter):
         self,
         *,
         client: ParserClient | None = None,
-        region: str = "us",
+        region: str = "asia-northeast1",
         zero_retention: bool = False,
         no_train: bool = False,
     ) -> None:

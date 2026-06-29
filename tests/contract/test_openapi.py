@@ -60,7 +60,7 @@ class OpenApiContractTest(unittest.TestCase):
                 self.assertIsInstance(_resolve_ref(self.doc, ref), dict)
 
     def test_operations_have_ids_security_and_response_contracts(self) -> None:
-        public_paths = {"/health", "/openapi.json"}
+        public_paths = {"/health", "/openapi.json", "/chat/public-widget/sessions"}
         operation_ids: set[str] = set()
         for path, path_item in self.doc["paths"].items():
             for method, operation in path_item.items():
@@ -155,7 +155,14 @@ class OpenApiContractTest(unittest.TestCase):
         schemas = self.doc["components"]["schemas"]
         datasource_type_enum = schemas["AdminDataSource"]["properties"]["type"]["enum"]
         upsert_type_enum = schemas["DataSourceUpsertRequest"]["properties"]["type"]["enum"]
-        for datasource_type in ("object_storage", "confluence", "database", "notion", "box", "google_drive"):
+        for datasource_type in (
+            "object_storage",
+            "confluence",
+            "database",
+            "notion",
+            "box",
+            "google_drive",
+        ):
             with self.subTest(datasource_type=datasource_type):
                 self.assertIn(datasource_type, datasource_type_enum)
                 self.assertIn(datasource_type, upsert_type_enum)

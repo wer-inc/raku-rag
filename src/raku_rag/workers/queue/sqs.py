@@ -109,3 +109,13 @@ class SqsTaskQueue:
             VisibilityTimeout=self.retry_visibility_timeout,
         )
         return False
+
+    def retry_later(
+        self, envelope: QueueEnvelope, *, delay_seconds: int = 5, reason: str = ""
+    ) -> None:
+        assert self.client is not None
+        self.client.change_message_visibility(
+            QueueUrl=self.queue_url,
+            ReceiptHandle=envelope.receipt_handle,
+            VisibilityTimeout=max(0, int(delay_seconds or self.retry_visibility_timeout)),
+        )

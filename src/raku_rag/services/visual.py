@@ -19,10 +19,14 @@ def visual_chunks_from_ingestion(result: VisualIngestionResult) -> tuple[Chunk, 
     for idx, region in enumerate(result.regions):
         text = visual_chunk_text(region)
         redaction_metadata = _visual_redaction_metadata(region)
+        primary_evidence_source = str(
+            region.extraction_source or region.metadata.get("extraction_source") or ""
+        )
+        caption_source = str(region.caption_source or region.metadata.get("caption_source") or "")
         chunks.append(
             Chunk(
                 tenant_id=region.tenant_id,
-                chunk_id=f"{region.document_id}:visual:{idx}",
+                chunk_id=f"{region.document_id}:visual:{region.page_number}:{idx}",
                 document_id=region.document_id,
                 collection_id=region.collection_id,
                 text=text,
@@ -43,11 +47,19 @@ def visual_chunks_from_ingestion(result: VisualIngestionResult) -> tuple[Chunk, 
                         "width": region.bbox.width,
                         "height": region.bbox.height,
                     },
+                    "crop_id": str(region.metadata.get("crop_id") or ""),
                     "crop_uri": region.crop_uri,
+                    "raw_crop_uri": str(region.metadata.get("raw_crop_uri") or region.crop_uri),
+                    "redacted_crop_uri": str(region.metadata.get("redacted_crop_uri") or ""),
+                    "crop_content_type": str(region.metadata.get("crop_content_type") or ""),
                     "region_type": region.region_type,
                     "ocr_text": region.ocr_text,
                     "generated_caption_text": region.generated_caption_text,
                     "primary_evidence_text": region.ocr_text,
+                    "primary_evidence_source": primary_evidence_source,
+                    "caption_source": caption_source,
+                    **_visual_page_aggregate_metadata(region),
+                    **_visual_pdf_fallback_metadata(region),
                     **redaction_metadata,
                 },
             )
@@ -75,4 +87,23 @@ def _visual_redaction_metadata(region: LayoutRegion) -> dict:
         "visual_redaction_policy_ref": str(
             region.metadata.get("visual_redaction_policy_ref") or ""
         ),
+    }
+
+
+def _visual_page_aggregate_metadata(region: LayoutRegion) -> dict:
+    if not region.metadata.get("page_aggregate"):
+        return {}
+    return {
+        "page_aggregate": True,
+        "aggregate_region_count": int(region.metadata.get("aggregate_region_count") or 0),
+    }
+
+
+def _visual_pdf_fallback_metadata(region: LayoutRegion) -> dict:
+    if not region.metadata.get("pdf_page_fallback"):
+        return {}
+    return {
+        "pdf_page_fallback": True,
+        "pdf_page_fallback_reason": str(region.metadata.get("pdf_page_fallback_reason") or ""),
+        "source_pdf_ref": str(region.metadata.get("source_pdf_ref") or ""),
     }

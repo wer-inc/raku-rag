@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from io import BytesIO
 import unittest
 
 from raku_rag.domain.models import BoundingBox, LayoutRegion
-from raku_rag.services.crop import CropService
+from raku_rag.services.crop import CropService, S3CropStore
+from tests.unit.test_connectors import FakeS3Client
 
 
 class TestCropService(unittest.TestCase):
@@ -73,6 +75,63 @@ class TestCropService(unittest.TestCase):
         self.assertEqual(crop.metadata["sensitive_detection_labels"], ["api_key", "email"])
         self.assertEqual(crop.metadata["raw_crop_uri"], crop.crop_uri)
         self.assertTrue(crop.metadata["redacted_crop_uri"].startswith("memory://redacted-crops/"))
+
+    def test_s3_crop_store_materializes_raw_and_redacted_objects(self) -> None:
+        from raku_rag.providers.connectors import S3Connector
+
+        client = FakeS3Client({})
+        store = S3CropStore(
+            "s3://docs/visual-crops",
+            connector=S3Connector(bucket="docs", client=client),
+        )
+        service = CropService(store)
+        region = self.region()
+        region.metadata = {
+            "sensitive_detected": True,
+            "sensitive_detection_labels": ["email"],
+            "visual_region_redaction_required": True,
+        }
+
+        crop = service.create_region_crop(region, raw_bytes=b"raw-png", redacted_bytes=b"redacted")
+
+        self.assertTrue(crop.crop_uri.startswith("s3://docs/visual-crops/tenant_a/manuals/"))
+        self.assertTrue(crop.metadata["redacted_crop_uri"].startswith("s3://docs/visual-crops/"))
+        self.assertIn(("docs", crop.crop_uri.removeprefix("s3://docs/")), client.objects)
+        self.assertEqual(
+            client.objects[("docs", crop.crop_uri.removeprefix("s3://docs/"))], b"raw-png"
+        )
+        self.assertEqual(
+            store.public_url(crop.crop_uri),
+            f"https://signed.example/docs/{crop.crop_uri.removeprefix('s3://docs/')}?ttl=300",
+        )
+
+    def test_s3_crop_store_materializes_bbox_png_when_image_bytes_are_available(self) -> None:
+        try:
+            from PIL import Image  # type: ignore
+        except Exception:
+            self.skipTest("Pillow is not installed")
+        from raku_rag.providers.connectors import S3Connector
+
+        source = Image.new("RGB", (10, 10), color=(255, 255, 255))
+        for x in range(1, 4):
+            for y in range(2, 6):
+                source.putpixel((x, y), (255, 0, 0))
+        raw = BytesIO()
+        source.save(raw, format="PNG")
+        client = FakeS3Client({})
+        store = S3CropStore(
+            "s3://docs/visual-crops",
+            connector=S3Connector(bucket="docs", client=client),
+        )
+        service = CropService(store)
+
+        crop = service.create_region_crop(self.region(), raw_bytes=raw.getvalue())
+
+        stored = client.objects[("docs", crop.crop_uri.removeprefix("s3://docs/"))]
+        with Image.open(BytesIO(stored)) as rendered:
+            self.assertEqual(rendered.size, (3, 4))
+            self.assertEqual(rendered.getpixel((0, 0))[:3], (255, 0, 0))
+        self.assertEqual(crop.metadata["crop_render_status"], "rendered")
 
 
 if __name__ == "__main__":

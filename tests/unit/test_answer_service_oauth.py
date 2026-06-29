@@ -53,7 +53,9 @@ class AnswerServiceOAuthGlueTest(unittest.TestCase):
         self.conns = InMemoryOAuthConnectionStore()
 
     def test_callback_persists_refresh_token_and_records_connection(self) -> None:
-        fetch = _Fetch(body={"access_token": "at", "refresh_token": "rt-9", "scope": "drive.readonly"})
+        fetch = _Fetch(
+            body={"access_token": "at", "refresh_token": "rt-9", "scope": "drive.readonly"}
+        )
         result = self.server._oauth_google_callback(
             "tenant_a",
             {"code": "auth-code", "redirect_uri": "https://app/cb"},
@@ -67,14 +69,20 @@ class AnswerServiceOAuthGlueTest(unittest.TestCase):
         conn = self.conns.get("tenant_a", cid)
         self.assertIsNotNone(conn)
         # refresh token landed in the SecretStore under the connection's ref, not in the result
-        self.assertEqual(self.secrets.retrieve_secret("tenant_a", conn.refresh_token_secret_ref), "rt-9")
+        self.assertEqual(
+            self.secrets.retrieve_secret("tenant_a", conn.refresh_token_secret_ref), "rt-9"
+        )
         self.assertNotIn("refresh_token", result)
 
     def test_callback_missing_code_raises_valueerror(self) -> None:
         with self.assertRaises(ValueError):
             self.server._oauth_google_callback(
-                "tenant_a", {"redirect_uri": "x"},
-                secret_store=self.secrets, oauth_connections=self.conns, env=_ENV, fetch_url=_Fetch(),
+                "tenant_a",
+                {"redirect_uri": "x"},
+                secret_store=self.secrets,
+                oauth_connections=self.conns,
+                env=_ENV,
+                fetch_url=_Fetch(),
             )
 
     def test_sync_injects_fresh_access_token_for_google_drive(self) -> None:
@@ -89,25 +97,45 @@ class AnswerServiceOAuthGlueTest(unittest.TestCase):
             "config": {"source_type": "google_drive", "connection_id": conn.connection_id},
         }
         self.server._inject_gdrive_access_token(
-            "tenant_a", "src-1", datasource, body,
-            secret_store=self.secrets, oauth_connections=self.conns, env=_ENV, fetch_url=fetch,
+            "tenant_a",
+            "src-1",
+            datasource,
+            body,
+            secret_store=self.secrets,
+            oauth_connections=self.conns,
+            env=_ENV,
+            fetch_url=fetch,
         )
         self.assertEqual(body["fresh_access_token"], "FRESH-AT")
 
     def test_sync_is_noop_for_non_gdrive(self) -> None:
         body: dict = {}
         self.server._inject_gdrive_access_token(
-            "tenant_a", "src-1", {"type": "box", "config": {"source_type": "box"}}, body,
-            secret_store=self.secrets, oauth_connections=self.conns, env=_ENV, fetch_url=_Fetch(),
+            "tenant_a",
+            "src-1",
+            {"type": "box", "config": {"source_type": "box"}},
+            body,
+            secret_store=self.secrets,
+            oauth_connections=self.conns,
+            env=_ENV,
+            fetch_url=_Fetch(),
         )
         self.assertNotIn("fresh_access_token", body)
 
     def test_sync_without_connection_is_reconnect_required(self) -> None:
         with self.assertRaises(ValueError):
             self.server._inject_gdrive_access_token(
-                "tenant_a", "src-1",
-                {"type": "google_drive", "config": {"source_type": "google_drive", "connection_id": "missing"}},
-                {}, secret_store=self.secrets, oauth_connections=self.conns, env=_ENV, fetch_url=_Fetch(),
+                "tenant_a",
+                "src-1",
+                {
+                    "type": "google_drive",
+                    "config": {"source_type": "google_drive", "connection_id": "missing"},
+                },
+                {},
+                secret_store=self.secrets,
+                oauth_connections=self.conns,
+                env=_ENV,
+                fetch_url=_Fetch(),
             )
 
     def test_sync_invalid_grant_is_reconnect_required(self) -> None:
@@ -116,9 +144,16 @@ class AnswerServiceOAuthGlueTest(unittest.TestCase):
         self.secrets.store_secret("tenant_a", conn.refresh_token_secret_ref, "revoked")
         with self.assertRaises(oauth_token_resolver.RefreshTokenExpiredError):
             self.server._inject_gdrive_access_token(
-                "tenant_a", "src-1",
-                {"type": "google_drive", "config": {"source_type": "google_drive", "connection_id": conn.connection_id}},
-                {}, secret_store=self.secrets, oauth_connections=self.conns, env=_ENV,
+                "tenant_a",
+                "src-1",
+                {
+                    "type": "google_drive",
+                    "config": {"source_type": "google_drive", "connection_id": conn.connection_id},
+                },
+                {},
+                secret_store=self.secrets,
+                oauth_connections=self.conns,
+                env=_ENV,
                 fetch_url=_Fetch(http_error=400),
             )
 

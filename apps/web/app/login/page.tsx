@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   completeCognitoNewPassword,
   getBrowserSessionState,
+  loadRememberLoginPreference,
   signInWithCognitoPassword,
 } from "../../lib/session";
 
@@ -26,6 +27,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [rememberLogin, setRememberLogin] = useState(false);
   const [challengeSession, setChallengeSession] = useState("");
   const [challengeUsername, setChallengeUsername] = useState("");
   const [state, setState] = useState<LoginViewState>({
@@ -37,6 +39,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     let active = true;
+    setRememberLogin(loadRememberLoginPreference());
     getBrowserSessionState()
       .then((session) => {
         if (!active) return;
@@ -67,10 +70,19 @@ export default function LoginPage() {
 
   const signIn = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const rememberInput = event.currentTarget.elements.namedItem("remember_login");
+    const remember =
+      rememberInput instanceof HTMLInputElement ? rememberInput.checked : rememberLogin;
     setState((current) => ({ ...current, error: null, loading: true }));
     const login = challengeSession
-      ? completeCognitoNewPassword(email, newPassword, challengeSession, challengeUsername)
-      : signInWithCognitoPassword(email, password);
+      ? completeCognitoNewPassword(
+          email,
+          newPassword,
+          challengeSession,
+          challengeUsername,
+          remember,
+        )
+      : signInWithCognitoPassword(email, password, remember);
     void login
       .then((result) => {
         if (result.status === "new_password_required") {
@@ -112,6 +124,27 @@ export default function LoginPage() {
           <p>
             製造手順・規格・トラブル事例を横断検索。安全分類と出典の有効期限つきで回答します。
           </p>
+          <ul className="auth-hero-points">
+            <li className="auth-hero-point">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="m4 12 5 5L20 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>承認済みかつ有効な根拠だけを引用します。</span>
+            </li>
+            <li className="auth-hero-point">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+              </svg>
+              <span>安全分類で、高リスクな回答を保護します。</span>
+            </li>
+            <li className="auth-hero-point">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                <path d="M12 7v5l3 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span>出典には有効期限。古い根拠は警告します。</span>
+            </li>
+          </ul>
         </div>
         <div className="auth-hero-footer">© 2026 Raku RAG, Inc.</div>
       </section>
@@ -126,9 +159,15 @@ export default function LoginPage() {
                 : "組織とユーザーを選んでワークスペースに入ります。"}
             </p>
           </div>
-          {state.error && <p className="auth-alert">{state.error}</p>}
+          {state.error && (
+            <p className="auth-alert" role="alert" id="login-error">
+              {state.error}
+            </p>
+          )}
           {isCognito && !state.configured && !state.loading && (
-            <p className="auth-alert">ログイン設定が完了していません。管理者に確認してください。</p>
+            <p className="auth-alert" role="alert">
+              ログイン設定が完了していません。管理者に確認してください。
+            </p>
           )}
           {isCognito ? (
             <form className="auth-form-grid" onSubmit={signIn}>
@@ -142,6 +181,8 @@ export default function LoginPage() {
                   required
                   type="email"
                   value={email}
+                  aria-invalid={state.error ? true : undefined}
+                  aria-describedby={state.error ? "login-error" : undefined}
                 />
               </label>
               {!challengeSession && (
@@ -153,6 +194,8 @@ export default function LoginPage() {
                     required
                     type="password"
                     value={password}
+                    aria-invalid={state.error ? true : undefined}
+                    aria-describedby={state.error ? "login-error" : undefined}
                   />
                 </label>
               )}
@@ -165,9 +208,26 @@ export default function LoginPage() {
                     required
                     type="password"
                     value={newPassword}
+                    aria-invalid={state.error ? true : undefined}
+                    aria-describedby={state.error ? "login-error" : undefined}
                   />
                 </label>
               )}
+              <label className="auth-remember">
+                <input
+                  checked={rememberLogin}
+                  name="remember_login"
+                  onChange={(event) => setRememberLogin(event.target.checked)}
+                  type="checkbox"
+                  aria-describedby="remember-login-note"
+                />
+                <span className="auth-remember-copy">
+                  <span className="auth-remember-title">ログインを保持する</span>
+                  <span className="auth-remember-note" id="remember-login-note">
+                    共有端末ではオフにしてください。
+                  </span>
+                </span>
+              </label>
               <div className="auth-login-actions">
                 <button
                   className="auth-primary"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from time import perf_counter
 
 from raku_rag.core.text import content_terms
@@ -76,6 +77,7 @@ class EvaluationRunner:
         visual_recall_hits = 0
         visual_citation_hits = 0
         visual_grounded_hits = 0
+        visual_grounding_subset_sum = 0.0
         bbox_scores: list[float] = []
         visual_latencies: list[float] = []
         visual_cost = 0.0
@@ -165,6 +167,9 @@ class EvaluationRunner:
                     and any(citation.kind == "visual" for citation in answer.citations)
                 ):
                     visual_grounded_hits += 1
+                visual_grounding_subset_sum += _visual_grounding_subset_score(
+                    answer.text or "", answer.citations, retrieved
+                )
                 bbox_scores.extend(_bbox_scores(expected_visual, answer.citations))
             examples.append(
                 EvaluationExampleResult(
@@ -204,6 +209,7 @@ class EvaluationRunner:
             "visual_citation_accuracy": visual_citation_hits / visual_count,
             "bbox_iou": (sum(bbox_scores) / len(bbox_scores)) if bbox_scores else 0.0,
             "visual_groundedness": visual_grounded_hits / visual_count,
+            "visual_grounding_subset_rate": visual_grounding_subset_sum / visual_count,
             "p95_visual_answer_latency_ms": _p95(visual_latencies),
             "visual_query_cost": visual_cost,
         }
@@ -350,6 +356,51 @@ def _bbox_iou(left: BoundingBox, right: BoundingBox | None) -> float:
     if union <= 0:
         return 0.0
     return intersection / union
+
+
+def _visual_grounding_subset_score(
+    answer_text: str, citations: tuple[Citation, ...], retrieved
+) -> float:
+    visual_citations = [citation for citation in citations if citation.kind == "visual"]
+    if not visual_citations:
+        return 0.0
+    retrieved_by_chunk = {result.chunk.chunk_id: result.chunk for result in retrieved}
+    scores: list[float] = []
+    for citation in visual_citations:
+        chunk = retrieved_by_chunk.get(citation.chunk_id or "")
+        if chunk is None:
+            scores.append(0.0)
+            continue
+        assertion = _attributed_visual_text(answer_text, chunk)
+        ocr_text = str(
+            chunk.metadata.get("primary_evidence_text") or chunk.metadata.get("ocr_text") or ""
+        )
+        scores.append(_term_subset_score(assertion, ocr_text))
+    return min(scores) if scores else 0.0
+
+
+def _attributed_visual_text(answer_text: str, chunk: Chunk) -> str:
+    evidence_text = str(chunk.metadata.get("primary_evidence_text") or chunk.text or "")
+    evidence_terms = content_terms(evidence_text)
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?。！？])\s+|[\r\n]+", answer_text or "")
+        if sentence.strip()
+    ]
+    if not sentences or not evidence_terms:
+        return answer_text
+    attributed = [
+        sentence for sentence in sentences if content_terms(sentence).intersection(evidence_terms)
+    ]
+    return " ".join(attributed) if attributed else answer_text
+
+
+def _term_subset_score(assertion: str, evidence_text: str) -> float:
+    assertion_terms = content_terms(assertion)
+    if not assertion_terms:
+        return 0.0
+    evidence_terms = content_terms(evidence_text)
+    return 1.0 if assertion_terms.issubset(evidence_terms) else 0.0
 
 
 def _visual_trace_cost(system, tenant_id: str, trace_id: str) -> float:

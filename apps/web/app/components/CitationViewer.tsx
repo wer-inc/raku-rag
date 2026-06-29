@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Citation, CitationPreview } from "@raku-rag/shared";
 import { adminCitationView, adminDocumentFile, submitFeedback } from "../../lib/api-client";
 import { getSessionToken } from "../../lib/session";
+import { useDialog } from "../../lib/use-dialog";
 
 export interface CitationViewTarget {
   citation: Citation;
@@ -52,6 +53,7 @@ export default function CitationViewer({
   const [preview, setPreview] = useState<CitationPreview | null>(null);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setSent(null);
@@ -103,14 +105,8 @@ export default function CitationViewer({
     };
   }, [target]);
 
-  useEffect(() => {
-    if (!target) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [target, onClose]);
+  // Escape-to-close + focus trap + initial focus + restore-on-close (shared modal a11y).
+  useDialog(target != null, onClose, panelRef);
 
   useEffect(() => {
     return () => {
@@ -150,12 +146,20 @@ export default function CitationViewer({
   }
 
   return (
-    <div className="cv-overlay" role="dialog" aria-modal="true" aria-label="引用ビューア" onClick={onClose}>
-      <div className="cv-panel" onClick={(e) => e.stopPropagation()}>
+    <div className="cv-overlay" onClick={onClose}>
+      <div
+        ref={panelRef}
+        className="cv-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="cv-dialog-title"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="cv-head">
           <div className="cv-head-titles">
             <span className="cv-eyebrow">引用 {index} / 引用ビューア</span>
-            <h3>{citation.document_id}</h3>
+            <h3 id="cv-dialog-title">{citation.document_id}</h3>
           </div>
           <button type="button" className="cv-close" aria-label="閉じる" onClick={onClose}>
             ✕
@@ -201,6 +205,17 @@ export default function CitationViewer({
                 ["列", preview.col ?? "—"],
                 ["範囲", preview.cell_range ?? "—"],
               ]}
+            />
+          </section>
+        )}
+
+        {preview?.crop_url && (
+          <section className="cv-grounded">
+            <h4>引用箇所</h4>
+            <img
+              className="cv-crop-image"
+              src={preview.crop_url}
+              alt={`${citation.document_id} の引用箇所`}
             />
           </section>
         )}

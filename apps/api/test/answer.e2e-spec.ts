@@ -5,8 +5,10 @@ import type { AddressInfo } from "net";
 import { createApp } from "../src/main";
 import { makeUserToken } from "../src/auth/principal";
 
-// Tier D — `/v1/answer` facade contract. A stub stands in for the Python answer-service so this asserts
-// the FACADE behaviour (auth required; identity taken from the signed token, NOT the body; request
+// Tier D — `/v1/answer` facade contract. In the manufacturing product this legacy route is a
+// compatibility alias for the safety-aware answer-service path, so older clients cannot bypass the
+// manufacturing safety overlay. A stub stands in for the Python answer-service so this asserts the
+// FACADE behaviour (auth required; identity taken from the signed token, NOT the body; request
 // forwarded; response passed through) with no Postgres. RAG correctness itself is the Tier B parity gate.
 describe("answer facade (e2e)", () => {
   let app: INestApplication;
@@ -24,6 +26,14 @@ describe("answer facade (e2e)", () => {
     confidence: 0.9,
     freshness: null,
     correlation_id: "trace_stub",
+    manufacturing: {
+      high_risk: false,
+      high_risk_reason_codes: [],
+      safety_block_reason: null,
+      obsolete_warning: false,
+      requires_onsite_confirmation: false,
+      notice: null,
+    },
   };
 
   beforeAll(async () => {
@@ -36,7 +46,7 @@ describe("answer facade (e2e)", () => {
       req.on("end", () => {
         received = JSON.parse(data || "{}");
         res.setHeader("content-type", "application/json");
-        if (receivedMethod !== "POST" || receivedPath !== "/internal/answer") {
+        if (receivedMethod !== "POST" || receivedPath !== "/internal/manufacturing/answer") {
           res.statusCode = 500;
           res.end(JSON.stringify({ error: "wrong upstream route" }));
           return;
@@ -78,7 +88,8 @@ describe("answer facade (e2e)", () => {
     expect(received?.tenant_id).toBe("tenant_a");
     expect(received?.user_id).toBe("alice");
     expect(receivedMethod).toBe("POST");
-    expect(receivedPath).toBe("/internal/answer");
+    expect(receivedPath).toBe("/internal/manufacturing/answer");
+    expect(res.body.manufacturing.high_risk).toBe(false);
   });
 
   it("SECURITY: tenant comes from the signed token, never from the request body", async () => {

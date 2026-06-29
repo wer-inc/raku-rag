@@ -1,7 +1,9 @@
 name: gate
 
 # Operationalizes the loop-engineering "No" (docs/loop-engineering.md §1): every push/PR must pass the
-# Tier-A hard gates (001 security + 002 manufacturing safety), the full suite, and RT1 compose smoke.
+# Tier-A hard gates (001 security + 002 manufacturing safety), the full suite, Tier-B real
+# Postgres/pgvector/RLS, and RT1 compose smoke. Tier B is deliberately unconditional here: a develop
+# release is not considered green until the production persistence adapter has passed against real PG.
 # This is the loop gate. (.github/workflows/ci.yml is the older 001 production-adapter skeleton.)
 on:
   push:
@@ -33,45 +35,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Detect Tier B relevant changes
-        id: changes
-        shell: bash
-        run: |
-          set -euo pipefail
-          before="${{ github.event.before }}"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base="${{ github.event.pull_request.base.sha }}"
-            changed="$(git diff --name-only "$base"...HEAD)"
-          elif git rev-parse --verify --quiet "${before}^{commit}" >/dev/null 2>&1; then
-            changed="$(git diff --name-only "$before"..."${{ github.sha }}")"
-          else
-            # New branch / no valid 'before' (first push reports before=000…0): cannot compute an
-            # incremental diff, so DON'T silently skip a Docker-backed gate — force it to run.
-            changed="__FORCE_RUN__"
-          fi
-          printf '%s\n' "$changed"
-          if [ "$changed" = "__FORCE_RUN__" ]; then
-            relevant="forced (new branch / no diff base)"
-          else
-            relevant="$(printf '%s\n' "$changed" | grep -E '^(infra/db/|infra/docker-compose\.yml|scripts/gate\.sh|tests/contract/test_tier_b_|tests/postgres/|src/raku_rag/(persistence|providers|services)/|src/raku_rag/production\.py|\.github/workflows/gate\.yml|docs/production-gate-strategy\.md)' || true)"
-          fi
-          if [ -n "$relevant" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-            echo "Tier B relevant changes:"; printf '%s\n' "$relevant"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "No Tier B relevant changes; skipping Docker-backed gate."
-          fi
       - name: Install Postgres driver (parity)
-        if: steps.changes.outputs.run == 'true'
         run: python -m pip install --quiet 'psycopg[binary]'
       - name: Pre-warm Postgres past first-init (avoid temp-server race)
-        if: steps.changes.outputs.run == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -98,8 +67,36 @@ jobs:
             exit 1
           fi
           "${compose[@]}" exec -T postgres pg_isready -h 127.0.0.1 -U "$user"
+      - name: Tier B full migration smoke (all numbered migrations)
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose=(docker compose -f infra/docker-compose.yml)
+          user="${POSTGRES_USER:-raku}"
+          db="${POSTGRES_DB:-raku}_tier_b_migration"
+          "${compose[@]}" exec -T postgres dropdb -U "$user" --if-exists "$db"
+          "${compose[@]}" exec -T postgres createdb -U "$user" "$db"
+          "${compose[@]}" exec -T postgres psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 \
+            < infra/db/init/01-extensions.sql
+          mapfile -t up_migrations < <(
+            find infra/db/migrations/postgres -maxdepth 1 -type f \
+              -name '[0-9][0-9][0-9][0-9]_*.sql' ! -name '*.down.sql' | sort
+          )
+          for migration in "${up_migrations[@]}"; do
+            "${compose[@]}" exec -T postgres psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 \
+              < "$migration"
+          done
+          for ((i=${#up_migrations[@]} - 1; i >= 0; i--)); do
+            down="${up_migrations[$i]%.sql}.down.sql"
+            if [ ! -f "$down" ]; then
+              echo "::error::Missing down migration for ${up_migrations[$i]}"
+              exit 1
+            fi
+            "${compose[@]}" exec -T postgres psql -U "$user" -d "$db" -v ON_ERROR_STOP=1 \
+              < "$down"
+          done
+          "${compose[@]}" exec -T postgres dropdb -U "$user" "$db"
       - name: Tier B bootstrap gate
-        if: steps.changes.outputs.run == 'true'
         run: bash scripts/gate.sh b
 
   rt1-compose:

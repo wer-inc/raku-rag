@@ -1,5 +1,9 @@
 "use client";
 
+import { useRef } from "react";
+
+import { useDialog } from "../../lib/use-dialog";
+
 const SALES_FILES = [
   {
     title: "承認済み作業標準",
@@ -44,6 +48,9 @@ export default function SalesDemoDrawer({
   onToggle: () => void;
   open: boolean;
 }) {
+  const panelRef = useRef<HTMLElement>(null);
+  useDialog(open, onClose, panelRef);
+
   return (
     <>
       <button
@@ -51,6 +58,7 @@ export default function SalesDemoDrawer({
         className="sales-drawer-tab"
         aria-label="提案資料を開く"
         aria-expanded={open}
+        aria-controls="sales-drawer-panel"
         onClick={onToggle}
       >
         資料
@@ -62,7 +70,15 @@ export default function SalesDemoDrawer({
         tabIndex={open ? 0 : -1}
         onClick={onClose}
       />
-      <aside className={`sales-drawer${open ? " open" : ""}`} aria-label="提案資料">
+      <aside
+        ref={panelRef}
+        id="sales-drawer-panel"
+        className={`sales-drawer${open ? " open" : ""}`}
+        role="dialog"
+        aria-modal={open ? true : undefined}
+        aria-label="提案資料"
+        tabIndex={-1}
+      >
         <header className="sales-drawer-head">
           <div>
             <p className="eyebrow">Resources</p>

@@ -12,6 +12,7 @@ import {
   Req,
 } from "@nestjs/common";
 import type { Request } from "express";
+import { stripTenantOverrides } from "../auth/strip-tenant";
 import type {
   ACLSettingsRequest,
   ACLSettingsResponse,
@@ -65,7 +66,7 @@ export class AdminSettingsController {
     const upstream = await fetch(`${this.baseUrl()}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(this.stripTenantOverrides(body)),
+      body: body === undefined ? undefined : JSON.stringify(stripTenantOverrides(body)),
     }).catch(() => {
       throw new BadGatewayException("answer-service unreachable");
     });
@@ -76,22 +77,6 @@ export class AdminSettingsController {
       throw new BadGatewayException(`answer-service error: ${upstream.status}`);
     }
     return (await upstream.json()) as T;
-  }
-
-  private stripTenantOverrides(value: unknown): unknown {
-    if (Array.isArray(value)) {
-      return value.map((item) => this.stripTenantOverrides(item));
-    }
-    if (value && typeof value === "object") {
-      const cleaned: Record<string, unknown> = {};
-      for (const [key, child] of Object.entries(value)) {
-        if (key !== "tenant_id") {
-          cleaned[key] = this.stripTenantOverrides(child);
-        }
-      }
-      return cleaned;
-    }
-    return value;
   }
 
   @Get("datasources")

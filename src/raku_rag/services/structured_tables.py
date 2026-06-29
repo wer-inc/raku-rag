@@ -17,7 +17,7 @@ from statistics import median
 from typing import Any, Mapping
 
 from raku_rag.core.errors import AnswerStatus
-from raku_rag.domain.models import Answer, Citation, Freshness, IdentityClaims
+from raku_rag.domain.models import Answer, Citation, ExtractionSource, Freshness, IdentityClaims
 from raku_rag.providers.parsers import (
     CSV_CONTENT_TYPES,
     XLSX_CONTENT_TYPE,
@@ -177,6 +177,8 @@ def cell_metadata_for_text(text: str, manifests: Iterable[Mapping[str, Any]]) ->
         "column_index": col,
         "column_name": column,
         "cell_range": cell,
+        "primary_evidence_source": ExtractionSource.SPREADSHEET_PARSER.value,
+        "extraction_source": ExtractionSource.SPREADSHEET_PARSER.value,
     }
 
 
@@ -339,6 +341,10 @@ def _citation(ref: _CellRef) -> Citation:
         sheet_name=ref.sheet_name,
         cell_range=ref.cell_range,
         row_id=ref.row_id,
+        metadata={
+            "primary_evidence_source": ExtractionSource.SPREADSHEET_PARSER.value,
+            "extraction_source": ExtractionSource.SPREADSHEET_PARSER.value,
+        },
     )
 
 
@@ -433,10 +439,16 @@ def _numeric_filter(
     if not value_col or threshold is None:
         return None
     if re.search(r"\b(less|below|under)\b|<|以下|未満|より小さい", query, re.I):
-        predicate = lambda value: value < threshold
+
+        def predicate(value: float) -> bool:
+            return value < threshold
+
         label = f"{value_col} < {_format_number(threshold)}"
     else:
-        predicate = lambda value: value > threshold
+
+        def predicate(value: float) -> bool:
+            return value > threshold
+
         label = f"{value_col} > {_format_number(threshold)}"
     matches = [
         row

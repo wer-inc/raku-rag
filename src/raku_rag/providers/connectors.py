@@ -72,6 +72,18 @@ class MemoryConnector(Connector):
         self.objects[ref] = bytes(raw)
         return ref
 
+    def put_bytes(
+        self,
+        key: str,
+        raw: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        bucket: str | None = None,
+    ) -> str:
+        ref = key if key.startswith("mem://") else f"mem://{key}"
+        self.objects[ref] = bytes(raw)
+        return ref
+
     def fetch(self, ref: str) -> bytes:
         if ref not in self.objects:
             raise FileNotFoundError(ref)
@@ -121,6 +133,39 @@ class S3Connector(Connector):
         obj = self.client.get_object(Bucket=bucket, Key=key)
         body = obj["Body"]
         return body.read()
+
+    def put_bytes(
+        self,
+        key: str,
+        raw: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        bucket: str | None = None,
+    ) -> str:
+        target_bucket = bucket or self.bucket or ""
+        if not target_bucket or not key:
+            raise ValueError("S3 put requires a bucket and key")
+        assert self.client is not None
+        self.client.put_object(
+            Bucket=target_bucket,
+            Key=key,
+            Body=raw,
+            ContentType=content_type,
+        )
+        return f"s3://{target_bucket}/{key}"
+
+    def presigned_get_url(self, ref: str, *, expires_in: int = 300) -> str:
+        bucket, key = self._parse_ref(ref)
+        assert self.client is not None
+        if hasattr(self.client, "generate_presigned_url"):
+            return str(
+                self.client.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": bucket, "Key": key},
+                    ExpiresIn=expires_in,
+                )
+            )
+        return ref
 
     def list_refs(self, *, prefix: str = "", limit: int = 25) -> list[str]:
         bucket = self.bucket or ""

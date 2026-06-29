@@ -225,6 +225,37 @@ class TestMetadataLookupUsesApprovedEvidence(unittest.TestCase):
         self.assertEqual({c.document_id for c in ans.citations}, {"upload-approved"})
         self.assertEqual({c.approval_status for c in ans.citations}, {"approved"})
 
+    def test_identifier_lookup_does_not_answer_from_different_approved_equipment(self) -> None:
+        sys = fresh()
+        sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="manuals",
+            document_id="other-approved",
+            text=(
+                "設備 CL-BIZ-E2E-OTHER-20260627 の担当部署は品質保証部です。"
+                "設置ラインはA3、記録先は保全台帳 MNT-77 です。"
+            ),
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="other-approved",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-06-27",
+                document_kind=DocumentKind.WORK_INSTRUCTION,
+                equipment_id="CL-BIZ-E2E-OTHER-20260627",
+            ),
+        )
+        sys.grant(T, ScopeType.COLLECTION, "manuals", SubjectType.USER, "op")
+
+        ans = sys.answer(
+            claims(T, "op"),
+            "設備 CL-BIZ-E2E-MISSING-20260627 の担当部署、設置ライン、記録先を教えて",
+        )
+
+        self.assertEqual(ans.status, "insufficient_evidence")
+        self.assertEqual(ans.safety_block_reason, "insufficient_evidence")
+        self.assertFalse(ans.text)
+        self.assertEqual(ans.citations, ())
+
 
 if __name__ == "__main__":
     unittest.main()

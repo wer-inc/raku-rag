@@ -137,7 +137,10 @@ class TestDatasourceSync(unittest.TestCase):
         with patch("raku_rag.services.datasource_sync.S3Connector", FakeS3Connector):
             docs = build_sync_documents("s3-src", datasource, limit=10)
 
-        self.assertEqual([doc.document_ref for doc in docs], ["s3://docs/manuals/a.txt", "s3://docs/manuals/b.csv"])
+        self.assertEqual(
+            [doc.document_ref for doc in docs],
+            ["s3://docs/manuals/a.txt", "s3://docs/manuals/b.csv"],
+        )
         self.assertEqual([doc.content_type for doc in docs], ["text/plain", "text/csv"])
         self.assertTrue(all(doc.raw.startswith(b"body for s3://docs/") for doc in docs))
 
@@ -155,12 +158,21 @@ class TestDatasourceSync(unittest.TestCase):
 
         docs = build_sync_documents(
             "web-src",
-            {"config": {"source_type": "url", "target_url": "https://example.test/start", "crawl_depth": "1"}},
+            {
+                "config": {
+                    "source_type": "url",
+                    "target_url": "https://example.test/start",
+                    "crawl_depth": "1",
+                }
+            },
             limit=5,
             fetch_url=fetch,
         )
 
-        self.assertEqual([doc.document_ref for doc in docs], ["https://example.test/start", "https://example.test/next"])
+        self.assertEqual(
+            [doc.document_ref for doc in docs],
+            ["https://example.test/start", "https://example.test/next"],
+        )
         self.assertEqual(docs[0].content_type, "text/html")
         self.assertEqual(docs[1].raw, b"next page")
 
@@ -219,7 +231,13 @@ class TestDatasourceSync(unittest.TestCase):
         ):
             docs = build_sync_documents(
                 "db2",
-                {"config": {"source_type": "db", "connection_string": "mysql://u@8.8.8.8/app", "table_name": "t"}},
+                {
+                    "config": {
+                        "source_type": "db",
+                        "connection_string": "mysql://u@8.8.8.8/app",
+                        "table_name": "t",
+                    }
+                },
                 limit=3,
             )
         self.assertEqual(docs[0].document_ref, "mysql://t")
@@ -253,7 +271,14 @@ class TestDatasourceSync(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_sync_documents(
                 "db",
-                {"config": {"source_type": "db", "db_engine": "mysql", "connection_string": "mysql://u@10.0.0.5/app", "table_name": "t"}},
+                {
+                    "config": {
+                        "source_type": "db",
+                        "db_engine": "mysql",
+                        "connection_string": "mysql://u@10.0.0.5/app",
+                        "table_name": "t",
+                    }
+                },
                 limit=3,
             )
 
@@ -294,7 +319,12 @@ class TestDatasourceSync(unittest.TestCase):
         self.assertTrue(_host_allowed("acme.atlassian.net", allow))
         self.assertTrue(_host_allowed("atlassian.net", allow))
         self.assertTrue(_host_allowed("atlassian.net.", allow))
-        for bad in ("atlassian.net.evil.com", "notatlassian.net", "evilatlassian.net", "box.com.attacker.io"):
+        for bad in (
+            "atlassian.net.evil.com",
+            "notatlassian.net",
+            "evilatlassian.net",
+            "box.com.attacker.io",
+        ):
             with self.subTest(host=bad):
                 self.assertFalse(_host_allowed(bad, allow))
         self.assertTrue(_host_allowed("api.notion.com", ("api.notion.com",)))
@@ -354,24 +384,43 @@ class TestDatasourceSync(unittest.TestCase):
         self.assertNotIn("Authorization", sink[1]["headers"])  # cross-host redirect drops it
 
     def test_confluence_surfaces_api_error_message(self) -> None:
-        fetch = RecordingFetch([(lambda u: True, (json.dumps({"message": "space not found"}).encode("utf-8"), "text/plain"))])
+        fetch = RecordingFetch(
+            [
+                (
+                    lambda u: True,
+                    (json.dumps({"message": "space not found"}).encode("utf-8"), "text/plain"),
+                )
+            ]
+        )
         with self.assertRaises(ValueError) as ctx:
             build_sync_documents(
                 "cf",
-                {"config": {"source_type": "confluence", "site_url": "https://a.atlassian.net/wiki", "space_key": "X", "email": "e@a.com", "api_token": "t"}},
+                {
+                    "config": {
+                        "source_type": "confluence",
+                        "site_url": "https://a.atlassian.net/wiki",
+                        "space_key": "X",
+                        "email": "e@a.com",
+                        "api_token": "t",
+                    }
+                },
                 fetch_url=fetch,
             )
         self.assertIn("space not found", str(ctx.exception))
 
     def test_box_accepts_uppercase_extension_and_types_by_name(self) -> None:
-        items = {"entries": [
-            {"type": "file", "id": "f1", "name": "REPORT.XLSX"},
-            {"type": "file", "id": "f2", "name": "page.HTML"},
-        ]}
-        fetch = RecordingFetch([
-            (lambda u: "/items" in u, (json.dumps(items).encode("utf-8"), "text/plain")),
-            (lambda u: u.endswith("/content"), (b"x", "text/plain")),
-        ])
+        items = {
+            "entries": [
+                {"type": "file", "id": "f1", "name": "REPORT.XLSX"},
+                {"type": "file", "id": "f2", "name": "page.HTML"},
+            ]
+        }
+        fetch = RecordingFetch(
+            [
+                (lambda u: "/items" in u, (json.dumps(items).encode("utf-8"), "text/plain")),
+                (lambda u: u.endswith("/content"), (b"x", "text/plain")),
+            ]
+        )
         docs = build_sync_documents(
             "bx",
             {"config": {"source_type": "box", "access_token": "t", "folder_id": "1"}},
@@ -403,7 +452,9 @@ class TestDatasourceSync(unittest.TestCase):
                 },
             ]
         }
-        fetch = RecordingFetch([(lambda u: True, (json.dumps(payload).encode("utf-8"), "text/plain"))])
+        fetch = RecordingFetch(
+            [(lambda u: True, (json.dumps(payload).encode("utf-8"), "text/plain"))]
+        )
 
         docs = build_sync_documents(
             "cf",
@@ -433,25 +484,47 @@ class TestDatasourceSync(unittest.TestCase):
         call = fetch.calls[0]
         self.assertEqual(call["allow_hosts"], ("atlassian.net",))
         self.assertTrue(call["headers"]["Authorization"].startswith("Basic "))
-        decoded = base64.b64decode(call["headers"]["Authorization"].split(" ", 1)[1]).decode("utf-8")
+        decoded = base64.b64decode(call["headers"]["Authorization"].split(" ", 1)[1]).decode(
+            "utf-8"
+        )
         self.assertEqual(decoded, "bot@acme.com:tok")
 
     def test_notion_queries_database_then_expands_blocks_to_markdown(self) -> None:
         db_query = {
             "results": [
-                {"id": "page-1", "properties": {"Name": {"type": "title", "title": [{"plain_text": "乾燥工程"}]}}},
-                {"id": "page-2", "properties": {"Name": {"type": "title", "title": [{"plain_text": "洗浄"}]}}},
+                {
+                    "id": "page-1",
+                    "properties": {
+                        "Name": {"type": "title", "title": [{"plain_text": "乾燥工程"}]}
+                    },
+                },
+                {
+                    "id": "page-2",
+                    "properties": {"Name": {"type": "title", "title": [{"plain_text": "洗浄"}]}},
+                },
             ]
         }
         blocks = {
             "results": [
                 {"type": "heading_1", "heading_1": {"rich_text": [{"plain_text": "概要"}]}},
                 {"type": "paragraph", "paragraph": {"rich_text": [{"plain_text": "本文です"}]}},
-                {"type": "bulleted_list_item", "bulleted_list_item": {"rich_text": [{"plain_text": "項目A"}]}},
-                {"type": "numbered_list_item", "numbered_list_item": {"rich_text": [{"plain_text": "手順1"}]}},
-                {"type": "to_do", "to_do": {"checked": True, "rich_text": [{"plain_text": "完了タスク"}]}},
+                {
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {"rich_text": [{"plain_text": "項目A"}]},
+                },
+                {
+                    "type": "numbered_list_item",
+                    "numbered_list_item": {"rich_text": [{"plain_text": "手順1"}]},
+                },
+                {
+                    "type": "to_do",
+                    "to_do": {"checked": True, "rich_text": [{"plain_text": "完了タスク"}]},
+                },
                 {"type": "quote", "quote": {"rich_text": [{"plain_text": "引用文"}]}},
-                {"type": "code", "code": {"language": "python", "rich_text": [{"plain_text": "print(1)"}]}},
+                {
+                    "type": "code",
+                    "code": {"language": "python", "rich_text": [{"plain_text": "print(1)"}]},
+                },
             ]
         }
         fetch = RecordingFetch(
@@ -463,7 +536,13 @@ class TestDatasourceSync(unittest.TestCase):
 
         docs = build_sync_documents(
             "no",
-            {"config": {"source_type": "notion", "integration_token": "secret", "database_id": "db123"}},
+            {
+                "config": {
+                    "source_type": "notion",
+                    "integration_token": "secret",
+                    "database_id": "db123",
+                }
+            },
             limit=10,
             fetch_url=fetch,
         )
@@ -496,7 +575,10 @@ class TestDatasourceSync(unittest.TestCase):
         }
         fetch = RecordingFetch(
             [
-                (lambda u: "/folders/" in u and "/items" in u, (json.dumps(items).encode("utf-8"), "text/plain")),
+                (
+                    lambda u: "/folders/" in u and "/items" in u,
+                    (json.dumps(items).encode("utf-8"), "text/plain"),
+                ),
                 (lambda u: "/files/" in u and u.endswith("/content"), (b"file body", "text/plain")),
             ]
         )
@@ -508,7 +590,9 @@ class TestDatasourceSync(unittest.TestCase):
             fetch_url=fetch,
         )
 
-        self.assertEqual([doc.document_ref for doc in docs], ["box://123/manual.txt", "box://123/notes.md"])
+        self.assertEqual(
+            [doc.document_ref for doc in docs], ["box://123/manual.txt", "box://123/notes.md"]
+        )
         self.assertEqual(docs[0].content_type, "text/plain")
         self.assertEqual(docs[1].content_type, "text/markdown")
         self.assertEqual(docs[0].raw, b"file body")
@@ -521,7 +605,13 @@ class TestDatasourceSync(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build_sync_documents(
                     "s3x",
-                    {"config": {"source_type": "s3", "bucket": "b", "endpoint_url": "https://attacker.example"}},
+                    {
+                        "config": {
+                            "source_type": "s3",
+                            "bucket": "b",
+                            "endpoint_url": "https://attacker.example",
+                        }
+                    },
                     limit=3,
                 )
 
@@ -546,7 +636,11 @@ class TestDatasourceSync(unittest.TestCase):
         files = {
             "files": [
                 {"id": "g1", "name": "Spec", "mimeType": "application/vnd.google-apps.document"},
-                {"id": "g2", "name": "Budget", "mimeType": "application/vnd.google-apps.spreadsheet"},
+                {
+                    "id": "g2",
+                    "name": "Budget",
+                    "mimeType": "application/vnd.google-apps.spreadsheet",
+                },
                 {"id": "g3", "name": "diagram.png", "mimeType": "image/png"},
                 {"id": "g4", "name": "readme.md", "mimeType": "text/markdown"},
                 {"id": "g5", "name": "sub", "mimeType": "application/vnd.google-apps.folder"},
@@ -554,7 +648,10 @@ class TestDatasourceSync(unittest.TestCase):
         }
         fetch = RecordingFetch(
             [
-                (lambda u: "/drive/v3/files?" in u, (json.dumps(files).encode("utf-8"), "text/plain")),
+                (
+                    lambda u: "/drive/v3/files?" in u,
+                    (json.dumps(files).encode("utf-8"), "text/plain"),
+                ),
                 (lambda u: "/export?" in u and "g1" in u, (b"<html>doc</html>", "text/plain")),
                 (lambda u: "/export?" in u and "g2" in u, (b"a,b,c", "text/plain")),
                 (lambda u: "g4?" in u and "alt=media" in u, (b"# readme", "text/plain")),
@@ -586,7 +683,10 @@ class TestDatasourceSync(unittest.TestCase):
         files = {"files": [{"id": "g4", "name": "n.txt", "mimeType": "text/plain"}]}
         fetch = RecordingFetch(
             [
-                (lambda u: "/drive/v3/files?" in u, (json.dumps(files).encode("utf-8"), "text/plain")),
+                (
+                    lambda u: "/drive/v3/files?" in u,
+                    (json.dumps(files).encode("utf-8"), "text/plain"),
+                ),
                 (lambda u: "alt=media" in u, (b"data", "text/plain")),
             ]
         )
@@ -622,10 +722,11 @@ class TestDatasourceSync(unittest.TestCase):
 
         fetch = RecordingFetch(
             [
-                (lambda u: list_route(u) and "pageToken=TKN2" in u,
-                 (json.dumps(page2).encode("utf-8"), "text/plain")),
-                (lambda u: list_route(u),
-                 (json.dumps(page1).encode("utf-8"), "text/plain")),
+                (
+                    lambda u: list_route(u) and "pageToken=TKN2" in u,
+                    (json.dumps(page2).encode("utf-8"), "text/plain"),
+                ),
+                (lambda u: list_route(u), (json.dumps(page1).encode("utf-8"), "text/plain")),
                 (lambda u: "alt=media" in u, (b"x", "text/plain")),
             ]
         )
@@ -643,17 +744,21 @@ class TestDatasourceSync(unittest.TestCase):
         files = {"files": [{"id": "a", "name": "a.txt", "mimeType": "text/plain"}]}
         fetch = RecordingFetch(
             [
-                (lambda u: "/drive/v3/files?" in u and "alt=media" not in u,
-                 (json.dumps(files).encode("utf-8"), "text/plain")),
+                (
+                    lambda u: "/drive/v3/files?" in u and "alt=media" not in u,
+                    (json.dumps(files).encode("utf-8"), "text/plain"),
+                ),
                 (lambda u: "alt=media" in u, (b"x", "text/plain")),
             ]
         )
         build_sync_documents(
             "gd",
-            {"config": {
-                "source_type": "google_drive",
-                "folder_id": "https://drive.google.com/drive/folders/REALID?usp=sharing",
-            }},
+            {
+                "config": {
+                    "source_type": "google_drive",
+                    "folder_id": "https://drive.google.com/drive/folders/REALID?usp=sharing",
+                }
+            },
             body={"fresh_access_token": "t"},
             limit=5,
             fetch_url=fetch,

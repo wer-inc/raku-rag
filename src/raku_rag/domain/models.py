@@ -36,6 +36,26 @@ class JobStatus(str, Enum):
     DEAD_LETTER = "dead_letter"
 
 
+class ExtractionSource(str, Enum):
+    DETERMINISTIC_OCR = "deterministic_ocr"
+    AWS_TEXTRACT = "aws_textract"
+    GOOGLE_DOCAI = "google_docai"
+    AZURE_DOCINTEL = "azure_docintel"
+    OSS_TESSERACT = "oss_tesseract"
+    SPREADSHEET_PARSER = "spreadsheet_parser"
+
+
+class CaptionSource(str, Enum):
+    DETERMINISTIC_CAPTION = "deterministic_caption"
+    BEDROCK_CLAUDE_VISION = "bedrock_claude_vision"
+    GOOGLE_GEMINI = "google_gemini"
+    AZURE_OPENAI_VISION = "azure_openai_vision"
+    OSS_LLAVA = "oss_llava"
+
+
+PROMOTABLE_EXTRACTION_SOURCES = frozenset(source.value for source in ExtractionSource)
+
+
 @dataclass(frozen=True)
 class IdentityClaims:
     """Verified end-user claims asserted by the calling app via signed token (FR-025)."""
@@ -116,9 +136,9 @@ class ScoredChunk:
 
 @dataclass(frozen=True)
 class Citation:
-    """Traceable evidence actually cited (FR-013/015). kind=text or visual."""
+    """Traceable evidence actually cited (FR-013/015)."""
 
-    kind: str  # "text" | "visual"
+    kind: str  # text | visual | spreadsheet | table_row | form_field | chart_series | etc.
     document_id: str
     source_id: str
     version: int
@@ -133,6 +153,17 @@ class Citation:
     sheet_name: str = ""
     cell_range: str = ""
     row_id: str = ""
+    table_id: str = ""
+    form_id: str = ""
+    field_name: str = ""
+    chart_id: str = ""
+    series_name: str = ""
+    point_index: int = -1
+    column_name: str = ""
+    pixel_derived: bool = False
+    visual_evidence_verified: bool = False
+    visual_verifier_verdicts: tuple[dict, ...] = ()
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -158,6 +189,7 @@ class OcrTextRegion:
     confidence: float
     bbox: BoundingBox
     page_number: int = 1
+    extraction_source: str = ""
 
 
 @dataclass
@@ -189,6 +221,9 @@ class LayoutRegion:
     ocr_text: str = ""
     generated_caption_text: str = ""
     crop_uri: str = ""
+    extraction_source: str = ""
+    caption_source: str = ""
+    transcription_confidence: float | None = None
     metadata: dict = field(default_factory=dict)
     tombstone: bool = False
 

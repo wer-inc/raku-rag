@@ -297,7 +297,17 @@ def sanitize_audit_log_entry(
         for name in _REDACT_TEXT_FIELDS
         if isinstance((value := getattr(entry, name)), str)
     }
-    safe_metadata = {
-        k: (red(v) if isinstance(v, str) else v) for k, v in entry.client_metadata.items()
-    }
+    safe_metadata = {k: _redact_metadata_value(v, red) for k, v in entry.client_metadata.items()}
     return replace(entry, client_metadata=safe_metadata, **text_patch)
+
+
+def _redact_metadata_value(value, redact):
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {str(k): _redact_metadata_value(v, redact) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_metadata_value(v, redact) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_metadata_value(v, redact) for v in value)
+    return value

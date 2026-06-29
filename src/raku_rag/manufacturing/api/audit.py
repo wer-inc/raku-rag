@@ -15,6 +15,7 @@ No PII / body text is recorded; the writer redacts as defence-in-depth.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Mapping
 
 from raku_rag.domain.models import IdentityClaims
 from raku_rag.manufacturing.domain.audit import (
@@ -48,6 +49,7 @@ def record_answer_decision(
     principal: IdentityClaims | None = None,
     factory_id: str | None = None,
     collection_id: str | None = None,
+    extra_client_metadata: Mapping[str, object] | None = None,
 ) -> None:
     """Record one answer-path safety decision. Counter (FR-MFG-021/030 telemetry source).
 
@@ -63,6 +65,17 @@ def record_answer_decision(
     reason: SafetyBlockReason | None = None
     if safety_block_reason is not None:
         reason = SafetyBlockReason(safety_block_reason)
+
+    client_metadata = {
+        "obsolete_warning": decision.obsolete_warning,
+        "requires_onsite_confirmation": decision.requires_onsite_confirmation,
+        "classification_source": (
+            classification.classification_source.value
+            if classification.classification_source is not None
+            else None
+        ),
+    }
+    client_metadata.update(dict(extra_client_metadata or {}))
 
     entry = AuditLogEntry(
         tenant_id=tenant_id,
@@ -81,15 +94,7 @@ def record_answer_decision(
         approval_status_at_use=decision.approval_status_at_use,
         citation_ids=tuple(citation_ids),
         document_ids_used=tuple(candidate_document_ids),
-        client_metadata={
-            "obsolete_warning": decision.obsolete_warning,
-            "requires_onsite_confirmation": decision.requires_onsite_confirmation,
-            "classification_source": (
-                classification.classification_source.value
-                if classification.classification_source is not None
-                else None
-            ),
-        },
+        client_metadata=client_metadata,
     )
     # T056 — snapshot the actor org-context (factory/department) onto the immutable entry so US5
     # telemetry can group by factory/department. No-op when no principal is supplied.

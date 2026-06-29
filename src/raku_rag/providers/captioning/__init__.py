@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from raku_rag.domain.models import CaptionSource
 from raku_rag.observability.redaction import Redactor
 
 
@@ -11,6 +12,7 @@ from raku_rag.observability.redaction import Redactor
 class CaptioningResult:
     status: str
     generated_caption_text: str = ""
+    caption_source: str = ""
     failure_reason: str = ""
     sensitive_detection_labels: tuple[str, ...] = ()
 
@@ -31,7 +33,7 @@ class DeterministicCaptioningProvider:
         self.fail = fail
         self._redactor = redactor or Redactor()
 
-    def caption(self, image: bytes) -> CaptioningResult:
+    def caption(self, image: bytes, *args, **kwargs) -> CaptioningResult:
         if not self.enabled:
             return CaptioningResult(status="not_requested")
         if self.fail:
@@ -48,6 +50,7 @@ class DeterministicCaptioningProvider:
         return CaptioningResult(
             status="succeeded",
             generated_caption_text=self._redactor.redact_visual_text(caption),
+            caption_source=CaptionSource.DETERMINISTIC_CAPTION.value,
             sensitive_detection_labels=labels,
         )
 

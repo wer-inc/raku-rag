@@ -12,9 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: CDK stage (sales = cheap/throwaway, prod = HA/retained)
+        description: CDK stage (sales = cheap/throwaway, stg = staging, prod = HA/retained)
         type: choice
-        options: [sales, prod]
+        options: [sales, stg, prod]
         default: sales
       frontend:
         description: Frontend hosting (aws-nextjs = same-origin web+API on one ALB)
@@ -44,6 +44,10 @@ on:
         description: After deploy, apply schema migrations + seed the demo KB
         type: boolean
         default: true
+      run_live_smoke:
+        description: After deploy, run Cognito-authenticated live smoke checks (requires Environment secrets/vars)
+        type: boolean
+        default: false
       embedding_provider:
         description: Embedding provider (openai needs a `raku-rag/openai-api-key` Secrets Manager secret)
         type: choice
@@ -54,6 +58,24 @@ on:
         type: choice
         options: [extractive, bedrock]
         default: extractive
+      visual_provider_profile:
+        description: Visual/PDF providers (promotion remains off unless CDK context explicitly enables it)
+        type: choice
+        options: [default, aws-textract-bedrock]
+        default: default
+      visual_evidence_promotion:
+        description: Allow verified visual citations to satisfy high-risk evidence rules
+        type: boolean
+        default: false
+      visual_verifier_models:
+        description: Comma-separated Bedrock verifier model ids, e.g. model-a,model-b
+        type: string
+        required: false
+        default: ""
+      visual_verifier_same_family_attestation:
+        description: Permit same provider family only when two distinct Bedrock models are explicitly attested
+        type: boolean
+        default: false
       dry_run:
         description: Synth/plan only (no AWS changes)
         type: boolean
@@ -80,6 +102,14 @@ jobs:
       BASIC_AUTH_USER: ${{ inputs.basic_auth_user }}
       EMBEDDING_PROVIDER: ${{ inputs.embedding_provider }}
       ANSWER_LLM: ${{ inputs.answer_llm }}
+      VISUAL_PROVIDER_PROFILE: ${{ inputs.visual_provider_profile }}
+      VISUAL_EVIDENCE_PROMOTION: ${{ inputs.visual_evidence_promotion }}
+      VISUAL_VERIFIER_MODELS: ${{ inputs.visual_verifier_models }}
+      VISUAL_VERIFIER_SAME_FAMILY_ATTESTATION: ${{ inputs.visual_verifier_same_family_attestation }}
+      # Textract is not available in every AWS region where the app can run (for example Tokyo).
+      # Keep the app stack regional, but route Textract OCR/layout calls to a supported region by
+      # default. Override with repo/environment Variable TEXTRACT_REGION if residency requires it.
+      TEXTRACT_REGION: ${{ vars.TEXTRACT_REGION || 'ap-southeast-1' }}
       ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
       AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
       AWS_DEFAULT_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
@@ -107,7 +137,18 @@ jobs:
             echo "::error::basic_auth_user must be 1-128 chars: A-Za-z0-9._@+-"
             exit 1
           fi
-          echo "stage=${STAGE} frontend=${FRONTEND} auth=${AUTH_MODE} domain='${DOMAIN_NAME}' region=${AWS_REGION}"
+          if [ -n "${VISUAL_VERIFIER_MODELS}" ] && ! printf '%s\n' "${VISUAL_VERIFIER_MODELS}" | grep -qE '^[A-Za-z0-9._:/,-]+$'; then
+            echo "::error::visual_verifier_models may contain only A-Za-z0-9._:/,-"
+            exit 1
+          fi
+          case "${VISUAL_PROVIDER_PROFILE}" in
+            default|aws-textract-bedrock) ;;
+            *)
+              echo "::error::visual_provider_profile must be default or aws-textract-bedrock."
+              exit 1
+              ;;
+          esac
+          echo "stage=${STAGE} frontend=${FRONTEND} auth=${AUTH_MODE} visual=${VISUAL_PROVIDER_PROFILE} domain='${DOMAIN_NAME}' region=${AWS_REGION}"
 
       - name: Install + build CDK app
         working-directory: infra/cdk
@@ -122,6 +163,19 @@ jobs:
           if [ "${BASIC_AUTH}" = "true" ]; then CTX="${CTX} --context basicAuthUser=${BASIC_AUTH_USER}"; fi
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
           if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
+          if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
+            CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock --context textractRegion=${TEXTRACT_REGION} --context ocrRegion=${TEXTRACT_REGION}"
+          fi
+          if [ "${VISUAL_EVIDENCE_PROMOTION}" = "true" ]; then
+            CTX="${CTX} --context visualEvidencePromotion=true --context visualEvidenceVerifierQuorum=2"
+          fi
+          if [ -n "${VISUAL_VERIFIER_MODELS}" ]; then
+            VERIFIERS="$(printf '%s' "${VISUAL_VERIFIER_MODELS}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sed 's/^/bedrock:/' | paste -sd, -)"
+            CTX="${CTX} --context visualEvidenceVerifiers=${VERIFIERS}"
+          fi
+          if [ "${VISUAL_VERIFIER_SAME_FAMILY_ATTESTATION}" = "true" ]; then
+            CTX="${CTX} --context visualVerifierAllowSameFamilyDistinctModels=true"
+          fi
           npx cdk synth ${CTX} --quiet
 
       - name: Configure AWS credentials (OIDC)
@@ -144,6 +198,19 @@ jobs:
           if [ "${BASIC_AUTH}" = "true" ]; then CTX="${CTX} --context basicAuthUser=${BASIC_AUTH_USER}"; fi
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
           if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
+          if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
+            CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock --context textractRegion=${TEXTRACT_REGION} --context ocrRegion=${TEXTRACT_REGION}"
+          fi
+          if [ "${VISUAL_EVIDENCE_PROMOTION}" = "true" ]; then
+            CTX="${CTX} --context visualEvidencePromotion=true --context visualEvidenceVerifierQuorum=2"
+          fi
+          if [ -n "${VISUAL_VERIFIER_MODELS}" ]; then
+            VERIFIERS="$(printf '%s' "${VISUAL_VERIFIER_MODELS}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$' | sed 's/^/bedrock:/' | paste -sd, -)"
+            CTX="${CTX} --context visualEvidenceVerifiers=${VERIFIERS}"
+          fi
+          if [ "${VISUAL_VERIFIER_SAME_FAMILY_ATTESTATION}" = "true" ]; then
+            CTX="${CTX} --context visualVerifierAllowSameFamilyDistinctModels=true"
+          fi
           npx cdk deploy --require-approval never ${CTX}
 
       - name: Migrate + seed (in-VPC one-off task)
@@ -160,3 +227,27 @@ jobs:
           aws cloudformation describe-stacks --stack-name "RakuRag-${STAGE}" \
             --query "Stacks[0].Outputs[?OutputKey=='ApiLoadBalancerDnsName'].OutputValue" --output text \
             | sed 's#^#Public URL (http): http://#' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Live smoke (Cognito + production probes)
+        if: ${{ !inputs.dry_run && inputs.run_live_smoke }}
+        env:
+          RAKU_PROD_SMOKE_APPROVED: "yes"
+          RAKU_SMOKE_USERNAME: ${{ secrets.RAKU_SMOKE_USERNAME }}
+          RAKU_SMOKE_PASSWORD: ${{ secrets.RAKU_SMOKE_PASSWORD }}
+          RAKU_SMOKE_OTHER_USERNAME: ${{ secrets.RAKU_SMOKE_OTHER_USERNAME }}
+          RAKU_SMOKE_OTHER_PASSWORD: ${{ secrets.RAKU_SMOKE_OTHER_PASSWORD }}
+          RAKU_SMOKE_COLLECTION_ID: ${{ vars.RAKU_SMOKE_COLLECTION_ID }}
+          RAKU_SMOKE_GROUNDED_QUERY: ${{ vars.RAKU_SMOKE_GROUNDED_QUERY }}
+          RAKU_SMOKE_HIGH_RISK_QUERY: ${{ vars.RAKU_SMOKE_HIGH_RISK_QUERY }}
+          RAKU_SMOKE_POISON_QUERY: ${{ vars.RAKU_SMOKE_POISON_QUERY }}
+          RAKU_SMOKE_ACL_QUERY: ${{ vars.RAKU_SMOKE_ACL_QUERY }}
+          RAKU_SMOKE_FORBIDDEN_DOCUMENT_ID: ${{ vars.RAKU_SMOKE_FORBIDDEN_DOCUMENT_ID }}
+          RAKU_SMOKE_DELETED_QUERY: ${{ vars.RAKU_SMOKE_DELETED_QUERY }}
+          RAKU_SMOKE_DELETED_DOCUMENT_ID: ${{ vars.RAKU_SMOKE_DELETED_DOCUMENT_ID }}
+          RAKU_SMOKE_LANGFUSE_TRACE_CHECK_URL: ${{ secrets.RAKU_SMOKE_LANGFUSE_TRACE_CHECK_URL }}
+          RAKU_SMOKE_DLQ_CHECK_URL: ${{ secrets.RAKU_SMOKE_DLQ_CHECK_URL }}
+          RAKU_PROD_SMOKE_ALLOW_SKIPS: ${{ vars.RAKU_PROD_SMOKE_ALLOW_SKIPS }}
+        run: |
+          set -euo pipefail
+          STACK="RakuRag-${STAGE}" AWS_REGION="${AWS_REGION}" bash scripts/aws/run-prod-smoke-from-stack.sh
+          echo "Live smoke: PASS" >> "$GITHUB_STEP_SUMMARY"

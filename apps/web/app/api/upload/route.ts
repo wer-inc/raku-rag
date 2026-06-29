@@ -1,17 +1,14 @@
 import path from "path";
 import { NextResponse } from "next/server";
 
-// Upload sink: returns the uploaded bytes as an inline `data:` ref (RFC 2397). The answer-service's
-// DataUriConnector decodes it in-request, so ingestion works even though web and the Python
-// answer-service run as SEPARATE containers with no shared filesystem (a `file://` ref written here
-// would 500 on the answer-service — it can't see this container's disk). The Add Source screen
-// uploads here, then calls POST /v1/ingest with the returned ref. Disabled in production builds
-// unless RAKU_ENABLE_UPLOAD_SINK is enabled.
+// Fallback upload sink: returns the uploaded bytes as an inline `data:` ref (RFC 2397). AWS-hosted
+// deployments use /api/upload/presign so the browser uploads directly to S3 and /v1/ingest receives
+// a small s3:// ref. Keep this route for local/dev deployments where an S3 bucket is absent.
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const MAX_BYTES = 10 * 1024 * 1024; // 10MB
+const MAX_BYTES = 25 * 1024 * 1024; // 25MB
 
 const EXT_CONTENT_TYPE: Record<string, string> = {
   ".txt": "text/plain",
@@ -20,6 +17,10 @@ const EXT_CONTENT_TYPE: Record<string, string> = {
   ".html": "text/html",
   ".htm": "text/html",
   ".csv": "text/csv",
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
@@ -48,7 +49,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "file is empty" }, { status: 400 });
   }
   if (file.size > MAX_BYTES) {
-    return NextResponse.json({ error: "file too large (max 10MB)" }, { status: 413 });
+    return NextResponse.json({ error: "file too large (max 25MB)" }, { status: 413 });
   }
 
   const safeName = (file.name || "upload.txt").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);

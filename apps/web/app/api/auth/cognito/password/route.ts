@@ -79,6 +79,7 @@ function authResult(raw: CognitoJson) {
     access_token: text(result.AccessToken),
     expires_in: typeof result.ExpiresIn === "number" ? result.ExpiresIn : 0,
     id_token: text(result.IdToken),
+    refresh_token: text(result.RefreshToken),
     token_type: text(result.TokenType),
   };
 }
@@ -89,6 +90,25 @@ export async function POST(req: Request) {
   }
   const body = (await req.json().catch(() => ({}))) as CognitoJson;
   const action = text(body.action) || "sign_in";
+
+  if (action === "refresh") {
+    const refreshToken = text(body.refresh_token);
+    if (!refreshToken) {
+      return NextResponse.json({ error: "ログイン情報の有効期限が切れています。" }, { status: 401 });
+    }
+    const response = await cognitoRequest("InitiateAuth", {
+      AuthFlow: "REFRESH_TOKEN_AUTH",
+      AuthParameters: {
+        REFRESH_TOKEN: refreshToken,
+      },
+      ClientId: clientId(),
+    });
+    if ("error" in response) {
+      return NextResponse.json({ error: response.error }, { status: response.status });
+    }
+    return NextResponse.json({ status: "authenticated", ...authResult(response.body) });
+  }
+
   const username = text(body.email).toLowerCase();
   if (!username || username.length > 320) {
     return NextResponse.json({ error: "メールアドレスを入力してください。" }, { status: 400 });

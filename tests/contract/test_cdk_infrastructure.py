@@ -48,6 +48,8 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             '"false"',
             "blockPublicAccess",
             "enforceSSL",
+            "allowedMethods: [s3.HttpMethods.PUT]",
+            'allowedOrigins: ["*"]',
             "deadLetterQueue",
             "deadLetterQueue.grantSendMessages",
             "SQS_DLQ_URL",
@@ -102,6 +104,40 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)
 
+    def test_visual_provider_runtime_context_and_iam_are_wired(self) -> None:
+        for token in (
+            'contextString("ocrProvider")',
+            'contextString("layoutProvider")',
+            'contextString("structuredProvider")',
+            'contextString("vlmProvider")',
+            'contextString("captioningProvider")',
+            'contextString("visualEmbeddingProvider")',
+            "RAKU_OCR_PROVIDER",
+            "RAKU_LAYOUT_PROVIDER",
+            "RAKU_STRUCTURED_PROVIDER",
+            "RAKU_VLM_PROVIDER",
+            "RAKU_CAPTIONING_PROVIDER",
+            "RAKU_VISUAL_EMBEDDING_PROVIDER",
+            "RAKU_RUNTIME_PROFILE",
+            "RAKU_CROP_STORAGE_URI",
+            "ingestConnectorEnvironment",
+            "RAKU_INGEST_CONNECTOR",
+            "S3_BUCKET",
+            "grantTextractDocumentAnalysis",
+            "grantTextractServiceReadDocuments",
+            "AllowTextractReadDocumentObjects",
+            "AllowTextractDecryptDocumentObjects",
+            'new iam.ServicePrincipal("textract.amazonaws.com")',
+            "this.grantTextractDocumentAnalysis(answerTask.taskRole)",
+            "textract:AnalyzeDocument",
+            "textract:StartDocumentAnalysis",
+            "textract:GetDocumentAnalysis",
+            "s3:GetObjectVersion",
+            "kms:Decrypt",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.stack)
+
     def test_gdrive_oauth_secrets_and_grants_are_wired(self) -> None:
         # 021-gdrive: a Google OAuth config secret (KMS-encrypted), per-tenant connector-secret grants
         # scoped to the raku/${stage}/* prefix, the durable refresh-token store env, and the output the
@@ -122,9 +158,7 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.stack)
         # the durable (forward-looking) connection table migration + its down ship together
-        self.assertTrue(
-            (ROOT / "infra/db/migrations/postgres/0012_data_source_oauth.sql").exists()
-        )
+        self.assertTrue((ROOT / "infra/db/migrations/postgres/0012_data_source_oauth.sql").exists())
         self.assertTrue(
             (ROOT / "infra/db/migrations/postgres/0012_data_source_oauth.down.sql").exists()
         )
@@ -185,6 +219,9 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             '"ApiRoute"',
             '"/v1/*"',
             "RAKU_ENABLE_DEV_TOKEN_ISSUER",
+            "RAKU_UPLOAD_BUCKET",
+            "DOCUMENT_BUCKET",
+            "this.attachRuntimePolicies(webTask.taskRole, documentBucket, dataKey)",
             "RAKU_BASIC_AUTH_USER",
             "RAKU_BASIC_AUTH_PASSWORD",
             "WebBasicAuthSecret",

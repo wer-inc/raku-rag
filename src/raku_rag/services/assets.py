@@ -24,7 +24,11 @@ class AssetService:
         doc = self._registry.get(principal.tenant_id, chunks[0].document_id)
         if doc is None or doc.tombstone or not self._acl.can_read_document(principal, doc):
             return None
-        regions = [_region_json(chunk) for chunk in chunks if chunk.document_id == doc.document_id]
+        regions = [
+            _region_json(chunk, crop_store=self._crop_store)
+            for chunk in chunks
+            if chunk.document_id == doc.document_id
+        ]
         return {
             "asset_id": asset_id,
             "tenant_id": doc.tenant_id,
@@ -36,7 +40,10 @@ class AssetService:
             "content_type": str(doc.metadata.get("visual_asset_content_type") or ""),
             "page_number": int(_first_metadata(chunks, "page_number") or 0),
             "regions": regions,
-            "crops": [_crop_json(crop) for crop in self._authorized_crops(doc, asset_id)],
+            "crops": [
+                _crop_json(crop, crop_store=self._crop_store)
+                for crop in self._authorized_crops(doc, asset_id)
+            ],
         }
 
     def _visual_chunks(self, tenant_id: str, asset_id: str) -> tuple[Chunk, ...]:
@@ -54,15 +61,18 @@ class AssetService:
         )
 
 
-def _region_json(chunk: Chunk) -> dict:
+def _region_json(chunk: Chunk, *, crop_store=None) -> dict:
     redaction_required = _metadata_bool(chunk.metadata, "visual_region_redaction_required")
+    crop_uri = _public_region_crop_uri(chunk, redaction_required=redaction_required)
+    crop_url = _public_crop_url(crop_uri, crop_store=crop_store)
     return {
         "region_id": str(chunk.metadata.get("region_id") or chunk.chunk_id),
         "chunk_id": chunk.chunk_id,
         "region_type": str(chunk.metadata.get("region_type") or "text"),
         "page_number": int(chunk.metadata.get("page_number") or 0),
         "bbox": _bbox_json(_bbox_from_metadata(chunk)),
-        "crop_uri": _public_region_crop_uri(chunk, redaction_required=redaction_required),
+        "crop_uri": "" if crop_uri.startswith("s3://") else crop_uri,
+        "crop_url": crop_url,
         "sensitive_detected": _metadata_bool(chunk.metadata, "sensitive_detected"),
         "sensitive_detection_labels": _metadata_labels(chunk.metadata),
         "visual_region_redaction_required": redaction_required,
@@ -73,13 +83,16 @@ def _region_json(chunk: Chunk) -> dict:
     }
 
 
-def _crop_json(crop: CropArtifact) -> dict:
+def _crop_json(crop: CropArtifact, *, crop_store=None) -> dict:
     redaction_required = _metadata_bool(crop.metadata, "visual_region_redaction_required")
+    crop_uri = _public_crop_uri(crop, redaction_required=redaction_required)
+    crop_url = _public_crop_url(crop_uri, crop_store=crop_store)
     return {
         "crop_id": crop.crop_id,
         "asset_id": crop.asset_id,
         "region_id": crop.region_id,
-        "crop_uri": _public_crop_uri(crop, redaction_required=redaction_required),
+        "crop_uri": "" if crop_uri.startswith("s3://") else crop_uri,
+        "crop_url": crop_url,
         "bbox": asdict(crop.bbox),
         "redaction_policy_ref": crop.redaction_policy_ref,
         "sensitive_detected": _metadata_bool(crop.metadata, "sensitive_detected"),
@@ -135,6 +148,17 @@ def _public_crop_uri(crop: CropArtifact, *, redaction_required: bool) -> str:
     if not redaction_required:
         return crop.crop_uri
     return str(crop.metadata.get("redacted_crop_uri") or "")
+
+
+def _public_crop_url(crop_uri: str, *, crop_store=None) -> str:
+    if not crop_uri:
+        return ""
+    if not crop_uri.startswith("s3://"):
+        return crop_uri
+    public_url = getattr(crop_store, "public_url", None)
+    if not callable(public_url):
+        return ""
+    return str(public_url(crop_uri))
 
 
 def _metadata_bool(metadata: dict, key: str) -> bool:

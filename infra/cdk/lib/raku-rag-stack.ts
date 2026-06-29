@@ -65,7 +65,11 @@ export class RakuRagStack extends cdk.Stack {
       : undefined;
     const embeddingEnvironment: Record<string, string> = useOpenAiEmbeddings
       ? { RAKU_EMBEDDING_PROVIDER: "openai_text_embedding_3_small", RAKU_EMBEDDING_DIM: "256" }
-      : {};
+      : {
+          RAKU_EMBEDDING_PROVIDER: "hashing",
+          RAKU_EMBEDDING_DIM: "256",
+          RAKU_ALLOW_HASHING_EMBEDDINGS_IN_PRODUCTION: "1"
+        };
     const embeddingSecrets: Record<string, ecs.Secret> = openAiSecret
       ? { OPENAI_API_KEY: ecs.Secret.fromSecretsManager(openAiSecret) }
       : {};
@@ -84,7 +88,10 @@ export class RakuRagStack extends cdk.Stack {
           AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
           ...(bedrockModelIdCtx ? { RAKU_BEDROCK_CLAUDE_MODEL_ID: bedrockModelIdCtx } : {})
         }
-      : {};
+      : {
+          RAKU_LLM_PROVIDER: "extractive",
+          RAKU_OUTPUT_GUARDRAIL_PROVIDER: "none"
+        };
     const bedrockGuardrailIdCtx = this.node.tryGetContext("bedrockGuardrailId") as
       | string
       | undefined;
@@ -96,13 +103,74 @@ export class RakuRagStack extends cdk.Stack {
         "prod Bedrock answer path requires --context bedrockGuardrailId and bedrockGuardrailVersion"
       );
     }
+    const contextString = (name: string) => String(this.node.tryGetContext(name) ?? "").trim();
+    const ocrProviderCtx = contextString("ocrProvider");
+    const layoutProviderCtx = contextString("layoutProvider");
+    const structuredProviderCtx = contextString("structuredProvider");
+    const vlmProviderCtx = contextString("vlmProvider");
+    const captioningProviderCtx = contextString("captioningProvider");
+    const visualEmbeddingProviderCtx = contextString("visualEmbeddingProvider");
+    const textractRegionCtx = contextString("textractRegion");
+    const ocrRegionCtx = contextString("ocrRegion");
+    const vlmRegionCtx = contextString("vlmRegion");
+    const vlmModelIdCtx = contextString("vlmModelId");
+    const captionModelIdCtx = contextString("captionModelId");
+    const maxInlineOcrBytesCtx = contextString("maxInlineOcrBytes");
+    const forceDeterministicCtx = contextString("forceDeterministic");
+    const visualEvidencePromotionCtx = contextString("visualEvidencePromotion");
+    const visualEvidenceVerifierQuorumCtx = contextString("visualEvidenceVerifierQuorum");
+    const visualEvidenceVerifiersCtx = contextString("visualEvidenceVerifiers");
+    const visualVerifierAllowSameFamilyCtx = contextString(
+      "visualVerifierAllowSameFamilyDistinctModels"
+    );
+    const maxRegionsVerifiedPerAnswerCtx = contextString("maxRegionsVerifiedPerAnswer");
+    const visualProviderEnvironment: Record<string, string> = {
+      ...(ocrProviderCtx ? { RAKU_OCR_PROVIDER: ocrProviderCtx } : {}),
+      ...(layoutProviderCtx ? { RAKU_LAYOUT_PROVIDER: layoutProviderCtx } : {}),
+      ...(structuredProviderCtx ? { RAKU_STRUCTURED_PROVIDER: structuredProviderCtx } : {}),
+      ...(vlmProviderCtx ? { RAKU_VLM_PROVIDER: vlmProviderCtx } : {}),
+      ...(captioningProviderCtx ? { RAKU_CAPTIONING_PROVIDER: captioningProviderCtx } : {}),
+      ...(visualEmbeddingProviderCtx
+        ? { RAKU_VISUAL_EMBEDDING_PROVIDER: visualEmbeddingProviderCtx }
+        : {}),
+      ...(textractRegionCtx ? { RAKU_TEXTRACT_REGION: textractRegionCtx } : {}),
+      ...(ocrRegionCtx ? { RAKU_OCR_REGION: ocrRegionCtx } : {}),
+      ...(vlmRegionCtx ? { RAKU_VLM_REGION: vlmRegionCtx } : {}),
+      ...(vlmModelIdCtx ? { RAKU_VLM_MODEL_ID: vlmModelIdCtx } : {}),
+      ...(captionModelIdCtx ? { RAKU_CAPTION_MODEL_ID: captionModelIdCtx } : {}),
+      ...(maxInlineOcrBytesCtx ? { RAKU_MAX_INLINE_OCR_BYTES: maxInlineOcrBytesCtx } : {}),
+      ...(forceDeterministicCtx ? { RAKU_FORCE_DETERMINISTIC: forceDeterministicCtx } : {}),
+      ...(visualEvidencePromotionCtx
+        ? { RAKU_VISUAL_EVIDENCE_PROMOTION: visualEvidencePromotionCtx }
+        : {}),
+      ...(visualEvidenceVerifierQuorumCtx
+        ? { RAKU_VISUAL_EVIDENCE_VERIFIER_QUORUM: visualEvidenceVerifierQuorumCtx }
+        : {}),
+      ...(visualEvidenceVerifiersCtx
+        ? { RAKU_VISUAL_EVIDENCE_VERIFIERS: visualEvidenceVerifiersCtx }
+        : {}),
+      ...(visualVerifierAllowSameFamilyCtx
+        ? {
+            RAKU_VISUAL_VERIFIER_ALLOW_SAME_FAMILY_DISTINCT_MODELS:
+              visualVerifierAllowSameFamilyCtx
+          }
+        : {}),
+      ...(maxRegionsVerifiedPerAnswerCtx
+        ? { RAKU_MAX_REGIONS_VERIFIED_PER_ANSWER: maxRegionsVerifiedPerAnswerCtx }
+        : {})
+    };
+    const visualProvidersConfigured = Object.keys(visualProviderEnvironment).length > 0;
     const productionRuntimeEnvironment: Record<string, string> =
-      useBedrockAnswerLlm && bedrockGuardrailIdCtx && bedrockGuardrailVersionCtx
+      visualProvidersConfigured || (useBedrockAnswerLlm && bedrockGuardrailIdCtx && bedrockGuardrailVersionCtx)
         ? {
             RAKU_RUNTIME_PROFILE: "production",
-            RAKU_BEDROCK_GUARDRAIL_ID: bedrockGuardrailIdCtx,
-            RAKU_BEDROCK_GUARDRAIL_VERSION: bedrockGuardrailVersionCtx,
-            AWS_DEFAULT_REGION: cdk.Stack.of(this).region
+            AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
+            ...(bedrockGuardrailIdCtx && bedrockGuardrailVersionCtx
+              ? {
+                  RAKU_BEDROCK_GUARDRAIL_ID: bedrockGuardrailIdCtx,
+                  RAKU_BEDROCK_GUARDRAIL_VERSION: bedrockGuardrailVersionCtx
+                }
+              : {})
           }
         : {};
     // Frontend hosting shape (resolved early — it decides who owns the public ALB):
@@ -170,8 +238,25 @@ export class RakuRagStack extends cdk.Stack {
       encryptionKey: dataKey,
       enforceSSL: true,
       versioned: true,
+      cors: [
+        {
+          allowedMethods: [s3.HttpMethods.PUT],
+          allowedOrigins: ["*"],
+          allowedHeaders: ["*"],
+          exposedHeaders: ["ETag"],
+          maxAge: 3000
+        }
+      ],
       removalPolicy
     });
+    this.grantTextractServiceReadDocuments(documentBucket, dataKey);
+    const ingestConnectorEnvironment: Record<string, string> = {
+      RAKU_INGEST_CONNECTOR: "s3",
+      S3_BUCKET: documentBucket.bucketName
+    };
+    const visualStorageEnvironment: Record<string, string> = {
+      RAKU_CROP_STORAGE_URI: `s3://${documentBucket.bucketName}/visual-crops`
+    };
 
     const deadLetterQueue = new sqs.Queue(this, "IngestionDeadLetterQueue", {
       queueName: `${servicePrefix}-ingestion-dlq`,
@@ -454,6 +539,7 @@ export class RakuRagStack extends cdk.Stack {
           cpuArchitecture: ecs.CpuArchitecture.X86_64
         }
       });
+      this.attachRuntimePolicies(webTask.taskRole, documentBucket, dataKey);
       appSecret.grantRead(webTask.taskRole);
       webBasicAuthSecret?.grantRead(webTask.taskRole);
       const webContainer = webTask.addContainer("AwsNextjsContainer", {
@@ -477,9 +563,10 @@ export class RakuRagStack extends cdk.Stack {
           WEB_PORT: "3002",
           RAKU_AUTH_MODE: authMode,
           RAKU_ENABLE_DEV_TOKEN_ISSUER: authMode === "dev" ? "1" : "0",
-          // The AWS-hosted demo protects the web entrypoint with HTTP Basic auth, then Cognito for
-          // app identity. Keep the local upload sink available there so /sources/new can hand inline
-          // data: refs to the answer-service across container boundaries.
+          DOCUMENT_BUCKET: documentBucket.bucketName,
+          RAKU_UPLOAD_BUCKET: documentBucket.bucketName,
+          // The AWS-hosted app protects the web entrypoint with HTTP Basic auth, then Cognito for
+          // app identity. Keep upload enabled there; /api/upload/presign stages files directly in S3.
           RAKU_ENABLE_UPLOAD_SINK: basicAuthUser || authMode === "dev" ? "1" : "0",
           COGNITO_DOMAIN: cognitoHostedUiDomain,
           COGNITO_ISSUER: cognitoIssuer,
@@ -693,6 +780,7 @@ export class RakuRagStack extends cdk.Stack {
     openAiSecret?.grantRead(workerTask.taskRole);
 
     this.grantBedrockInvoke(workerTask.taskRole);
+    this.grantTextractDocumentAnalysis(workerTask.taskRole);
     workerTask.addContainer("PythonIngestWorkerContainer", {
       image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "workers/ingest/Dockerfile" }),
       entryPoint: ["/bin/sh", "-c"],
@@ -704,6 +792,10 @@ export class RakuRagStack extends cdk.Stack {
       }),
       environment: {
         ...embeddingEnvironment,
+        ...productionRuntimeEnvironment,
+        ...visualProviderEnvironment,
+        ...visualStorageEnvironment,
+        ...ingestConnectorEnvironment,
         STAGE_NAME: props.stageName,
         RAKU_WORKER_BACKEND: "postgres",
         DOCUMENT_BUCKET: documentBucket.bucketName,
@@ -754,7 +846,9 @@ export class RakuRagStack extends cdk.Stack {
       }
     });
     this.attachRuntimePolicies(answerTask.taskRole, documentBucket, dataKey);
+    ingestionQueue.grantSendMessages(answerTask.taskRole);
     this.grantBedrockInvoke(answerTask.taskRole);
+    this.grantTextractDocumentAnalysis(answerTask.taskRole);
     internalAuthSecret.grantRead(answerTask.taskRole);
     openAiSecret?.grantRead(answerTask.taskRole);
     database.secret?.grantRead(answerTask.taskRole);
@@ -790,10 +884,15 @@ export class RakuRagStack extends cdk.Stack {
         ...embeddingEnvironment,
         ...answerLlmEnvironment,
         ...productionRuntimeEnvironment,
+        ...visualProviderEnvironment,
+        ...visualStorageEnvironment,
+        ...ingestConnectorEnvironment,
         STAGE_NAME: props.stageName,
         // Listen on all interfaces so the internal ALB health check reaches the task ENI (the default
         // 127.0.0.1 bind is loopback-only → failed ELB health checks → ECS kills the task).
         ANSWER_SERVICE_HOST: "0.0.0.0",
+        INGESTION_QUEUE_URL: ingestionQueue.queueUrl,
+        SQS_DLQ_URL: deadLetterQueue.queueUrl,
         DATABASE_HOST: database.clusterEndpoint.hostname,
         DATABASE_PORT: database.clusterEndpoint.port.toString(),
         DATABASE_NAME: "raku_rag",
@@ -1211,6 +1310,50 @@ export class RakuRagStack extends cdk.Stack {
           `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:inference-profile/*`,
           `arn:aws:bedrock:*:${cdk.Stack.of(this).account}:guardrail/*`
         ]
+      })
+    );
+  }
+
+  private grantTextractDocumentAnalysis(taskRole: iam.IRole): void {
+    taskRole.addToPrincipalPolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "textract:AnalyzeDocument",
+          "textract:DetectDocumentText",
+          "textract:StartDocumentAnalysis",
+          "textract:GetDocumentAnalysis"
+        ],
+        resources: ["*"]
+      })
+    );
+  }
+
+  private grantTextractServiceReadDocuments(documentBucket: s3.IBucket, dataKey: kms.IKey): void {
+    const textractService = new iam.ServicePrincipal("textract.amazonaws.com");
+    documentBucket.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: "AllowTextractReadDocumentObjects",
+        principals: [textractService],
+        actions: ["s3:GetObject", "s3:GetObjectVersion"],
+        resources: [documentBucket.arnForObjects("*")],
+        conditions: {
+          StringEquals: {
+            "aws:SourceAccount": cdk.Aws.ACCOUNT_ID
+          }
+        }
+      })
+    );
+    dataKey.addToResourcePolicy(
+      new iam.PolicyStatement({
+        sid: "AllowTextractDecryptDocumentObjects",
+        principals: [textractService],
+        actions: ["kms:Decrypt", "kms:DescribeKey", "kms:GenerateDataKey"],
+        resources: ["*"],
+        conditions: {
+          StringEquals: {
+            "aws:SourceAccount": cdk.Aws.ACCOUNT_ID
+          }
+        }
       })
     );
   }

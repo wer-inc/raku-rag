@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from raku_rag.domain.models import BoundingBox, OcrTextRegion
+from raku_rag.domain.models import BoundingBox, ExtractionSource, OcrTextRegion
 
 
 def _decode_text(image: bytes) -> str:
@@ -18,7 +18,7 @@ class DeterministicOcrEngine:
 
     engine_version = "deterministic-ocr-v1"
 
-    def extract(self, image: bytes) -> tuple[OcrTextRegion, ...]:
+    def extract(self, image: bytes, *args, **kwargs) -> tuple[OcrTextRegion, ...]:
         text = _decode_text(image)
         if not text:
             return ()
@@ -35,6 +35,7 @@ class DeterministicOcrEngine:
                     confidence=1.0,
                     bbox=BoundingBox(x=0.05, y=min(0.9, 0.05 * idx), width=0.9, height=0.04),
                     page_number=1,
+                    extraction_source=ExtractionSource.DETERMINISTIC_OCR.value,
                 )
             )
         return tuple(regions)

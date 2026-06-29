@@ -36,7 +36,9 @@ class SearchAnswerContractTest(unittest.TestCase):
         self.assertIn("body?.query", search_controller)
         self.assertIn("tenant_id: p.tenant_id", answer_controller)
         self.assertIn("tenant_id: p.tenant_id", search_controller)
-        self.assertIn("/internal/answer", answer_controller)
+        # In the manufacturing product, legacy /v1/answer must still use the safety overlay.
+        self.assertIn("/internal/manufacturing/answer", answer_controller)
+        self.assertNotIn("`${base}/internal/answer`", answer_controller)
         self.assertIn("/internal/search", search_controller)
         self.assertIn("/internal/assets", assets_controller)
         self.assertIn("x-raku-tenant-id", assets_controller)

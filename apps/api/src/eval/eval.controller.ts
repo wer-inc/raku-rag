@@ -18,6 +18,7 @@ import type {
   EvaluationSetCreateResponse,
 } from "@raku-rag/shared";
 import { internalAuthHeaders } from "../auth/internal-auth";
+import { stripTenantOverrides } from "../auth/strip-tenant";
 
 @Controller({ path: "evaluations", version: "1" })
 export class EvalController {
@@ -40,7 +41,7 @@ export class EvalController {
     const upstream = await fetch(`${this.baseUrl()}${path}`, {
       method: "POST",
       headers: { ...this.principalHeaders(req), "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(stripTenantOverrides(body)),
     }).catch(() => {
       throw new BadGatewayException("answer-service unreachable");
     });

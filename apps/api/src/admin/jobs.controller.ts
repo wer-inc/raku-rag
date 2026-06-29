@@ -26,6 +26,7 @@ import type {
 } from "@raku-rag/shared";
 import { assertAdminMutationAllowed } from "../auth/roles";
 import { internalAuthHeaders } from "../auth/internal-auth";
+import { stripTenantOverrides } from "../auth/strip-tenant";
 
 @Controller({ path: "admin", version: "1" })
 export class AdminJobsController {
@@ -68,7 +69,7 @@ export class AdminJobsController {
     const upstream = await fetch(`${this.baseUrl()}${path}`, {
       method: "POST",
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : JSON.stringify(stripTenantOverrides(body)),
     }).catch(() => {
       throw new BadGatewayException("answer-service unreachable");
     });

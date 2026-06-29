@@ -64,6 +64,35 @@ const OPENAPI_DOC = {
           document_id: { type: "string" },
           ref: { type: "string" },
           content_type: { type: "string" },
+          manufacturing: { $ref: "#/components/schemas/ManufacturingIngestMetadata" },
+        },
+      },
+      ManufacturingIngestMetadata: {
+        // Optional manufacturing approval/safety metadata forwarded verbatim to the answer-service,
+        // which persists it on the Document so the safety overlay fires (mirrors dto/ingest.ts).
+        type: "object",
+        properties: {
+          approval_status: {
+            type: "string",
+            enum: ["draft", "pending_review", "approved", "obsolete"],
+          },
+          effective_date: { type: "string", nullable: true },
+          approval_source: { type: "string", enum: ["imported", "workflow"] },
+          approved_by: { type: "string" },
+          approved_at: { type: "string" },
+          obsolete_at: { type: "string" },
+          superseded_by: { type: "string" },
+          document_kind: { type: "string" },
+          safety_category: { type: "string" },
+          quality_category: { type: "string" },
+          equipment_operation_category: { type: "string" },
+          hazard_tags: { type: "array", items: { type: "string" } },
+          equipment_id: { type: "string" },
+          process_id: { type: "string" },
+          alarm_code: { type: "string" },
+          defect_type: { type: "string" },
+          part_no: { type: "string" },
+          customer: { type: "string" },
         },
       },
       IngestResponse: {
@@ -377,8 +406,13 @@ const OPENAPI_DOC = {
           },
           allowed_parser_providers: { type: "array", items: { type: "string" } },
           allowed_ocr_providers: { type: "array", items: { type: "string" } },
+          allowed_layout_providers: { type: "array", items: { type: "string" } },
+          allowed_structured_providers: { type: "array", items: { type: "string" } },
           allowed_llm_providers: { type: "array", items: { type: "string" } },
           allowed_embedding_providers: { type: "array", items: { type: "string" } },
+          allowed_visual_embedding_providers: { type: "array", items: { type: "string" } },
+          allowed_vlm_providers: { type: "array", items: { type: "string" } },
+          allowed_caption_providers: { type: "array", items: { type: "string" } },
           allowed_rerank_providers: { type: "array", items: { type: "string" } },
           allowed_regions: { type: "array", items: { type: "string" } },
           provider_regions: { type: "object" },
@@ -388,6 +422,7 @@ const OPENAPI_DOC = {
           no_train_required: { type: "boolean" },
           customer_opt_in_required: { type: "boolean" },
           customer_opt_in_status: { type: "string", enum: ["pending", "granted", "revoked"] },
+          opt_in_status_by_family: { type: "object" },
           provider_capability_snapshot: { type: "object" },
           fallback_policy: { type: "object" },
           audit_events: { type: "array", items: { $ref: "#/components/schemas/ProviderConfigAuditEvent" } },
@@ -405,8 +440,13 @@ const OPENAPI_DOC = {
           parser_mode: { type: "string" },
           allowed_parser_providers: { type: "array", items: { type: "string" } },
           allowed_ocr_providers: { type: "array", items: { type: "string" } },
+          allowed_layout_providers: { type: "array", items: { type: "string" } },
+          allowed_structured_providers: { type: "array", items: { type: "string" } },
           allowed_llm_providers: { type: "array", items: { type: "string" } },
           allowed_embedding_providers: { type: "array", items: { type: "string" } },
+          allowed_visual_embedding_providers: { type: "array", items: { type: "string" } },
+          allowed_vlm_providers: { type: "array", items: { type: "string" } },
+          allowed_caption_providers: { type: "array", items: { type: "string" } },
           allowed_rerank_providers: { type: "array", items: { type: "string" } },
           allowed_regions: { type: "array", items: { type: "string" } },
           provider_regions: { type: "object" },
@@ -415,6 +455,7 @@ const OPENAPI_DOC = {
           no_train_required: { type: "boolean" },
           customer_opt_in_required: { type: "boolean" },
           customer_opt_in_status: { type: "string" },
+          opt_in_status_by_family: { type: "object" },
           fallback_policy: { type: "object" },
           reason: { type: "string" },
         },
@@ -425,7 +466,23 @@ const OPENAPI_DOC = {
         properties: {
           collection_id: { type: "string" },
           document_sample_refs: { type: "array", items: { type: "string" } },
-          operation: { type: "string", enum: ["parse", "ocr", "embed", "rerank", "llm", "log"] },
+          operation: {
+            type: "string",
+            enum: [
+              "parse",
+              "ocr",
+              "layout",
+              "structured",
+              "embed",
+              "embedding",
+              "visual_embedding",
+              "rerank",
+              "llm",
+              "vlm",
+              "caption",
+              "log",
+            ],
+          },
           provider: { type: "string" },
         },
       },
@@ -851,16 +908,44 @@ const OPENAPI_DOC = {
       Citation: {
         type: "object",
         properties: {
-          kind: { type: "string" },
+          kind: {
+            type: "string",
+            enum: [
+              "text",
+              "visual",
+              "spreadsheet",
+              "table_row",
+              "form_field",
+              "chart_series",
+              "figure_caption",
+            ],
+          },
           document_id: { type: "string" },
           source_id: { type: "string" },
           version: { type: "number" },
           retrieval_score: { type: "number" },
-          chunk_id: { type: "string" },
+          chunk_id: { type: "string", nullable: true },
           text_range: { type: "array", items: { type: "number" }, nullable: true },
+          asset_id: { type: "string", nullable: true },
+          page_number: { type: "number", nullable: true },
+          region_id: { type: "string", nullable: true },
+          bbox: { $ref: "#/components/schemas/BoundingBox", nullable: true },
           sheet_name: { type: "string", nullable: true },
           cell_range: { type: "string", nullable: true },
           row_id: { type: "string", nullable: true },
+          table_id: { type: "string", nullable: true },
+          form_id: { type: "string", nullable: true },
+          field_name: { type: "string", nullable: true },
+          chart_id: { type: "string", nullable: true },
+          series_name: { type: "string", nullable: true },
+          point_index: { type: "number", nullable: true },
+          column_name: { type: "string", nullable: true },
+          pixel_derived: { type: "boolean" },
+          visual_evidence_verified: { type: "boolean" },
+          visual_verifier_verdicts: {
+            type: "array",
+            items: { type: "object" },
+          },
           approval_status: {
             type: "string",
             enum: ["draft", "pending_review", "approved", "obsolete"],
@@ -922,7 +1007,7 @@ const OPENAPI_DOC = {
       },
       AnswerResponse: {
         type: "object",
-        required: ["status", "citations", "used_chunks"],
+        required: ["status", "citations", "used_chunks", "correlation_id"],
         properties: {
           status: {
             type: "string",
@@ -954,6 +1039,386 @@ const OPENAPI_DOC = {
           correlation_id: { type: "string" },
         },
       },
+      ChatQuickReply: {
+        type: "object",
+        required: ["label", "value"],
+        properties: {
+          label: { type: "string" },
+          value: { type: "string" },
+        },
+      },
+      ChatAssistantMessage: {
+        type: "object",
+        required: ["message_id", "message", "message_type", "ai_action", "quick_replies", "citations"],
+        properties: {
+          message_id: { type: "string" },
+          message: { type: "string" },
+          message_type: { type: "string" },
+          ai_action: { type: "string" },
+          quick_replies: { type: "array", items: { $ref: "#/components/schemas/ChatQuickReply" } },
+          citations: { type: "array", items: { $ref: "#/components/schemas/Citation" } },
+        },
+      },
+      ChatConversationState: {
+        type: "object",
+        required: ["status"],
+        properties: {
+          status: { type: "string" },
+          response_state: {
+            type: "string",
+            enum: [
+              "sending",
+              "thinking",
+              "checking_rag",
+              "checking_action",
+              "delayed",
+              "retryable_error",
+              "handoff_available",
+              "completed",
+            ],
+          },
+          current_intent: { type: "string", nullable: true },
+          current_step: { type: "string", nullable: true },
+          scenario_id: { type: "string", nullable: true },
+          scenario_version_id: { type: "string", nullable: true },
+          collected_slots: { type: "object" },
+          missing_slots: { type: "array", items: { type: "string" } },
+          summary: { type: "string" },
+          handoff_required: { type: "boolean" },
+        },
+      },
+      ChatRagInteraction: {
+        type: "object",
+        required: ["rag_interaction_id", "status", "answerable", "latency_ms"],
+        properties: {
+          rag_interaction_id: { type: "string" },
+          status: { type: "string" },
+          answerable: { type: "boolean" },
+          confidence: { type: "number", nullable: true },
+          no_answer_reason: { type: "string", nullable: true },
+          trace_id: { type: "string", nullable: true },
+          latency_ms: { type: "number" },
+          citations: { type: "array", items: { $ref: "#/components/schemas/Citation" } },
+          source_policy_id: { type: "string", nullable: true },
+        },
+      },
+      ChatHandoffPackage: {
+        type: "object",
+        required: ["handoff_package_id", "session_id", "status", "reason"],
+        properties: {
+          handoff_package_id: { type: "string" },
+          session_id: { type: "string" },
+          status: { type: "string" },
+          reason: { type: "string" },
+          priority: { type: "string" },
+          summary: { type: "string" },
+          collected_slots: { type: "object" },
+          missing_slots: { type: "array", items: { type: "string" } },
+          rag_citations: { type: "array", items: { $ref: "#/components/schemas/Citation" } },
+          recommended_action: { type: "string" },
+        },
+      },
+      ChatTicketStub: {
+        type: "object",
+        required: ["ticket_id", "status"],
+        properties: {
+          ticket_id: { type: "string" },
+          status: { type: "string" },
+          idempotency_key: { type: "string" },
+          created_at: { type: "string" },
+        },
+      },
+      ChatCreateSessionRequest: {
+        type: "object",
+        properties: {
+          channel: { type: "string" },
+          initial_message: { type: "string" },
+          collection_id: { type: "string" },
+          metadata: { type: "object" },
+        },
+      },
+      ChatPublicWidgetSessionRequest: {
+        type: "object",
+        required: ["widget_token"],
+        properties: {
+          widget_token: { type: "string" },
+          initial_message: { type: "string" },
+          metadata: { type: "object" },
+        },
+      },
+      ChatCreateSessionResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "session_id", "status", "processed_initial_message", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          session_id: { type: "string" },
+          status: { type: "string" },
+          processed_initial_message: { type: "boolean" },
+          user_message_id: { type: "string" },
+          assistant_message: { $ref: "#/components/schemas/ChatAssistantMessage" },
+          state: { $ref: "#/components/schemas/ChatConversationState" },
+          rag: { $ref: "#/components/schemas/ChatRagInteraction", nullable: true },
+          handoff: { $ref: "#/components/schemas/ChatHandoffPackage", nullable: true },
+          ticket: { $ref: "#/components/schemas/ChatTicketStub", nullable: true },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatMessageRequest: {
+        type: "object",
+        required: ["message"],
+        properties: {
+          message: { type: "string" },
+          client_message_id: { type: "string" },
+          collection_id: { type: "string" },
+          stream: { type: "boolean" },
+        },
+      },
+      ChatMessageResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "session_id", "user_message_id", "assistant_message", "state", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          session_id: { type: "string" },
+          status: { type: "string" },
+          user_message_id: { type: "string" },
+          assistant_message: { $ref: "#/components/schemas/ChatAssistantMessage" },
+          state: { $ref: "#/components/schemas/ChatConversationState" },
+          rag: { $ref: "#/components/schemas/ChatRagInteraction", nullable: true },
+          handoff: { $ref: "#/components/schemas/ChatHandoffPackage", nullable: true },
+          ticket: { $ref: "#/components/schemas/ChatTicketStub", nullable: true },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatStoredMessage: {
+        type: "object",
+        required: ["message_id", "role", "content_redacted"],
+        properties: {
+          message_id: { type: "string" },
+          role: { type: "string" },
+          content_redacted: { type: "string" },
+          created_at: { type: "string" },
+          message: { type: "string" },
+          message_type: { type: "string" },
+          ai_action: { type: "string", nullable: true },
+          quick_replies: { type: "array", items: { $ref: "#/components/schemas/ChatQuickReply" } },
+          citations: { type: "array", items: { $ref: "#/components/schemas/Citation" } },
+        },
+      },
+      ChatSessionDetailResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "session_id", "status", "messages", "state", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          session_id: { type: "string" },
+          status: { type: "string" },
+          current_intent: { type: "string", nullable: true },
+          scenario_id: { type: "string", nullable: true },
+          scenario_version_id: { type: "string", nullable: true },
+          summary: { type: "string" },
+          messages: { type: "array", items: { $ref: "#/components/schemas/ChatStoredMessage" } },
+          state: { $ref: "#/components/schemas/ChatConversationState" },
+          handoff: { $ref: "#/components/schemas/ChatHandoffPackage", nullable: true },
+          ticket: { $ref: "#/components/schemas/ChatTicketStub", nullable: true },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatSessionSummary: {
+        type: "object",
+        required: ["session_id", "started_at", "last_message_at", "status", "handoff_required"],
+        properties: {
+          session_id: { type: "string" },
+          started_at: { type: "string" },
+          last_message_at: { type: "string" },
+          current_intent: { type: "string", nullable: true },
+          status: { type: "string" },
+          resolution_status: { type: "string" },
+          handoff_required: { type: "boolean" },
+          scenario_version_id: { type: "string", nullable: true },
+        },
+      },
+      ChatSessionListResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "items", "next_cursor", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          items: { type: "array", items: { $ref: "#/components/schemas/ChatSessionSummary" } },
+          next_cursor: { type: "string", nullable: true },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatHandoffRequest: {
+        type: "object",
+        properties: {
+          reason: { type: "string" },
+          comment: { type: "string" },
+        },
+      },
+      ChatHandoffResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "session_id", "handoff_package_id", "status", "reason", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          session_id: { type: "string" },
+          handoff_package_id: { type: "string" },
+          status: { type: "string" },
+          reason: { type: "string" },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatFeedbackRequest: {
+        type: "object",
+        properties: {
+          message_id: { type: "string" },
+          rating: { type: "number" },
+          issue_type: { type: "string" },
+          comment: { type: "string" },
+        },
+      },
+      ChatFeedbackResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "evaluation_id", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          evaluation_id: { type: "string" },
+          improvement_item_id: { type: "string", nullable: true },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatMetricsResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "summary", "top_intents", "top_handoff_reasons", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          summary: {
+            type: "object",
+            required: [
+              "conversation_count",
+              "bot_resolution_rate",
+              "handoff_rate",
+              "unanswered_rate",
+              "rag_answerable_rate",
+              "average_turns",
+              "p95_response_latency_ms",
+            ],
+            properties: {
+              conversation_count: { type: "number" },
+              bot_resolution_rate: { type: "number" },
+              handoff_rate: { type: "number" },
+              unanswered_rate: { type: "number" },
+              rag_answerable_rate: { type: "number" },
+              average_turns: { type: "number" },
+              p95_response_latency_ms: { type: "number" },
+            },
+          },
+          top_intents: { type: "array", items: { type: "object" } },
+          top_handoff_reasons: { type: "array", items: { type: "object" } },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatbotSourceExposurePolicy: {
+        type: "object",
+        required: ["policy_id", "source_id", "exposure_mode"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          policy_id: { type: "string" },
+          source_id: { type: "string" },
+          collection_id: { type: "string" },
+          exposure_mode: {
+            type: "string",
+            enum: [
+              "disabled",
+              "internal_authenticated",
+              "external_authenticated",
+              "external_anonymous",
+            ],
+          },
+          allowed_channels: { type: "array", items: { type: "string" } },
+          allowed_scenario_ids: { type: "array", items: { type: "string" } },
+          allowed_intents: { type: "array", items: { type: "string" } },
+          required_document_tags: { type: "array", items: { type: "string" } },
+          blocked_document_tags: { type: "array", items: { type: "string" } },
+          require_approved_effective: { type: "boolean" },
+          allow_obsolete_primary_evidence: { type: "boolean" },
+          allowed_domains: { type: "array", items: { type: "string" } },
+          status: { type: "string" },
+          unsupported_reason: { type: "string" },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatbotSourceExposureListResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "items", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          items: { type: "array", items: { $ref: "#/components/schemas/ChatbotSourceExposurePolicy" } },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatbotSourceExposureValidationResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "allowed", "reasons", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          allowed: { type: "boolean" },
+          reasons: { type: "array", items: { type: "string" } },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatScenarioVersion: {
+        type: "object",
+        required: ["version_id", "status"],
+        properties: {
+          version_id: { type: "string" },
+          status: { type: "string" },
+          required_slots: { type: "array", items: { type: "string" } },
+          optional_slots: { type: "array", items: { type: "string" } },
+          steps: { type: "array", items: { type: "object" } },
+          validation_rules: { type: "array", items: { type: "object" } },
+          rag_policy: { type: "object" },
+          actions: { type: "array", items: { type: "object" } },
+          response_templates: { type: "object" },
+          handoff_conditions: { type: "array", items: { type: "object" } },
+          updated_at: { type: "string" },
+          approved_by: { type: "string", nullable: true },
+          approved_at: { type: "string", nullable: true },
+          published_by: { type: "string", nullable: true },
+          published_at: { type: "string", nullable: true },
+        },
+      },
+      ChatScenarioResponse: {
+        type: "object",
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          scenario_id: { type: "string" },
+          name: { type: "string" },
+          intents: { type: "array", items: { type: "string" } },
+          status: { type: "string" },
+          active_version_id: { type: "string", nullable: true },
+          versions: { type: "array", items: { $ref: "#/components/schemas/ChatScenarioVersion" } },
+          correlation_id: { type: "string" },
+        },
+      },
+      ChatScenarioListResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "items", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          items: { type: "array", items: { $ref: "#/components/schemas/ChatScenarioResponse" } },
+          correlation_id: { type: "string" },
+        },
+      },
       ManufacturingAnswerRequest: {
         type: "object",
         required: ["query"],
@@ -978,7 +1443,7 @@ const OPENAPI_DOC = {
       },
       ManufacturingAnswerResponse: {
         type: "object",
-        required: ["status", "citations", "used_chunks", "manufacturing"],
+        required: ["status", "citations", "used_chunks", "correlation_id", "manufacturing"],
         properties: {
           status: {
             type: "string",
@@ -1760,6 +2225,478 @@ const OPENAPI_DOC = {
               "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
             },
           },
+        },
+      },
+    },
+    "/chat/public-widget/sessions": {
+      post: {
+        operationId: "createPublicWidgetChatSession",
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ChatPublicWidgetSessionRequest" } },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created restricted anonymous public widget ChatBot session",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatCreateSessionResponse" } },
+            },
+          },
+          "401": { description: "Invalid widget token", content: { "application/json": {} } },
+          "403": { description: "Anonymous chat disabled or widget domain not allowed", content: { "application/json": {} } },
+          "429": { description: "Public widget rate limit exceeded", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/sessions": {
+      get: {
+        operationId: "listChatSessions",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "intent", in: "query", required: false, schema: { type: "string" } },
+          { name: "status", in: "query", required: false, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "Tenant-scoped ChatBot sessions",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatSessionListResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: ChatBot admin role required", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+      post: {
+        operationId: "createChatSession",
+        security: [{ bearerAuth: [], userToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ChatCreateSessionRequest" } },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created ChatBot session",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatCreateSessionResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/sessions/{session_id}": {
+      get: {
+        operationId: "getChatSession",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "session_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "ChatBot session detail",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatSessionDetailResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "404": { description: "Chat session not found", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/sessions/{session_id}/messages": {
+      post: {
+        operationId: "postChatMessage",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "session_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ChatMessageRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Completed non-streaming ChatBot turn",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatMessageResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "404": { description: "Chat session not found", content: { "application/json": {} } },
+          "409": { description: "Chat session is terminal", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/sessions/{session_id}/handoff": {
+      post: {
+        operationId: "requestChatHandoff",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "session_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ChatHandoffRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Queued ChatBot handoff package",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatHandoffResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "404": { description: "Chat session not found", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/handoffs/{handoff_package_id}": {
+      get: {
+        operationId: "getChatHandoff",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "handoff_package_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "ChatBot handoff package",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatHandoffPackage" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: handoff read role required", content: { "application/json": {} } },
+          "404": { description: "Handoff not found", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/sessions/{session_id}/feedback": {
+      post: {
+        operationId: "postChatFeedback",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "session_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ChatFeedbackRequest" } },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created ChatBot feedback record",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatFeedbackResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "404": { description: "Chat session not found", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/metrics": {
+      get: {
+        operationId: "getChatMetrics",
+        security: [{ bearerAuth: [], userToken: [] }],
+        responses: {
+          "200": {
+            description: "ChatBot operational metrics",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatMetricsResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: metrics role required", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/source-exposure-policies": {
+      get: {
+        operationId: "listChatSourceExposurePolicies",
+        security: [{ bearerAuth: [], userToken: [] }],
+        responses: {
+          "200": {
+            description: "ChatBot source exposure policies",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatbotSourceExposureListResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: source exposure policy role required", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/source-exposure-policies/{policy_id}": {
+      put: {
+        operationId: "putChatSourceExposurePolicy",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "policy_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ChatbotSourceExposurePolicy" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Updated ChatBot source exposure policy",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatbotSourceExposurePolicy" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: source exposure policy role required", content: { "application/json": {} } },
+          "422": { description: "Invalid exposure policy", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/source-exposure-policies/validate": {
+      post: {
+        operationId: "validateChatSourceExposurePolicy",
+        security: [{ bearerAuth: [], userToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ChatbotSourceExposurePolicy" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Validation result for a ChatBot source exposure policy",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatbotSourceExposureValidationResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: source exposure policy role required", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/scenarios": {
+      get: {
+        operationId: "listChatScenarios",
+        security: [{ bearerAuth: [], userToken: [] }],
+        responses: {
+          "200": {
+            description: "ChatBot scenarios",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatScenarioListResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario role required", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+      post: {
+        operationId: "createChatScenario",
+        security: [{ bearerAuth: [], userToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { type: "object" } },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created ChatBot scenario",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatScenarioResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario manage role required", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/scenarios/{scenario_id}/versions/{version_id}": {
+      put: {
+        operationId: "putChatScenarioVersion",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "scenario_id", in: "path", required: true, schema: { type: "string" } },
+          { name: "version_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ChatScenarioVersion" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Updated draft ChatBot scenario version",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatScenarioResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario manage role required", content: { "application/json": {} } },
+          "404": { description: "Scenario not found", content: { "application/json": {} } },
+          "409": { description: "Scenario version is immutable", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/scenarios/{scenario_id}/versions/{version_id}/{action}": {
+      post: {
+        operationId: "postChatScenarioAction",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "scenario_id", in: "path", required: true, schema: { type: "string" } },
+          { name: "version_id", in: "path", required: true, schema: { type: "string" } },
+          { name: "action", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": { schema: { type: "object" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Preview or transition a ChatBot scenario version",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { type: "object" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario role required", content: { "application/json": {} } },
+          "404": { description: "Scenario not found", content: { "application/json": {} } },
+          "409": { description: "Scenario state conflict", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/chat/scenarios/{scenario_id}/rollback": {
+      post: {
+        operationId: "rollbackChatScenario",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "scenario_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "Rollback ChatBot scenario to a published version",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ChatScenarioResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario approver role required", content: { "application/json": {} } },
+          "404": { description: "Scenario not found", content: { "application/json": {} } },
+          "502": { description: "Chat service unavailable", content: { "application/json": {} } },
         },
       },
     },

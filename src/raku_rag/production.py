@@ -11,13 +11,15 @@ gates exercise, so they run against real Postgres+RLS via adapter parity (see ``
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from raku_rag.app import MvpSystem
 from raku_rag.core.config import Settings
 from raku_rag.core.security.token import TokenVerifier
-from raku_rag.domain.models import JobStatus
+from raku_rag.domain.models import Document, JobStatus
 from raku_rag.domain.models import QueryProfile
+from raku_rag.manufacturing.safety.visual_verify import visual_verifiers_from_settings
 from raku_rag.observability.exporters import exporter_from_settings
 from raku_rag.observability.langfuse_client import build_langfuse_client
 from raku_rag.observability.metrics import MetricsRecorder
@@ -26,6 +28,7 @@ from raku_rag.persistence.postgres import (
     PostgresAclPolicy,
     PostgresAuditSink,
     PostgresDocumentRegistry,
+    PostgresProviderPolicyRepository,
     PostgresIngestionRunStore,
     PostgresVectorStore,
     connect,
@@ -41,12 +44,20 @@ from raku_rag.providers.parsers import (
     TextParser,
 )
 from raku_rag.providers.rerankers import reranker_from_settings
-from raku_rag.providers.vlms import ExtractiveVLMProvider
+from raku_rag.providers.visual import (
+    async_document_analyzer_from_settings,
+    captioning_from_settings,
+    layout_from_settings,
+    ocr_from_settings,
+    structured_from_settings,
+    vlm_from_settings,
+    visual_embedding_from_settings,
+)
 from raku_rag.services.answer import AnswerService
 from raku_rag.services.assets import AssetService
 from raku_rag.services.cache import CacheService
 from raku_rag.services.cost import CostService
-from raku_rag.services.crop import CropService
+from raku_rag.services.crop import crop_service_from_settings
 from raku_rag.services.deletion import DeletionService
 from raku_rag.services.groundedness import GroundednessGate
 from raku_rag.services.ingestion import IngestionService
@@ -54,7 +65,20 @@ from raku_rag.services.profile import ProfileRegistry
 from raku_rag.services.reindex import InMemoryReindexPlanStore, ReindexService
 from raku_rag.services.retrieval import RetrievalService
 from raku_rag.services.structured_tables import TableManifestStructuredTool
-from raku_rag.workers.ingestion import IngestionJobMessage, IngestionRun
+from raku_rag.workers.ingestion import (
+    IngestionExecutor,
+    IngestionJobMessage,
+    IngestionRun,
+    VisualIngestionExecutor,
+)
+from workers.ingest.providers.visual import (
+    AsyncDocumentAnalyzerPolicyRouter,
+    CaptionPolicyRouter,
+    LayoutPolicyRouter,
+    OcrPolicyRouter,
+    VisualEmbeddingPolicyRouter,
+    VlmPolicyRouter,
+)
 
 if TYPE_CHECKING:
     from raku_rag.manufacturing.app import ManufacturingSystem
@@ -81,6 +105,7 @@ class ProductionSystem(MvpSystem):
         self.store = PostgresVectorStore(self._conn, embedding_dim=self.settings.embedding_dim)
         self.acl = PostgresAclPolicy(self._conn)
         self.ingestion_runs = PostgresIngestionRunStore(self._conn)
+        self.provider_policies = PostgresProviderPolicyRepository(self._conn)
 
         # Reused, unchanged from MvpSystem.
         self.embedder = embedding_provider_from_settings(self.settings)
@@ -96,7 +121,33 @@ class ProductionSystem(MvpSystem):
         self.reranker = reranker_from_settings(self.settings)
         self.llm = llm_provider_from_settings(self.settings)
         self.guardrail = guardrail_from_settings(self.settings)
-        self.vlm = ExtractiveVLMProvider()
+        self.ocr = _wrap_provider_policy(
+            ocr_from_settings(self.settings), OcrPolicyRouter, self.provider_policies
+        )
+        self.layout = _wrap_provider_policy(
+            layout_from_settings(self.settings), LayoutPolicyRouter, self.provider_policies
+        )
+        self.structured = _wrap_provider_policy(
+            structured_from_settings(self.settings), None, self.provider_policies
+        )
+        self.captioning = _wrap_provider_policy(
+            captioning_from_settings(self.settings),
+            CaptionPolicyRouter,
+            self.provider_policies,
+        )
+        self.vlm = _wrap_provider_policy(
+            vlm_from_settings(self.settings), VlmPolicyRouter, self.provider_policies
+        )
+        self.visual_embedder = _wrap_provider_policy(
+            visual_embedding_from_settings(self.settings),
+            VisualEmbeddingPolicyRouter,
+            self.provider_policies,
+        )
+        self.async_document_analyzer = _wrap_provider_policy(
+            async_document_analyzer_from_settings(self.settings),
+            AsyncDocumentAnalyzerPolicyRouter,
+            self.provider_policies,
+        )
         self.cost = CostService()
         self.telemetry_exporter = exporter_from_settings(
             self.settings, langfuse_client=build_langfuse_client(self.settings)
@@ -105,7 +156,7 @@ class ProductionSystem(MvpSystem):
         self.tracer = InMemoryTracer(exporter=self.telemetry_exporter)
         self.audit = PostgresAuditSink(self._conn)
         self.cache = CacheService()
-        self.crops = CropService()
+        self.crops = crop_service_from_settings(self.settings)
         self.profiles = ProfileRegistry(
             QueryProfile(
                 score_threshold=self.settings.default_score_threshold,
@@ -141,6 +192,19 @@ class ProductionSystem(MvpSystem):
             self.tracer,
             pii_redaction_mode=self.settings.pii_redaction_mode,
         )
+        self.visual_ingestion_executor = VisualIngestionExecutor(
+            ocr=self.ocr,
+            layout=self.layout,
+            captioning=self.captioning,
+            visual_embedder=self.visual_embedder,
+            cost=self.cost,
+            crops=self.crops,
+        )
+        self.ingestion_executor = IngestionExecutor(
+            self.ingestion,
+            visual_executor=self.visual_ingestion_executor,
+            async_document_analyzer=self.async_document_analyzer,
+        )
         self.answer_service = AnswerService(
             self.retrieval,
             self.llm,
@@ -153,6 +217,8 @@ class ProductionSystem(MvpSystem):
             self.vlm,
             output_guardrail=self.guardrail,
             structured_tool=self.structured_tool,
+            visual_verifiers=visual_verifiers_from_settings(self.settings),
+            settings=self.settings,
         )
         self.deletion = DeletionService(
             self.store, self.registry, self.cache, crop_store=self.crops.store
@@ -193,9 +259,66 @@ class ProductionSystem(MvpSystem):
         )
         run, created = self.ingestion_runs.create_queued(message, trigger="api")
         if not created and run.status == JobStatus.SUCCEEDED.value:
+            if manufacturing_metadata is not None:
+                self.attach_manufacturing_metadata(tenant_id, document_id, manufacturing_metadata)
+            return run
+        if _is_pdf_content_type(content_type):
+            # Multi-page PDFs are async: the API creates the run and the worker owns submit/poll/persist.
+            if run.status not in {JobStatus.QUEUED.value, JobStatus.RUNNING.value}:
+                self.ingestion_runs.mark_queued(run)
+            self._upsert_pending_document_stub(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                source_id=source_id,
+                document_id=document_id,
+                checksum=checksum,
+                document_ref=document_ref,
+                content_type=content_type,
+                manufacturing_metadata=manufacturing_metadata,
+            )
             return run
 
         self.ingestion_runs.mark_running(run)
+        if _is_image_content_type(content_type):
+            try:
+                result = self.ingestion_executor.execute_document(
+                    tenant_id=tenant_id,
+                    collection_id=collection_id,
+                    source_id=source_id,
+                    document_id=document_id,
+                    document_ref=document_ref,
+                    raw=raw,
+                    content_type=content_type,
+                )
+            except Exception as exc:
+                self.ingestion_runs.mark_failed(run, reason=str(exc), retry_count=0)
+                refreshed = self.ingestion_runs.get_for_tenant(tenant_id, run.ingestion_run_id)
+                return refreshed or run
+            if result.status == JobStatus.SUCCEEDED.value:
+                self.ingestion_runs.mark_succeeded(
+                    run,
+                    chunk_count=result.chunk_count,
+                    content_checksum=result.content_checksum,
+                    parser_version=result.parser_version,
+                    chunking_config_version=result.chunking_config_version,
+                    embedding_model_version=result.embedding_model_version,
+                )
+                doc = self.registry.get(tenant_id, document_id)
+                if doc is not None:
+                    doc.metadata["document_ref"] = document_ref
+                    doc.metadata["content_type"] = content_type
+                    self.registry.put(doc)
+                if manufacturing_metadata is not None:
+                    self.attach_manufacturing_metadata(
+                        tenant_id, document_id, manufacturing_metadata
+                    )
+            else:
+                self.ingestion_runs.mark_failed(
+                    run, reason=result.failure_reason or "visual ingestion failed", retry_count=0
+                )
+            refreshed = self.ingestion_runs.get_for_tenant(tenant_id, run.ingestion_run_id)
+            return refreshed or run
+
         job = self.ingestion.ingest(
             tenant_id=tenant_id,
             collection_id=collection_id,
@@ -245,6 +368,43 @@ class ProductionSystem(MvpSystem):
         doc.metadata[MFG_META_KEY] = metadata.to_mapping()
         self.registry.put(doc)
         return metadata
+
+    def _upsert_pending_document_stub(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_id: str,
+        document_id: str,
+        checksum: str,
+        document_ref: str,
+        content_type: str,
+        manufacturing_metadata: "ManufacturingDocumentMetadata | None",
+    ) -> None:
+        existing = self.registry.get(tenant_id, document_id)
+        metadata = dict(existing.metadata) if existing else {}
+        metadata["document_ref"] = document_ref
+        metadata["content_type"] = content_type
+        if manufacturing_metadata is not None:
+            from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY
+
+            metadata[MFG_META_KEY] = manufacturing_metadata.to_mapping()
+        now = datetime.now(timezone.utc).isoformat()
+        self.registry.put(
+            Document(
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                document_id=document_id,
+                source_id=source_id,
+                version=existing.version if existing else 1,
+                checksum=checksum,
+                metadata=metadata,
+                created_at=existing.created_at if existing else now,
+                updated_at=now,
+                indexed_at=existing.indexed_at if existing else "",
+                tombstone=False,
+            )
+        )
 
     def ingest_manufacturing(
         self,
@@ -298,6 +458,23 @@ class ProductionSystem(MvpSystem):
         self.close()
 
 
+def _is_image_content_type(content_type: str) -> bool:
+    return content_type.lower().split(";", 1)[0].strip().startswith("image/")
+
+
+def _is_pdf_content_type(content_type: str) -> bool:
+    return content_type.lower().split(";", 1)[0].strip() == "application/pdf"
+
+
+def _wrap_provider_policy(provider: object | None, router_cls: object | None, resolver: object):
+    if provider is None or router_cls is None:
+        return provider
+    provider_id = str(getattr(provider, "provider_id", "") or "")
+    if not provider_id:
+        return provider
+    return router_cls(provider, provider_id=provider_id, policy_resolver=resolver)
+
+
 def build_manufacturing_system_for_base(base: ProductionSystem) -> "ManufacturingSystem":
     """Compose the manufacturing product surface over an existing production base system.
 
@@ -309,6 +486,13 @@ def build_manufacturing_system_for_base(base: ProductionSystem) -> "Manufacturin
     from raku_rag.persistence.manufacturing_audit import PostgresManufacturingAuditLogWriter
     from raku_rag.persistence.manufacturing_governance import PostgresDataUsePolicyStore
 
+    # NOTE (issue 0012): PostgresDraftStore is implemented and unit/Tier-B tested, but is NOT wired
+    # here yet. Activating it requires first correcting the manufacturing_draft_artifacts CHECK
+    # constraint `NOT (created_by='ai' AND status='approved')`, which currently rejects the legitimate
+    # human-approved AI draft (created_by stays 'ai' as provenance; approval is attributed by
+    # reviewer_id). That constraint governs the draft-approval safety boundary (always human per
+    # CLAUDE.md), so the corrective migration is a separate, human-approved change. Until then the draft
+    # queue uses the in-memory store (draft_store defaults to None -> InMemoryDraftStore).
     return ManufacturingSystem(
         settings=base.settings,
         base_system=base,

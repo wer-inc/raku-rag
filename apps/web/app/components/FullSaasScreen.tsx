@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type {
   AdminDataSource,
+  ChatAssistantMessage,
   Citation,
   DataSourceMappingProfile,
   DataSourceProfileType,
@@ -31,9 +32,14 @@ import {
   apiGetJson,
   apiPostJson,
   apiPutJson,
+  authHeaders,
+  chatMetrics,
+  createChatSession,
   ingestDocument,
   manufacturingAnswer,
+  requestChatHandoff,
   searchChunks,
+  sendChatMessage,
   manufacturingAssignReviewer,
   manufacturingAuditEvents,
   manufacturingAuditExport,
@@ -75,6 +81,7 @@ import {
 } from "../../lib/session";
 import { missingApis, type ManifestScreen } from "../../lib/full-saas";
 import CitationViewer, { type CitationViewTarget } from "./CitationViewer";
+import { useDialog } from "../../lib/use-dialog";
 import {
   clearAnswerHistory,
   loadAnswerHistory,
@@ -150,7 +157,6 @@ const SYNC_ACTIVE_STATUSES = new Set([
   "syncing",
   "queued",
   "observing",
-  "partially_succeeded",
 ]);
 
 function isSyncActive(status: string | undefined | null): boolean {
@@ -410,7 +416,7 @@ function AnswerFeedback({ question, answerId }: { question: string; answerId: st
           </div>
         </div>
       )}
-      {error && <span className="cv-foot-error">{error}</span>}
+      {error && <span className="cv-foot-error" role="alert">{error}</span>}
     </div>
   );
 }
@@ -625,7 +631,7 @@ function AnswersBody() {
           return <AnswerPanel key={turn.id} turn={turn} onOpenCitation={setViewer} />;
         })}
 
-        {loading && <p className="ops-empty">回答を生成中…</p>}
+        {loading && <p className="ops-empty" role="status" aria-live="polite">回答を生成中…</p>}
       </div>
 
       <form className="answers-composer" onSubmit={onAsk}>
@@ -665,6 +671,405 @@ function AnswersBody() {
         </div>
       </form>
 
+      <CitationViewer target={viewer} onClose={() => setViewer(null)} />
+    </>
+  );
+}
+
+type ChatTurn =
+  | { kind: "user"; id: string; text: string }
+  | {
+      kind: "assistant";
+      id: string;
+      message: ChatAssistantMessage;
+      ragStatus?: string | null;
+      handoffReason?: string | null;
+      ticketId?: string | null;
+    }
+  | { kind: "error"; id: string; text: string };
+
+function chatProgressLabel(state: "thinking" | "checking_rag" | "delayed"): string {
+  if (state === "checking_rag") return "根拠を確認しています";
+  if (state === "delayed") return "少し時間がかかっています";
+  return "返答を準備しています";
+}
+
+function chatActionLabel(action?: string | null): string {
+  switch (action) {
+    case "collect_slot":
+      return "確認中";
+    case "answer_with_citations":
+      return "根拠付き回答";
+    case "confirm_action":
+      return "最終確認";
+    case "ticket_created":
+      return "受付作成";
+    case "handoff":
+      return "引き継ぎ";
+    default:
+      return action || "応答";
+  }
+}
+
+function ChatAssistantBubble({
+  turn,
+  onQuickReply,
+  onOpenCitation,
+}: {
+  turn: Extract<ChatTurn, { kind: "assistant" }>;
+  onQuickReply: (label: string, value: string) => void;
+  onOpenCitation: (target: CitationViewTarget) => void;
+}) {
+  const message = turn.message;
+  return (
+    <article className="chat-bot-bubble">
+      <div className="chat-bubble-head">
+        <span className="status-badge">{chatActionLabel(message.ai_action)}</span>
+        {turn.ragStatus && <span className={`citation-chip status-${turn.ragStatus}`}>RAG {turn.ragStatus}</span>}
+        {turn.ticketId && <span className="citation-chip approval-approved">{turn.ticketId}</span>}
+        {turn.handoffReason && <span className="citation-chip approval-obsolete">{turn.handoffReason}</span>}
+      </div>
+      <p>{message.message}</p>
+
+      {message.citations.length > 0 && (
+        <div className="chat-citation-strip" aria-label="引用ソース">
+          {message.citations.map((citation, index) => (
+            <button
+              key={`${citation.document_id}-${citation.chunk_id ?? index}`}
+              type="button"
+              className="citation-open"
+              onClick={() =>
+                onOpenCitation({
+                  citation,
+                  answerId: message.message_id,
+                  groundedText: message.message,
+                  index: index + 1,
+                })
+              }
+            >
+              {citationLabel(citation)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {message.quick_replies.length > 0 && (
+        <div className="chat-quick-replies" aria-label="返信候補">
+          {message.quick_replies.map((reply) => (
+            <button
+              key={`${message.message_id}-${reply.value}`}
+              type="button"
+              className="citation-open"
+              onClick={() => onQuickReply(reply.label, reply.value)}
+            >
+              {reply.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ChatBotBody() {
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [input, setInput] = useState("");
+  const [collectionId, setCollectionId] = useState(DEMO_COLLECTION);
+  const [collections, setCollections] = useState<string[]>([DEMO_COLLECTION]);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [stateSummary, setStateSummary] = useState("idle");
+  const [progress, setProgress] = useState<"thinking" | "checking_rag" | "delayed" | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [viewer, setViewer] = useState<CitationViewTarget | null>(null);
+  const [metrics, setMetrics] = useState<{ conversation_count: number; handoff_rate: number } | null>(null);
+  const thinkingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const delayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setCollectionId(loadAnswerCollection());
+    void getSessionToken()
+      .then(async (token) => {
+        const [sources, metricResponse] = await Promise.all([
+          adminDataSources(token).catch(() => [] as AdminDataSource[]),
+          chatMetrics(token).catch(() => null),
+        ]);
+        const ids = [...new Set(sources.map((source) => source.collection_id).filter(Boolean))].sort();
+        if (ids.length > 0) setCollections(ids);
+        if (metricResponse) {
+          setMetrics({
+            conversation_count: metricResponse.summary.conversation_count,
+            handoff_rate: metricResponse.summary.handoff_rate,
+          });
+        }
+      })
+      .catch(() => {
+        /* keep default */
+      });
+    return () => {
+      if (thinkingTimer.current) clearTimeout(thinkingTimer.current);
+      if (delayTimer.current) clearTimeout(delayTimer.current);
+    };
+  }, []);
+
+  function onCollectionChange(value: string) {
+    setCollectionId(value);
+    saveAnswerCollection(value);
+  }
+
+  function beginRequest() {
+    setLoading(true);
+    setProgress("thinking");
+    if (thinkingTimer.current) clearTimeout(thinkingTimer.current);
+    if (delayTimer.current) clearTimeout(delayTimer.current);
+    thinkingTimer.current = setTimeout(() => setProgress("checking_rag"), 450);
+    delayTimer.current = setTimeout(() => setProgress("delayed"), 2200);
+  }
+
+  function endRequest() {
+    setLoading(false);
+    setProgress(null);
+    if (thinkingTimer.current) clearTimeout(thinkingTimer.current);
+    if (delayTimer.current) clearTimeout(delayTimer.current);
+  }
+
+  function appendAssistant(
+    message: ChatAssistantMessage | undefined,
+    extra: { ragStatus?: string | null; handoffReason?: string | null; ticketId?: string | null } = {},
+  ) {
+    if (!message) return;
+    setTurns((prev) => [
+      ...prev,
+      {
+        kind: "assistant",
+        id: message.message_id,
+        message,
+        ragStatus: extra.ragStatus,
+        handoffReason: extra.handoffReason,
+        ticketId: extra.ticketId,
+      },
+    ]);
+  }
+
+  async function submitText(text: string, displayText = text) {
+    const trimmed = text.trim();
+    if (!trimmed || loading) return;
+    const turnId = `${Date.now().toString(36)}-${turns.length}`;
+    setTurns((prev) => [...prev, { kind: "user", id: `${turnId}-u`, text: displayText }]);
+    setInput("");
+    beginRequest();
+    try {
+      const token = await getSessionToken();
+      if (!sessionId) {
+        const response = await createChatSession(
+          { channel: "web_chat", initial_message: trimmed, collection_id: collectionId },
+          token,
+        );
+        setSessionId(response.session_id);
+        setStateSummary(response.state?.status ?? response.status);
+        appendAssistant(response.assistant_message, {
+          ragStatus: response.rag?.status,
+          handoffReason: response.handoff?.reason,
+          ticketId: response.ticket?.ticket_id,
+        });
+      } else {
+        const response = await sendChatMessage(
+          sessionId,
+          { message: trimmed, collection_id: collectionId, stream: false },
+          token,
+        );
+        setStateSummary(response.state.status);
+        appendAssistant(response.assistant_message, {
+          ragStatus: response.rag?.status,
+          handoffReason: response.handoff?.reason,
+          ticketId: response.ticket?.ticket_id,
+        });
+      }
+      void chatMetrics(token).then((metricResponse) => {
+        setMetrics({
+          conversation_count: metricResponse.summary.conversation_count,
+          handoff_rate: metricResponse.summary.handoff_rate,
+        });
+      }).catch(() => undefined);
+    } catch (err) {
+      if (isAuthError(err)) {
+        clearSessionToken();
+        redirectToLoginAfterAuthError();
+      }
+      setTurns((prev) => [
+        ...prev,
+        { kind: "error", id: `${turnId}-e`, text: formatLoadError(err) },
+      ]);
+    } finally {
+      endRequest();
+    }
+  }
+
+  async function onSend(event: FormEvent) {
+    event.preventDefault();
+    await submitText(input);
+  }
+
+  async function onHandoff() {
+    if (loading) return;
+    if (!sessionId) {
+      await submitText("担当者に相談したい");
+      return;
+    }
+    beginRequest();
+    try {
+      const token = await getSessionToken();
+      const response = await requestChatHandoff(
+        sessionId,
+        { reason: "customer_requested_human", comment: "UI handoff action" },
+        token,
+      );
+      setStateSummary("handoff_pending");
+      appendAssistant({
+        message_id: `handoff-${response.handoff_package_id}`,
+        message: "担当者に引き継ぎました。会話内容と確認済み情報をキューに入れました。",
+        message_type: "text",
+        ai_action: "handoff",
+        quick_replies: [],
+        citations: [],
+      }, { handoffReason: response.reason });
+    } catch (err) {
+      setTurns((prev) => [...prev, { kind: "error", id: `handoff-${Date.now()}`, text: formatLoadError(err) }]);
+    } finally {
+      endRequest();
+    }
+  }
+
+  function onQuickReply(label: string, value: string) {
+    if (value === "handoff") {
+      void onHandoff();
+      return;
+    }
+    void submitText(value, label);
+  }
+
+  return (
+    <>
+      <div className="chatbot-layout">
+        <section className="chatbot-main" aria-label="ChatBot 会話">
+          <div className="chatbot-thread" aria-busy={loading}>
+            {turns.length === 0 && !loading && (
+              <div className="answer-empty-state">
+                <div className="answer-empty-mark" aria-hidden="true" />
+                <div>
+                  <strong>会話を開始してください</strong>
+                  <span>手続き相談、料金確認、根拠付き回答、人間引き継ぎまで同じ会話で扱います。</span>
+                </div>
+              </div>
+            )}
+
+            {turns.map((turn) => {
+              if (turn.kind === "user") {
+                return (
+                  <div className="answer-user-bubble" key={turn.id}>
+                    {turn.text}
+                  </div>
+                );
+              }
+              if (turn.kind === "error") {
+                return (
+                  <section className="result-panel error-panel" aria-live="polite" key={turn.id}>
+                    <h3>送信に失敗しました</h3>
+                    <p>{turn.text}</p>
+                  </section>
+                );
+              }
+              return (
+                <ChatAssistantBubble
+                  key={turn.id}
+                  turn={turn}
+                  onQuickReply={onQuickReply}
+                  onOpenCitation={setViewer}
+                />
+              );
+            })}
+
+            {progress && (
+              <div className="chat-progress" role="status" aria-live="polite">
+                <span aria-hidden="true" />
+                <strong>{chatProgressLabel(progress)}</strong>
+                {progress === "delayed" && (
+                  <button type="button" className="citation-open" onClick={() => void onHandoff()}>
+                    人間に相談する
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <form className="answers-composer" onSubmit={onSend}>
+            <div className="answers-composer-meta">
+              <label className="answers-collection-field">
+                <span>参照コレクション</span>
+                <select
+                  aria-label="ChatBot collection"
+                  value={collectionId}
+                  onChange={(event) => onCollectionChange(event.target.value)}
+                >
+                  {collections.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="citation-open"
+                onClick={() => void onHandoff()}
+                disabled={loading}
+              >
+                人間に相談する
+              </button>
+            </div>
+            <div className="answers-composer-inner">
+              <textarea
+                aria-label="Chat message"
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void submitText(input);
+                  }
+                }}
+                placeholder="相談内容を入力する…"
+                rows={1}
+              />
+              <button type="submit" disabled={loading || input.trim().length === 0}>
+                {loading ? "送信中" : "送信"}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <aside className="chatbot-side" aria-label="会話状態">
+          <div className="chatbot-state-row">
+            <span>セッション</span>
+            <strong>{sessionId ?? "未開始"}</strong>
+          </div>
+          <div className="chatbot-state-row">
+            <span>状態</span>
+            <strong>{stateSummary}</strong>
+          </div>
+          {metrics && (
+            <>
+              <div className="chatbot-state-row">
+                <span>会話数</span>
+                <strong>{metrics.conversation_count}</strong>
+              </div>
+              <div className="chatbot-state-row">
+                <span>引き継ぎ率</span>
+                <strong>{Math.round(metrics.handoff_rate * 100)}%</strong>
+              </div>
+            </>
+          )}
+        </aside>
+      </div>
       <CitationViewer target={viewer} onClose={() => setViewer(null)} />
     </>
   );
@@ -781,7 +1186,7 @@ function SourceSearchBody() {
                 </div>
                 {match.failure_mode && (
                   <div>
-                    <h4 className="src-h4">原因候補</h4>
+                    <h3 className="src-h4">原因候補</h3>
                     <p className="answer-text src-cause">
                       {match.failure_mode.name}
                       {match.failure_mode.description ? ` — ${match.failure_mode.description}` : ""}
@@ -806,6 +1211,7 @@ function SourceSearchBody() {
               value={sourceId}
               onChange={(e) => setSourceId(e.target.value)}
               placeholder="source_id"
+              aria-label="ソース ID"
               autoComplete="off"
             />
             <button type="submit">確認</button>
@@ -816,7 +1222,7 @@ function SourceSearchBody() {
         <section className="ops-panel">
           <h3>取り込み実行</h3>
           <form className="src-inline-form" onSubmit={onRun}>
-            <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="run_id" autoComplete="off" />
+            <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="run_id" aria-label="実行 ID" autoComplete="off" />
             <button type="submit">確認</button>
           </form>
           {runError && <p className="ops-note">{runError}</p>}
@@ -830,18 +1236,19 @@ function SourceSearchBody() {
 function screenTitle(screen: ManifestScreen): string {
   const titles: Record<string, string> = {
     answers: "質問する",
+    chatbot: "チャットボット",
     "answer-history": "回答履歴",
     "source-search": "ソース",
-    "source-list": "ソース一覧",
+    "source-list": "接続済みソース",
     "source-detail": "ソース詳細",
     "add-source": "ソースを追加",
     "ingestion-runs": "取り込み実行",
     "document-list": "ドキュメント",
     "document-detail": "ドキュメント詳細",
-    "review-queue": "レビューキュー",
-    "review-detail": "レビュー詳細",
-    "approval-workflow-settings": "承認ルール",
-    "document-approval-queue": "文書承認キュー",
+    "review-queue": "AIドラフトレビュー",
+    "review-detail": "AIドラフト詳細",
+    "approval-workflow-settings": "同期・承認ポリシー",
+    "document-approval-queue": "根拠文書レビュー",
     "operations-dashboard": "運用ダッシュボード",
     "safety-telemetry": "安全テレメトリ",
     "quality-kpi": "品質・KPI",
@@ -901,15 +1308,15 @@ function MockBanner({ screen }: { screen: ManifestScreen }) {
   );
 }
 
-const SOURCE_SYNC_STATUS: Record<string, { label: string; key: string }> = {
-  succeeded: { label: "同期済み", key: "ok" },
-  idle: { label: "待機", key: "ok" },
-  partially_succeeded: { label: "一部成功", key: "wait" },
-  syncing: { label: "同期中", key: "wait" },
-  queued: { label: "待機中", key: "wait" },
-  observing: { label: "確認中", key: "wait" },
-  failed: { label: "失敗", key: "bad" },
-};
+const SOURCE_LIST_PAGE_SIZE = 10;
+const SOURCE_LIST_FILTERS = [
+  { value: "all", label: "すべて" },
+  { value: "needs_action", label: "要対応" },
+  { value: "pending_review", label: "承認待ちあり" },
+  { value: "failed", label: "同期失敗" },
+  { value: "unsynced", label: "未同期" },
+] as const;
+type SourceListFilter = (typeof SOURCE_LIST_FILTERS)[number]["value"];
 
 type SourceListRow = {
   source: AdminDataSource;
@@ -919,13 +1326,143 @@ type SourceListRow = {
   approvedCount: number | null;
   pendingCount: number | null;
 };
+type SourceActionMessage = { tone: "success" | "error"; text: string };
+
+function syncFreshness(sync: ManufacturingSourceSyncStatus | null): string {
+  const freshness = sync?.freshness;
+  if (freshness && typeof freshness === "object") {
+    const value = (freshness as { last_successful_sync_at?: unknown }).last_successful_sync_at;
+    if (typeof value === "string" && value) return value;
+  }
+  return "";
+}
+
+function sourceLastSyncedAt(row: SourceListRow): string {
+  return syncFreshness(row.sync) || row.source.last_synced_at || "";
+}
 
 function sourceFreshness(row: SourceListRow): string {
-  const at = row.source.last_synced_at;
+  const at = sourceLastSyncedAt(row);
   if (row.origin === "documents" && !at) return "取込済み";
   if (!at) return "未同期";
   const parsed = new Date(at);
   return Number.isNaN(parsed.getTime()) ? at : parsed.toLocaleString("ja-JP");
+}
+
+function sourceConfig(row: SourceListRow): Record<string, unknown> {
+  return (row.source.config ?? {}) as Record<string, unknown>;
+}
+
+function sourceName(row: SourceListRow): string {
+  const config = sourceConfig(row);
+  return String(config.display_name || row.source.source_id);
+}
+
+function sourceKind(row: SourceListRow): string {
+  const config = sourceConfig(row);
+  return String(config.source_type || row.source.type || "source");
+}
+
+function sourceKindLabel(kind: string): string {
+  const normalized = kind.toLowerCase().replace(/-/g, "_");
+  const labels: Record<string, string> = {
+    box: "Box",
+    confluence: "Confluence",
+    database: "データベース",
+    file: "ファイル",
+    google_drive: "Google Drive",
+    googledrive: "Google Drive",
+    kintone: "kintone",
+    mysql: "MySQL",
+    notion: "Notion",
+    object_storage: "S3 / オブジェクトストレージ",
+    postgres: "PostgreSQL",
+    postgresql: "PostgreSQL",
+    s3: "S3",
+    upload: "ファイルアップロード",
+    url: "URL",
+  };
+  return labels[normalized] ?? kind;
+}
+
+function sourceDocumentCount(row: SourceListRow): number | null {
+  return row.documentCount ?? row.sync?.summary?.observed_count ?? null;
+}
+
+function sourceOperationalStatus(row: SourceListRow): { label: string; key: string; reason: string } {
+  const syncStatus = row.sync?.status ?? "";
+  if (row.source.status !== "active") {
+    return { label: "停止中", key: "bad", reason: "このソースは現在利用対象外です。" };
+  }
+  if (isSyncActive(syncStatus)) {
+    return { label: "同期中", key: "wait", reason: "更新内容を確認しています。" };
+  }
+  if (syncStatus === "failed") {
+    return { label: "同期失敗", key: "bad", reason: "詳細を確認して再同期してください。" };
+  }
+  if (syncStatus === "partially_succeeded") {
+    return { label: "確認が必要", key: "wait", reason: "一部の文書を取り込めませんでした。" };
+  }
+  if ((row.pendingCount ?? 0) > 0) {
+    return { label: "確認が必要", key: "wait", reason: "承認待ちの文書があります。" };
+  }
+  if (row.origin === "registered" && !sourceLastSyncedAt(row) && !sourceDocumentCount(row)) {
+    return { label: "未同期", key: "wait", reason: "初回同期を実行してください。" };
+  }
+  if (syncStatus === "not_found") {
+    return { label: "未同期", key: "wait", reason: "同期履歴がまだありません。" };
+  }
+  return { label: "利用可", key: "ok", reason: "回答の根拠として利用できます。" };
+}
+
+function sourceApprovalSummary(row: SourceListRow): string {
+  const total = sourceDocumentCount(row);
+  if (total === null) return "承認状況未取得";
+  const pending = row.pendingCount ?? 0;
+  if (pending > 0) return `${pending} 件の承認待ち`;
+  return `承認済み ${row.approvedCount ?? 0} / ${total}`;
+}
+
+function sourceNeedsAction(row: SourceListRow): boolean {
+  const status = sourceOperationalStatus(row);
+  return (
+    status.label === "確認が必要" ||
+    status.label === "同期失敗" ||
+    status.label === "未同期" ||
+    status.label === "停止中"
+  );
+}
+
+function sourceMatchesFilter(row: SourceListRow, filter: SourceListFilter): boolean {
+  const status = sourceOperationalStatus(row);
+  switch (filter) {
+    case "needs_action":
+      return sourceNeedsAction(row);
+    case "pending_review":
+      return (row.pendingCount ?? 0) > 0;
+    case "failed":
+      return row.sync?.status === "failed" || status.label === "同期失敗";
+    case "unsynced":
+      return status.label === "未同期";
+    default:
+      return true;
+  }
+}
+
+function sourceSearchText(row: SourceListRow): string {
+  const kind = sourceKind(row);
+  const status = sourceOperationalStatus(row);
+  return [
+    sourceName(row),
+    sourceKindLabel(kind),
+    kind,
+    row.source.source_id,
+    row.source.collection_id,
+    status.label,
+    status.reason,
+  ]
+    .join(" ")
+    .toLowerCase();
 }
 
 function valueLabel(value: unknown): string {
@@ -1010,13 +1547,71 @@ function SourceListBody() {
     pollIntervalMs: SYNC_POLL_MS,
     shouldPoll: (rows) => rows.some(({ sync }) => isSyncActive(sync?.status)),
   });
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<SourceListFilter>("all");
+  const [page, setPage] = useState(1);
+  const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
+  const [sourceActionMessage, setSourceActionMessage] = useState<SourceActionMessage | null>(null);
   const polling = state.state === "ready" && state.data.some(({ sync }) => isSyncActive(sync?.status));
+  const rows = state.state === "ready" ? state.data : [];
+  const filteredRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (!sourceMatchesFilter(row, filter)) return false;
+      if (!needle) return true;
+      return sourceSearchText(row).includes(needle);
+    });
+  }, [filter, query, rows]);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / SOURCE_LIST_PAGE_SIZE));
+  const pageRows = filteredRows.slice((page - 1) * SOURCE_LIST_PAGE_SIZE, page * SOURCE_LIST_PAGE_SIZE);
+  const needsActionCount = rows.filter(sourceNeedsAction).length;
+  const pendingReviewCount = rows.reduce((sum, row) => sum + (row.pendingCount ?? 0), 0);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filter, query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+
+  async function onResync(row: SourceListRow) {
+    if (row.origin !== "registered" || syncingSourceId) return;
+    setSourceActionMessage(null);
+    setSyncingSourceId(row.source.source_id);
+    try {
+      const token = await getSessionToken();
+      const sync = await adminSourceSync(
+        row.source.source_id,
+        { collection_id: row.source.collection_id || DEMO_COLLECTION, reason: "manual_refresh" },
+        token,
+      );
+      recordConnectorRun({
+        ingestion_run_id: sync.ingestion_run_id,
+        source_id: sync.source_id,
+        collection_id: sync.collection_id,
+        status: sync.status,
+        observed_count: sync.observed_count,
+        changed_count: sync.changed_count,
+        failed_count: sync.failed_count,
+        synced_at: new Date().toISOString(),
+      });
+      setSourceActionMessage({ tone: "success", text: `${sourceName(row)} の再同期を依頼しました。` });
+      reload();
+    } catch (err) {
+      if (isAuthError(err)) clearSessionToken();
+      setSourceActionMessage({ tone: "error", text: formatLoadError(err) });
+    } finally {
+      setSyncingSourceId(null);
+    }
+  }
 
   return (
     <div className="standalone-list-shell">
       <header className="standalone-list-head">
         <div className="standalone-list-head-title">
-          <h3>ソース</h3>
+          <h3>同期・承認状況</h3>
+          <p>RAG が参照するデータソースの同期・承認状態を確認できます。</p>
           {polling && <span className="sync-poll-badge">同期中 — 自動更新</span>}
         </div>
         <div className="standalone-list-tools">
@@ -1026,7 +1621,47 @@ function SourceListBody() {
           <Link href="/sources/new">ソースを追加</Link>
         </div>
       </header>
-      {state.state === "loading" && <p className="ops-empty">ソースを読み込み中…</p>}
+      {state.state === "ready" && state.data.length > 0 && (
+        <section className="source-list-controls" aria-label="接続済みソースの検索と絞り込み">
+          <label className="standalone-search source-list-search">
+            <span aria-hidden="true">⌕</span>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="ソース名・種類で検索"
+              aria-label="ソース名・種類で検索"
+            />
+          </label>
+          <div className="source-list-filter" role="group" aria-label="ソース状態で絞り込み">
+            {SOURCE_LIST_FILTERS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={filter === option.value ? "source-filter-button active" : "source-filter-button"}
+                aria-pressed={filter === option.value}
+                onClick={() => setFilter(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="source-list-summary" aria-live="polite">
+            <span>{filteredRows.length} 件表示</span>
+            <span>要対応 {needsActionCount} 件</span>
+            <span>承認待ち {pendingReviewCount} 件</span>
+          </div>
+        </section>
+      )}
+      {sourceActionMessage && (
+        <p
+          className={`source-list-message ${sourceActionMessage.tone}`}
+          role={sourceActionMessage.tone === "error" ? "alert" : "status"}
+          aria-live={sourceActionMessage.tone === "error" ? "assertive" : "polite"}
+        >
+          {sourceActionMessage.text}
+        </p>
+      )}
+      {state.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ソースを読み込み中…</p>}
       {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
       {state.state === "ready" &&
         (state.data.length === 0 ? (
@@ -1045,58 +1680,100 @@ function SourceListBody() {
               ソースを追加
             </Link>
           </div>
-        ) : (
-          <div className="standalone-table-wrap">
-            <div className="standalone-table-head">
-              <div>ソース</div>
-              <div>種別</div>
-              <div>ステータス</div>
-              <div className="is-right">文書数</div>
-              <div className="is-right">最終同期</div>
-              <div>コレクション</div>
-              <div>承認内訳</div>
-            </div>
-            {state.data.map((row) => {
-              const { source, sync } = row;
-              const config = (source.config ?? {}) as Record<string, unknown>;
-              const name = (config.display_name as string) || source.source_id;
-              const kind = (config.source_type as string) || source.type;
-              const status =
-                row.origin === "documents" && !sync
-                  ? { label: "取込済み", key: "ok" }
-                  : sync?.status
-                    ? SOURCE_SYNC_STATUS[sync.status] ?? { label: sync.status, key: "wait" }
-                    : { label: "未同期", key: "wait" };
-              const changed = row.documentCount ?? sync?.summary?.changed_count;
-              const approval =
-                row.documentCount != null
-                  ? `承認済み ${row.approvedCount ?? 0} / 承認待ち ${row.pendingCount ?? 0}`
-                  : "プレビュー";
-              const href = row.origin === "documents" ? "/documents" : `/sources/${source.source_id}`;
-              return (
-                <Link
-                  key={source.source_id}
-                  href={href}
-                  className="standalone-table-row"
-                >
-                  <div className="standalone-source-cell">
-                    <div className="standalone-source-mark">{kind.slice(0, 2).toUpperCase()}</div>
-                    <span>{name}</span>
-                  </div>
-                  <div>{kind}</div>
-                  <div>
-                    <span className={`standalone-status ${status.key}`}>{status.label}</span>
-                  </div>
-                  <div className="is-right mono">{changed ?? "—"}</div>
-                  <div className="is-right muted">{sourceFreshness(row)}</div>
-                  <div className="muted">{source.collection_id}</div>
-                  <div>
-                    <span className="standalone-status wait">{approval}</span>
-                  </div>
-                </Link>
-              );
-            })}
+        ) : filteredRows.length === 0 ? (
+          <div className="standalone-empty-state">
+            <h4>条件に合うソースはありません</h4>
+            <p>検索語や絞り込みを変えると、別のソースを確認できます。</p>
+            <button
+              type="button"
+              className="standalone-empty-cta"
+              onClick={() => {
+                setQuery("");
+                setFilter("all");
+              }}
+            >
+              条件をクリア
+            </button>
           </div>
+        ) : (
+          <>
+            <div className="source-list-items" role="list">
+              {pageRows.map((row) => {
+                const kind = sourceKind(row);
+                const name = sourceName(row);
+                const status = sourceOperationalStatus(row);
+                const documents = sourceDocumentCount(row);
+                const href = row.origin === "documents" ? "/documents" : `/sources/${row.source.source_id}`;
+                const isSyncing = syncingSourceId === row.source.source_id;
+                const rowSyncActive = isSyncActive(row.sync?.status);
+                return (
+                  <article className="source-list-row" key={row.source.source_id} role="listitem">
+                    <div className="source-list-main">
+                      <div className="standalone-source-mark" aria-hidden="true">
+                        {kind.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="source-list-title-block">
+                        <h4>
+                          <Link href={href} className="source-title-link" aria-label={`${name} の詳細を見る`}>
+                            {name}
+                          </Link>
+                        </h4>
+                        <p>{sourceKindLabel(kind)}</p>
+                      </div>
+                    </div>
+                    <div className="source-list-status-cell">
+                      <span className={`standalone-status ${status.key}`}>{status.label}</span>
+                      <span>{status.reason}</span>
+                    </div>
+                    <div className="source-list-metrics" aria-label={`${name} の文書と承認状態`}>
+                      <span>
+                        <strong>{documents ?? "—"}</strong> 文書
+                      </span>
+                      <span>{sourceApprovalSummary(row)}</span>
+                      <span>最終同期: {sourceFreshness(row)}</span>
+                    </div>
+                    <div className="source-list-actions">
+                      {(row.pendingCount ?? 0) > 0 && (
+                        <Link href="/reviews/documents" className="button-link secondary">
+                          レビューへ
+                        </Link>
+                      )}
+                      {row.origin === "registered" && (
+                        <button
+                          type="button"
+                          onClick={() => onResync(row)}
+                          disabled={Boolean(syncingSourceId) || rowSyncActive}
+                        >
+                          {isSyncing || rowSyncActive ? "同期中" : "再同期を依頼"}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            {totalPages > 1 && (
+              <nav className="source-list-pagination" aria-label="接続済みソースのページ">
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={page <= 1}
+                >
+                  前へ
+                </button>
+                <span>
+                  {page} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  disabled={page >= totalPages}
+                >
+                  次へ
+                </button>
+              </nav>
+            )}
+          </>
         ))}
     </div>
   );
@@ -1506,6 +2183,7 @@ function SourcePreviewPanel({
                   <select
                     value={mappingEdits[column] ?? preview.suggested_mapping[column] ?? ""}
                     onChange={(e) => updateMapping(column, e.target.value)}
+                    aria-label="標準項目マッピング"
                   >
                     <option value="">未使用</option>
                     {preview.canonical_fields.map((field) => (
@@ -1621,7 +2299,7 @@ function HomeDashboardBody() {
     [],
   );
 
-  if (state.state === "loading") return <p className="ops-empty">ホームダッシュボードを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">ホームダッシュボードを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
 
   const { dashboard, telemetry, kpi, governance } = state.data;
@@ -1631,12 +2309,12 @@ function HomeDashboardBody() {
         <div className="home-task-grid">
           <Link href="/reviews" className="home-task-card">
             <div className="home-task-head">
-              <span className="home-task-label">レビュー待ち</span>
+              <span className="home-task-label">AIドラフト</span>
               <span className="home-task-dot" />
             </div>
             <strong>{dashboard.unanswered_question_count}</strong>
             <span>未回答の質問</span>
-            <span className="home-task-cta">ドラフト確認</span>
+            <span className="home-task-cta">レビューへ</span>
           </Link>
           <Link href="/operations/safety" className="home-task-card">
             <div className="home-task-head">
@@ -1679,7 +2357,7 @@ function HomeDashboardBody() {
               <span>接続済みソースと同期状態を確認する</span>
             </Link>
             <Link href="/reviews" className="action-card">
-              <strong>レビュー</strong>
+              <strong>AIドラフトレビュー</strong>
               <span>AI ドラフトを確認する</span>
             </Link>
             <Link href="/operations" className="action-card">
@@ -1694,7 +2372,7 @@ function HomeDashboardBody() {
               ["ポリシー版本", String(governance.policy_version)],
               ["No-train デフォルト", governance.no_train.no_train_default ? "はい" : "いいえ"],
               ["提供元 no-train 必須", governance.no_train.provider_no_train_required ? "はい" : "いいえ"],
-              ["高リスクは承認済み引用必須", governance.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
+              ["高リスク回答は承認済み根拠が必須", governance.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
               ["引用必須", governance.groundedness.citation_required ? "はい" : "いいえ"],
             ]}
           />
@@ -1781,7 +2459,7 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
         collectionId={syncState.state === "ready" ? syncState.data.collection_id : undefined}
       />
 
-      {syncState.state === "loading" && <p className="ops-empty">ソース同期状態を読み込み中…</p>}
+      {syncState.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ソース同期状態を読み込み中…</p>}
       {syncState.state === "error" && <ScreenLoadError error={syncState.error} onRetry={reload} />}
       {syncState.state === "ready" && (
         <>
@@ -1915,10 +2593,10 @@ function DocumentApprovalQueueBody() {
     <>
       <p className="src-warning">
         取り込んだ文書は、ここで承認するまで正式な根拠になりません。AIドラフトのレビュー（
-        <Link href="/reviews">レビューキュー</Link>）とは別キューです。
+        <Link href="/reviews">AIドラフトレビュー</Link>）とは別キューです。
       </p>
       <Section
-        title="文書承認キュー"
+        title="根拠文書レビュー"
         note={`テナント ${merged.length} 件（承認待ち相当 ${pending.length} 件）。承認すると質問の正式な根拠になります。`}
       >
         {merged.length === 0 ? (
@@ -1969,7 +2647,7 @@ function DocumentApprovalQueueBody() {
           </div>
         )}
         {message && <p className="cv-foot-done">{message}</p>}
-        {error && <p className="cv-foot-error">{error}</p>}
+        {error && <p className="cv-foot-error" role="alert">{error}</p>}
       </Section>
     </>
   );
@@ -1977,15 +2655,28 @@ function DocumentApprovalQueueBody() {
 
 function ReviewDetailBody({ artifactId }: { artifactId: string }) {
   const [draftState, setDraftState] = useState<ViewState<DraftArtifact>>({ state: "loading" });
-  const [reviewerId, setReviewerId] = useState("alice");
+  const [reviewerId, setReviewerId] = useState("");
   const [comment, setComment] = useState("");
   const [docId, setDocId] = useState("");
   const [approvalState, setApprovalState] = useState("pending_review");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  // The pending approve/reject awaiting confirmation (null = no dialog open). Approval is irreversible
+  // and audited, so it always passes through a confirm step. (issue 0015)
+  const [confirmKind, setConfirmKind] = useState<"approved" | "rejected" | null>(null);
 
   useEffect(() => {
     let active = true;
     setDraftState({ state: "loading" });
+    // Reset all per-draft action/form state so a confirm dialog or in-flight flag can't carry over to a
+    // DIFFERENT draft (e.g. via browser back/forward) and act on the wrong artifact — approval is
+    // irreversible and audited. (issue 0015)
+    setConfirmKind(null);
+    setSaving(false);
+    setActionError(null);
+    setComment("");
+    setReviewerId("");
+    setDocId("");
     runWithToken((token) => manufacturingGetDraft(artifactId, token))
       .then((data) => active && setDraftState({ state: "ready", data }))
       .catch((err) => {
@@ -1998,8 +2689,9 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
   }, [artifactId]);
 
   async function onAssign() {
-    if (draftState.state !== "ready") return;
+    if (draftState.state !== "ready" || saving) return;
     setActionError(null);
+    setSaving(true);
     try {
       await runWithToken((token) => manufacturingAssignReviewer(artifactId, { reviewer_id: reviewerId }, token));
       const refreshed = await runWithToken((token) => manufacturingGetDraft(artifactId, token));
@@ -2007,12 +2699,22 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
       updateDraftRecord(artifactId, { status: refreshed.status, reviewer_id: refreshed.reviewer_id });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "リクエストに失敗しました");
+    } finally {
+      setSaving(false);
     }
   }
 
   async function onReview(decision: "approved" | "rejected") {
-    if (draftState.state !== "ready") return;
+    if (draftState.state !== "ready" || saving) return;
+    // A rejection must carry a reason for the audit trail (HR5). Defense in depth — the reject button
+    // is also disabled while the comment is empty. (issue 0015)
+    if (decision === "rejected" && !comment.trim()) {
+      setActionError("却下にはレビューコメント(理由)が必要です。");
+      setConfirmKind(null);
+      return;
+    }
     setActionError(null);
+    setSaving(true);
     try {
       await runWithToken((token) =>
         manufacturingReviewDraft(artifactId, { decision, comment: comment.trim() || undefined }, token),
@@ -2022,20 +2724,26 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
       updateDraftRecord(artifactId, { status: refreshed.status });
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "リクエストに失敗しました");
+    } finally {
+      setSaving(false);
+      setConfirmKind(null);
     }
   }
 
   async function onApproveDocument() {
-    if (!docId.trim()) return;
+    if (!docId.trim() || saving) return;
     setActionError(null);
+    setSaving(true);
     try {
       await runWithToken((token) => manufacturingDocumentApproval(docId.trim(), { to_status: approvalState }, token));
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "リクエストに失敗しました");
+    } finally {
+      setSaving(false);
     }
   }
 
-  if (draftState.state === "loading") return <p className="ops-empty">ドラフトを読み込み中…</p>;
+  if (draftState.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">ドラフトを読み込み中…</p>;
   if (draftState.state === "error") return <ScreenLoadError error={draftState.error} />;
 
   const draft = draftState.data;
@@ -2066,12 +2774,12 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
         </p>
       )}
       {draft.status === "approved" && (
-        <p className="ops-note" style={{ color: "#15803d", fontWeight: 600 }}>
+        <p className="ops-note" role="status" aria-live="polite" style={{ color: "#15803d", fontWeight: 600 }}>
           承認済み — このドラフトは正式に公開できます。
         </p>
       )}
       {draft.status === "rejected" && (
-        <p className="ops-note" style={{ color: "#be123c", fontWeight: 600 }}>
+        <p className="ops-note" role="status" aria-live="polite" style={{ color: "#be123c", fontWeight: 600 }}>
           却下 — 修正のうえ再生成が必要です。
         </p>
       )}
@@ -2082,9 +2790,17 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
             ["ドラフト ID", draft.artifact_id],
             ["種別", draftKindLabel(draft.type)],
             ["状態", st.label],
-            ["作成者", draft.created_by === "ai" ? "AI" : (draft.created_by ?? "—")],
+            [
+              "作成者",
+              draft.created_by === "ai" ? "AI" : draft.created_by === "user" ? "担当者" : (draft.created_by ?? "—"),
+            ],
             ["レビュー担当", draft.reviewer_id ?? "未割当"],
-            ["決定", draft.approval_decision ?? "—"],
+            [
+              "決定",
+              draft.approval_decision
+                ? (APPROVAL_DECISION_LABEL[draft.approval_decision] ?? draft.approval_decision)
+                : "—",
+            ],
             ["根拠ドキュメント", draft.source_document_ids.length ? draft.source_document_ids.join(", ") : "—"],
             ["監査参照", draft.audit_log_ref ?? "—"],
           ]}
@@ -2122,44 +2838,90 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
       <Section title="レビュー操作" note={terminal ? "このドラフトは終了状態です。" : undefined}>
         <div className="form-grid">
           <div className="review-assign-row">
-            <input value={reviewerId} onChange={(e) => setReviewerId(e.target.value)} placeholder="reviewer_id" />
-            <button type="button" onClick={() => void onAssign()} disabled={terminal || !reviewerId.trim()}>
-              担当に割り当て
+            <input
+              value={reviewerId}
+              onChange={(e) => setReviewerId(e.target.value)}
+              placeholder="reviewer_id（担当者ID）"
+              aria-label="レビュー担当者ID"
+              disabled={terminal || saving}
+            />
+            <button type="button" onClick={() => void onAssign()} disabled={terminal || saving || !reviewerId.trim()}>
+              {saving ? "処理中…" : "担当に割り当て"}
             </button>
           </div>
+          {draft.status === "draft" && (
+            <p className="ops-note" role="note">
+              承認・却下の前に、まず担当者を割り当ててレビューを開始してください。
+            </p>
+          )}
           <textarea
             value={comment}
             onChange={(e) => setComment(e.target.value)}
-            placeholder="レビューコメント（任意）"
+            aria-label="レビューコメント"
+            placeholder={draft.status === "in_review" ? "レビューコメント（却下時は理由が必須）" : "レビューコメント（任意）"}
             rows={3}
-            disabled={terminal}
+            disabled={terminal || saving}
           />
           <div className="review-decide">
-            <button type="button" className="btn-approve" onClick={() => void onReview("approved")} disabled={terminal}>
+            <button
+              type="button"
+              className="btn-approve"
+              onClick={() => setConfirmKind("approved")}
+              disabled={saving || draft.status !== "in_review"}
+            >
               承認・公開
             </button>
-            <button type="button" className="btn-reject" onClick={() => void onReview("rejected")} disabled={terminal}>
+            <button
+              type="button"
+              className="btn-reject"
+              onClick={() => setConfirmKind("rejected")}
+              disabled={saving || draft.status !== "in_review" || !comment.trim()}
+            >
               却下
             </button>
           </div>
+          {draft.status === "in_review" && !comment.trim() && (
+            <p className="ops-note" role="note">
+              却下する場合はレビューコメント（理由）が必須です。
+            </p>
+          )}
         </div>
       </Section>
 
-      <Section title="文書承認">
+      <Section title="根拠文書レビュー">
         <div className="form-grid">
-          <input value={docId} onChange={(e) => setDocId(e.target.value)} placeholder="document_id" />
-          <select value={approvalState} onChange={(e) => setApprovalState(e.target.value)}>
+          <input value={docId} onChange={(e) => setDocId(e.target.value)} placeholder="document_id" aria-label="ドキュメントID" />
+          <select value={approvalState} onChange={(e) => setApprovalState(e.target.value)} aria-label="承認状態">
             <option value="pending_review">pending_review</option>
             <option value="approved">approved</option>
             <option value="obsolete">obsolete</option>
             <option value="draft">draft</option>
           </select>
-          <button type="button" onClick={() => void onApproveDocument()} disabled={!docId.trim()}>
-            変更
+          <button type="button" onClick={() => void onApproveDocument()} disabled={!docId.trim() || saving}>
+            {saving ? "処理中…" : "変更"}
           </button>
         </div>
       </Section>
-      {actionError && <ScreenLoadError error={actionError} />}
+      {actionError && (
+        <p className="src-warning" role="alert">
+          {actionError}
+        </p>
+      )}
+      {confirmKind && (
+        <ConfirmDialog
+          title={confirmKind === "approved" ? "このドラフトを承認しますか？" : "このドラフトを却下しますか？"}
+          body={
+            confirmKind === "approved"
+              ? "承認すると正式なレビュー結果として監査に記録されます。この操作は取り消せません。"
+              : "却下するとこのドラフトは終了状態になります。この操作は取り消せません。"
+          }
+          confirmLabel={confirmKind === "approved" ? "承認する" : "却下する"}
+          danger={confirmKind === "rejected"}
+          busy={saving}
+          onCancel={() => setConfirmKind(null)}
+          onConfirm={() => void onReview(confirmKind)}
+        />
+      )}
     </>
   );
 }
@@ -2179,6 +2941,80 @@ const DRAFT_STATUS_LABEL: Record<string, { label: string; cls: string }> = {
   rejected: { label: "却下", cls: "approval-obsolete" },
   archived: { label: "アーカイブ", cls: "approval-obsolete" },
 };
+
+const APPROVAL_DECISION_LABEL: Record<string, string> = {
+  approved: "承認",
+  rejected: "却下",
+  archived: "アーカイブ",
+};
+
+// Confirmation dialog for irreversible, audited review actions (approve / reject). Reuses the Citation
+// Viewer modal styles and the useDialog hook (focus trap, Escape-to-close, focus restore). (issue 0015)
+function ConfirmDialog({
+  title,
+  body,
+  confirmLabel,
+  danger,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  danger?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Stay focus-trapped while open; ignore Escape/backdrop/cancel while a request is in flight.
+  const cancel = () => {
+    if (!busy) onCancel();
+  };
+  useDialog(true, cancel, panelRef);
+  return (
+    <div className="cv-overlay" onClick={cancel}>
+      <div
+        className="cv-panel"
+        ref={panelRef}
+        tabIndex={-1}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-dialog-title"
+        aria-describedby="confirm-dialog-body"
+        aria-busy={busy}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="cv-head">
+          <div className="cv-head-titles">
+            <span className="cv-eyebrow">確認</span>
+            <h3 id="confirm-dialog-title">{title}</h3>
+          </div>
+          <button type="button" className="cv-close" onClick={cancel} disabled={busy} aria-label="閉じる">
+            ×
+          </button>
+        </div>
+        <p className="ops-note" id="confirm-dialog-body">
+          {body}
+        </p>
+        <div className="review-decide">
+          <button
+            type="button"
+            className={danger ? "btn-reject" : "btn-approve"}
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            {busy ? "処理中…" : confirmLabel}
+          </button>
+          <button type="button" onClick={cancel} disabled={busy}>
+            キャンセル
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function draftStatusLabel(status: string): { label: string; cls: string } {
   return DRAFT_STATUS_LABEL[status] ?? { label: status, cls: "approval-draft" };
@@ -2260,9 +3096,9 @@ function ReviewQueueBody() {
         AI 出力は常にドラフトです。人手レビューで承認されるまで、正式な知識にはなりません（自動承認は禁止）。
       </p>
       <div className="reviews-layout standalone-reviews-layout">
-        <section className="review-queue-panel" aria-label="Drafts">
+        <section className="review-queue-panel" aria-label="AIドラフトレビュー">
           <div className="review-queue-head">
-            <h3>レビューキュー</h3>
+            <h3>AIドラフトレビュー</h3>
             <span className="review-queue-count">{drafts.length}</span>
           </div>
           {drafts.length === 0 ? (
@@ -2312,7 +3148,7 @@ function ReviewQueueBody() {
               {creating ? "生成中…" : "ドラフトを生成"}
             </button>
           </form>
-          {error && <p className="cv-foot-error">{error}</p>}
+          {error && <p className="cv-foot-error" role="alert">{error}</p>}
         </section>
       </div>
     </>
@@ -2365,7 +3201,7 @@ function IngestionRunsBody() {
     <>
       <Section title="実行を確認" note="実行 ID でバックエンドの投影を確認できます。">
         <form className="src-inline-form" onSubmit={lookup}>
-          <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="ingestion_run_id" />
+          <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="ingestion_run_id" aria-label="実行 ID" />
           <button type="submit" disabled={!runId.trim()}>
             確認
           </button>
@@ -2430,7 +3266,7 @@ function IngestionRunsBody() {
           まだ取込履歴はありません。<Link href="/sources/new">ソースを追加</Link> から同期またはアップロードしてください。
         </p>
       )}
-      {state.state === "loading" && lastLookupId && <p className="ops-empty">実行状態を読み込み中…</p>}
+      {state.state === "loading" && lastLookupId && <p className="ops-empty" role="status" aria-live="polite">実行状態を読み込み中…</p>}
       {state.state === "error" && <ScreenLoadError error={state.error} onRetry={retryLookup} />}
       {state.state === "ready" && (
         <Section title="実行詳細">
@@ -2463,7 +3299,7 @@ function OperationTelemetryBody() {
     [],
   );
 
-  if (state.state === "loading") return <p className="ops-empty">安全テレメトリを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">安全テレメトリを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const breakdown = state.data.telemetry.block_breakdown ?? state.data.telemetry.safety_gate_block_breakdown ?? {};
   return (
@@ -2496,7 +3332,7 @@ function QualityBody() {
     },
     [],
   );
-  if (state.state === "loading") return <p className="ops-empty">品質データを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">品質データを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const { kpi } = state.data;
   return (
@@ -2578,7 +3414,7 @@ function QualityEvalSection() {
           {running ? "評価を実行中…" : "品質評価を実行"}
         </button>
       </div>
-      {error && <p className="cv-foot-error">{error}</p>}
+      {error && <p className="cv-foot-error" role="alert">{error}</p>}
       {result && (
         <>
           <div className="metric-grid">
@@ -2615,7 +3451,7 @@ function ImpactReportBody() {
     const reviewDone = drafts.filter((d) => d.status === "approved" || d.status === "rejected").length;
     return { dashboard, telemetry, kpi, draftCount: drafts.length, reviewDone };
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">導入効果レポートを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">導入効果レポートを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const { dashboard, telemetry, kpi, draftCount, reviewDone } = state.data;
   const blocks = telemetry.safety_gate_block_breakdown ?? telemetry.block_breakdown ?? {};
@@ -2803,7 +3639,7 @@ function ComplianceExportBody() {
     },
     [],
   );
-  if (state.state === "loading") return <p className="ops-empty">出力データを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">出力データを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   return (
       <Section title="コンプライアンス出力">
@@ -2834,6 +3670,7 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
   return (
     <ScreenShell screen={screen}>
       {screen.id === "answers" && <AnswersBody />}
+      {screen.id === "chatbot" && <ChatBotBody />}
       {screen.id === "home-dashboard" && <HomeDashboardBody />}
       {screen.id === "answer-history" && <AnswerHistoryBody />}
       {screen.id === "source-search" && <SourceSearchBody />}
@@ -2877,7 +3714,7 @@ const APPROVAL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "obsolete", label: "旧版（参照のみ・警告）" },
 ];
 
-const ACCEPT_EXT = ".txt,.md,.markdown,.csv,.html,.htm,.docx,.xlsx";
+const ACCEPT_EXT = ".txt,.md,.markdown,.csv,.html,.htm,.docx,.xlsx,.pdf,.png,.jpg,.jpeg";
 
 type AddSourceTypeId =
   | "file"
@@ -3125,7 +3962,7 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   db: {
     fields: [
       { id: "db_engine", label: "エンジン", placeholder: "postgres または mysql" },
-      { id: "connection_string", label: "接続文字列", placeholder: "postgresql://… または mysql://user:pass@host:3306/db", type: "password" }, // pragma: allowlist secret -- UI placeholder example, not a real credential
+      { id: "connection_string", label: "接続文字列", placeholder: "postgresql://… または mysql://user:pass@host:3306/db", type: "password" }, // pragma: allowlist secret -- illustrative placeholder, not a credential
       { id: "table_name", label: "対象テーブル", placeholder: "public.maintenance_cases" },
       { id: "updated_column", label: "更新検知列（任意）", placeholder: "updated_at" },
       { id: "allow_private_host", label: "内部ホストを許可（任意）", placeholder: "社内DBに接続する場合は true" },
@@ -3143,6 +3980,64 @@ function sourceReadinessLabel(readiness: AddSourceType["readiness"]): string {
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+interface UploadForIngestResult {
+  ref: string;
+  filename: string;
+  content_type: string;
+  size?: number;
+  storage?: string;
+}
+
+async function fallbackInlineUpload(file: File): Promise<UploadForIngestResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const upRes = await fetch("/api/upload", { method: "POST", body: form });
+  const up = await upRes.json().catch(() => ({}));
+  if (!upRes.ok) throw new Error(up.error ?? "アップロードに失敗しました");
+  return up as UploadForIngestResult;
+}
+
+async function uploadForIngest(file: File, token: string): Promise<UploadForIngestResult> {
+  const presignRes = await fetch("/api/upload/presign", {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({
+      filename: file.name || "upload.bin",
+      size: file.size,
+      content_type: file.type || "application/octet-stream",
+    }),
+  });
+  const presign = await presignRes.json().catch(() => ({}));
+
+  if (presignRes.ok && typeof presign.upload_url === "string" && typeof presign.ref === "string") {
+    const contentType =
+      typeof presign.content_type === "string"
+        ? presign.content_type
+        : file.type || "application/octet-stream";
+    const uploadRes = await fetch(presign.upload_url, {
+      method: "PUT",
+      headers: { "content-type": contentType },
+      body: file,
+    });
+    if (!uploadRes.ok) throw new Error(`S3 アップロードに失敗しました (HTTP ${uploadRes.status})`);
+    return {
+      ref: presign.ref,
+      filename: typeof presign.filename === "string" ? presign.filename : file.name || "upload.bin",
+      content_type: contentType,
+      size: typeof presign.size === "number" ? presign.size : file.size,
+      storage: "s3",
+    };
+  }
+
+  if (presignRes.status === 403 || presignRes.status === 501) {
+    return fallbackInlineUpload(file);
+  }
+
+  throw new Error(
+    typeof presign.error === "string" ? presign.error : "アップロード URL の発行に失敗しました",
+  );
 }
 
 const GDRIVE_OAUTH_STATE_KEY = "raku.gdrive.oauth.state";
@@ -3373,7 +4268,7 @@ function AddSourceBody() {
       const policyNote =
         approvalPolicy === "trusted"
           ? `${sync.changed_count ?? 0} 件を「承認済み（信頼ソース）」として取り込みました。`
-          : `${sync.changed_count ?? 0} 件を「承認待ち（pending_review）」として取り込みました。レビューキューで承認すると正式な根拠になります。`;
+          : `${sync.changed_count ?? 0} 件を「承認待ち（pending_review）」として取り込みました。根拠文書レビューで承認すると正式な根拠になります。`;
       setConfigMessage(`${selectedSourceDef.name} の同期を開始しました。${policyNote}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "同期開始に失敗しました");
@@ -3410,20 +4305,14 @@ function AddSourceBody() {
 
     setSubmitting(true);
     try {
-      // 1) upload to the local sink -> file:// ref the answer-service can read
-      const form = new FormData();
-      form.append("file", payload);
-      const upRes = await fetch("/api/upload", { method: "POST", body: form });
-      const up = await upRes.json().catch(() => ({}));
-      if (!upRes.ok) throw new Error(up.error ?? "アップロードに失敗しました");
+      const token = await getSessionToken();
+      const up = await uploadForIngest(payload, token);
 
       const docId =
         documentId.trim() ||
         up.filename.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 80) ||
         `doc-${Date.now().toString(36)}`;
 
-      // 2) ingest -> parse / chunk / embed / store
-      const token = await getSessionToken();
       const ingest = await ingestDocument(
         {
           collection_id: collectionId.trim() || "manuals",
@@ -3497,12 +4386,11 @@ function AddSourceBody() {
 
       {selectedSource === "file" ? (
         <form className="upload-form" onSubmit={onSubmit}>
-        <Section title="ドキュメントを追加" note="対応形式: テキスト / Markdown / HTML / CSV / Word(.docx) / Excel(.xlsx)">
-          <div className="upload-mode-tabs" role="tablist">
+        <Section title="ドキュメントを追加" note="対応形式: テキスト / Markdown / HTML / CSV / Word(.docx) / Excel(.xlsx) / PDF / 画像">
+          <div className="upload-mode-tabs">
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === "file"}
+              aria-pressed={mode === "file"}
               className={`upload-mode-tab ${mode === "file" ? "active" : ""}`}
               onClick={() => setMode("file")}
             >
@@ -3510,8 +4398,7 @@ function AddSourceBody() {
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={mode === "text"}
+              aria-pressed={mode === "text"}
               className={`upload-mode-tab ${mode === "text" ? "active" : ""}`}
               onClick={() => setMode("text")}
             >
@@ -3528,7 +4415,9 @@ function AddSourceBody() {
               />
               <span className="upload-drop-main">{file ? file.name : "ファイルを選択（または、ここにドロップ）"}</span>
               <span className="upload-drop-sub">
-                {file ? `${(file.size / 1024).toFixed(1)} KB` : ".txt / .md / .csv / .html / .docx / .xlsx・最大10MB"}
+                {file
+                  ? `${(file.size / 1024).toFixed(1)} KB`
+                  : ".txt / .md / .csv / .html / .docx / .xlsx / .pdf / .png / .jpg・最大25MB"}
               </span>
             </label>
           ) : (
@@ -3594,7 +4483,7 @@ function AddSourceBody() {
                       : "「Google で接続」で drive.readonly を認可します。リフレッシュトークンはサーバ側に保管されます。"}
                   </span>
                   {oauthStatus === "error" && oauthError && (
-                    <span className="connector-oauth-error" style={{ color: "#c0392b" }}>
+                    <span className="connector-oauth-error" style={{ color: "#c0392b" }} role="alert">
                       接続エラー: {oauthError}
                     </span>
                   )}
@@ -3699,7 +4588,7 @@ function AddSourceBody() {
             <p className="ops-note">
               {approvalPolicy === "trusted"
                 ? "信頼ソース: 同期した全ファイルを承認済み（source-of-truth）として取り込みます。1件ずつのレビューは行いません。"
-                : "既定: 同期した全ファイルは pending_review で取り込まれ、レビューキューで承認するまで高リスク回答の正式な根拠にはなりません。"}
+                : "既定: 同期した全ファイルは pending_review で取り込まれ、根拠文書レビューで承認するまで高リスク回答の正式な根拠にはなりません。"}
             </p>
 
             <div className="screen-actions">
@@ -3840,8 +4729,150 @@ const DOCUMENT_KIND_LABEL: Record<string, string> = {
   spec: "仕様書",
 };
 
+const DOCUMENT_LIST_PAGE_SIZE = 12;
+const DOCUMENT_LIST_FILTERS = [
+  { value: "all", label: "すべて" },
+  { value: "needs_review", label: "レビュー待ち" },
+  { value: "approved", label: "正式根拠" },
+  { value: "obsolete", label: "旧版" },
+  { value: "local", label: "取込直後" },
+] as const;
+type DocumentListFilter = (typeof DOCUMENT_LIST_FILTERS)[number]["value"];
+
+type DocumentListRow = {
+  document_id: string;
+  collection_id: string;
+  source_id: string;
+  document_kind: string | null;
+  approval_status: string;
+  effective_date: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  superseded_by: string | null;
+  equipment: string | null;
+  safety_category: string | null;
+  source: "server" | "local";
+  filename?: string;
+  chunk_count?: number;
+  ingested_at?: string;
+};
+
+function documentKindLabel(kind: string | null | undefined, fallback?: string): string {
+  if (!kind) return fallback ? sourceKindLabel(fallback) : "種別未設定";
+  return DOCUMENT_KIND_LABEL[kind] ?? kind;
+}
+
+function documentTitle(row: DocumentListRow): string {
+  return row.filename || row.document_id;
+}
+
+function documentApprovalView(status: string): { label: string; cls: string; description: string } {
+  if (status === "approved") {
+    return {
+      cls: "approval-approved",
+      description: "回答の正式な根拠として利用できます。",
+      label: "正式根拠",
+    };
+  }
+  if (status === "obsolete") {
+    return {
+      cls: "approval-obsolete",
+      description: "高リスク回答の正式根拠には使われません。",
+      label: "旧版",
+    };
+  }
+  if (status === "draft") {
+    return {
+      cls: "approval-draft",
+      description: "参考のみ。正式根拠化にはレビューが必要です。",
+      label: "ドラフト",
+    };
+  }
+  if (status === "pending_review") {
+    return {
+      cls: "approval-pending_review",
+      description: "承認すると正式な根拠になります。",
+      label: "レビュー待ち",
+    };
+  }
+  return {
+    cls: "approval-draft",
+    description: "状態を確認してください。",
+    label: status || "状態不明",
+  };
+}
+
+function documentNeedsReview(row: DocumentListRow): boolean {
+  return row.approval_status === "pending_review" || row.approval_status === "draft";
+}
+
+function documentMatchesFilter(row: DocumentListRow, filter: DocumentListFilter): boolean {
+  switch (filter) {
+    case "needs_review":
+      return documentNeedsReview(row);
+    case "approved":
+      return row.approval_status === "approved";
+    case "obsolete":
+      return row.approval_status === "obsolete";
+    case "local":
+      return row.source === "local";
+    default:
+      return true;
+  }
+}
+
+function documentSearchText(row: DocumentListRow): string {
+  const approval = documentApprovalView(row.approval_status);
+  return [
+    row.document_id,
+    row.filename,
+    row.collection_id,
+    row.source_id,
+    documentKindLabel(row.document_kind, row.source_id),
+    approval.label,
+    approval.description,
+    row.equipment,
+    row.safety_category,
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function documentFreshness(row: DocumentListRow): string {
+  if (row.effective_date) return `発効 ${row.effective_date}`;
+  if (row.approved_at) return `承認 ${new Date(row.approved_at).toLocaleDateString("ja-JP")}`;
+  if (row.ingested_at) return `取込 ${new Date(row.ingested_at).toLocaleString("ja-JP")}`;
+  return "発効日未設定";
+}
+
+function localUploadRows(uploaded: IngestedDoc[], serverDocs: ManufacturingDocumentSummary[]): DocumentListRow[] {
+  const serverIds = new Set(serverDocs.map((doc) => doc.document_id));
+  return uploaded
+    .filter((doc) => !serverIds.has(doc.document_id))
+    .map((doc) => ({
+      approved_at: null,
+      approved_by: null,
+      approval_status: doc.approval_status,
+      chunk_count: doc.chunk_count,
+      collection_id: doc.collection_id,
+      document_id: doc.document_id,
+      document_kind: null,
+      effective_date: doc.effective_date,
+      equipment: null,
+      filename: doc.filename,
+      ingested_at: doc.ingested_at,
+      safety_category: null,
+      source: "local" as const,
+      source_id: doc.source_id,
+      superseded_by: null,
+    }));
+}
+
 function DocumentListBody() {
   const [uploaded, setUploaded] = useState<IngestedDoc[]>([]);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<DocumentListFilter>("all");
+  const [page, setPage] = useState(1);
   const [docs, reloadDocs] = useLoad(
     async () => manufacturingDocuments(await getSessionToken(), DEMO_COLLECTION),
     [],
@@ -3855,23 +4886,51 @@ function DocumentListBody() {
     uploaded.length > 0
       ? "テナント一覧への反映を確認中です。直近アップロードは上の控えに表示されています。"
       : "ドキュメントはまだありません。「ソースを追加」から取り込めます。";
+  const serverDocs = docs.state === "ready" ? docs.data : [];
+  const rows: DocumentListRow[] =
+    docs.state === "ready"
+      ? [
+          ...serverDocs.map((doc) => ({ ...doc, source: "server" as const })),
+          ...localUploadRows(uploaded, serverDocs),
+        ]
+      : [];
+  const filteredRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (!documentMatchesFilter(row, filter)) return false;
+      if (!needle) return true;
+      return documentSearchText(row).includes(needle);
+    });
+  }, [filter, query, rows]);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / DOCUMENT_LIST_PAGE_SIZE));
+  const pageRows = filteredRows.slice((page - 1) * DOCUMENT_LIST_PAGE_SIZE, page * DOCUMENT_LIST_PAGE_SIZE);
+  const reviewCount = rows.filter(documentNeedsReview).length;
+  const approvedCount = rows.filter((row) => row.approval_status === "approved").length;
+  const obsoleteCount = rows.filter((row) => row.approval_status === "obsolete").length;
+
+  useEffect(() => {
+    setPage(1);
+  }, [filter, query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
 
   return (
     <>
       {uploaded.length > 0 && (
         <Section
-          title="最近アップロードしたドキュメント"
-          note="このブラウザから取り込んだドキュメントです（取込直後の控え。テナント全体は下の一覧に表示されます）。"
+          title="取込直後の控え"
+          note="このブラウザで開始した取込の控えです。テナント全体の正式な一覧は下に表示されます。"
         >
           <DataTable
-            columns={["文書", "承認状態", "チャンク", "コレクション", "取込日時"]}
+            columns={["文書", "承認状態", "チャンク", "取込日時"]}
             rows={uploaded.map((doc) => [
               <Link key={doc.document_id} href={`/documents/${doc.document_id}`}>
-                {doc.document_id}
+                {doc.filename || doc.document_id}
               </Link>,
               UPLOAD_APPROVAL_LABEL[doc.approval_status] ?? doc.approval_status,
               String(doc.chunk_count),
-              doc.collection_id,
               new Date(doc.ingested_at).toLocaleString("ja-JP"),
             ])}
             empty="アップロードはありません。"
@@ -3879,46 +4938,156 @@ function DocumentListBody() {
           <div className="screen-actions">
             <button
               type="button"
-              className="btn-reject"
+              className="is-secondary"
               onClick={() => {
                 clearIngestedDocs();
                 setUploaded([]);
               }}
             >
-              この控えを消去
+              このブラウザの控えを消去
             </button>
           </div>
         </Section>
       )}
       <Section
         title="ドキュメント"
-        note="テナントのナレッジベースに取り込まれ、検索・回答の根拠になっているドキュメントです。"
+        note="正式根拠、レビュー待ち、旧版を分けて確認できます。内部 ID や処理状態は詳細画面で確認できます。"
       >
-        {docs.state === "loading" && <p className="ops-empty">ドキュメントを読み込み中…</p>}
+        {docs.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ドキュメントを読み込み中…</p>}
         {docs.state === "error" && <ScreenLoadError error={docs.error} onRetry={reloadDocs} />}
-        {docs.state === "ready" && (
-          <DataTable
-            columns={["文書", "種別", "承認状態", "発効日", "ソース", "コレクション"]}
-            rows={docs.data.map((doc) => [
-              <Link key={doc.document_id} href={`/documents/${doc.document_id}`}>
-                {doc.document_id}
-              </Link>,
-              ((kind) => (kind ? DOCUMENT_KIND_LABEL[kind] ?? kind : "—"))(
-                doc.document_kind ?? doc.source_id,
-              ),
-              <span
-                key={`${doc.document_id}-status`}
-                className={`review-queue-status approval-${doc.approval_status}`}
-              >
-                {UPLOAD_APPROVAL_LABEL[doc.approval_status] ?? doc.approval_status}
-              </span>,
-              doc.effective_date ?? "—",
-              doc.source_id,
-              doc.collection_id,
-            ])}
-            empty={emptyDocumentMessage}
-          />
-        )}
+        {docs.state === "ready" &&
+          (rows.length === 0 ? (
+            <div className="standalone-empty-state">
+              <h4>ドキュメントはまだありません</h4>
+              <p>{emptyDocumentMessage}</p>
+              <Link className="standalone-empty-cta" href="/sources/new">
+                ソースを追加
+              </Link>
+            </div>
+          ) : (
+            <div className="document-library-shell">
+              <section className="source-list-controls document-list-controls" aria-label="ドキュメントの検索と絞り込み">
+                <label className="standalone-search source-list-search">
+                  <span aria-hidden="true">⌕</span>
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="文書名・ソース・状態で検索"
+                    aria-label="文書名・ソース・状態で検索"
+                  />
+                </label>
+                <div className="source-list-filter" role="group" aria-label="ドキュメント状態で絞り込み">
+                  {DOCUMENT_LIST_FILTERS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={filter === option.value ? "source-filter-button active" : "source-filter-button"}
+                      aria-pressed={filter === option.value}
+                      onClick={() => setFilter(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="source-list-summary" aria-live="polite">
+                  <span>{filteredRows.length} 件表示</span>
+                  <span>レビュー待ち {reviewCount} 件</span>
+                  <span>正式根拠 {approvedCount} 件</span>
+                  <span>旧版 {obsoleteCount} 件</span>
+                </div>
+              </section>
+              {filteredRows.length === 0 ? (
+                <div className="standalone-empty-state">
+                  <h4>条件に合うドキュメントはありません</h4>
+                  <p>検索語や絞り込みを変えると、別の文書を確認できます。</p>
+                  <button
+                    type="button"
+                    className="standalone-empty-cta"
+                    onClick={() => {
+                      setQuery("");
+                      setFilter("all");
+                    }}
+                  >
+                    条件をクリア
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="document-list-items" role="list">
+                    {pageRows.map((doc) => {
+                      const approval = documentApprovalView(doc.approval_status);
+                      const needsReview = documentNeedsReview(doc);
+                      return (
+                        <article className="document-list-row" key={`${doc.source}-${doc.document_id}`} role="listitem">
+                          <div className="document-list-main">
+                            <div className="standalone-source-mark" aria-hidden="true">
+                              {documentKindLabel(doc.document_kind, doc.source_id).slice(0, 2)}
+                            </div>
+                            <div className="source-list-title-block">
+                              <h4>
+                                <Link href={`/documents/${doc.document_id}`} className="source-title-link" aria-label={`${documentTitle(doc)} の詳細を見る`}>
+                                  {documentTitle(doc)}
+                                </Link>
+                              </h4>
+                              <p>
+                                {documentKindLabel(doc.document_kind, doc.source_id)}
+                                {doc.source === "local" ? " · 取込直後の控え" : ""}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="document-list-status-cell">
+                            <span className={`review-queue-status ${approval.cls}`}>{approval.label}</span>
+                            <span>{approval.description}</span>
+                          </div>
+                          <div className="document-list-metrics">
+                            <span>{documentFreshness(doc)}</span>
+                            <span>ソース: {sourceKindLabel(doc.source_id)}</span>
+                            <span>設備/分類: {doc.equipment || doc.safety_category || "—"}</span>
+                          </div>
+                          <div className="document-list-actions">
+                            {needsReview && (
+                              <Link href="/reviews/documents" className="button-link">
+                                レビューへ
+                              </Link>
+                            )}
+                            {doc.approval_status === "approved" && (
+                              <Link href="/" className="button-link secondary">
+                                質問で確認
+                              </Link>
+                            )}
+                            <Link href={`/documents/${doc.document_id}`} className="button-link secondary">
+                              詳細
+                            </Link>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  {totalPages > 1 && (
+                    <nav className="source-list-pagination" aria-label="ドキュメント一覧のページ">
+                      <button
+                        type="button"
+                        onClick={() => setPage((current) => Math.max(1, current - 1))}
+                        disabled={page <= 1}
+                      >
+                        前へ
+                      </button>
+                      <span>
+                        {page} / {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                        disabled={page >= totalPages}
+                      >
+                        次へ
+                      </button>
+                    </nav>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
       </Section>
     </>
   );
@@ -3992,7 +5161,7 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
         />
       </Section>
       <Section title="メタデータ編集">
-        <textarea value={metadata} onChange={(e) => setMetadata(e.target.value)} rows={8} />
+        <textarea value={metadata} onChange={(e) => setMetadata(e.target.value)} rows={8} aria-label="メタデータ" />
         <div className="screen-actions">
           <button type="button" onClick={() => void onSave()} disabled={saving}>
             メタデータを保存
@@ -4002,7 +5171,7 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
           </button>
         </div>
       </Section>
-      {state.state === "loading" && <p className="ops-empty">処理状態を読み込み中…</p>}
+      {state.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">処理状態を読み込み中…</p>}
       {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
       {state.state === "ready" && (
         <Section title="処理状態">
@@ -4014,28 +5183,138 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
   );
 }
 
+
+type KnowledgePreparationData = {
+  governance: GovernanceStatus;
+  sources: SourceListRow[];
+  documents: ManufacturingDocumentSummary[];
+  drafts: DraftArtifact[];
+};
+
+async function loadKnowledgePreparationData(): Promise<KnowledgePreparationData> {
+  const token = await getSessionToken();
+  const [governance, sources, documents, drafts] = await Promise.all([
+    manufacturingGovernanceStatus(token),
+    loadSourceListRows(),
+    manufacturingDocuments(token).catch(() => [] as ManufacturingDocumentSummary[]),
+    manufacturingListDrafts(token).catch(() => [] as DraftArtifact[]),
+  ]);
+  return { documents, drafts, governance, sources };
+}
+
+function draftNeedsHumanReview(draft: DraftArtifact): boolean {
+  return draft.status === "draft" || draft.status === "in_review";
+}
+
+function KnowledgePrepStep({
+  action,
+  description,
+  href,
+  index,
+  label,
+  metric,
+  tone,
+}: {
+  action: string;
+  description: string;
+  href: string;
+  index: string;
+  label: string;
+  metric: string;
+  tone: "ok" | "wait" | "bad";
+}) {
+  return (
+    <Link href={href} className="knowledge-step-card" role="listitem">
+      <span className="knowledge-step-index" aria-hidden="true">{index}</span>
+      <span className="knowledge-step-label">{label}</span>
+      <strong>{metric}</strong>
+      <span className={`knowledge-step-state ${tone}`}>{description}</span>
+      <span className="knowledge-step-action">{action}</span>
+    </Link>
+  );
+}
+
 function ApprovalWorkflowBody() {
-  const [memo, setMemo] = useState("Review flow is controlled by governance status.");
-  const [state, reload] = useLoad(async () => {
-    const token = await getSessionToken();
-    return manufacturingGovernanceStatus(token);
-  }, []);
-  if (state.state === "loading") return <p className="ops-empty">ガバナンス状態を読み込み中…</p>;
+  const [state, reload] = useLoad(loadKnowledgePreparationData, []);
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">ガバナンス状態を読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
+
+  const { documents, drafts, governance, sources } = state.data;
+  const sourceActionCount = sources.filter(sourceNeedsAction).length;
+  const activeSyncCount = sources.filter((row) => isSyncActive(row.sync?.status)).length;
+  const pendingDocumentCount = documents.filter((doc) => doc.approval_status === "pending_review" || doc.approval_status === "draft").length;
+  const approvedDocumentCount = documents.filter((doc) => doc.approval_status === "approved").length;
+  const openDraftCount = drafts.filter(draftNeedsHumanReview).length;
+
   return (
     <>
-      <Section title="ガバナンスベースの承認ルール">
+      <Section title="ナレッジ準備" note="ソース接続から正式根拠化、AI生成物レビューまでの作業順です。件数が残っている段階から処理してください。">
+        <div className="knowledge-flow-grid" role="list" aria-label="ナレッジ準備の作業順">
+          <KnowledgePrepStep
+            index="1"
+            label="接続済みソース"
+            metric={`${sources.length} 件`}
+            description={sourceActionCount > 0 ? `${sourceActionCount} 件に対応が必要` : "利用状態を確認済み"}
+            tone={sourceActionCount > 0 ? "wait" : "ok"}
+            href="/sources/list"
+            action="ソースを確認"
+          />
+          <KnowledgePrepStep
+            index="2"
+            label="同期・取り込み"
+            metric={activeSyncCount > 0 ? `${activeSyncCount} 件実行中` : "取込ラン"}
+            description={activeSyncCount > 0 ? "完了まで自動更新を確認" : "失敗や部分成功を確認"}
+            tone={activeSyncCount > 0 ? "wait" : "ok"}
+            href="/ingestion-runs"
+            action="取込ランを見る"
+          />
+          <KnowledgePrepStep
+            index="3"
+            label="根拠文書レビュー"
+            metric={`${pendingDocumentCount} 件`}
+            description={pendingDocumentCount > 0 ? "正式根拠化が必要" : `${approvedDocumentCount} 件が正式根拠`}
+            tone={pendingDocumentCount > 0 ? "wait" : "ok"}
+            href="/reviews/documents"
+            action="文書をレビュー"
+          />
+          <KnowledgePrepStep
+            index="4"
+            label="AIドラフトレビュー"
+            metric={`${openDraftCount} 件`}
+            description={openDraftCount > 0 ? "人手レビュー待ち" : "未処理のドラフトなし"}
+            tone={openDraftCount > 0 ? "wait" : "ok"}
+            href="/reviews"
+            action="ドラフトを確認"
+          />
+        </div>
+      </Section>
+
+      <Section title="ガバナンスベースのポリシー">
         <FieldGrid
           rows={[
-            ["AI 出力は常にドラフト", state.data.draft_review.ai_output_always_draft ? "はい" : "いいえ"],
-            ["レビュー担当必須", state.data.draft_review.reviewer_required_for_approval ? "はい" : "いいえ"],
-            ["高リスクは承認済み引用必須", state.data.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
+            ["AI生成物はドラフト固定", governance.draft_review.ai_output_always_draft ? "はい" : "いいえ"],
+            ["AIドラフト承認に担当者必須", governance.draft_review.reviewer_required_for_approval ? "はい" : "いいえ"],
+            ["高リスク回答は承認済み根拠が必須", governance.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
           ]}
         />
       </Section>
-      <Section title="設計メモ">
-        <textarea value={memo} onChange={(e) => setMemo(e.target.value)} rows={5} />
-        <p className="ops-note">承認ルールはガバナンス設定に基づいて表示しています。</p>
+
+      <Section title="同期・承認ポリシー概要" note="同期元を信頼するか、根拠文書レビューに回すかはデータソース追加時に選択します。">
+        <div className="policy-summary-grid">
+          <article className="policy-summary-card">
+            <span className="policy-summary-label">レビューが必要</span>
+            <strong>pending_review で取り込み</strong>
+            <p>同期した文書は根拠文書レビューに入り、承認されるまで高リスク回答の正式根拠にはなりません。</p>
+            <Link href="/reviews/documents">根拠文書レビューへ</Link>
+          </article>
+          <article className="policy-summary-card">
+            <span className="policy-summary-label">信頼するソース</span>
+            <strong>承認済みとして取り込み</strong>
+            <p>source-of-truth として扱う同期元です。個別レビューを省略する代わりに、接続設定時の判断が監査上重要になります。</p>
+            <Link href="/sources/new">ソースを追加</Link>
+          </article>
+        </div>
+        <p className="ops-note">この画面では現在のポリシーと作業導線を表示します。承認ルール編集 API は未接続です。</p>
       </Section>
     </>
   );
@@ -4055,7 +5334,7 @@ function GenericOpsOverview() {
     },
     [],
   );
-  if (state.state === "loading") return <p className="ops-empty">運用概要を読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">運用概要を読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const telemetryBreakdown =
     state.data.telemetry.block_breakdown ?? state.data.telemetry.safety_gate_block_breakdown ?? {};
@@ -4157,8 +5436,8 @@ function GenericOpsOverview() {
             ["ポリシー版本", String(state.data.governance.policy_version)],
             ["No-train デフォルト", state.data.governance.no_train.no_train_default ? "はい" : "いいえ"],
             ["安全ゲート有効", state.data.governance.safety_gate.enabled ? "はい" : "いいえ"],
-            ["高リスクは承認済み引用必須", state.data.governance.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
-            ["AI 出力は常にドラフト", state.data.governance.draft_review.ai_output_always_draft ? "はい" : "いいえ"],
+            ["高リスク回答は承認済み根拠が必須", state.data.governance.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
+            ["AI生成物はドラフト固定", state.data.governance.draft_review.ai_output_always_draft ? "はい" : "いいえ"],
           ]}
         />
       </section>
@@ -4203,7 +5482,7 @@ function AuditLogBody() {
       return { events: records, total: records.length, offset: 0, limit: records.length };
     }
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">監査ログを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">監査ログを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
 
   const records = (state.data.events ?? []) as AuditRecord[];
@@ -4334,9 +5613,9 @@ function PermissionSimulator() {
       note="指定ユーザーとして同じ質問を実行し、その人がアクセスできる根拠だけが返ることを確認します（ACL は deny-by-default でサーバ側強制）。"
     >
       <div className="form-grid">
-        <textarea value={query} onChange={(e) => setQuery(e.target.value)} rows={2} placeholder="質問" />
+        <textarea value={query} onChange={(e) => setQuery(e.target.value)} rows={2} placeholder="質問" aria-label="質問" />
         <div className="review-assign-row">
-          <input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="user_id" />
+          <input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="user_id" aria-label="ユーザーID" />
           <button type="button" onClick={() => void run(userId.trim() || "bob")} disabled={loading || !query.trim()}>
             このユーザーで実行
           </button>
@@ -4351,8 +5630,8 @@ function PermissionSimulator() {
         </div>
       </div>
 
-      {loading && <p className="ops-empty">実行中…</p>}
-      {error && <p className="cv-foot-error">{error}</p>}
+      {loading && <p className="ops-empty" role="status" aria-live="polite">実行中…</p>}
+      {error && <p className="cv-foot-error" role="alert">{error}</p>}
       {result && (
         <div className={`sim-result ${accessible ? "sim-ok" : "sim-deny"}`}>
           <div className="result-head">
@@ -4397,7 +5676,7 @@ function RolesAclBody() {
       </Section>
 
       <Section title="ACL 付与" note="GET /v1/admin/acl から取得した実データです。">
-        {state.state === "loading" && <p className="ops-empty">ACL を読み込み中…</p>}
+        {state.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ACL を読み込み中…</p>}
         {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
         {state.state === "ready" && (
           <DataTable
@@ -4422,8 +5701,15 @@ interface ProviderPolicy {
   name?: string;
   status?: string;
   parser_mode?: string;
+  allowed_parser_providers?: string[];
+  allowed_ocr_providers?: string[];
+  allowed_layout_providers?: string[];
+  allowed_structured_providers?: string[];
   allowed_llm_providers?: string[];
   allowed_embedding_providers?: string[];
+  allowed_visual_embedding_providers?: string[];
+  allowed_vlm_providers?: string[];
+  allowed_caption_providers?: string[];
   allowed_rerank_providers?: string[];
   allowed_regions?: string[];
   data_residency_requirement?: string;
@@ -4468,7 +5754,7 @@ function ProviderPolicyBody() {
     ]);
     return { policies, dataUse };
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">プロバイダーポリシーを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">プロバイダーポリシーを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const policies = (Array.isArray(state.data.policies) ? state.data.policies : []) as ProviderPolicy[];
   const dataUse = state.data.dataUse as DataUsePolicy;
@@ -4493,8 +5779,15 @@ function ProviderPolicyBody() {
               ["クロスクラウド処理", p.cross_cloud_processing_allowed ? "許可" : "不許可"],
               ["ゼロ保持要件", p.zero_retention_required ? "必須" : "—"],
               ["許可リージョン", (p.allowed_regions ?? []).join(", ") || "—"],
+              ["パーサー", (p.allowed_parser_providers ?? []).join(", ") || "—"],
+              ["OCR", (p.allowed_ocr_providers ?? []).join(", ") || "—"],
+              ["レイアウト解析", (p.allowed_layout_providers ?? []).join(", ") || "—"],
+              ["構造抽出", (p.allowed_structured_providers ?? []).join(", ") || "—"],
               ["LLM プロバイダ", (p.allowed_llm_providers ?? []).join(", ") || "—"],
               ["埋め込みプロバイダ", (p.allowed_embedding_providers ?? []).join(", ") || "—"],
+              ["画像埋め込み", (p.allowed_visual_embedding_providers ?? []).join(", ") || "—"],
+              ["画像理解", (p.allowed_vlm_providers ?? []).join(", ") || "—"],
+              ["キャプション", (p.allowed_caption_providers ?? []).join(", ") || "—"],
               ["リランカー", (p.allowed_rerank_providers ?? []).join(", ") || "—"],
             ]}
           />
@@ -4616,7 +5909,7 @@ function RetrievalDebugBody() {
       </form>
 
       {error && (
-        <section className="result-panel error-panel">
+        <section className="result-panel error-panel" role="alert">
           <h3>診断に失敗しました</h3>
           <p>{error}</p>
         </section>
@@ -4689,7 +5982,7 @@ function RetrievalBody() {
     ]);
     return { profiles, queries };
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">検索設定を読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">検索設定を読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   return <Section title="検索設定"><pre className="code-block">{JSON.stringify(state.data, null, 2)}</pre></Section>;
 }
@@ -4703,7 +5996,7 @@ function LoggingPrivacyBody() {
     ]);
     return { logging, policy };
   }, []);
-  if (state.state === "loading") return <p className="ops-empty">ログポリシーを読み込み中…</p>;
+  if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">ログポリシーを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
   const dataUse = state.data.policy as DataUsePolicy;
   return (

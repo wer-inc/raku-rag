@@ -118,6 +118,8 @@ describe("manufacturing answer facade (e2e)", () => {
           res.end(JSON.stringify({ status: "insufficient_evidence", results: [], correlation_id: "trace" }));
         } else if (req.method === "POST" && url.pathname === "/internal/manufacturing/drafts") {
           res.end(JSON.stringify({ artifact_id: "art1", type: "faq", status: "draft" }));
+        } else if (req.method === "GET" && url.pathname === "/internal/manufacturing/drafts") {
+          res.end(JSON.stringify({ drafts: [], total: 0 }));
         } else if (req.method === "GET" && url.pathname === "/internal/manufacturing/drafts/art1") {
           res.end(JSON.stringify({ artifact_id: "art1", type: "faq", status: "draft" }));
         } else if (
@@ -130,6 +132,26 @@ describe("manufacturing answer facade (e2e)", () => {
           url.pathname === "/internal/manufacturing/drafts/art1/review"
         ) {
           res.end(JSON.stringify({ artifact_id: "art1", status: "approved" }));
+        } else if (
+          req.method === "POST" &&
+          url.pathname === "/internal/manufacturing/drafts/art409/review"
+        ) {
+          // out-of-order lifecycle transition -> answer-service returns a real 409 (issue 0023)
+          res.statusCode = 409;
+          res.end(JSON.stringify({ error: "draft must be in_review before approval" }));
+        } else if (
+          req.method === "POST" &&
+          url.pathname === "/internal/manufacturing/drafts/art422/review"
+        ) {
+          res.statusCode = 422;
+          res.end(JSON.stringify({ error: "unknown decision value" }));
+        } else if (
+          req.method === "POST" &&
+          url.pathname === "/internal/manufacturing/drafts/art500/review"
+        ) {
+          // upstream 5xx carrying a raw internal detail that must NOT leak to the client (issue 0023)
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: "psycopg2 ProgrammingError: relation secret_table" }));
         } else if (req.method === "GET" && url.pathname === "/internal/manufacturing/dashboard") {
           res.end(JSON.stringify({ unanswered_question_count: 0 }));
         } else if (
@@ -384,7 +406,7 @@ describe("manufacturing answer facade (e2e)", () => {
 
     res = await request(app.getHttpServer())
       .get("/v1/manufacturing/drafts/art1")
-      .set(authed(readerToken));
+      .set(authed(adminToken)); // draft reads are reviewer/admin-only (issue 0024)
     expect(res.status).toBe(200);
     expect(receivedPath).toBe("/internal/manufacturing/drafts/art1");
 
@@ -419,5 +441,195 @@ describe("manufacturing answer facade (e2e)", () => {
       .set(authed(readerToken));
     expect(res.status).toBe(200);
     expect(receivedPath).toBe("/internal/manufacturing/kpi?format=json");
+  });
+
+  // 0011 — the dedicated `reviewer` role (with NO admin/tenant_admin) must be able to drive the human
+  // review/approval loop. Contract: mfg-interfaces.md:141 "approved は reviewer のみ".
+  // Guard: assertReviewApprovalAllowed on assign/review/document-approval.
+  it("lets a pure reviewer (no tenant_admin) assign, review, and approve documents", async () => {
+    const reviewer = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "carol",
+      groups: ["qa"],
+      roles: ["reviewer"], // pure reviewer — no tenant_admin
+    });
+    const authed = { Authorization: "Bearer local-dev-key", "X-User-Token": reviewer };
+
+    let res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/drafts/art1/assign")
+      .set(authed)
+      .send({ reviewer_id: "carol" });
+    expect(res.status).toBe(200);
+    expect(receivedPath).toBe("/internal/manufacturing/drafts/art1/assign");
+
+    res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/drafts/art1/review")
+      .set(authed)
+      .send({ decision: "approved" });
+    expect(res.status).toBe(200);
+    expect(receivedPath).toBe("/internal/manufacturing/drafts/art1/review");
+
+    res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/documents/doc1/approval")
+      .set(authed)
+      .send({ to_status: "approved" });
+    expect(res.status).toBe(200);
+    expect(receivedPath).toBe("/internal/manufacturing/documents/doc1/approval");
+  });
+
+  it("denies a field-user principal the approval loop (before forwarding)", async () => {
+    const fieldUser = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "bob",
+      groups: [],
+      roles: ["field_user"], // not a reviewer/admin -> 403, never reaches the answer-service
+    });
+    const authed = { Authorization: "Bearer local-dev-key", "X-User-Token": fieldUser };
+    const before = upstreamRequestCount;
+
+    let res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/drafts/art1/assign")
+      .set(authed)
+      .send({ reviewer_id: "x" });
+    expect(res.status).toBe(403);
+
+    res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/drafts/art1/review")
+      .set(authed)
+      .send({ decision: "approved" });
+    expect(res.status).toBe(403);
+
+    res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/documents/doc1/approval")
+      .set(authed)
+      .send({ to_status: "approved" });
+    expect(res.status).toBe(403);
+
+    expect(upstreamRequestCount).toBe(before); // gated BEFORE the answer-service is ever called
+  });
+
+  it("keeps admin-only ops admin-only: a pure reviewer cannot edit metadata or data-use policy", async () => {
+    const reviewer = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "carol",
+      groups: ["qa"],
+      roles: ["reviewer"],
+    });
+    const authed = { Authorization: "Bearer local-dev-key", "X-User-Token": reviewer };
+    const before = upstreamRequestCount;
+
+    let res = await request(app.getHttpServer())
+      .put("/v1/manufacturing/documents/doc1/metadata")
+      .set(authed)
+      .send({ manufacturing_metadata: { document_type: "training" } });
+    expect(res.status).toBe(403);
+
+    res = await request(app.getHttpServer())
+      .put("/v1/manufacturing/policy/data-use")
+      .set(authed)
+      .send({ retention_customer: 30 });
+    expect(res.status).toBe(403);
+
+    expect(upstreamRequestCount).toBe(before); // both admin-only mutations gated before forwarding
+  });
+
+  // 0024 — draft reads (queue list + detail) are limited to reviewer/admin (manifest review-queue
+  // rbac=[reviewer, tenant_admin]); a field user must NOT browse pre-approval AI drafts.
+  it("lets a reviewer read the draft queue but denies a field user (before forwarding)", async () => {
+    const reviewer = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "carol",
+      groups: [],
+      roles: ["reviewer"],
+    });
+    const fieldUser = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "bob",
+      groups: [],
+      roles: ["field_user"],
+    });
+    const asReviewer = { Authorization: "Bearer local-dev-key", "X-User-Token": reviewer };
+    const asFieldUser = { Authorization: "Bearer local-dev-key", "X-User-Token": fieldUser };
+
+    let res = await request(app.getHttpServer()).get("/v1/manufacturing/drafts").set(asReviewer);
+    expect(res.status).toBe(200);
+    res = await request(app.getHttpServer()).get("/v1/manufacturing/drafts/art1").set(asReviewer);
+    expect(res.status).toBe(200);
+
+    const before = upstreamRequestCount;
+    res = await request(app.getHttpServer()).get("/v1/manufacturing/drafts").set(asFieldUser);
+    expect(res.status).toBe(403);
+    res = await request(app.getHttpServer()).get("/v1/manufacturing/drafts/art1").set(asFieldUser);
+    expect(res.status).toBe(403);
+    expect(upstreamRequestCount).toBe(before); // both draft reads gated before forwarding
+  });
+
+  // 0023 — an out-of-order lifecycle transition must surface the answer-service's 409 (not a 502),
+  // preserving the reason, so the UI can guide the reviewer instead of showing a generic gateway error.
+  it("surfaces the answer-service 409 (not 502) and preserves the reason", async () => {
+    const admin = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "admin",
+      groups: [],
+      roles: ["admin"],
+    });
+    const res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/drafts/art409/review")
+      .set({ Authorization: "Bearer local-dev-key", "X-User-Token": admin })
+      .send({ decision: "approved" });
+    expect(res.status).toBe(409); // not 502
+    expect(JSON.stringify(res.body)).toContain("in_review"); // reason preserved
+  });
+
+  it("surfaces a 422 with reason but turns an upstream 5xx into a generic 502 (no internal leak)", async () => {
+    const admin = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "admin",
+      groups: [],
+      roles: ["admin"],
+    });
+    const auth = { Authorization: "Bearer local-dev-key", "X-User-Token": admin };
+
+    let res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/drafts/art422/review")
+      .set(auth)
+      .send({ decision: "bogus" });
+    expect(res.status).toBe(422); // invalid input surfaced
+    expect(JSON.stringify(res.body)).toContain("decision");
+
+    res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/drafts/art500/review")
+      .set(auth)
+      .send({ decision: "approved" });
+    expect(res.status).toBe(502); // gateway fault, NOT transparently 500
+    expect(JSON.stringify(res.body)).not.toContain("psycopg2"); // raw internal detail must NOT leak
+    expect(JSON.stringify(res.body)).not.toContain("secret_table");
+  });
+
+  // 0011 DoD#4 / 0024 — ops_owner is NOT a review-cluster role (manifest review-* rbac excludes it);
+  // both approval and draft reads are denied, consistent with the nav (which no longer shows /reviews*).
+  it("excludes ops_owner from the review cluster (approval AND draft reads)", async () => {
+    const opsOwner = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "dave",
+      groups: [],
+      roles: ["ops_owner"],
+    });
+    const auth = { Authorization: "Bearer local-dev-key", "X-User-Token": opsOwner };
+    const before = upstreamRequestCount;
+
+    let res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/drafts/art1/review")
+      .set(auth)
+      .send({ decision: "approved" });
+    expect(res.status).toBe(403);
+
+    res = await request(app.getHttpServer()).get("/v1/manufacturing/drafts").set(auth);
+    expect(res.status).toBe(403);
+
+    res = await request(app.getHttpServer()).get("/v1/manufacturing/drafts/art1").set(auth);
+    expect(res.status).toBe(403);
+
+    expect(upstreamRequestCount).toBe(before); // all gated before forwarding
   });
 });

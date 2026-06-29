@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import unittest
 
-from raku_rag.domain.models import BoundingBox, LayoutRegion
+from raku_rag.domain.models import (
+    BoundingBox,
+    CaptionSource,
+    ExtractionSource,
+    LayoutRegion,
+    VisualAsset,
+)
 from raku_rag.providers.captioning import DeterministicCaptioningProvider
 from raku_rag.providers.layout import DeterministicLayoutExtractor
 from raku_rag.providers.ocr import DeterministicOcrEngine
 from raku_rag.providers.visual_embeddings import HashingVisualEmbeddingProvider
 from raku_rag.providers.vlms import ExtractiveVLMProvider
+from raku_rag.services.visual import visual_chunks_from_ingestion
+from raku_rag.workers.ingestion import VisualIngestionResult
 
 
 class TestVisualProviders(unittest.TestCase):
@@ -80,6 +88,45 @@ class TestVisualProviders(unittest.TestCase):
 
         self.assertEqual(vlm.generate("what alarm is shown?", visual_regions=[caption_only]), "")
         self.assertIn("AL-42", vlm.generate("what alarm is shown?", visual_regions=[ocr_backed]))
+
+    def test_visual_chunks_preserve_disjoint_primary_and_caption_sources(self) -> None:
+        region = LayoutRegion(
+            tenant_id="tenant_a",
+            collection_id="manuals",
+            document_id="doc_visual",
+            asset_id="asset_1",
+            region_id="asset_1:region:1",
+            bbox=BoundingBox(0.0, 0.0, 1.0, 1.0),
+            ocr_text="The panel shows alarm AL-42.",
+            generated_caption_text="A model caption about the panel.",
+            extraction_source=ExtractionSource.DETERMINISTIC_OCR.value,
+            caption_source=CaptionSource.DETERMINISTIC_CAPTION.value,
+        )
+        result = VisualIngestionResult(
+            asset=VisualAsset(
+                tenant_id="tenant_a",
+                collection_id="manuals",
+                document_id="doc_visual",
+                asset_id="asset_1",
+                storage_uri="memory://asset",
+                checksum="checksum",
+            ),
+            regions=(region,),
+            visual_vectors=((0.0,),),
+            caption_status="succeeded",
+        )
+
+        chunk = visual_chunks_from_ingestion(result)[0]
+
+        self.assertEqual(
+            chunk.metadata["primary_evidence_source"],
+            ExtractionSource.DETERMINISTIC_OCR.value,
+        )
+        self.assertEqual(
+            chunk.metadata["caption_source"],
+            CaptionSource.DETERMINISTIC_CAPTION.value,
+        )
+        self.assertEqual(chunk.metadata["primary_evidence_text"], region.ocr_text)
 
 
 if __name__ == "__main__":

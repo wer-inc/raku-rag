@@ -13,7 +13,7 @@ import io
 import re
 import unicodedata
 from datetime import date
-from typing import Any, Mapping
+from typing import Mapping
 
 from raku_rag.services.datasource_sync import SyncDocument
 
@@ -138,7 +138,10 @@ CANONICAL_SECTIONS_BY_PROFILE = {
                 "body",
             ),
         ),
-        ("対象", ("category", "product_id", "product_name", "equipment_id", "factory_id", "line_id")),
+        (
+            "対象",
+            ("category", "product_id", "product_name", "equipment_id", "factory_id", "line_id"),
+        ),
         ("管理", ("owner_department", "published_at", "updated_at")),
         ("ガバナンス", ("document_kind", "approval_status", "effective_date", "acl_tags")),
     ),
@@ -290,9 +293,7 @@ def _normalize_key(value: object) -> str:
 
 
 _ALIAS_TO_FIELD = {
-    _normalize_key(alias): field
-    for field, aliases in _FIELD_ALIASES.items()
-    for alias in aliases
+    _normalize_key(alias): field for field, aliases in _FIELD_ALIASES.items() for alias in aliases
 }
 
 _APPROVAL_STATUS_ALIASES = {
@@ -364,9 +365,9 @@ def build_datasource_preview(
                 "content_type": document.content_type,
                 "kind": "table" if parsed_tables else "text",
                 "sample_row_count": sum(len(table["rows"]) for table in parsed_tables),
-                "text_preview": _text_preview(document.raw, document.content_type)
-                if not parsed_tables
-                else "",
+                "text_preview": (
+                    _text_preview(document.raw, document.content_type) if not parsed_tables else ""
+                ),
             }
         )
         for table in parsed_tables:
@@ -428,9 +429,7 @@ def build_datasource_preview(
     if detected_columns and not suggested_mapping:
         validation_warnings.append("no columns mapped to canonical fields")
     elif unmapped:
-        validation_warnings.append(
-            "unmapped columns: " + ", ".join(unmapped[:8])
-        )
+        validation_warnings.append("unmapped columns: " + ", ".join(unmapped[:8]))
 
     return {
         "source_id": source_id,
@@ -464,7 +463,12 @@ def _mapping_profile(
 ) -> dict[str, object]:
     config = _mapping(datasource.get("config"))
     profile: dict[str, object] = {}
-    for source in (config, _mapping(config.get("mapping_profile")), body, _mapping(body.get("mapping_profile"))):
+    for source in (
+        config,
+        _mapping(config.get("mapping_profile")),
+        body,
+        _mapping(body.get("mapping_profile")),
+    ):
         for key in (
             "profile_type",
             "data_profile",
@@ -559,19 +563,20 @@ def _matched_fields(columns: list[str]) -> set[str]:
 
 
 def _canonical_fields(profile_type: str) -> tuple[str, ...]:
-    return tuple(CANONICAL_FIELDS_BY_PROFILE.get(profile_type, CANONICAL_FIELDS_BY_PROFILE["generic"]))
+    return tuple(
+        CANONICAL_FIELDS_BY_PROFILE.get(profile_type, CANONICAL_FIELDS_BY_PROFILE["generic"])
+    )
 
 
 def _profile_options() -> list[dict[str, str]]:
-    return [
-        {"profile_type": key, "label": label}
-        for key, label in PROFILE_LABELS.items()
-    ]
+    return [{"profile_type": key, "label": label} for key, label in PROFILE_LABELS.items()]
 
 
 def _canonical_sections(profile_type: str) -> list[dict[str, object]]:
     fields = set(_canonical_fields(profile_type))
-    sections = CANONICAL_SECTIONS_BY_PROFILE.get(profile_type, CANONICAL_SECTIONS_BY_PROFILE["generic"])
+    sections = CANONICAL_SECTIONS_BY_PROFILE.get(
+        profile_type, CANONICAL_SECTIONS_BY_PROFILE["generic"]
+    )
     return [
         {"label": label, "fields": [field for field in section_fields if field in fields]}
         for label, section_fields in sections

@@ -13,7 +13,7 @@ ENV PYTHONUNBUFFERED=1 \
 # RAKU_RUNTIME_PROFILE=production wires the real Bedrock providers; python-docx/openpyxl back the
 # 002 manufacturing parsers (pyproject [manufacturing] extra). CSV/text use the stdlib.
 RUN pip install --no-cache-dir \
-      "psycopg[binary]>=3" boto3 python-docx==1.1.2 openpyxl==3.1.5
+      "psycopg[binary]>=3" boto3 "Pillow>=10" "pypdfium2>=4" python-docx==1.1.2 openpyxl==3.1.5
 
 COPY pyproject.toml ./
 COPY src/ ./src/

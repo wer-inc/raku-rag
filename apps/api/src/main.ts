@@ -29,7 +29,7 @@ export async function createApp() {
       }
       callback(null, false);
     },
-    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["authorization", "x-user-token", "content-type"],
     exposedHeaders: ["api-version", "deprecation", "sunset", "link"],
   });

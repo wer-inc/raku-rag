@@ -30,6 +30,7 @@ from raku_rag.domain.models import IdentityClaims, ScopeType, SubjectType
 from raku_rag.manufacturing.api import record_answer_decision, record_answer_feedback
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, ManufacturingAnswerService
 from raku_rag.manufacturing.api.dashboard import DashboardService
+from raku_rag.manufacturing.api.draft_store import DraftStore
 from raku_rag.manufacturing.api.drafts import DraftService
 from raku_rag.manufacturing.api.improvements import ImprovementQueueService
 from raku_rag.manufacturing.api.ingest_metadata import ManufacturingSyncStatusService
@@ -122,6 +123,7 @@ class ManufacturingSystem:
         base_system: MvpSystem | None = None,
         audit: AuditLogWriter | None = None,
         policy_store: DataUsePolicyStore | None = None,
+        draft_store: DraftStore | None = None,
     ) -> None:
         self._mvp = base_system or MvpSystem(settings)
         self.control_plane = InMemoryControlPlaneStateRepository()
@@ -179,7 +181,10 @@ class ManufacturingSystem:
                 self._mvp.settings, self._mvp.llm
             ),
         )
-        safety_gate = ManufacturingSafetyGate(today=today)
+        safety_gate = ManufacturingSafetyGate(
+            today=today,
+            visual_evidence_promotion=self._mvp.settings.visual_evidence_promotion,
+        )
         self._answer = ManufacturingAnswerService(
             retrieval=self._mvp.retrieval,
             groundedness=self._mvp.gate,
@@ -189,6 +194,7 @@ class ManufacturingSystem:
             safety_gate=safety_gate,
             get_document=self._mvp.registry.get,
             today=today,
+            visual_evidence_promotion=self._mvp.settings.visual_evidence_promotion,
         )
         self._search = ManufacturingSearchService(
             retrieval=self._mvp.retrieval, get_mfg_meta=self.get_mfg_meta
@@ -200,6 +206,7 @@ class ManufacturingSystem:
             get_mfg_meta=self.get_mfg_meta,
             can_use_source=self._can_use_draft_source,
             today=today,
+            store=draft_store,
         )
         # US3 — similar past TroubleCase retrieval (FR-MFG-008/009, Hard Rule 4). The knowledge graph
         # is registered in an in-memory store; the retriever runs the symptom query through the SAME
@@ -278,24 +285,27 @@ class ManufacturingSystem:
         # that has been withdrawn/recalled. A later restore (re-ingest) un-tombstones the registry doc
         # and re-populates the resolver, so this also honors the restore path.
         doc = self._mvp.registry.get(tenant_id, document_id)
-        if doc is not None and doc.tombstone:
+        if doc is None or doc.tombstone:
             return None
-        cached = self._mfg_meta.get((tenant_id, document_id))
-        if cached is not None:
-            return cached
-        if doc is None:
-            return None
+        # Resolve from the registry document (the SSOT) on EVERY call — never from a long-lived
+        # process-local cache. An out-of-band obsolete/approval change (connector sync, re-ingest,
+        # another instance) must be reflected immediately so a stale cached APPROVED+effective entry
+        # cannot confirm a high-risk answer for a document that has since been withdrawn. (0017-D)
         raw = doc.metadata.get(_MFG_META_KEY)
         if raw is None:
             return None
-        meta = ManufacturingDocumentMetadata.from_mapping(raw)
-        self._mfg_meta[(tenant_id, document_id)] = meta
-        return meta
+        return ManufacturingDocumentMetadata.from_mapping(raw)
 
     def _set_mfg_meta(
         self, tenant_id: str, document_id: str, metadata: ManufacturingDocumentMetadata
     ) -> None:
-        """Update the fast resolver map (read by search/answer/classifier/gate)."""
+        """Write manufacturing metadata to the registry document (the SSOT that get_mfg_meta reads).
+
+        Also keeps the legacy ``_mfg_meta`` map in sync — but note that map is NO LONGER the source of
+        truth for the safety path: search/answer/classifier/gate resolve through ``get_mfg_meta``, which
+        reads the registry document on every call (0017-D). ``_mfg_meta`` now only backs aggregate
+        dashboard/KPI iteration.
+        """
         self._mfg_meta[(tenant_id, document_id)] = metadata
         doc = self._mvp.registry.get(tenant_id, document_id)
         if doc is not None:
@@ -487,6 +497,8 @@ class ManufacturingSystem:
                 return None
         primary = chunks[0] if chunks else {}
         preview = self._preview_from_chunk(doc, primary) if doc and primary else {"kind": "text"}
+        if primary:
+            self._attach_visual_preview(principal, primary, preview)
         return {
             "document_id": detail["document_id"],
             "collection_id": detail["collection_id"],
@@ -498,6 +510,39 @@ class ManufacturingSystem:
             "chunks": chunks,
             "preview": preview,
         }
+
+    def _attach_visual_preview(self, principal: IdentityClaims, chunk: dict, preview: dict) -> None:
+        meta = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
+        asset_id = str(meta.get("asset_id") or "")
+        region_id = str(meta.get("region_id") or "")
+        if not asset_id:
+            return
+        preview["asset_id"] = asset_id
+        if region_id:
+            preview["region_id"] = region_id
+        asset_service = getattr(self._mvp, "assets", None)
+        get_visual_asset = getattr(asset_service, "get_visual_asset", None)
+        if not callable(get_visual_asset):
+            return
+        asset = get_visual_asset(principal, asset_id)
+        if not asset:
+            return
+        for region in asset.get("regions", []):
+            if region_id and region.get("region_id") == region_id:
+                preview["bbox"] = region.get("bbox")
+                crop_url = str(region.get("crop_url") or region.get("crop_uri") or "")
+                if crop_url:
+                    preview["crop_url"] = crop_url
+                break
+        for crop in asset.get("crops", []):
+            if region_id and crop.get("region_id") != region_id:
+                continue
+            crop_url = str(crop.get("crop_url") or crop.get("crop_uri") or "")
+            if crop_url:
+                preview["crop_url"] = crop_url
+            preview["crop_id"] = crop.get("crop_id")
+            preview["redaction_policy_ref"] = crop.get("redaction_policy_ref")
+            break
 
     def get_document_file(
         self, principal: IdentityClaims, document_id: str, *, max_bytes: int = 10_485_760
@@ -816,6 +861,11 @@ class ManufacturingSystem:
             principal=principal,
             factory_id=factory_id,
             collection_id=collection_id,  # FR-MFG-030 collection axis (None = cross-collection answer)
+            extra_client_metadata=(
+                {"visual_evidence": list(ans.visual_evidence_audit)}
+                if ans.visual_evidence_audit
+                else None
+            ),
         )
         # T061 — citation-access auditing (FR-MFG-021): when the answer path retrieves and SURVEYS
         # candidate citations as evidence (asserted citations, else the surveyed candidate documents),

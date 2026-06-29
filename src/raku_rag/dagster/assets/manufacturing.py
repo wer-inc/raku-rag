@@ -332,6 +332,7 @@ def _approval_metadata_checksum(meta: ManufacturingDocumentMetadata) -> str:
         "approval_status": meta.approval_status.value,
         "approval_source": meta.approval_source.value,
         "effective_date": meta.effective_date,
+        "valid_until": meta.valid_until,  # 0017-A: an expiry-only change MUST be re-propagated
         "approved_by": meta.approved_by,
         "approved_at": meta.approved_at,
         "obsolete_at": meta.obsolete_at,

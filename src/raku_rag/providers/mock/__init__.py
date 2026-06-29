@@ -17,6 +17,11 @@ from raku_rag.interfaces.base import Reranker
 from raku_rag.providers.embeddings import HashingEmbeddingProvider
 from raku_rag.providers.llms import ExtractiveLLMProvider
 from raku_rag.providers.rerankers import ScoreOrderReranker
+from raku_rag.providers.mock.visual import (
+    FakeAsyncDocumentAnalyzer,
+    FakeCaptioningProvider,
+    FakeVisionProvider,
+)
 
 # Advertised, auditable provider capability — no external training / zero retention (RT11/RT12).
 NO_TRAIN_CAPABILITY = {"no_train": True, "zero_retention": True, "provider": "mock"}
@@ -124,6 +129,9 @@ MOCK_PROVIDERS = {
     "rerank": MockRerankProvider,
     "guardrail": MockGuardrailProvider,
     "auth": MockAuthProvider,
+    "async_document_analyzer": FakeAsyncDocumentAnalyzer,
+    "captioning": FakeCaptioningProvider,
+    "vlm": FakeVisionProvider,
 }
 
 __all__ = [
@@ -132,6 +140,9 @@ __all__ = [
     "MockRerankProvider",
     "MockGuardrailProvider",
     "MockAuthProvider",
+    "FakeAsyncDocumentAnalyzer",
+    "FakeCaptioningProvider",
+    "FakeVisionProvider",
     "GuardrailDecision",
     "NO_TRAIN_CAPABILITY",
     "MOCK_PROVIDERS",

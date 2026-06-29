@@ -77,7 +77,8 @@ class ManufacturingDocumentMetadata:
 
     # --- approval metadata (FR-MFG-004/004a) ---
     approval_status: ApprovalStatus = ApprovalStatus.DRAFT
-    effective_date: str | None = None  # ISO date; valid = not future, not expired
+    effective_date: str | None = None  # ISO date; effective once today >= effective_date
+    valid_until: str | None = None  # ISO date; optional exclusive expiry; None=no expiry (0017-A)
     approved_by: str | None = None
     approved_at: str | None = None  # ISO timestamp
     obsolete_at: str | None = None
@@ -113,6 +114,7 @@ class ManufacturingDocumentMetadata:
             "regulation_refs": list(self.regulation_refs),
             "approval_status": self.approval_status.value,
             "effective_date": self.effective_date,
+            "valid_until": self.valid_until,
             "approved_by": self.approved_by,
             "approved_at": self.approved_at,
             "obsolete_at": self.obsolete_at,
@@ -158,6 +160,7 @@ class ManufacturingDocumentMetadata:
             regulation_refs=tuple(m.get("regulation_refs") or ()),
             approval_status=_enum(ApprovalStatus, m.get("approval_status"), ApprovalStatus.DRAFT),
             effective_date=m.get("effective_date"),
+            valid_until=m.get("valid_until"),
             approved_by=m.get("approved_by"),
             approved_at=m.get("approved_at"),
             obsolete_at=m.get("obsolete_at"),

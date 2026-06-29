@@ -99,6 +99,26 @@ class TestDeletedDocNotApprovedEvidenceInDraft(unittest.TestCase):
         )
         self.assertIsNotNone(self.sys.get_mfg_meta(T, _DOC))
 
+    def test_get_mfg_meta_reflects_out_of_band_registry_change_no_stale_cache(self) -> None:
+        # 0017-D: get_mfg_meta resolves from the registry SSOT on EVERY call. An out-of-band change
+        # (another instance / connector sync writes the registry document but not this process's cache)
+        # must be reflected immediately — a stale APPROVED entry must not survive an obsolete change.
+        from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY
+
+        first = self.sys.get_mfg_meta(T, _DOC)  # primes any cache; seed is APPROVED
+        self.assertEqual(first.approval_status, ApprovalStatus.APPROVED)
+        # Mutate the registry document directly, WITHOUT going through _set_mfg_meta.
+        doc = self.sys._mvp.registry.get(T, _DOC)
+        doc.metadata[MFG_META_KEY] = mfg_meta(
+            tenant_id=T, document_id=_DOC, approval_status=ApprovalStatus.OBSOLETE
+        ).to_mapping()
+        self.sys._mvp.registry.put(doc)
+        self.assertEqual(
+            self.sys.get_mfg_meta(T, _DOC).approval_status,
+            ApprovalStatus.OBSOLETE,
+            "get_mfg_meta must reflect the registry SSOT, not a stale process-local cache (0017-D)",
+        )
+
     def test_deleted_approved_doc_does_not_confirm_a_draft_safety_item(self) -> None:
         # POSITIVE CONTROL: while the approved source is live, the safety item IS confirmable — so a
         # degenerate "never confirm" implementation cannot pass this test.

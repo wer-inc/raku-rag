@@ -41,8 +41,13 @@ class ProviderPolicy:
     parser_mode: str = "aws_only"
     allowed_parser_providers: tuple[str, ...] = ("aws_textract", "tesseract", "customer_managed")
     allowed_ocr_providers: tuple[str, ...] = ("aws_textract", "tesseract", "customer_managed")
+    allowed_layout_providers: tuple[str, ...] = ("aws_textract", "tesseract", "customer_managed")
+    allowed_structured_providers: tuple[str, ...] = ("aws_textract", "customer_managed")
     allowed_llm_providers: tuple[str, ...] = ("bedrock", "customer_managed")
     allowed_embedding_providers: tuple[str, ...] = ("bedrock", "customer_managed")
+    allowed_visual_embedding_providers: tuple[str, ...] = ("bedrock", "customer_managed")
+    allowed_vlm_providers: tuple[str, ...] = ("bedrock", "customer_managed")
+    allowed_caption_providers: tuple[str, ...] = ("bedrock", "customer_managed")
     allowed_rerank_providers: tuple[str, ...] = ("bedrock", "customer_managed")
     allowed_regions: tuple[str, ...] = ()
     data_residency_requirement: str = "single_region"
@@ -51,6 +56,7 @@ class ProviderPolicy:
     no_train_required: bool = True
     customer_opt_in_required: bool = True
     customer_opt_in_status: str = "pending"
+    opt_in_status_by_family: Mapping[str, str] = field(default_factory=dict)
     fallback_policy: Mapping[str, object] = field(default_factory=dict)
 
     @classmethod
@@ -82,9 +88,23 @@ class ProviderPolicy:
                 "allowed_parser_providers", cls.allowed_parser_providers
             ),
             allowed_ocr_providers=tuple_field("allowed_ocr_providers", cls.allowed_ocr_providers),
+            allowed_layout_providers=tuple_field(
+                "allowed_layout_providers", cls.allowed_layout_providers
+            ),
+            allowed_structured_providers=tuple_field(
+                "allowed_structured_providers", cls.allowed_structured_providers
+            ),
             allowed_llm_providers=tuple_field("allowed_llm_providers", cls.allowed_llm_providers),
             allowed_embedding_providers=tuple_field(
                 "allowed_embedding_providers", cls.allowed_embedding_providers
+            ),
+            allowed_visual_embedding_providers=tuple_field(
+                "allowed_visual_embedding_providers",
+                cls.allowed_visual_embedding_providers,
+            ),
+            allowed_vlm_providers=tuple_field("allowed_vlm_providers", cls.allowed_vlm_providers),
+            allowed_caption_providers=tuple_field(
+                "allowed_caption_providers", cls.allowed_caption_providers
             ),
             allowed_rerank_providers=tuple_field(
                 "allowed_rerank_providers", cls.allowed_rerank_providers
@@ -100,6 +120,14 @@ class ProviderPolicy:
             no_train_required=bool(value.get("no_train_required", True)),
             customer_opt_in_required=bool(value.get("customer_opt_in_required", True)),
             customer_opt_in_status=str(value.get("customer_opt_in_status") or "pending"),
+            opt_in_status_by_family=(
+                {
+                    str(key): str(status)
+                    for key, status in dict(value.get("opt_in_status_by_family") or {}).items()
+                }
+                if isinstance(value.get("opt_in_status_by_family"), Mapping)
+                else {}
+            ),
             fallback_policy=fallback_policy,
         )
 
@@ -139,9 +167,14 @@ class ProviderPolicyEnforcer:
     _operation_allowlist_field = {
         "parse": "allowed_parser_providers",
         "ocr": "allowed_ocr_providers",
+        "layout": "allowed_layout_providers",
+        "structured": "allowed_structured_providers",
         "llm": "allowed_llm_providers",
         "embed": "allowed_embedding_providers",
         "embedding": "allowed_embedding_providers",
+        "visual_embedding": "allowed_visual_embedding_providers",
+        "vlm": "allowed_vlm_providers",
+        "caption": "allowed_caption_providers",
         "rerank": "allowed_rerank_providers",
     }
 
@@ -159,7 +192,7 @@ class ProviderPolicyEnforcer:
             if provider not in allowlist:
                 reasons.append(f"{provider} is not allowed for {operation}")
 
-        if operation in {"parse", "ocr"}:
+        if operation in {"parse", "ocr", "layout", "structured"}:
             if policy.parser_mode == "aws_only" and capability.provider_family not in {
                 "aws",
                 "oss",
@@ -168,7 +201,10 @@ class ProviderPolicyEnforcer:
                 reasons.append("aws_only parser policy forbids external parser/OCR providers")
             if provider == "azure_document_intelligence" and "azure" not in policy.parser_mode:
                 reasons.append("Azure Document Intelligence requires explicit parser_mode opt-in")
-            if provider == "google_document_ai" and "google" not in policy.parser_mode:
+            if (
+                provider in {"google_document_ai", "google_docai"}
+                and "google" not in policy.parser_mode
+            ):
                 reasons.append("Google Document AI requires explicit parser_mode opt-in")
 
         if (
@@ -194,7 +230,7 @@ class ProviderPolicyEnforcer:
         if (
             policy.customer_opt_in_required
             and not capability.customer_managed
-            and policy.customer_opt_in_status != "granted"
+            and self._opt_in_status(policy, capability.provider_family) != "granted"
         ):
             reasons.append("customer opt-in is required before this provider can process content")
 
@@ -226,23 +262,42 @@ class ProviderPolicyEnforcer:
                 if "aws_textract" in policy.allowed_parser_providers
                 else "customer_managed"
             )
-        if operation in {"embed", "embedding", "rerank", "llm"}:
+        if operation in {"layout", "structured"}:
+            return (
+                "aws_textract"
+                if "aws_textract" in getattr(policy, f"allowed_{operation}_providers")
+                else "customer_managed"
+            )
+        if operation in {
+            "embed",
+            "embedding",
+            "visual_embedding",
+            "rerank",
+            "llm",
+            "vlm",
+            "caption",
+        }:
             return "bedrock"
         return "customer_managed"
+
+    def _opt_in_status(self, policy: ProviderPolicy, provider_family: str) -> str:
+        if provider_family in policy.opt_in_status_by_family:
+            return str(policy.opt_in_status_by_family[provider_family])
+        return policy.customer_opt_in_status
 
 
 DEFAULT_PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
     "aws_textract": ProviderCapability(
         provider="aws_textract",
         provider_family="aws",
-        region="us-east-1",
+        region="ap-northeast-1",
         zero_retention=True,
         no_train=True,
     ),
     "bedrock": ProviderCapability(
         provider="bedrock",
         provider_family="aws",
-        region="us-east-1",
+        region="ap-northeast-1",
         zero_retention=True,
         no_train=True,
     ),
@@ -264,14 +319,42 @@ DEFAULT_PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
     "azure_document_intelligence": ProviderCapability(
         provider="azure_document_intelligence",
         provider_family="azure",
-        region="eastus",
+        region="japaneast",
         zero_retention=False,
         no_train=False,
     ),
     "google_document_ai": ProviderCapability(
         provider="google_document_ai",
         provider_family="google",
-        region="us",
+        region="asia-northeast1",
+        zero_retention=False,
+        no_train=False,
+    ),
+    "google_docai": ProviderCapability(
+        provider="google_docai",
+        provider_family="google",
+        region="asia-northeast1",
+        zero_retention=False,
+        no_train=False,
+    ),
+    "google_gemini": ProviderCapability(
+        provider="google_gemini",
+        provider_family="google",
+        region="asia-northeast1",
+        zero_retention=False,
+        no_train=False,
+    ),
+    "vertex_gemini": ProviderCapability(
+        provider="vertex_gemini",
+        provider_family="google",
+        region="asia-northeast1",
+        zero_retention=False,
+        no_train=False,
+    ),
+    "vertex_embeddings": ProviderCapability(
+        provider="vertex_embeddings",
+        provider_family="google",
+        region="asia-northeast1",
         zero_retention=False,
         no_train=False,
     ),

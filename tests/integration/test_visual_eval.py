@@ -58,6 +58,7 @@ class TestVisualEvaluationRunner(unittest.TestCase):
         self.assertEqual(run.metrics["visual_citation_accuracy"], 1.0)
         self.assertAlmostEqual(run.metrics["bbox_iou"], 1.0)
         self.assertEqual(run.metrics["visual_groundedness"], 1.0)
+        self.assertEqual(run.metrics["visual_grounding_subset_rate"], 1.0)
         self.assertGreaterEqual(run.metrics["p95_visual_answer_latency_ms"], 0.0)
         self.assertGreater(run.metrics["visual_query_cost"], 0.0)
         self.assertEqual(run.examples[0].retrieved_asset_ids, (result.asset.asset_id,))

@@ -12,6 +12,7 @@ export interface AssetRegion {
   page_number: number;
   bbox: BoundingBoxDto;
   crop_uri: string;
+  crop_url?: string;
 }
 
 export interface AssetCrop {
@@ -19,6 +20,7 @@ export interface AssetCrop {
   asset_id: string;
   region_id: string;
   crop_uri: string;
+  crop_url?: string;
   bbox: BoundingBoxDto;
   redaction_policy_ref: string;
 }

@@ -73,7 +73,7 @@ from raku_rag.persistence.oauth_connection import (  # noqa: E402
 from raku_rag.persistence.secret_store import secret_store_from_settings  # noqa: E402
 from raku_rag.services import oauth_token_resolver  # noqa: E402
 from raku_rag.providers.connectors import default_connector_from_env  # noqa: E402
-from raku_rag.workers.ingestion import IngestionRunStore  # noqa: E402
+from raku_rag.workers.ingestion import IngestionJobMessage, IngestionRunStore  # noqa: E402
 from raku_rag.workers.queue.sqs import SqsTaskQueue  # noqa: E402
 from workers.ingest.provider_policy import (  # noqa: E402
     ProviderPolicy,
@@ -81,6 +81,7 @@ from workers.ingest.provider_policy import (  # noqa: E402
     ProviderRequest,
     capability_for,
 )
+from raku_rag.chatbot import ChatbotService  # noqa: E402
 
 _LOCAL_DEMO_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _LOCAL_DEMO_DBS = {"raku", "raku_demo", "raku_parity"}
@@ -115,6 +116,14 @@ class _AdminSettingsStore:
         "parser_mode",
         "allowed_parser_providers",
         "allowed_ocr_providers",
+        "allowed_layout_providers",
+        "allowed_structured_providers",
+        "allowed_vlm_providers",
+        "allowed_caption_providers",
+        "allowed_llm_providers",
+        "allowed_embedding_providers",
+        "allowed_visual_embedding_providers",
+        "allowed_rerank_providers",
         "fallback_policy",
     }
     _residency_policy_keys = {
@@ -123,12 +132,25 @@ class _AdminSettingsStore:
         "data_residency_requirement",
         "cross_cloud_processing_allowed",
     }
-    _opt_in_policy_keys = {"customer_opt_in_required", "customer_opt_in_status"}
+    _opt_in_policy_keys = {
+        "customer_opt_in_required",
+        "customer_opt_in_status",
+        "opt_in_status_by_family",
+    }
     _model_policy_keys = {"embedding_provider", "llm_provider", "llm_model"}
 
-    def __init__(self, system: ProductionSystem, *, datasource_repo: object | None = None) -> None:
+    def __init__(
+        self,
+        system: ProductionSystem,
+        *,
+        datasource_repo: object | None = None,
+        provider_policy_repo: object | None = None,
+    ) -> None:
         self._system = system
         self._datasource_repo = datasource_repo
+        self._provider_policy_repo = provider_policy_repo or getattr(
+            system, "provider_policies", None
+        )
         self._items: dict[str, dict[str, dict[str, dict]]] = {name: {} for name in self._id_fields}
         self._acl: dict[str, dict[str, dict]] = {}
         self._budgets: dict[str, dict[str, dict]] = {}
@@ -226,8 +248,13 @@ class _AdminSettingsStore:
             "parser_mode": "aws_only",
             "allowed_parser_providers": ["aws_textract", "tesseract"],
             "allowed_ocr_providers": ["aws_textract", "tesseract"],
+            "allowed_layout_providers": ["aws_textract", "tesseract"],
+            "allowed_structured_providers": ["aws_textract", "customer_managed"],
             "allowed_llm_providers": ["bedrock", "customer_managed"],
             "allowed_embedding_providers": ["bedrock", "customer_managed"],
+            "allowed_visual_embedding_providers": ["bedrock", "customer_managed"],
+            "allowed_vlm_providers": ["bedrock", "customer_managed"],
+            "allowed_caption_providers": ["bedrock", "customer_managed"],
             "allowed_rerank_providers": ["bedrock", "customer_managed"],
             "allowed_regions": [],
             "provider_regions": {},
@@ -237,6 +264,7 @@ class _AdminSettingsStore:
             "no_train_required": True,
             "customer_opt_in_required": True,
             "customer_opt_in_status": "pending",
+            "opt_in_status_by_family": {},
             "provider_contract_refs": [],
             "provider_capability_snapshot": {},
             "fallback_policy": {
@@ -327,6 +355,10 @@ class _AdminSettingsStore:
     ) -> list[dict]:
         if resource == "datasources" and self._datasource_repo is not None:
             return self._datasource_repo.list(tenant_id, collection_id=collection_id)
+        if resource == "provider-policies" and hasattr(self._provider_policy_repo, "list_mappings"):
+            items = self._provider_policy_repo.list_mappings(tenant_id, collection_id)
+            if items:
+                return [copy.deepcopy(item) for item in items]
         self._ensure_default(tenant_id, resource)
         items = list(self._bucket(resource, tenant_id).values())
         if collection_id:
@@ -336,6 +368,10 @@ class _AdminSettingsStore:
     def get_resource(self, tenant_id: str, resource: str, item_id: str) -> dict | None:
         if resource == "datasources" and self._datasource_repo is not None:
             return self._datasource_repo.get(tenant_id, item_id)
+        if resource == "provider-policies" and hasattr(self._provider_policy_repo, "get_mapping"):
+            item = self._provider_policy_repo.get_mapping(tenant_id, "", item_id)
+            if item is not None:
+                return copy.deepcopy(item)
         self._ensure_default(tenant_id, resource)
         item = self._bucket(resource, tenant_id).get(item_id)
         return copy.deepcopy(item) if item else None
@@ -387,6 +423,9 @@ class _AdminSettingsStore:
             item.setdefault("raw_retrieved_context_storage", "disabled")
         if resource == "retrieval-profiles":
             item["version"] = int(item.get("version") or 1) + (1 if existing else 0)
+        if resource == "provider-policies" and hasattr(self._provider_policy_repo, "upsert"):
+            persisted = self._provider_policy_repo.upsert(tenant_id, item_id, item)
+            item.update(persisted)
 
         after = self._audit_snapshot(item)
         event = self._audit_event(
@@ -436,9 +475,17 @@ class _AdminSettingsStore:
         return decision.to_dict()
 
     def _default_provider_for_operation(self, operation: str) -> str:
-        if operation in {"parse", "ocr"}:
+        if operation in {"parse", "ocr", "layout", "structured"}:
             return "aws_textract"
-        if operation in {"embed", "embedding", "rerank", "llm"}:
+        if operation in {
+            "embed",
+            "embedding",
+            "visual_embedding",
+            "rerank",
+            "llm",
+            "vlm",
+            "caption",
+        }:
             return "bedrock"
         return "customer_managed"
 
@@ -695,26 +742,52 @@ def _query_time_range(qs: dict[str, list[str]]) -> tuple[str, str] | None:
     return (start, end) if start and end else None
 
 
+def _citation_json(c, *, include_approval: bool = False) -> dict:
+    item = {
+        "kind": c.kind,
+        "document_id": c.document_id,
+        "chunk_id": c.chunk_id,
+        "source_id": c.source_id,
+        "version": c.version,
+        "text_range": list(c.text_range) if getattr(c, "text_range", None) else None,
+        "retrieval_score": c.retrieval_score,
+        "asset_id": getattr(c, "asset_id", "") or None,
+        "page_number": getattr(c, "page_number", 0) or None,
+        "region_id": getattr(c, "region_id", "") or None,
+        "bbox": _jsonable(getattr(c, "bbox", None)),
+        "sheet_name": getattr(c, "sheet_name", "") or None,
+        "cell_range": getattr(c, "cell_range", "") or None,
+        "row_id": getattr(c, "row_id", "") or None,
+        "table_id": getattr(c, "table_id", "") or None,
+        "form_id": getattr(c, "form_id", "") or None,
+        "field_name": getattr(c, "field_name", "") or None,
+        "chart_id": getattr(c, "chart_id", "") or None,
+        "series_name": getattr(c, "series_name", "") or None,
+        "point_index": (
+            getattr(c, "point_index", -1) if getattr(c, "point_index", -1) >= 0 else None
+        ),
+        "column_name": getattr(c, "column_name", "") or None,
+        "pixel_derived": bool(getattr(c, "pixel_derived", False)),
+        "visual_evidence_verified": bool(getattr(c, "visual_evidence_verified", False)),
+        "visual_verifier_verdicts": _jsonable(getattr(c, "visual_verifier_verdicts", ())),
+    }
+    if include_approval:
+        item.update(
+            {
+                "approval_status": getattr(c, "approval_status", None),
+                "effective_date": getattr(c, "effective_date", None),
+                "approval_source": getattr(c, "approval_source", None),
+            }
+        )
+    return item
+
+
 def _answer_json(ans) -> dict:
     return {
         "status": ans.status,
         "text": ans.text,
         **answer_format_metadata(ans),
-        "citations": [
-            {
-                "kind": c.kind,
-                "document_id": c.document_id,
-                "chunk_id": c.chunk_id,
-                "source_id": c.source_id,
-                "version": c.version,
-                "text_range": list(c.text_range) if c.text_range else None,
-                "retrieval_score": c.retrieval_score,
-                "sheet_name": getattr(c, "sheet_name", "") or None,
-                "cell_range": getattr(c, "cell_range", "") or None,
-                "row_id": getattr(c, "row_id", "") or None,
-            }
-            for c in ans.citations
-        ],
+        "citations": [_citation_json(c) for c in ans.citations],
         "used_chunks": [
             {"chunk_id": cid, "document_id": cid.split(":")[0], "retrieval_score": 0.0}
             for cid in ans.used_chunks
@@ -743,20 +816,7 @@ def _manufacturing_answer_json(ans) -> dict:
         "text": ans.text,
         **answer_format_metadata(ans),
         "confidence": ans.confidence,
-        "citations": [
-            {
-                "kind": c.kind,
-                "document_id": c.document_id,
-                "chunk_id": c.chunk_id,
-                "source_id": c.source_id,
-                "version": c.version,
-                "retrieval_score": c.retrieval_score,
-                "approval_status": c.approval_status,
-                "effective_date": c.effective_date,
-                "approval_source": c.approval_source,
-            }
-            for c in ans.citations
-        ],
+        "citations": [_citation_json(c, include_approval=True) for c in ans.citations],
         "used_chunks": list(ans.used_chunks),
         "correlation_id": ans.correlation_id,
         "manufacturing": {
@@ -957,6 +1017,7 @@ def _ingest_response_json(job) -> dict:
         "document_id": job.document_id,
         "status": job.status,
         "status_url": f"/v1/admin/ingestion-runs/{job.ingestion_run_id}",
+        "sqs_message_id": getattr(job, "sqs_message_id", ""),
         "failure_reason": job.failure_reason,
         "chunk_count": job.chunk_count,
     }
@@ -1255,6 +1316,60 @@ def _source_sync_queue_from_env():
     return SqsTaskQueue(queue_url, dead_letter_queue_url=os.environ.get("SQS_DLQ_URL", ""))
 
 
+def _is_pdf_content_type(content_type: str) -> bool:
+    return content_type.lower().split(";", 1)[0].strip() == "application/pdf"
+
+
+def _safe_s3_key_part(value: object) -> str:
+    text = str(value or "")
+    return "".join(ch if ch.isalnum() or ch in "._=-" else "-" for ch in text).strip("-")
+
+
+def _stage_visual_upload_ref(
+    connector,
+    *,
+    tenant_id: str,
+    collection_id: str,
+    document_id: str,
+    document_ref: str,
+    raw: bytes,
+    content_type: str,
+) -> str:
+    if not _is_pdf_content_type(content_type) or document_ref.startswith("s3://"):
+        return document_ref
+    put_bytes = getattr(connector, "put_bytes", None)
+    if not callable(put_bytes):
+        return document_ref
+    checksum = hashlib.sha256(raw).hexdigest()
+    key = "/".join(
+        (
+            "uploads",
+            _safe_s3_key_part(tenant_id),
+            _safe_s3_key_part(collection_id),
+            _safe_s3_key_part(document_id),
+            f"{checksum}.pdf",
+        )
+    )
+    return str(put_bytes(key, raw, content_type=content_type))
+
+
+def _enqueue_upload_ingest_if_needed(queue, runs, run) -> str:
+    if queue is None or run.status != "queued" or run.sqs_message_id:
+        return ""
+    message = IngestionJobMessage(
+        idempotency_key=run.idempotency_key,
+        tenant_id=run.tenant_id,
+        collection_id=run.collection_id,
+        source_id=run.source_id,
+        document_id=run.document_id,
+        document_ref=run.document_ref,
+        content_type=run.content_type,
+    )
+    message_id = queue.enqueue_message(message.to_dict())
+    runs.mark_message_id(run, message_id)
+    return message_id
+
+
 def make_handler(system: ProductionSystem):
     connector = default_connector_from_env()
     runtime_settings = settings_from_env()
@@ -1268,12 +1383,19 @@ def make_handler(system: ProductionSystem):
         runs=runs,
         datasource_repo=datasource_repo,
         secret_store=secret_store,
+        child_queue=source_sync_queue,
+        connector=connector,
         oauth_connections=oauth_connections,
         oauth_secret_store=secret_store,
     )
     admin_settings = _AdminSettingsStore(system, datasource_repo=datasource_repo)
     eval_feedback = _EvalFeedbackStore(system)
     manufacturing_system = build_manufacturing_system_for_base(system)
+    chatbot = ChatbotService(
+        lambda principal, query, collection_id: _manufacturing_answer_json(
+            manufacturing_system.answer(principal, query, collection_id)
+        )
+    )
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()
     investment_api = InvestmentApiService()
@@ -1286,6 +1408,10 @@ def make_handler(system: ProductionSystem):
             self.send_header("content-length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def _send_result(self, result: tuple[int, dict]) -> None:
+            code, payload = result
+            self._send(code, _jsonable(payload))
 
         def _body(self) -> dict:
             n = int(self.headers.get("content-length") or 0)
@@ -1315,6 +1441,31 @@ def make_handler(system: ProductionSystem):
                 parts = [unquote(p) for p in path.split("/") if p]
                 if path == "/healthz":
                     self._send(200, {"status": "ok", "backend": "production-system"})
+                elif parts == ["internal", "chat", "sessions"]:
+                    qs = parse_qs(parsed.query)
+                    self._send_result(chatbot.list_sessions(_claims_from_headers(self.headers), qs))
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "chat", "sessions"]
+                    and parts[3] != "export"
+                ):
+                    self._send_result(
+                        chatbot.get_session(_claims_from_headers(self.headers), parts[3])
+                    )
+                elif len(parts) == 4 and parts[:3] == ["internal", "chat", "handoffs"]:
+                    self._send_result(
+                        chatbot.get_handoff(_claims_from_headers(self.headers), parts[3])
+                    )
+                elif parts == ["internal", "chat", "metrics"]:
+                    self._send_result(chatbot.metrics(_claims_from_headers(self.headers)))
+                elif parts == ["internal", "chat", "retention-policy"]:
+                    self._send_result(chatbot.retention_policy(_claims_from_headers(self.headers)))
+                elif parts == ["internal", "chat", "source-exposure-policies"]:
+                    self._send_result(
+                        chatbot.list_source_policies(_claims_from_headers(self.headers))
+                    )
+                elif parts == ["internal", "chat", "scenarios"]:
+                    self._send_result(chatbot.list_scenarios(_claims_from_headers(self.headers)))
                 elif parts == ["internal", "industries"]:
                     self._send(200, industry_api.list_industries(tenant_id=self._tenant_header()))
                 elif (
@@ -1711,6 +1862,74 @@ def make_handler(system: ProductionSystem):
                     query = str(body.get("query") or "")
                     collection_id = body.get("collection_id")
                     self._send(200, _answer_json(system.answer(principal, query, collection_id)))
+                elif parts == ["internal", "chat", "sessions"]:
+                    self._send_result(
+                        chatbot.create_session(_claims_from_headers(self.headers), body)
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "chat", "sessions"]
+                    and parts[4] == "messages"
+                ):
+                    self._send_result(
+                        chatbot.submit_message(_claims_from_headers(self.headers), parts[3], body)
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "chat", "sessions"]
+                    and parts[4] == "handoff"
+                ):
+                    self._send_result(
+                        chatbot.request_handoff(_claims_from_headers(self.headers), parts[3], body)
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "chat", "sessions"]
+                    and parts[4] == "feedback"
+                ):
+                    self._send_result(
+                        chatbot.submit_feedback(_claims_from_headers(self.headers), parts[3], body)
+                    )
+                elif parts == ["internal", "chat", "sessions", "export"]:
+                    self._send_result(chatbot.export_sessions(_claims_from_headers(self.headers)))
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "chat", "sessions"]
+                    and parts[4] == "delete-request"
+                ):
+                    self._send_result(
+                        chatbot.delete_request(_claims_from_headers(self.headers), parts[3])
+                    )
+                elif parts == ["internal", "chat", "source-exposure-policies", "validate"]:
+                    self._send_result(
+                        chatbot.validate_source_policy(_claims_from_headers(self.headers), body)
+                    )
+                elif parts == ["internal", "chat", "scenarios"]:
+                    self._send_result(
+                        chatbot.create_scenario(_claims_from_headers(self.headers), body)
+                    )
+                elif (
+                    len(parts) == 7
+                    and parts[:3] == ["internal", "chat", "scenarios"]
+                    and parts[4] == "versions"
+                ):
+                    self._send_result(
+                        chatbot.scenario_action(
+                            _claims_from_headers(self.headers),
+                            parts[3],
+                            parts[5],
+                            parts[6],
+                            body,
+                        )
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "chat", "scenarios"]
+                    and parts[4] == "rollback"
+                ):
+                    self._send_result(
+                        chatbot.rollback_scenario(_claims_from_headers(self.headers), parts[3])
+                    )
                 elif path == "/internal/manufacturing/answer":
                     # P2-1: the manufacturing safety overlay (high-risk gate, approved+effective
                     # evidence requirement, draft/obsolete never primary) on the deployed answer path.
@@ -1918,8 +2137,10 @@ def make_handler(system: ProductionSystem):
                     for field in ("collection_id", "source_id", "document_id", "document_ref"):
                         if not body.get(field):
                             raise KeyError(field)
+                    original_ref = str(body["document_ref"])
+                    content_type = str(body.get("content_type") or "text/plain")
                     try:
-                        raw = connector.fetch(str(body["document_ref"]))
+                        raw = connector.fetch(original_ref)
                     except Exception as fetch_exc:
                         # A document_ref the connector can't resolve (e.g. a file:// path from another
                         # container, or a bad data:/s3: ref) is a per-document INGEST failure, not a
@@ -1941,16 +2162,26 @@ def make_handler(system: ProductionSystem):
                     mfg_meta = _mfg_metadata_from_body(
                         body, principal.tenant_id, str(body["document_id"])
                     )
+                    staged_ref = _stage_visual_upload_ref(
+                        connector,
+                        tenant_id=principal.tenant_id,
+                        collection_id=str(body["collection_id"]),
+                        document_id=str(body["document_id"]),
+                        document_ref=original_ref,
+                        raw=raw,
+                        content_type=content_type,
+                    )
                     job = system.ingest_document(
                         tenant_id=principal.tenant_id,
                         collection_id=str(body["collection_id"]),
                         source_id=str(body["source_id"]),
                         document_id=str(body["document_id"]),
-                        document_ref=str(body["document_ref"]),
+                        document_ref=staged_ref,
                         raw=raw,
-                        content_type=str(body.get("content_type") or "text/plain"),
+                        content_type=content_type,
                         manufacturing_metadata=mfg_meta,
                     )
+                    _enqueue_upload_ingest_if_needed(source_sync_queue, runs, job)
                     self._send(
                         202 if job.status in {"queued", "running", "succeeded"} else 200,
                         _ingest_response_json(job),
@@ -2249,6 +2480,7 @@ def make_handler(system: ProductionSystem):
                     if retried is None:
                         self._send(404, {"error": "not found"})
                     else:
+                        _enqueue_upload_ingest_if_needed(source_sync_queue, runs, retried)
                         self._send(
                             202 if retried.status in {"queued", "running", "succeeded"} else 200,
                             _ingest_response_json(retried),
@@ -2291,7 +2523,9 @@ def make_handler(system: ProductionSystem):
                     except Exception as exc:
                         self._send(400, {"ok": False, "error": str(exc)})
                 elif (
-                    len(parts) == 4 and parts[:2] == ["internal", "sources"] and parts[3] == "preview"
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "sources"]
+                    and parts[3] == "preview"
                 ):
                     tenant_id = self._tenant_header()
                     try:
@@ -2397,10 +2631,32 @@ def make_handler(system: ProductionSystem):
 
         def do_PUT(self) -> None:  # noqa: N802
             try:
-                body = self._body()
                 path = urlparse(self.path).path
+                if not self._internal_auth_ok(path):
+                    return
+                body = self._body()
                 parts = [unquote(p) for p in path.split("/") if p]
-                if (
+                if len(parts) == 4 and parts[:3] == [
+                    "internal",
+                    "chat",
+                    "source-exposure-policies",
+                ]:
+                    self._send_result(
+                        chatbot.upsert_source_policy(
+                            _claims_from_headers(self.headers), parts[3], body
+                        )
+                    )
+                elif (
+                    len(parts) == 6
+                    and parts[:3] == ["internal", "chat", "scenarios"]
+                    and parts[4] == "versions"
+                ):
+                    self._send_result(
+                        chatbot.upsert_scenario_version(
+                            _claims_from_headers(self.headers), parts[3], parts[5], body
+                        )
+                    )
+                elif (
                     len(parts) == 4
                     and parts[:2] == ["internal", "admin"]
                     and parts[2] in admin_settings._id_fields
@@ -2485,6 +2741,8 @@ def make_handler(system: ProductionSystem):
         def do_DELETE(self) -> None:  # noqa: N802
             try:
                 path = urlparse(self.path).path
+                if not self._internal_auth_ok(path):
+                    return
                 parts = [unquote(p) for p in path.split("/") if p]
                 if len(parts) == 3 and parts[:2] == ["internal", "documents"]:
                     tenant_id = self._tenant_header()
