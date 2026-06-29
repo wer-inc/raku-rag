@@ -3954,7 +3954,6 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
       {screen.id === "source-list" && <SourceListBody />}
       {screen.id === "source-detail" && <SourceDetailBody sourceId={pathname.split("/").at(-1) ?? ""} />}
       {screen.id === "ingestion-runs" && <IngestionRunsBody />}
-      {screen.id === "file-browser" && <DocumentListBody />}
       {screen.id === "document-list" && <DocumentListBody />}
       {screen.id === "document-detail" && (
         <DocumentDetailBody documentId={pathname.split("/").at(-1) ?? ""} />
@@ -3981,6 +3980,7 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
       {screen.id === "usage-billing" && <BillingBody />}
       {screen.id === "support" && <SupportBody />}
       {screen.id === "add-source" && <AddSourceBody />}
+      {screen.id === "file-browser" && <FileBrowserBody />}
     </ScreenShell>
   );
 }
@@ -4420,6 +4420,714 @@ function makeOAuthNonce(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes); // CSPRNG, not Math.random — this nonce is the CSRF guard
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const FILE_BROWSER_FOLDER_KEY = "raku.fileFolders";
+const FILE_BROWSER_PAGE_SIZE = 24;
+const FILE_BROWSER_ROOT_FOLDER: FileBrowserFolder = {
+  created_at: "",
+  id: DEMO_COLLECTION,
+  name: "フォルダなし",
+};
+
+type FileBrowserFolder = {
+  created_at: string;
+  id: string;
+  name: string;
+};
+
+type FileBrowserFileRow = {
+  approval_status: string;
+  content_type?: string;
+  document_id: string;
+  effective_date: string | null;
+  filename: string;
+  folder_id: string;
+  ingested_at?: string;
+  source: "local" | "server";
+};
+
+const FILE_BROWSER_FILTERS = [
+  { label: "すべて", value: "all" },
+  { label: "レビュー待ち", value: "needs_review" },
+  { label: "正式根拠", value: "approved" },
+  { label: "旧版", value: "obsolete" },
+] as const;
+
+type FileBrowserFilter = (typeof FILE_BROWSER_FILTERS)[number]["value"];
+
+function loadFileBrowserFolders(): FileBrowserFolder[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(FILE_BROWSER_FOLDER_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item): FileBrowserFolder | null => {
+        if (!item || typeof item !== "object") return null;
+        const id = (item as { id?: unknown }).id;
+        const name = (item as { name?: unknown }).name;
+        const createdAt = (item as { created_at?: unknown }).created_at;
+        if (typeof id !== "string" || typeof name !== "string") return null;
+        return {
+          created_at: typeof createdAt === "string" ? createdAt : new Date().toISOString(),
+          id,
+          name,
+        };
+      })
+      .filter((item): item is FileBrowserFolder => Boolean(item));
+  } catch {
+    return [];
+  }
+}
+
+function saveFileBrowserFolders(folders: FileBrowserFolder[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(FILE_BROWSER_FOLDER_KEY, JSON.stringify(folders));
+  } catch {
+    /* best-effort */
+  }
+}
+
+function normalizeFolderName(value: string): string {
+  return value.trim().replace(/\s+/g, " ").slice(0, 64);
+}
+
+function fileBrowserFolderName(collectionId: string): string {
+  if (!collectionId || collectionId === DEMO_COLLECTION) return FILE_BROWSER_ROOT_FOLDER.name;
+  if (collectionId.startsWith("files-")) return collectionId.slice("files-".length) || "ファイル";
+  return collectionId;
+}
+
+function uniqueFolderId(name: string, folders: FileBrowserFolder[]): string {
+  const stem = cleanDocumentIdPart(name).toLowerCase() || Date.now().toString(36);
+  const used = new Set(folders.map((folder) => folder.id));
+  let candidate = `files-${stem}`;
+  let index = 2;
+  while (used.has(candidate)) {
+    candidate = `files-${stem}-${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function fileSourceId(folderId: string): string {
+  return `file-${cleanDocumentIdPart(folderId) || "folder"}`.slice(0, 120);
+}
+
+function isRootFileFolder(folderId: string | null | undefined): boolean {
+  return !folderId || folderId === DEMO_COLLECTION;
+}
+
+function isFileUploadSource(sourceId: string | null | undefined, sourceType?: string): boolean {
+  const normalizedSourceId = String(sourceId || "").toLowerCase();
+  const normalizedType = String(sourceType || "").toLowerCase();
+  return (
+    normalizedType === "upload" ||
+    normalizedType === "file" ||
+    normalizedSourceId === "upload" ||
+    normalizedSourceId.startsWith("file-")
+  );
+}
+
+function fileRowsFromDocs(
+  localDocs: IngestedDoc[],
+  apiDocs: ManufacturingDocumentSummary[],
+): FileBrowserFileRow[] {
+  const fileLocalDocs = localDocs.filter((doc) => isFileUploadSource(doc.source_id, doc.source_type));
+  const localIds = new Set(fileLocalDocs.map((doc) => doc.document_id));
+  const localRows = fileLocalDocs.map((doc) => ({
+    approval_status: doc.approval_status,
+    content_type: doc.content_type,
+    document_id: doc.document_id,
+    effective_date: doc.effective_date,
+    filename: doc.filename || doc.document_id,
+    folder_id: doc.collection_id || DEMO_COLLECTION,
+    ingested_at: doc.ingested_at,
+    source: "local" as const,
+  }));
+  const serverRows = apiDocs
+    .filter((doc) => isFileUploadSource(doc.source_id) && !localIds.has(doc.document_id))
+    .map((doc) => ({
+      approval_status: doc.approval_status,
+      document_id: doc.document_id,
+      effective_date: doc.effective_date,
+      filename: doc.document_id,
+      folder_id: doc.collection_id || DEMO_COLLECTION,
+      source: "server" as const,
+    }));
+  return [...localRows, ...serverRows];
+}
+
+function fileBrowserSearchText(row: FileBrowserFileRow): string {
+  const approval = documentApprovalView(row.approval_status);
+  return [
+    row.filename,
+    row.document_id,
+    row.content_type,
+    row.folder_id,
+    approval.label,
+    row.effective_date,
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function fileBrowserMatchesFilter(row: FileBrowserFileRow, filter: FileBrowserFilter): boolean {
+  if (filter === "needs_review") {
+    return row.approval_status === "pending_review" || row.approval_status === "draft";
+  }
+  if (filter === "approved") return row.approval_status === "approved";
+  if (filter === "obsolete") return row.approval_status === "obsolete";
+  return true;
+}
+
+function FileBrowserBody() {
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [folders, setFolders] = useState<FileBrowserFolder[]>([]);
+  const [localDocs, setLocalDocs] = useState<IngestedDoc[]>([]);
+  const [apiDocs, setApiDocs] = useState<ManufacturingDocumentSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [rootQuery, setRootQuery] = useState("");
+  const [fileQuery, setFileQuery] = useState("");
+  const [filter, setFilter] = useState<FileBrowserFilter>("all");
+  const [page, setPage] = useState(1);
+  const [showUploadForm, setShowUploadForm] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
+  const [uploadFailures, setUploadFailures] = useState<string[]>([]);
+  const [showNewFolder, setShowNewFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [folderError, setFolderError] = useState("");
+  const toast = useToast();
+
+  async function reloadFiles() {
+    setLoading(true);
+    setLoadError(null);
+    setLocalDocs(loadIngestedDocs());
+    try {
+      const token = await getSessionToken();
+      setApiDocs(await manufacturingDocuments(token));
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "ファイル一覧を読み込めませんでした");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setFolders(loadFileBrowserFolders());
+    void reloadFiles();
+  }, []);
+
+  const fileRows = useMemo(() => fileRowsFromDocs(localDocs, apiDocs), [apiDocs, localDocs]);
+  const allFolders = useMemo(() => {
+    const byId = new Map<string, FileBrowserFolder>();
+    for (const folder of folders) {
+      byId.set(folder.id, folder);
+    }
+    for (const row of fileRows) {
+      if (isRootFileFolder(row.folder_id)) continue;
+      if (!byId.has(row.folder_id)) {
+        byId.set(row.folder_id, {
+          created_at: row.ingested_at || "",
+          id: row.folder_id,
+          name: fileBrowserFolderName(row.folder_id),
+        });
+      }
+    }
+    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  }, [fileRows, folders]);
+
+  const currentFolder = currentFolderId
+    ? allFolders.find((folder) => folder.id === currentFolderId) ?? {
+        created_at: "",
+        id: currentFolderId,
+        name: fileBrowserFolderName(currentFolderId),
+      }
+    : null;
+  const uploadTarget = currentFolder ?? FILE_BROWSER_ROOT_FOLDER;
+
+  const visibleFolders = useMemo(() => {
+    const needle = rootQuery.trim().toLowerCase();
+    if (!needle) return allFolders;
+    return allFolders.filter((folder) => folder.name.toLowerCase().includes(needle));
+  }, [allFolders, rootQuery]);
+
+  const folderRows = currentFolder
+    ? fileRows.filter((row) => row.folder_id === currentFolder.id)
+    : [];
+  const rootRows = fileRows.filter((row) => isRootFileFolder(row.folder_id));
+  const filteredRows = useMemo(() => {
+    const needle = fileQuery.trim().toLowerCase();
+    return folderRows.filter((row) => {
+      if (!fileBrowserMatchesFilter(row, filter)) return false;
+      if (!needle) return true;
+      return fileBrowserSearchText(row).includes(needle);
+    });
+  }, [fileQuery, filter, folderRows]);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / FILE_BROWSER_PAGE_SIZE));
+  const pageRows = filteredRows.slice(
+    (page - 1) * FILE_BROWSER_PAGE_SIZE,
+    page * FILE_BROWSER_PAGE_SIZE,
+  );
+  const folderFileCount = (folderId: string) =>
+    fileRows.filter((row) => row.folder_id === folderId).length;
+  const reviewCount = folderRows.filter((row) =>
+    row.approval_status === "pending_review" || row.approval_status === "draft"
+  ).length;
+  const approvedCount = folderRows.filter((row) => row.approval_status === "approved").length;
+
+  useEffect(() => {
+    setPage(1);
+  }, [currentFolderId, fileQuery, filter]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+
+  function createFolder() {
+    const name = normalizeFolderName(newFolderName);
+    if (!name) {
+      setFolderError("フォルダ名を入力してください");
+      return;
+    }
+    if (allFolders.some((folder) => folder.name.toLowerCase() === name.toLowerCase())) {
+      setFolderError("同じ名前のフォルダがあります");
+      return;
+    }
+    const nextFolder = {
+      created_at: new Date().toISOString(),
+      id: uniqueFolderId(name, allFolders),
+      name,
+    };
+    const nextFolders = [nextFolder, ...folders];
+    setFolders(nextFolders);
+    saveFileBrowserFolders(nextFolders);
+    setFolderError("");
+    setNewFolderName("");
+    setShowNewFolder(false);
+    setCurrentFolderId(nextFolder.id);
+    setShowUploadForm(true);
+  }
+
+  async function onUpload() {
+    if (!files.length || uploading) return;
+    setUploading(true);
+    setUploadFailures([]);
+    const failures: string[] = [];
+    try {
+      const token = await getSessionToken();
+      for (const [i, file] of files.entries()) {
+        setUploadProgress(`${files.length} 件中 ${i + 1} 件目: ${file.name}`);
+        try {
+          const up = await uploadForIngest(file, token);
+          const docId = documentIdForUpload({ fileName: up.filename, index: i, total: files.length });
+          const ingest = await ingestDocument(
+            {
+              collection_id: uploadTarget.id,
+              source_id: fileSourceId(uploadTarget.id),
+              document_id: docId,
+              ref: up.ref,
+              content_type: up.content_type,
+              manufacturing: {
+                approval_status: "pending_review",
+                effective_date: todayIso(),
+                approval_source: "workflow",
+              },
+            },
+            token,
+          );
+          if (!uploadResultOk(ingest.status)) {
+            throw new Error(ingest.failure_reason || "取込に失敗しました");
+          }
+          recordIngestedDoc({
+            document_id: ingest.document_id ?? docId,
+            collection_id: uploadTarget.id,
+            source_id: fileSourceId(uploadTarget.id),
+            source_name: uploadTarget.name,
+            source_type: "upload",
+            filename: up.filename,
+            content_type: up.content_type,
+            approval_status: "pending_review",
+            effective_date: todayIso(),
+            ingestion_run_id: ingest.ingestion_run_id,
+            status: ingest.status,
+            chunk_count: ingest.chunk_count ?? 0,
+            ingested_at: new Date().toISOString(),
+          });
+        } catch (err) {
+          failures.push(`${file.name}: ${err instanceof Error ? err.message : "取込に失敗しました"}`);
+        }
+      }
+      setLocalDocs(loadIngestedDocs());
+      void reloadFiles();
+      if (failures.length === 0) {
+        toast(`${files.length} 件を取込しました。`, "success");
+        setFiles([]);
+        setFileInputKey((key) => key + 1);
+        setShowUploadForm(false);
+      } else {
+        setUploadFailures(failures);
+        toast(`一部の取込に失敗しました: ${failures[0]}`, "warning");
+      }
+    } finally {
+      setUploadProgress("");
+      setUploading(false);
+    }
+  }
+
+  function renderUploadPanel(panelId: string) {
+    return (
+      <div id={panelId} className="fb-upload-panel">
+        <label className="upload-drop">
+          <input
+            key={fileInputKey}
+            type="file"
+            multiple
+            accept={ACCEPT_EXT}
+            onChange={(event) => {
+              setFiles(Array.from(event.target.files ?? []));
+              setUploadFailures([]);
+            }}
+          />
+          <span className="upload-drop-main">{selectedFilesTitle(files)}</span>
+          <span className="upload-drop-sub">{selectedFilesDetail(files)}</span>
+        </label>
+        {uploadProgress && (
+          <p className="source-config-note" role="status" aria-live="polite">
+            {uploadProgress}
+          </p>
+        )}
+        {uploadFailures.length > 0 && (
+          <div className="fb-upload-errors" role="alert">
+            {uploadFailures.slice(0, 3).map((failure) => (
+              <p key={failure}>{failure}</p>
+            ))}
+          </div>
+        )}
+        <div className="screen-actions">
+          <button type="button" onClick={() => void onUpload()} disabled={files.length === 0 || uploading}>
+            {uploading ? "取込中..." : "アップロード取込"}
+          </button>
+          <button
+            type="button"
+            className="button-link"
+            onClick={() => {
+              setShowUploadForm(false);
+              setFiles([]);
+              setFileInputKey((key) => key + 1);
+              setUploadFailures([]);
+            }}
+          >
+            キャンセル
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentFolder) {
+    return (
+      <section className="fb-root">
+        <div className="fb-toolbar">
+          <div>
+            <h2 className="fb-heading">ファイル</h2>
+          </div>
+          <div className="fb-toolbar-actions">
+            <button
+              type="button"
+              className="button-link btn-approve"
+              aria-controls="root-file-upload-panel"
+              aria-expanded={showUploadForm}
+              onClick={() => {
+                setShowUploadForm((shown) => !shown);
+                setUploadFailures([]);
+                setShowNewFolder(false);
+              }}
+            >
+              アップロード
+            </button>
+            <button
+              type="button"
+              className="button-link"
+              aria-controls="file-folder-form"
+              aria-expanded={showNewFolder}
+              onClick={() => {
+                setShowNewFolder((shown) => !shown);
+                setFolderError("");
+                setShowUploadForm(false);
+              }}
+            >
+              フォルダを作成
+            </button>
+          </div>
+        </div>
+        {showUploadForm && renderUploadPanel("root-file-upload-panel")}
+        {showNewFolder && (
+          <form
+            id="file-folder-form"
+            className="fb-new-folder-row"
+            onSubmit={(event) => {
+              event.preventDefault();
+              createFolder();
+            }}
+          >
+            <label className="fb-new-folder-field">
+              <span>フォルダ名</span>
+              <input
+                type="text"
+                className="fb-new-folder-input"
+                value={newFolderName}
+                onChange={(event) => setNewFolderName(event.target.value)}
+                aria-describedby={folderError ? "file-folder-error" : undefined}
+                aria-invalid={folderError ? "true" : undefined}
+                autoFocus
+              />
+            </label>
+            <button type="submit" className="button-link btn-approve" disabled={!newFolderName.trim()}>
+              作成
+            </button>
+            <button
+              type="button"
+              className="button-link"
+              onClick={() => {
+                setShowNewFolder(false);
+                setNewFolderName("");
+                setFolderError("");
+              }}
+            >
+              キャンセル
+            </button>
+            {folderError && (
+              <p id="file-folder-error" className="fb-form-error" role="alert">
+                {folderError}
+              </p>
+            )}
+          </form>
+        )}
+        {loadError && <ScreenLoadError error={loadError} onRetry={() => void reloadFiles()} />}
+        {!loadError && (
+          <>
+            <section className="source-list-controls fb-controls" aria-label="フォルダの検索">
+              <label className="standalone-search source-list-search">
+                <span aria-hidden="true">⌕</span>
+                <input
+                  value={rootQuery}
+                  onChange={(event) => setRootQuery(event.target.value)}
+                  placeholder="フォルダ名で検索"
+                  aria-label="フォルダ名で検索"
+                />
+              </label>
+              <div className="source-list-summary" aria-live="polite">
+                <span>{visibleFolders.length} フォルダ</span>
+                <span>{fileRows.length} ファイル</span>
+              </div>
+            </section>
+            {loading ? (
+              <p className="fb-empty" role="status" aria-live="polite">読み込み中...</p>
+            ) : allFolders.length === 0 && rootRows.length === 0 ? (
+              <div className="standalone-empty-state">
+                <h4>ファイルはまだありません</h4>
+                <button type="button" className="standalone-empty-cta" onClick={() => setShowUploadForm(true)}>
+                  アップロード
+                </button>
+              </div>
+            ) : visibleFolders.length === 0 ? (
+              <div className="standalone-empty-state">
+                <h4>条件に合うフォルダはありません</h4>
+                <button type="button" className="standalone-empty-cta" onClick={() => setRootQuery("")}>
+                  検索をクリア
+                </button>
+              </div>
+            ) : (
+              <div className="fb-grid">
+                {visibleFolders.map((folder) => (
+                  <button
+                    key={folder.id}
+                    type="button"
+                    className="fb-folder-card"
+                    onClick={() => {
+                      setCurrentFolderId(folder.id);
+                      setShowUploadForm(false);
+                    }}
+                  >
+                    <span className="fb-folder-icon" aria-hidden="true" />
+                    <span className="fb-item-name">{folder.name}</span>
+                    <span className="fb-item-meta">{folderFileCount(folder.id)} 件</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {!loading && rootRows.length > 0 && (
+              <section className="fb-root-files" aria-label="フォルダなしのファイル">
+                <div className="fb-section-heading">
+                  <h3>フォルダなし</h3>
+                  <span>{rootRows.length} 件</span>
+                </div>
+                <div className="fb-grid">
+                  {rootRows.map((file) => {
+                    const approval = documentApprovalView(file.approval_status);
+                    return (
+                      <article key={`${file.source}-${file.document_id}`} className="fb-file-card">
+                        <span className="fb-file-icon" aria-hidden="true" />
+                        <span className="fb-item-name" title={file.filename}>{file.filename}</span>
+                        <span className={`review-queue-status ${approval.cls}`}>{approval.label}</span>
+                        <span className="fb-item-meta">
+                          {file.source === "local" ? "取込直後" : "文書一覧"}
+                          {file.effective_date ? ` · 発効 ${file.effective_date}` : ""}
+                        </span>
+                        <Link href={`/documents/${file.document_id}`} className="fb-file-link">
+                          詳細
+                        </Link>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="fb-root">
+      <nav className="fb-breadcrumb" aria-label="パス">
+        <button
+          type="button"
+          className="fb-bc-link"
+          onClick={() => {
+            setCurrentFolderId(null);
+            setShowUploadForm(false);
+            setFiles([]);
+            setUploadFailures([]);
+          }}
+        >
+          ファイル
+        </button>
+        <span className="fb-bc-sep" aria-hidden="true">›</span>
+        <span className="fb-bc-current">{currentFolder.name}</span>
+      </nav>
+      <div className="fb-toolbar">
+        <div>
+          <h2 className="fb-heading">{currentFolder.name}</h2>
+        </div>
+        <button
+          type="button"
+          className="button-link btn-approve"
+          aria-controls="file-upload-panel"
+          aria-expanded={showUploadForm}
+          onClick={() => setShowUploadForm((shown) => !shown)}
+        >
+          アップロード
+        </button>
+      </div>
+      {showUploadForm && (
+        renderUploadPanel("file-upload-panel")
+      )}
+      <section className="source-list-controls fb-controls" aria-label="ファイルの検索と絞り込み">
+        <label className="standalone-search source-list-search">
+          <span aria-hidden="true">⌕</span>
+          <input
+            value={fileQuery}
+            onChange={(event) => setFileQuery(event.target.value)}
+            placeholder="ファイル名・状態で検索"
+            aria-label="ファイル名・状態で検索"
+          />
+        </label>
+        <div className="source-list-filter" role="group" aria-label="ファイル状態で絞り込み">
+          {FILE_BROWSER_FILTERS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={filter === option.value ? "source-filter-button active" : "source-filter-button"}
+              aria-pressed={filter === option.value}
+              onClick={() => setFilter(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <div className="source-list-summary" aria-live="polite">
+          <span>{filteredRows.length} 件表示</span>
+          <span>レビュー待ち {reviewCount} 件</span>
+          <span>正式根拠 {approvedCount} 件</span>
+        </div>
+      </section>
+      {loading ? (
+        <p className="fb-empty" role="status" aria-live="polite">読み込み中...</p>
+      ) : folderRows.length === 0 ? (
+        <div className="standalone-empty-state">
+          <h4>ファイルはまだありません</h4>
+          <button type="button" className="standalone-empty-cta" onClick={() => setShowUploadForm(true)}>
+            アップロード
+          </button>
+        </div>
+      ) : filteredRows.length === 0 ? (
+        <div className="standalone-empty-state">
+          <h4>条件に合うファイルはありません</h4>
+          <button
+            type="button"
+            className="standalone-empty-cta"
+            onClick={() => {
+              setFileQuery("");
+              setFilter("all");
+            }}
+          >
+            条件をクリア
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="fb-grid">
+            {pageRows.map((file) => {
+              const approval = documentApprovalView(file.approval_status);
+              return (
+                <article key={`${file.source}-${file.document_id}`} className="fb-file-card">
+                  <span className="fb-file-icon" aria-hidden="true" />
+                  <span className="fb-item-name" title={file.filename}>{file.filename}</span>
+                  <span className={`review-queue-status ${approval.cls}`}>{approval.label}</span>
+                  <span className="fb-item-meta">
+                    {file.source === "local" ? "取込直後" : "文書一覧"}
+                    {file.effective_date ? ` · 発効 ${file.effective_date}` : ""}
+                  </span>
+                  <Link href={`/documents/${file.document_id}`} className="fb-file-link">
+                    詳細
+                  </Link>
+                </article>
+              );
+            })}
+          </div>
+          {totalPages > 1 && (
+            <nav className="source-list-pagination" aria-label="ファイルのページ">
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.max(1, current - 1))}
+                disabled={page <= 1}
+              >
+                前へ
+              </button>
+              <span>
+                {page} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                disabled={page >= totalPages}
+              >
+                次へ
+              </button>
+            </nav>
+          )}
+        </>
+      )}
+    </section>
+  );
 }
 
 function AddSourceBody() {
