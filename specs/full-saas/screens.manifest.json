@@ -132,6 +132,22 @@
       "status": "spec"
     },
     {
+      "id": "file-browser",
+      "category": "knowledge-sources",
+      "route": "/files",
+      "title": "File Browser",
+      "absorbs": [],
+      "data": ["collections", "documents", "upload_result"],
+      "apis": [
+        { "method": "POST", "path": "/v1/ingest", "status": "existing" },
+        { "method": "GET", "path": "/v1/manufacturing/documents", "status": "existing" }
+      ],
+      "states": ["loading", "empty", "error", "ready", "uploading"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": ["add-source"],
+      "status": "spec"
+    },
+    {
       "id": "source-list",
       "category": "knowledge-sources",
       "route": "/sources/list",

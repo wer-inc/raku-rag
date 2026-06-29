@@ -69,6 +69,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "データ",
     items: [
+      { href: "/files", label: "ファイル", icon: "documents" },
       { href: "/sources/list", label: "外部接続", icon: "sources" },
       { href: "/documents", label: "ドキュメント", icon: "documents" },
       { href: "/sources", label: "事例検索", icon: "search" },

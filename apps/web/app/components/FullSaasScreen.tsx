@@ -1375,6 +1375,7 @@ function SourceSearchBody() {
 
 function screenTitle(screen: ManifestScreen): string {
   const titles: Record<string, string> = {
+    "file-browser": "ファイル",
     answers: "質問する",
     chatbot: "チャットボット",
     "answer-history": "回答履歴",
@@ -3953,6 +3954,7 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
       {screen.id === "source-list" && <SourceListBody />}
       {screen.id === "source-detail" && <SourceDetailBody sourceId={pathname.split("/").at(-1) ?? ""} />}
       {screen.id === "ingestion-runs" && <IngestionRunsBody />}
+      {screen.id === "file-browser" && <DocumentListBody />}
       {screen.id === "document-list" && <DocumentListBody />}
       {screen.id === "document-detail" && (
         <DocumentDetailBody documentId={pathname.split("/").at(-1) ?? ""} />

@@ -40,6 +40,7 @@ const TENANT_ADMIN_ONLY_HREFS = new Set(["/reviews/settings"]);
 // avoid a "nav shows it, API 403s it" dead screen. (issue 0011 DoD#4 / 0024)
 const OPS_OWNER_HREFS = new Set([
   ...FIELD_USER_HREFS,
+  "/files",
   "/sources/list",
   "/sources",
   "/documents",
