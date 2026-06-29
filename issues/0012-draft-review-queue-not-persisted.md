@@ -1,6 +1,13 @@
 # 0012 — AI ドラフトのレビューキューがプロセス内メモリで非永続(系統 ①)
 
-> Priority: **P1 / High** / Status: Open / Labels: `manufacturing`, `persistence`, `review-queue`, `production`
+> Priority: **P1 / High** / Status: **Resolved(BE landed・コミット待ち, 2026-06-28)** / Labels: `manufacturing`, `persistence`, `review-queue`, `production`
+>
+> **対応:** DraftService のストレージを `DraftStore` Protocol へ切り出し(`api/draft_store.py`):`InMemoryDraftStore`(単体テスト/単一プロセス MVP)と
+> `PostgresDraftStore`(`persistence/manufacturing_drafts.py`、dead だった `manufacturing_draft_artifacts` を runtime read/write)を差し替え可能に。
+> `build_manufacturing_system_for_base`(production.py)が `draft_store=PostgresDraftStore(base._conn)` を配線(audit/policy と同条件)。
+> id 採番は `itertools.count`(プロセスローカル=多インスタンス衝突)から uuid ベースへ。スキーマ追加列(B1#9 の 8 列)は migration を避けて `payload` jsonb に同梱(無損失 round-trip)。
+> **検証:** Tier-A 全 1063 緑 / **Tier-B 実 PG で 3 本緑**(別ストアインスタンスで保持=再起動相当 / mutation 永続 / list フィルタ+テナント分離 RLS) / 既存 372 透過 / error-contract テストが PostgresDraftStore をサーバ本番配線経路で 409 検証。`_FakeConnection` に draft テーブル emulation を追加。
+> 残: payload 同梱フィールドの索引化列昇格は follow-up(本対応はクエリ対象=status/reviewer_id を実列で持つため list は十分)。
 
 ## 背景(なぜ今)
 

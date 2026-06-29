@@ -486,6 +486,13 @@ def build_manufacturing_system_for_base(base: ProductionSystem) -> "Manufacturin
     from raku_rag.persistence.manufacturing_audit import PostgresManufacturingAuditLogWriter
     from raku_rag.persistence.manufacturing_governance import PostgresDataUsePolicyStore
 
+    # NOTE (issue 0012): PostgresDraftStore is implemented and unit/Tier-B tested, but is NOT wired
+    # here yet. Activating it requires first correcting the manufacturing_draft_artifacts CHECK
+    # constraint `NOT (created_by='ai' AND status='approved')`, which currently rejects the legitimate
+    # human-approved AI draft (created_by stays 'ai' as provenance; approval is attributed by
+    # reviewer_id). That constraint governs the draft-approval safety boundary (always human per
+    # CLAUDE.md), so the corrective migration is a separate, human-approved change. Until then the draft
+    # queue uses the in-memory store (draft_store defaults to None -> InMemoryDraftStore).
     return ManufacturingSystem(
         settings=base.settings,
         base_system=base,

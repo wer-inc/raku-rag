@@ -30,6 +30,7 @@ from raku_rag.domain.models import IdentityClaims, ScopeType, SubjectType
 from raku_rag.manufacturing.api import record_answer_decision, record_answer_feedback
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, ManufacturingAnswerService
 from raku_rag.manufacturing.api.dashboard import DashboardService
+from raku_rag.manufacturing.api.draft_store import DraftStore
 from raku_rag.manufacturing.api.drafts import DraftService
 from raku_rag.manufacturing.api.improvements import ImprovementQueueService
 from raku_rag.manufacturing.api.ingest_metadata import ManufacturingSyncStatusService
@@ -122,6 +123,7 @@ class ManufacturingSystem:
         base_system: MvpSystem | None = None,
         audit: AuditLogWriter | None = None,
         policy_store: DataUsePolicyStore | None = None,
+        draft_store: DraftStore | None = None,
     ) -> None:
         self._mvp = base_system or MvpSystem(settings)
         self.control_plane = InMemoryControlPlaneStateRepository()
@@ -204,6 +206,7 @@ class ManufacturingSystem:
             get_mfg_meta=self.get_mfg_meta,
             can_use_source=self._can_use_draft_source,
             today=today,
+            store=draft_store,
         )
         # US3 — similar past TroubleCase retrieval (FR-MFG-008/009, Hard Rule 4). The knowledge graph
         # is registered in an in-memory store; the retriever runs the symptom query through the SAME

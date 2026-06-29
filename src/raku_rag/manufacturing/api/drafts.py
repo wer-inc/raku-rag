@@ -19,11 +19,14 @@ stdlib only.
 
 from __future__ import annotations
 
-import itertools
-from dataclasses import replace
 from datetime import date, datetime, timezone
 
 from raku_rag.domain.models import IdentityClaims
+from raku_rag.manufacturing.api.draft_store import (
+    DraftStore,
+    InMemoryDraftStore,
+    copy_artifact,
+)
 from raku_rag.manufacturing.domain.audit import AuditLogEntry
 from raku_rag.manufacturing.domain.draft import DraftArtifact, DraftType
 from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
@@ -54,14 +57,15 @@ class DraftService:
         get_mfg_meta: GetMfgMeta | None = None,
         can_use_source: CanUseSource | None = None,
         today: date | None = None,
+        store: DraftStore | None = None,
     ) -> None:
         self._audit = audit
         self._can_use_source = can_use_source
         self._generator = DraftGenerator(get_mfg_meta=get_mfg_meta, today=today)
         self._review = ReviewWorkflow()
-        # (tenant_id, artifact_id) -> canonical DraftArtifact (the system of record).
-        self._store: dict[tuple[str, str], DraftArtifact] = {}
-        self._ids = itertools.count(1)
+        # The canonical DraftArtifact lives behind the DraftStore seam (in-memory for unit tests /
+        # single-process MVP; Postgres in production so the queue survives restart — issue 0012).
+        self._store: DraftStore = store or InMemoryDraftStore()
 
     # --- POST /v1/manufacturing/drafts -------------------------------------------------------------
     def create(
@@ -78,7 +82,7 @@ class DraftService:
         """Generate a draft (ALWAYS status=draft, created_by=ai), persist it, audit, return a copy."""
         tenant_id = principal.tenant_id
         draft_type = coerce_kind(kind)
-        artifact_id = f"art_{next(self._ids)}"
+        artifact_id = self._store.next_id()
         created_at = _now()
 
         # SC-MFG-008 / data-model.md:86,146-147 — a draft must NOT surface a tombstoned or
@@ -113,8 +117,8 @@ class DraftService:
         artifact.audit_log_ref = log_id
 
         # Persist the canonical record; hand the caller a detached copy.
-        self._store[(tenant_id, artifact_id)] = artifact
-        return self._copy(artifact)
+        self._store.add(artifact)
+        return copy_artifact(artifact)
 
     # --- GET /v1/manufacturing/drafts (list) -------------------------------------------------------
     def list(
@@ -125,23 +129,13 @@ class DraftService:
         reviewer_id: str | None = None,
     ) -> list[DraftArtifact]:
         """Return detached copies of tenant drafts, newest first. Optional status/reviewer filters."""
-        items: list[DraftArtifact] = []
-        for (tid, _aid), artifact in self._store.items():
-            if tid != tenant_id:
-                continue
-            if status and artifact.status.value != status:
-                continue
-            if reviewer_id and artifact.reviewer_id != reviewer_id:
-                continue
-            items.append(self._copy(artifact))
-        items.sort(key=lambda a: a.created_at or "", reverse=True)
-        return items
+        return self._store.list(tenant_id, status=status, reviewer_id=reviewer_id)
 
     # --- GET /v1/manufacturing/drafts/{artifact_id} ------------------------------------------------
     def get(self, tenant_id: str, artifact_id: str) -> DraftArtifact | None:
         """Return a DETACHED COPY of the stored draft (external mutation cannot flip the record)."""
-        artifact = self._store.get((tenant_id, artifact_id))
-        return self._copy(artifact) if artifact is not None else None
+        artifact = self._store.get(tenant_id, artifact_id)
+        return copy_artifact(artifact) if artifact is not None else None
 
     # --- POST .../assign ---------------------------------------------------------------------------
     def assign(
@@ -161,13 +155,14 @@ class DraftService:
             reviewer_group=reviewer_group,
             reviewer_role=reviewer_role,
         )
+        self._store.save(artifact)
         self._audit_transition(
             artifact,
             action="draft.assign",
             actor_id=reviewer_id,
             decision=artifact.status.value,
         )
-        return self._copy(artifact)
+        return copy_artifact(artifact)
 
     # --- POST .../review ---------------------------------------------------------------------------
     def review(
@@ -184,27 +179,23 @@ class DraftService:
         # decide() raises PermissionError on a no-reviewer approve WITHOUT mutating the artifact, so
         # the canonical record stays draft (Hard Rule 1, SC-MFG-007).
         self._review.decide(artifact, reviewer=reviewer, decision=decision, comment=comment)
+        # decide() raised above on a no-reviewer approve WITHOUT mutating, so we only reach save() on a
+        # legal transition — the canonical record is persisted (Postgres) or re-put (in-memory).
+        self._store.save(artifact)
         self._audit_transition(
             artifact,
             action="draft.review",
             actor_id=artifact.reviewer_id,
             decision=artifact.approval_decision or artifact.status.value,
         )
-        return self._copy(artifact)
+        return copy_artifact(artifact)
 
     # --- internals ---------------------------------------------------------------------------------
     def _require(self, tenant_id: str, artifact_id: str) -> DraftArtifact:
-        artifact = self._store.get((tenant_id, artifact_id))
+        artifact = self._store.get(tenant_id, artifact_id)
         if artifact is None:
             raise ValueError(f"draft not found: {artifact_id}")
         return artifact
-
-    @staticmethod
-    def _copy(artifact: DraftArtifact) -> DraftArtifact:
-        """Detached shallow copy; ``content`` is copied so callers can't mutate the stored body."""
-        clone = replace(artifact)
-        clone.content = dict(artifact.content)
-        return clone
 
     def _audit_generation(self, artifact: DraftArtifact, *, actor_id: str | None) -> str:
         """Audit DraftArtifact generation: time / creator / template / source docs (FR-MFG-010b)."""
