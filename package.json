@@ -10,6 +10,14 @@
   "engines": {
     "node": ">=20"
   },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.10"
+    },
+    "ai": {
+      "jsondiffpatch": "0.7.2"
+    }
+  },
   "scripts": {
     "build:shared": "npm run build --workspace @raku-rag/shared",
     "dev:api": "npm run start:dev --workspace @raku-rag/api",
