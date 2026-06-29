@@ -157,6 +157,7 @@ export async function POST(req: Request) {
     "x-amz-meta-raku-user-id": userSegment,
     "x-amz-meta-raku-upload-id": uploadId,
   };
+  const uploadHeaders = { "content-type": contentType, ...metadataHeaders };
 
   const client = new S3Client({ region });
   const command = new PutObjectCommand({
@@ -169,12 +170,16 @@ export async function POST(req: Request) {
       "raku-upload-id": uploadId,
     },
   });
-  const uploadUrl = await getSignedUrl(client, command, { expiresIn: SIGNED_URL_TTL_SECONDS });
+  const uploadUrl = await getSignedUrl(client, command, {
+    expiresIn: SIGNED_URL_TTL_SECONDS,
+    signableHeaders: new Set(Object.keys(uploadHeaders)),
+    unhoistableHeaders: new Set(Object.keys(metadataHeaders)),
+  });
 
   return NextResponse.json({
     upload_url: uploadUrl,
     method: "PUT",
-    headers: { "content-type": contentType, ...metadataHeaders },
+    headers: uploadHeaders,
     ref: `s3://${bucket}/${key}`,
     upload_id: uploadId,
     filename,

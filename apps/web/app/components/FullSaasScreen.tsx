@@ -4830,6 +4830,40 @@ function FileBrowserBody() {
     );
   }
 
+  function renderFileList(rows: FileBrowserFileRow[]) {
+    return (
+      <div className="fb-list" role="list">
+        {rows.map((file) => {
+          const approval = documentApprovalView(file.approval_status);
+          return (
+            <article key={`${file.source}-${file.document_id}`} className="fb-list-row" role="listitem">
+              <div className="fb-list-main">
+                <span className="fb-file-icon" aria-hidden="true" />
+                <div className="fb-list-title">
+                  <h4 title={file.filename}>{file.filename}</h4>
+                  <p>{file.document_id}</p>
+                </div>
+              </div>
+              <div className="fb-list-cell">
+                <span className={`review-queue-status ${approval.cls}`}>{approval.label}</span>
+                <span>{file.source === "local" ? "アップロード済み" : "文書一覧"}</span>
+              </div>
+              <div className="fb-list-cell">
+                <span>{isRootFileFolder(file.folder_id) ? FILE_BROWSER_ROOT_FOLDER.name : fileBrowserFolderName(file.folder_id)}</span>
+                <span>{file.effective_date ? `発効日 ${file.effective_date}` : "発効日なし"}</span>
+              </div>
+              <div className="fb-list-actions">
+                <Link href={`/documents/${file.document_id}`} className="button-link secondary">
+                  詳細
+                </Link>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    );
+  }
+
   if (!currentFolder) {
     return (
       <section className="fb-root">
@@ -4936,57 +4970,59 @@ function FileBrowserBody() {
                   アップロード
                 </button>
               </div>
-            ) : visibleFolders.length === 0 ? (
+            ) : allFolders.length > 0 && visibleFolders.length === 0 ? (
               <div className="standalone-empty-state">
                 <h4>条件に合うフォルダはありません</h4>
                 <button type="button" className="standalone-empty-cta" onClick={() => setRootQuery("")}>
                   検索をクリア
                 </button>
               </div>
-            ) : (
-              <div className="fb-grid">
+            ) : visibleFolders.length > 0 ? (
+              <div className="fb-list" role="list">
                 {visibleFolders.map((folder) => (
-                  <button
+                  <article
                     key={folder.id}
-                    type="button"
-                    className="fb-folder-card"
-                    onClick={() => {
-                      setCurrentFolderId(folder.id);
-                      setShowUploadForm(false);
-                    }}
+                    className="fb-list-row fb-folder-row"
+                    role="listitem"
                   >
-                    <span className="fb-folder-icon" aria-hidden="true" />
-                    <span className="fb-item-name">{folder.name}</span>
-                    <span className="fb-item-meta">{folderFileCount(folder.id)} 件</span>
-                  </button>
+                    <div className="fb-list-main">
+                      <span className="fb-folder-icon" aria-hidden="true" />
+                      <div className="fb-list-title">
+                        <h4>{folder.name}</h4>
+                        <p>フォルダ</p>
+                      </div>
+                    </div>
+                    <div className="fb-list-cell">
+                      <span>{folderFileCount(folder.id)} 件</span>
+                      <span>{folder.created_at ? `作成 ${folder.created_at.slice(0, 10)}` : "作成日なし"}</span>
+                    </div>
+                    <div className="fb-list-cell">
+                      <span>このフォルダにアップロードできます</span>
+                      <span>サブフォルダなし</span>
+                    </div>
+                    <div className="fb-list-actions">
+                      <button
+                        type="button"
+                        className="button-link secondary fb-list-open"
+                        onClick={() => {
+                          setCurrentFolderId(folder.id);
+                          setShowUploadForm(false);
+                        }}
+                      >
+                        開く
+                      </button>
+                    </div>
+                  </article>
                 ))}
               </div>
-            )}
+            ) : null}
             {!loading && rootRows.length > 0 && (
               <section className="fb-root-files" aria-label="フォルダなしのファイル">
                 <div className="fb-section-heading">
                   <h3>フォルダなし</h3>
                   <span>{rootRows.length} 件</span>
                 </div>
-                <div className="fb-grid">
-                  {rootRows.map((file) => {
-                    const approval = documentApprovalView(file.approval_status);
-                    return (
-                      <article key={`${file.source}-${file.document_id}`} className="fb-file-card">
-                        <span className="fb-file-icon" aria-hidden="true" />
-                        <span className="fb-item-name" title={file.filename}>{file.filename}</span>
-                        <span className={`review-queue-status ${approval.cls}`}>{approval.label}</span>
-                        <span className="fb-item-meta">
-                          {file.source === "local" ? "取込直後" : "文書一覧"}
-                          {file.effective_date ? ` · 発効 ${file.effective_date}` : ""}
-                        </span>
-                        <Link href={`/documents/${file.document_id}`} className="fb-file-link">
-                          詳細
-                        </Link>
-                      </article>
-                    );
-                  })}
-                </div>
+                {renderFileList(rootRows)}
               </section>
             )}
           </>
@@ -5084,25 +5120,7 @@ function FileBrowserBody() {
         </div>
       ) : (
         <>
-          <div className="fb-grid">
-            {pageRows.map((file) => {
-              const approval = documentApprovalView(file.approval_status);
-              return (
-                <article key={`${file.source}-${file.document_id}`} className="fb-file-card">
-                  <span className="fb-file-icon" aria-hidden="true" />
-                  <span className="fb-item-name" title={file.filename}>{file.filename}</span>
-                  <span className={`review-queue-status ${approval.cls}`}>{approval.label}</span>
-                  <span className="fb-item-meta">
-                    {file.source === "local" ? "取込直後" : "文書一覧"}
-                    {file.effective_date ? ` · 発効 ${file.effective_date}` : ""}
-                  </span>
-                  <Link href={`/documents/${file.document_id}`} className="fb-file-link">
-                    詳細
-                  </Link>
-                </article>
-              );
-            })}
-          </div>
+          {renderFileList(pageRows)}
           {totalPages > 1 && (
             <nav className="source-list-pagination" aria-label="ファイルのページ">
               <button

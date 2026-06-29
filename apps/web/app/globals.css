@@ -5415,7 +5415,7 @@ textarea:focus-visible,
 }
 
 .fb-bc-link:focus-visible,
-.fb-folder-card:focus-visible,
+.fb-list-open:focus-visible,
 .fb-file-link:focus-visible {
   outline: 2px solid var(--accent, #2563eb);
   outline-offset: 3px;
@@ -5434,6 +5434,95 @@ textarea:focus-visible,
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
   gap: 12px;
+}
+
+.fb-list {
+  display: grid;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.fb-list-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.35fr) minmax(140px, 0.75fr) minmax(180px, 0.95fr) minmax(96px, max-content);
+  gap: 16px;
+  align-items: center;
+  min-height: 70px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #f0f0f2;
+}
+
+.fb-list-row:last-child {
+  border-bottom: 0;
+}
+
+.fb-list-row:hover {
+  background: #fbfbfc;
+}
+
+.fb-list-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.fb-list-title {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.fb-list-title h4,
+.fb-list-title p {
+  margin: 0;
+}
+
+.fb-list-title h4 {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-list-title p,
+.fb-list-cell span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.fb-list-cell {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.fb-list-cell span:first-child {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.fb-list-actions {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.fb-list-actions a,
+.fb-list-actions button {
+  justify-content: center;
+  min-width: 74px;
+  min-height: 34px;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .fb-folder-card,
@@ -5671,6 +5760,21 @@ textarea:focus-visible,
   .fb-new-folder-row > button {
     width: 100%;
     justify-content: center;
+  }
+
+  .fb-list-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    align-items: stretch;
+  }
+
+  .fb-list-actions {
+    justify-content: stretch;
+  }
+
+  .fb-list-actions a,
+  .fb-list-actions button {
+    width: 100%;
   }
 
   .fb-grid {
