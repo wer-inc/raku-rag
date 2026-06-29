@@ -16,7 +16,9 @@ from tests.helpers import claims
 
 
 class TestManufacturingAnswerExtractiveStaging(unittest.TestCase):
-    def test_approved_ingested_text_answers_when_production_profile_uses_extractive_llm(self) -> None:
+    def test_approved_ingested_text_answers_when_production_profile_uses_extractive_llm(
+        self,
+    ) -> None:
         settings = Settings(
             runtime_profile="production",
             llm_provider="extractive",

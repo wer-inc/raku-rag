@@ -511,9 +511,7 @@ class ManufacturingSystem:
             "preview": preview,
         }
 
-    def _attach_visual_preview(
-        self, principal: IdentityClaims, chunk: dict, preview: dict
-    ) -> None:
+    def _attach_visual_preview(self, principal: IdentityClaims, chunk: dict, preview: dict) -> None:
         meta = chunk.get("metadata") if isinstance(chunk.get("metadata"), dict) else {}
         asset_id = str(meta.get("asset_id") or "")
         region_id = str(meta.get("region_id") or "")

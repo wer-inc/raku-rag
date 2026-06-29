@@ -149,6 +149,15 @@ class TestPostgresDraftStoreDurability(unittest.TestCase):
 
         self._cleanup(*ids)
 
+    def _purge(self) -> None:
+        with self._conn() as c, c.cursor() as cur:
+            for tenant in (self.tenant, self.other):
+                cur.execute("SELECT set_config('app.current_tenant_id', %s, false)", (tenant,))
+                cur.execute(
+                    "DELETE FROM manufacturing_draft_artifacts WHERE tenant_id = %s",
+                    (tenant,),
+                )
+
     def _cleanup(self, *artifact_ids: str) -> None:
         with self._conn() as c, c.cursor() as cur:
             for tenant in (self.tenant, self.other):

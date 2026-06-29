@@ -298,7 +298,10 @@ class TestIngestionWorkerQueue(unittest.TestCase):
         )
         analyzed_page = replace(
             analyzed_page,
-            metadata={"page_image_bytes": page_png.getvalue(), "page_image_content_type": "image/png"},
+            metadata={
+                "page_image_bytes": page_png.getvalue(),
+                "page_image_content_type": "image/png",
+            },
         )
         self.connector.put("mem://manual.pdf", b"%PDF fixture bytes")
         client = FakeS3Client({})

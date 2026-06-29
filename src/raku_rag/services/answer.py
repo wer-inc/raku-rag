@@ -759,9 +759,7 @@ class AnswerService:
         if best_hits <= 0:
             return list(evidence)
         matching_documents = {
-            item.chunk.document_id
-            for item, hits in zip(evidence, hit_counts)
-            if hits == best_hits
+            item.chunk.document_id for item, hits in zip(evidence, hit_counts) if hits == best_hits
         }
         matched = [
             item

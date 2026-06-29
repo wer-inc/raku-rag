@@ -97,8 +97,13 @@ class TestCropService(unittest.TestCase):
         self.assertTrue(crop.crop_uri.startswith("s3://docs/visual-crops/tenant_a/manuals/"))
         self.assertTrue(crop.metadata["redacted_crop_uri"].startswith("s3://docs/visual-crops/"))
         self.assertIn(("docs", crop.crop_uri.removeprefix("s3://docs/")), client.objects)
-        self.assertEqual(client.objects[("docs", crop.crop_uri.removeprefix("s3://docs/"))], b"raw-png")
-        self.assertEqual(store.public_url(crop.crop_uri), f"https://signed.example/docs/{crop.crop_uri.removeprefix('s3://docs/')}?ttl=300")
+        self.assertEqual(
+            client.objects[("docs", crop.crop_uri.removeprefix("s3://docs/"))], b"raw-png"
+        )
+        self.assertEqual(
+            store.public_url(crop.crop_uri),
+            f"https://signed.example/docs/{crop.crop_uri.removeprefix('s3://docs/')}?ttl=300",
+        )
 
     def test_s3_crop_store_materializes_bbox_png_when_image_bytes_are_available(self) -> None:
         try:
