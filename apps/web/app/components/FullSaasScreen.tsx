@@ -1886,7 +1886,7 @@ function SourceListBody() {
                           onClick={() => onResync(row)}
                           disabled={Boolean(syncingSourceId) || rowSyncActive}
                         >
-                          {isSyncing || rowSyncActive ? "同期中" : "再同期を依頼"}
+                          {isSyncing || rowSyncActive ? "同期中" : "再同期"}
                         </button>
                       )}
                     </div>
