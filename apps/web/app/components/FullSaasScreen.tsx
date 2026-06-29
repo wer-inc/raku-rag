@@ -1381,7 +1381,7 @@ function screenTitle(screen: ManifestScreen): string {
     chatbot: "チャットボット",
     "answer-history": "回答履歴",
     "source-search": "ソース",
-    "source-list": "接続済みソース",
+    "source-list": "データソース",
     "source-detail": "ソース詳細",
     "add-source": "ソースを追加",
     "ingestion-runs": "取り込み実行",
@@ -1764,7 +1764,7 @@ function SourceListBody() {
         </div>
       </header>
       {state.state === "ready" && state.data.length > 0 && (
-        <section className="source-list-controls" aria-label="接続済みソースの検索と絞り込み">
+        <section className="source-list-controls" aria-label="データソースの検索と絞り込み">
           <label className="standalone-search source-list-search">
             <span aria-hidden="true">⌕</span>
             <input
@@ -1895,7 +1895,7 @@ function SourceListBody() {
               })}
             </div>
             {totalPages > 1 && (
-              <nav className="source-list-pagination" aria-label="接続済みソースのページ">
+              <nav className="source-list-pagination" aria-label="データソースのページ">
                 <button
                   type="button"
                   onClick={() => setPage((current) => Math.max(1, current - 1))}
@@ -2606,7 +2606,7 @@ function HomeDashboardBody() {
             </Link>
             <Link href="/sources/list" className="action-card">
               <strong>ソース一覧</strong>
-              <span>接続済みソースと同期状態を確認する</span>
+              <span>データソースと同期状態を確認する</span>
             </Link>
             <Link href="/reviews" className="action-card">
               <strong>AIドラフトレビュー</strong>
@@ -5504,7 +5504,7 @@ function ApprovalWorkflowBody() {
         <div className="knowledge-flow-grid" role="list" aria-label="ナレッジ準備の作業順">
           <KnowledgePrepStep
             index="1"
-            label="接続済みソース"
+            label="データソース"
             metric={`${sources.length} 件`}
             description={sourceActionCount > 0 ? `${sourceActionCount} 件に対応が必要` : "利用状態を確認済み"}
             tone={sourceActionCount > 0 ? "wait" : "ok"}
