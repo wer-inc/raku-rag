@@ -4283,7 +4283,15 @@ async function uploadForIngest(file: File, token: string): Promise<UploadForInge
     };
   }
 
-  if (presignRes.status === 403 || presignRes.status === 501) {
+  if (
+    presignRes.status === 403 &&
+    typeof presign.error === "string" &&
+    presign.error.toLowerCase().includes("upload sink disabled")
+  ) {
+    throw new Error("この環境ではファイルアップロードが無効です。管理者にアップロード設定を確認してください。");
+  }
+
+  if (presignRes.status === 501) {
     return fallbackInlineUpload(file);
   }
 

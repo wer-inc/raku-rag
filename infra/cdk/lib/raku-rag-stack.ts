@@ -193,6 +193,8 @@ export class RakuRagStack extends cdk.Stack {
     const manageCognitoGroups = String(this.node.tryGetContext("manageCognitoGroups") ?? "false").toLowerCase() === "true";
     const basicAuthUser = String(this.node.tryGetContext("basicAuthUser") ?? "").trim();
     const basicAuthRealm = String(this.node.tryGetContext("basicAuthRealm") ?? "Raku RAG").trim();
+    const enablePresignedUpload = authMode === "cognito" || authMode === "dev";
+    const enableInlineUploadSink = authMode === "dev";
     const fargateSize = {
       api: minimalSpec ? { cpu: 512, memoryLimitMiB: 1024 } : { cpu: 1024, memoryLimitMiB: 2048 },
       worker: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 512, memoryLimitMiB: 1024 },
@@ -565,9 +567,10 @@ export class RakuRagStack extends cdk.Stack {
           RAKU_ENABLE_DEV_TOKEN_ISSUER: authMode === "dev" ? "1" : "0",
           DOCUMENT_BUCKET: documentBucket.bucketName,
           RAKU_UPLOAD_BUCKET: documentBucket.bucketName,
-          // The AWS-hosted app protects the web entrypoint with HTTP Basic auth, then Cognito for
-          // app identity. Keep upload enabled there; /api/upload/presign stages files directly in S3.
-          RAKU_ENABLE_UPLOAD_SINK: basicAuthUser || authMode === "dev" ? "1" : "0",
+          // Cognito/dev users upload through /api/upload/presign, which verifies the app session before
+          // issuing a short-lived S3 PUT URL. Keep the inline data: fallback limited to dev.
+          RAKU_ENABLE_UPLOAD_PRESIGN: enablePresignedUpload ? "1" : "0",
+          RAKU_ENABLE_UPLOAD_SINK: enableInlineUploadSink ? "1" : "0",
           COGNITO_DOMAIN: cognitoHostedUiDomain,
           COGNITO_ISSUER: cognitoIssuer,
           COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,

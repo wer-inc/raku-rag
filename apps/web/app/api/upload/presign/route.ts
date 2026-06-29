@@ -25,11 +25,22 @@ const EXT_CONTENT_TYPE: Record<string, string> = {
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
+function flagEnabled(value: string): boolean {
+  return value === "1" || value.toLowerCase() === "true";
+}
+
 function enabled(): boolean {
+  const presignedUpload = process.env.RAKU_ENABLE_UPLOAD_PRESIGN;
+  if (presignedUpload !== undefined) return flagEnabled(presignedUpload);
+
+  // Backward compatibility with earlier deployments that used the shared upload sink flag for both
+  // S3 presign and the local inline fallback. New production deploys should set
+  // RAKU_ENABLE_UPLOAD_PRESIGN so the two routes can be gated independently.
   const uploadSink = process.env.RAKU_ENABLE_UPLOAD_SINK;
-  if (uploadSink !== undefined) return uploadSink === "1" || uploadSink.toLowerCase() === "true";
+  if (uploadSink !== undefined) return flagEnabled(uploadSink);
+
   const raw = process.env.RAKU_ENABLE_DEV_TOKEN_ISSUER;
-  if (raw !== undefined) return raw === "1" || raw.toLowerCase() === "true";
+  if (raw !== undefined) return flagEnabled(raw);
   return process.env.NODE_ENV !== "production";
 }
 

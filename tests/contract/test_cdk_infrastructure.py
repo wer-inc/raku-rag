@@ -11,6 +11,15 @@ class CdkInfrastructureContractTest(unittest.TestCase):
         self.stack = (ROOT / "infra/cdk/lib/raku-rag-stack.ts").read_text(encoding="utf-8")
         self.readme = (ROOT / "infra/cdk/README.md").read_text(encoding="utf-8")
         self.bin = (ROOT / "infra/cdk/bin/raku-rag.ts").read_text(encoding="utf-8")
+        self.presign_route = (ROOT / "apps/web/app/api/upload/presign/route.ts").read_text(
+            encoding="utf-8"
+        )
+        self.inline_upload_route = (ROOT / "apps/web/app/api/upload/route.ts").read_text(
+            encoding="utf-8"
+        )
+        self.full_saas = (
+            ROOT / "apps/web/app/components/FullSaasScreen.tsx"
+        ).read_text(encoding="utf-8")
 
     def test_required_aws_resources_are_declared(self) -> None:
         for token in (
@@ -219,6 +228,7 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             '"ApiRoute"',
             '"/v1/*"',
             "RAKU_ENABLE_DEV_TOKEN_ISSUER",
+            "RAKU_ENABLE_UPLOAD_PRESIGN",
             "RAKU_UPLOAD_BUCKET",
             "DOCUMENT_BUCKET",
             "this.attachRuntimePolicies(webTask.taskRole, documentBucket, dataKey)",
@@ -237,6 +247,25 @@ class CdkInfrastructureContractTest(unittest.TestCase):
                 self.assertIn(token, self.stack)
         # The old sleep-forever placeholder must be gone.
         self.assertNotIn("sleep infinity", self.stack)
+
+    def test_cognito_upload_uses_s3_presign_without_opening_inline_sink(self) -> None:
+        # Cognito-only aws-nextjs deploys must allow the authenticated S3 presign route, while keeping
+        # the legacy inline data: upload fallback disabled outside dev.
+        for token in (
+            'const enablePresignedUpload = authMode === "cognito" || authMode === "dev";',
+            'const enableInlineUploadSink = authMode === "dev";',
+            'RAKU_ENABLE_UPLOAD_PRESIGN: enablePresignedUpload ? "1" : "0"',
+            'RAKU_ENABLE_UPLOAD_SINK: enableInlineUploadSink ? "1" : "0"',
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.stack)
+
+        self.assertIn("RAKU_ENABLE_UPLOAD_PRESIGN", self.presign_route)
+        self.assertIn("assertAppSession(req)", self.presign_route)
+        self.assertNotIn("RAKU_ENABLE_UPLOAD_PRESIGN", self.inline_upload_route)
+        self.assertIn("presignRes.status === 501", self.full_saas)
+        self.assertIn("この環境ではファイルアップロードが無効です", self.full_saas)
+        self.assertNotIn("presignRes.status === 403 || presignRes.status === 501", self.full_saas)
 
     def test_readme_documents_synth_and_resource_scope(self) -> None:
         for token in (
