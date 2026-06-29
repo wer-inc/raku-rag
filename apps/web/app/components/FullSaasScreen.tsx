@@ -1700,6 +1700,7 @@ function SourceListBody() {
             <div className="source-list-items" role="list">
               {pageRows.map((row) => {
                 const kind = sourceKind(row);
+                const name = sourceName(row);
                 const status = sourceOperationalStatus(row);
                 const documents = sourceDocumentCount(row);
                 const href = row.origin === "documents" ? "/documents" : `/sources/${row.source.source_id}`;
@@ -1712,7 +1713,11 @@ function SourceListBody() {
                         {kind.slice(0, 2).toUpperCase()}
                       </div>
                       <div className="source-list-title-block">
-                        <h4>{sourceName(row)}</h4>
+                        <h4>
+                          <Link href={href} className="source-title-link" aria-label={`${name} の詳細を見る`}>
+                            {name}
+                          </Link>
+                        </h4>
                         <p>{sourceKindLabel(kind)}</p>
                       </div>
                     </div>
@@ -1720,7 +1725,7 @@ function SourceListBody() {
                       <span className={`standalone-status ${status.key}`}>{status.label}</span>
                       <span>{status.reason}</span>
                     </div>
-                    <div className="source-list-metrics" aria-label={`${sourceName(row)} の文書と承認状態`}>
+                    <div className="source-list-metrics" aria-label={`${name} の文書と承認状態`}>
                       <span>
                         <strong>{documents ?? "—"}</strong> 文書
                       </span>
@@ -1742,9 +1747,6 @@ function SourceListBody() {
                           {isSyncing || rowSyncActive ? "同期中" : "再同期を依頼"}
                         </button>
                       )}
-                      <Link href={href} className="button-link secondary">
-                        詳細
-                      </Link>
                     </div>
                   </article>
                 );
