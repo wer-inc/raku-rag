@@ -1532,6 +1532,7 @@ function sourceKindLabel(kind: string): string {
     postgres: "PostgreSQL",
     postgresql: "PostgreSQL",
     s3: "S3",
+    text: "テキスト",
     upload: "ファイル",
     url: "URL",
   };
@@ -3988,7 +3989,7 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
 const ACCEPT_EXT = ".txt,.md,.markdown,.csv,.html,.htm,.docx,.xlsx,.pdf,.png,.jpg,.jpeg";
 
 type AddSourceTypeId =
-  | "file"
+  | "text"
   | "url"
   | "googledrive"
   | "sharepoint"
@@ -4035,10 +4036,10 @@ type AddSourceConfig = {
 
 const ADD_SOURCE_TYPES: AddSourceType[] = [
   {
-    id: "file",
-    name: "ファイルアップロード",
-    desc: "PDF・Word・Excel・CAD などを直接アップロード",
-    mono: "UP",
+    id: "text",
+    name: "テキストを貼り付け",
+    desc: "手順・規格・トラブル対応の本文を貼り付けて取込",
+    mono: "TXT",
     readiness: "ready",
   },
   {
@@ -4128,11 +4129,10 @@ const ADD_SOURCE_TYPES: AddSourceType[] = [
 ];
 
 const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
-  file: {
-    upload: true,
+  text: {
     fields: [],
     dataSourceType: "upload",
-    note: "既存のアップロード API でそのまま取込できます。",
+    note: "本文を貼り付けて、レビュー待ちのナレッジとして取込します。",
   },
   url: {
     fields: [
@@ -4254,11 +4254,12 @@ function todayIso(): string {
 }
 
 function defaultSourceIdFor(sourceType: AddSourceTypeId): string {
-  if (sourceType === "file") return `file-${Date.now().toString(36)}`;
+  if (sourceType === "text") return `text-${Date.now().toString(36)}`;
   return `${sourceType}-${Date.now().toString(36)}`;
 }
 
 function sourceTypeForConfig(sourceType: AddSourceTypeId): string {
+  if (sourceType === "text") return "text";
   return sourceType === "googledrive" ? "google_drive" : sourceType;
 }
 
@@ -4582,6 +4583,77 @@ function fileBrowserMatchesFilter(row: FileBrowserFileRow, filter: FileBrowserFi
   return true;
 }
 
+function FileFolderDialog({
+  error,
+  name,
+  onCancel,
+  onChange,
+  onSubmit,
+}: {
+  error: string;
+  name: string;
+  onCancel: () => void;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  useDialog(true, onCancel, panelRef);
+
+  return (
+    <div className="cv-overlay" onMouseDown={onCancel}>
+      <div
+        className="fb-folder-dialog"
+        ref={panelRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="file-folder-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <form
+          className="fb-folder-dialog-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          <div className="fb-folder-dialog-head">
+            <span className="cv-eyebrow">ファイル</span>
+            <h3 id="file-folder-dialog-title">フォルダを作成</h3>
+          </div>
+          <label className="fb-new-folder-field">
+            <span>フォルダ名</span>
+            <input
+              type="text"
+              className="fb-new-folder-input"
+              value={name}
+              onChange={(event) => onChange(event.target.value)}
+              aria-describedby={error ? "file-folder-error" : undefined}
+              aria-invalid={error ? "true" : undefined}
+              autoComplete="off"
+              autoFocus
+              maxLength={64}
+            />
+          </label>
+          {error && (
+            <p id="file-folder-error" className="fb-form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="fb-folder-dialog-actions">
+            <button type="button" className="button-link" onClick={onCancel}>
+              キャンセル
+            </button>
+            <button type="submit" className="button-link btn-approve" disabled={!name.trim()}>
+              作成
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function FileBrowserBody() {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [folders, setFolders] = useState<FileBrowserFolder[]>([]);
@@ -4688,6 +4760,12 @@ function FileBrowserBody() {
   useEffect(() => {
     setPage((current) => Math.min(current, totalPages));
   }, [totalPages]);
+
+  function closeNewFolderDialog() {
+    setShowNewFolder(false);
+    setNewFolderName("");
+    setFolderError("");
+  }
 
   function createFolder() {
     const name = normalizeFolderName(newFolderName);
@@ -4881,6 +4959,8 @@ function FileBrowserBody() {
                 setShowUploadForm((shown) => !shown);
                 setUploadFailures([]);
                 setShowNewFolder(false);
+                setNewFolderName("");
+                setFolderError("");
               }}
             >
               アップロード
@@ -4888,10 +4968,10 @@ function FileBrowserBody() {
             <button
               type="button"
               className="button-link"
-              aria-controls="file-folder-form"
-              aria-expanded={showNewFolder}
+              aria-haspopup="dialog"
               onClick={() => {
-                setShowNewFolder((shown) => !shown);
+                setShowNewFolder(true);
+                setNewFolderName("");
                 setFolderError("");
                 setShowUploadForm(false);
               }}
@@ -4902,46 +4982,16 @@ function FileBrowserBody() {
         </div>
         {showUploadForm && renderUploadPanel("root-file-upload-panel")}
         {showNewFolder && (
-          <form
-            id="file-folder-form"
-            className="fb-new-folder-row"
-            onSubmit={(event) => {
-              event.preventDefault();
-              createFolder();
+          <FileFolderDialog
+            error={folderError}
+            name={newFolderName}
+            onCancel={closeNewFolderDialog}
+            onChange={(value) => {
+              setNewFolderName(value);
+              if (folderError) setFolderError("");
             }}
-          >
-            <label className="fb-new-folder-field">
-              <span>フォルダ名</span>
-              <input
-                type="text"
-                className="fb-new-folder-input"
-                value={newFolderName}
-                onChange={(event) => setNewFolderName(event.target.value)}
-                aria-describedby={folderError ? "file-folder-error" : undefined}
-                aria-invalid={folderError ? "true" : undefined}
-                autoFocus
-              />
-            </label>
-            <button type="submit" className="button-link btn-approve" disabled={!newFolderName.trim()}>
-              作成
-            </button>
-            <button
-              type="button"
-              className="button-link"
-              onClick={() => {
-                setShowNewFolder(false);
-                setNewFolderName("");
-                setFolderError("");
-              }}
-            >
-              キャンセル
-            </button>
-            {folderError && (
-              <p id="file-folder-error" className="fb-form-error" role="alert">
-                {folderError}
-              </p>
-            )}
-          </form>
+            onSubmit={createFolder}
+          />
         )}
         {loadError && <ScreenLoadError error={loadError} onRetry={() => void reloadFiles()} />}
         {!loadError && (
@@ -5150,14 +5200,11 @@ function FileBrowserBody() {
 
 function AddSourceBody() {
   const [step, setStep] = useState<"select" | "configure">("select");
-  const [selectedSource, setSelectedSource] = useState<AddSourceTypeId>("file");
-  const [mode, setMode] = useState<"file" | "text">("file");
-  const [files, setFiles] = useState<File[]>([]);
-  const [fileInputKey, setFileInputKey] = useState(0);
+  const [selectedSource, setSelectedSource] = useState<AddSourceTypeId>("text");
   const [text, setText] = useState("");
   const [sourceName, setSourceName] = useState("");
   const [collectionId, setCollectionId] = useState("manuals");
-  const [sourceId, setSourceId] = useState(() => defaultSourceIdFor("file"));
+  const [sourceId, setSourceId] = useState(() => defaultSourceIdFor("text"));
   const [approvalStatus] = useState("pending_review");
   const [effectiveDate] = useState(todayIso());
   // Connector (multi-file) trust policy. Default review_required so synced files land in the review
@@ -5235,8 +5282,7 @@ function AddSourceBody() {
     setSourceId(defaultSourceIdFor(sourceIdValue));
     setSourceName("");
     setConfigValues({});
-    setFiles([]);
-    setFileInputKey((current) => current + 1);
+    setText("");
     setResult([]);
     setUploadProgress("");
     setUploadFailures([]);
@@ -5252,15 +5298,8 @@ function AddSourceBody() {
     setConfigValues((current) => ({ ...current, [fieldId]: value }));
   }
 
-  function onPickFiles(picked: File[]) {
-    setFiles(picked);
-    setResult([]);
-    setUploadProgress("");
-    setUploadFailures([]);
-  }
-
   async function saveDatasource(): Promise<string | null> {
-    if (selectedSource === "file" || configSaving || syncing) return null;
+    if (selectedSource === "text" || configSaving || syncing) return null;
     if (!sourceName.trim()) {
       toast("ソース名を入力してください。", "error");
       return null;
@@ -5389,7 +5428,7 @@ function AddSourceBody() {
     setUploadFailures([]);
     setUploadProgress("");
 
-    if (selectedSource !== "file") {
+    if (selectedSource !== "text") {
       toast("このソース種別は接続設定フォームから保存してください。", "error");
       return;
     }
@@ -5398,40 +5437,31 @@ function AddSourceBody() {
       return;
     }
 
-    let payloads: File[] = files;
-    if (mode === "text") {
-      const trimmed = text.trim();
-      if (!trimmed) {
-        toast("テキストを入力してください。", "error");
-        return;
-      }
-      const textFileBase = cleanDocumentIdPart(sourceName.trim()) || `pasted-${Date.now().toString(36)}`;
-      payloads = [
-        new File([trimmed], `${textFileBase}.txt`, {
-          type: "text/plain",
-        }),
-      ];
-    }
-    if (payloads.length === 0) {
-      toast("ファイルを選択してください。", "error");
+    const trimmed = text.trim();
+    if (!trimmed) {
+      toast("テキストを入力してください。", "error");
       return;
     }
+    const textFileBase = cleanDocumentIdPart(sourceName.trim()) || `pasted-${Date.now().toString(36)}`;
+    const payloads = [
+      new File([trimmed], `${textFileBase}.txt`, {
+        type: "text/plain",
+      }),
+    ];
 
     setSubmitting(true);
     const records: IngestedDoc[] = [];
     const failures: string[] = [];
-    const failedFiles: File[] = [];
     const displayName = sourceDisplayName({
       rawName: sourceName,
       fallback: selectedSourceDef.name,
-      files: payloads,
     });
     const displayType = sourceTypeForConfig(selectedSource);
-    const requestSourceId = sourceId.trim() || defaultSourceIdFor("file");
+    const requestSourceId = sourceId.trim() || defaultSourceIdFor("text");
     try {
       const token = await getSessionToken();
       for (const [index, payload] of payloads.entries()) {
-        setUploadProgress(`${payloads.length}件中 ${index + 1}件目を取込中: ${payload.name || "upload.bin"}`);
+        setUploadProgress("テキストを取込中...");
         try {
           const up = await uploadForIngest(payload, token);
           const docId = documentIdForUpload({
@@ -5474,27 +5504,18 @@ function AddSourceBody() {
           recordIngestedDoc(record);
           records.push(record);
           if (ingest.failure_reason || ingest.status === "failed") {
-            if (mode === "file" && ingest.status === "failed") failedFiles.push(payload);
             failures.push(`${up.filename}: ${ingest.failure_reason || "取込に失敗しました"}`);
           }
         } catch (err) {
-          failedFiles.push(payload);
           failures.push(`${payload.name || "upload.bin"}: ${err instanceof Error ? err.message : "取込に失敗しました"}`);
         }
       }
       setResult(records);
       setUploadFailures(failures);
       const acceptedCount = records.filter((item) => uploadResultOk(item.status)).length;
-      if (mode === "file") {
-        setFiles(failedFiles);
-        if (failedFiles.length === 0) {
-          setFileInputKey((current) => current + 1);
-          setSourceId(defaultSourceIdFor("file"));
-          setSourceName("");
-        }
-      } else if (failures.length === 0) {
+      if (failures.length === 0) {
         setText("");
-        setSourceId(defaultSourceIdFor("file"));
+        setSourceId(defaultSourceIdFor("text"));
         setSourceName("");
       }
       if (failures.length === 0) {
@@ -5515,7 +5536,7 @@ function AddSourceBody() {
   const resultAttemptCount = result.length + uploadFailures.length;
   const resultSourceName =
     result.find((item) => item.source_name)?.source_name ||
-    sourceDisplayName({ rawName: sourceName, fallback: selectedSourceDef.name, files });
+    sourceDisplayName({ rawName: sourceName, fallback: selectedSourceDef.name });
   const resultSourceType = result.find((item) => item.source_type)?.source_type || sourceTypeForConfig(selectedSource);
 
   return (
@@ -5558,71 +5579,36 @@ function AddSourceBody() {
         </button>
       )}
 
-      {step === "configure" && selectedSource === "file" && (
+      {step === "configure" && selectedSource === "text" && (
         <form className="upload-form" onSubmit={onSubmit}>
-          <Section title="ドキュメントを追加" note="対応形式: テキスト / Markdown / HTML / CSV / Word(.docx) / Excel(.xlsx) / PDF / 画像">
+          <Section title="テキストを貼り付け" note="手順・規格・トラブル対応などの本文を貼り付けて、レビュー待ちのナレッジとして取込します。">
             <label className="source-name-field">
               <span>ソース名</span>
               <input
                 value={sourceName}
                 onChange={(e) => setSourceName(e.target.value)}
-                placeholder="例: 品質保証マニュアル"
+                placeholder="例: 品質保証マニュアルの抜粋"
                 required
-                aria-describedby="file-source-name-help"
+                aria-describedby="text-source-name-help"
               />
-              <small id="file-source-name-help">
+              <small id="text-source-name-help">
                 {sourceKindLabel(sourceTypeForConfig(selectedSource))} として登録されます。
               </small>
             </label>
 
-            <div className="upload-mode-tabs">
-              <button
-                type="button"
-                aria-pressed={mode === "file"}
-                className={`upload-mode-tab ${mode === "file" ? "active" : ""}`}
-                onClick={() => setMode("file")}
-              >
-                ファイル
-              </button>
-              <button
-                type="button"
-                aria-pressed={mode === "text"}
-                className={`upload-mode-tab ${mode === "text" ? "active" : ""}`}
-                onClick={() => setMode("text")}
-              >
-                テキストを貼り付け
-              </button>
-            </div>
-
-            {mode === "file" ? (
-              <label className="upload-drop">
-                <input
-                  key={fileInputKey}
-                  type="file"
-                  accept={ACCEPT_EXT}
-                  multiple
-                  onChange={(e) => onPickFiles(Array.from(e.target.files ?? []))}
-                />
-                <span className="upload-drop-main">{selectedFilesTitle(files)}</span>
-                <span className="upload-drop-sub">{selectedFilesDetail(files)}</span>
-              </label>
-            ) : (
-              <textarea
-                className="upload-textarea"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="ここに手順・規格・トラブル対応の本文を貼り付け…"
-                rows={6}
-              />
-            )}
+            <textarea
+              className="upload-textarea"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="ここに手順・規格・トラブル対応の本文を貼り付け…"
+              rows={8}
+              aria-label="取込するテキスト本文"
+              required
+            />
 
             <div className="screen-actions">
               <button type="submit" disabled={submitting}>
-                {submitting
-                  ? "取込中…"
-                  : mode === "file" && files.length > 1
-                    ? `${files.length} 件をアップロードして取込`
-                    : "アップロードして取込"}
+                {submitting ? "取込中…" : "テキストを取込"}
               </button>
             </div>
             {uploadProgress && (
@@ -5634,7 +5620,7 @@ function AddSourceBody() {
         </form>
       )}
 
-      {step === "configure" && selectedSource !== "file" && (
+      {step === "configure" && selectedSource !== "text" && (
         <form className="connector-form" onSubmit={onSaveDatasource}>
           <Section title={`${selectedSourceDef.name} の接続設定`} note={selectedSourceDef.desc}>
             <label className="source-name-field">
@@ -5761,7 +5747,7 @@ function AddSourceBody() {
           />
           {result.length > 0 && (
             <DataTable
-              columns={["ファイル", "状態", "チャンク", "取込ラン"]}
+              columns={["入力", "状態", "チャンク", "取込ラン"]}
               rows={result.map((item) => [
                 <Link key={item.document_id} href={`/documents/${item.document_id}`}>
                   {item.filename || item.document_id}

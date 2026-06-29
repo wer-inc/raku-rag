@@ -5635,22 +5635,38 @@ textarea:focus-visible,
   padding: 24px 0;
 }
 
-.fb-new-folder-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 14px;
+.fb-folder-dialog {
+  width: min(420px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
+  box-shadow: 0 24px 64px rgba(24, 24, 27, 0.28);
+}
+
+.fb-folder-dialog-form {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.fb-folder-dialog-head {
+  display: grid;
+  gap: 4px;
+}
+
+.fb-folder-dialog-head h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .fb-new-folder-field {
   display: grid;
-  flex: 1 1 260px;
   gap: 6px;
-  min-width: 180px;
+  min-width: 0;
 }
 
 .fb-new-folder-field span {
@@ -5677,11 +5693,22 @@ textarea:focus-visible,
 
 .fb-form-error,
 .fb-upload-errors {
-  flex-basis: 100%;
   margin: 0;
   color: #b42318;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.fb-folder-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fb-folder-dialog-actions button {
+  min-height: 36px;
+  justify-content: center;
 }
 
 .fb-upload-errors {
@@ -5749,17 +5776,27 @@ textarea:focus-visible,
     padding: 16px;
   }
 
-  .fb-toolbar,
-  .fb-new-folder-row {
+  .fb-toolbar {
     align-items: stretch;
   }
 
   .fb-toolbar > button,
   .fb-toolbar-actions,
-  .fb-toolbar-actions > button,
-  .fb-new-folder-row > button {
+  .fb-toolbar-actions > button {
     width: 100%;
     justify-content: center;
+  }
+
+  .fb-folder-dialog {
+    width: min(100%, calc(100vw - 32px));
+  }
+
+  .fb-folder-dialog-actions {
+    display: grid;
+  }
+
+  .fb-folder-dialog-actions button {
+    width: 100%;
   }
 
   .fb-list-row {
