@@ -18,7 +18,7 @@ const WORKSPACE_ROLES: WorkspaceRole[] = [
   "sales_demo",
 ];
 
-const FIELD_USER_HREFS = new Set(["/home", "/", "/answers/history"]);
+const FIELD_USER_HREFS = new Set(["/home", "/", "/chatbot", "/answers/history"]);
 
 const REVIEWER_HREFS = new Set([
   ...FIELD_USER_HREFS,

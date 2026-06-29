@@ -8,6 +8,14 @@ import type {
   AssignReviewerRequest,
   AuditEventListResponse,
   CitationSourceView,
+  ChatCreateSessionRequest,
+  ChatCreateSessionResponse,
+  ChatHandoffRequest,
+  ChatHandoffResponse,
+  ChatMessageRequest,
+  ChatMessageResponse,
+  ChatMetricsResponse,
+  ChatSessionDetailResponse,
   CreateDraftRequest,
   DocumentFileResponse,
   ImprovementQueueResponse,
@@ -153,6 +161,51 @@ export async function searchChunks(req: SearchRequest, userToken: string): Promi
     body: JSON.stringify(req),
   });
   return jsonOrThrow<SearchResponse>(res);
+}
+
+export async function createChatSession(
+  req: ChatCreateSessionRequest,
+  userToken: string,
+): Promise<ChatCreateSessionResponse> {
+  return apiPostJson<ChatCreateSessionResponse>("/chat/sessions", req, userToken);
+}
+
+export async function sendChatMessage(
+  sessionId: string,
+  req: ChatMessageRequest,
+  userToken: string,
+): Promise<ChatMessageResponse> {
+  return apiPostJson<ChatMessageResponse>(
+    `/chat/sessions/${encodeURIComponent(sessionId)}/messages`,
+    req,
+    userToken,
+  );
+}
+
+export async function requestChatHandoff(
+  sessionId: string,
+  req: ChatHandoffRequest,
+  userToken: string,
+): Promise<ChatHandoffResponse> {
+  return apiPostJson<ChatHandoffResponse>(
+    `/chat/sessions/${encodeURIComponent(sessionId)}/handoff`,
+    req,
+    userToken,
+  );
+}
+
+export async function chatSessionDetail(
+  sessionId: string,
+  userToken: string,
+): Promise<ChatSessionDetailResponse> {
+  return apiGetJson<ChatSessionDetailResponse>(
+    `/chat/sessions/${encodeURIComponent(sessionId)}`,
+    userToken,
+  );
+}
+
+export async function chatMetrics(userToken: string): Promise<ChatMetricsResponse> {
+  return apiGetJson<ChatMetricsResponse>("/chat/metrics", userToken);
 }
 
 /** Record answer/citation feedback (👍/👎, "この引用は正しい/間違い"). */

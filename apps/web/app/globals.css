@@ -791,6 +791,121 @@ textarea {
   font: inherit;
 }
 
+.chatbot-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 16px;
+  align-items: start;
+}
+
+.chatbot-main {
+  min-width: 0;
+}
+
+.chatbot-thread {
+  display: grid;
+  gap: 14px;
+  min-height: 420px;
+}
+
+.chat-bot-bubble {
+  display: grid;
+  gap: 10px;
+  max-width: 84%;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px 14px 14px 4px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+}
+
+.chat-bot-bubble p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.chat-bubble-head,
+.chat-quick-replies,
+.chat-citation-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.chat-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.chat-progress span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: chat-pulse 1.2s ease-in-out infinite;
+}
+
+.chat-progress strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.chatbot-side {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.chatbot-state-row {
+  display: grid;
+  gap: 3px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chatbot-state-row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.chatbot-state-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chatbot-state-row strong {
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+}
+
+@keyframes chat-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .sync-poll-badge {
   margin-left: 10px;
   font-size: 12px;
@@ -1891,8 +2006,14 @@ button:disabled {
   .home-split,
   .sources-layout,
   .reviews-layout,
+  .chatbot-layout,
   .ops-layout {
     grid-template-columns: 1fr;
+  }
+
+  .chat-bot-bubble,
+  .answer-user-bubble {
+    max-width: 100%;
   }
 
   .review-queue-row {
@@ -4254,6 +4375,10 @@ button,
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .chat-progress span {
+    animation: none;
+  }
+
   .sidebar,
   .nav-scrim {
     transition: none;

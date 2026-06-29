@@ -17,6 +17,7 @@ import { OpenApiController } from "./openapi/openapi.controller";
 import { RealEstateController } from "./real-estate/real-estate.controller";
 import { InvestmentController } from "./investment/investment.controller";
 import { OAuthController } from "./connectors/oauth.controller";
+import { ChatController, PublicChatController } from "./chat/chat.controller";
 import { AuthMiddleware } from "./auth/auth.middleware";
 import { ProviderPolicyService } from "./provider-policy/provider-policy.service";
 import { RetrievalProfileService } from "./retrieval/retrieval-profile.service";
@@ -45,6 +46,8 @@ import { BedrockCohereRerankService } from "./rerank/bedrock-cohere-rerank.servi
     RealEstateController,
     InvestmentController,
     OAuthController,
+    ChatController,
+    PublicChatController,
     OpenApiController,
   ],
   providers: [
@@ -79,6 +82,7 @@ export class AppModule implements NestModule {
         RealEstateController,
         InvestmentController,
         OAuthController,
+        ChatController,
       );
   }
 }

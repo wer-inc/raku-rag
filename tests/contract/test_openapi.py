@@ -60,7 +60,7 @@ class OpenApiContractTest(unittest.TestCase):
                 self.assertIsInstance(_resolve_ref(self.doc, ref), dict)
 
     def test_operations_have_ids_security_and_response_contracts(self) -> None:
-        public_paths = {"/health", "/openapi.json"}
+        public_paths = {"/health", "/openapi.json", "/chat/public-widget/sessions"}
         operation_ids: set[str] = set()
         for path, path_item in self.doc["paths"].items():
             for method, operation in path_item.items():

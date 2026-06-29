@@ -3,7 +3,7 @@
   "scope": "full-saas-screen-contract-p0",
   "status_values": ["spec", "done"],
   "api_status_values": ["existing", "missing"],
-  "screen_count": 30,
+  "screen_count": 31,
   "frontend_app": "apps/web",
   "frontend_router": "next-app-router",
   "frontend_entry": "app/[...slug]/page.tsx loads each screen via specs/full-saas/screens.manifest.json; legacy aliases remain at app/page.tsx, app/sources/page.tsx, app/reviews/page.tsx, and app/operations/page.tsx",
@@ -11,6 +11,7 @@
   "current_frontend_routes": [
     "/home",
     "/",
+    "/chatbot",
     "/answers/history",
     "/sources",
     "/sources/list",
@@ -76,6 +77,25 @@
       "states": ["idle", "loading", "empty", "error", "ready", "blocked", "insufficient_evidence"],
       "rbac": ["field_user", "reviewer", "ops_owner", "tenant_admin"],
       "deps": [],
+      "status": "spec"
+    },
+    {
+      "id": "chatbot",
+      "category": "workspace",
+      "route": "/chatbot",
+      "title": "ChatBot",
+      "absorbs": [],
+      "data": ["chat_session", "chat_messages", "conversation_state", "rag_citations", "handoff", "ticket_stub"],
+      "apis": [
+        { "method": "POST", "path": "/v1/chat/sessions", "status": "existing" },
+        { "method": "POST", "path": "/v1/chat/sessions/:session_id/messages", "status": "existing" },
+        { "method": "GET", "path": "/v1/chat/sessions/:session_id", "status": "existing" },
+        { "method": "POST", "path": "/v1/chat/sessions/:session_id/handoff", "status": "existing" },
+        { "method": "GET", "path": "/v1/chat/metrics", "status": "existing" }
+      ],
+      "states": ["idle", "sending", "thinking", "checking_rag", "delayed", "retryable_error", "handoff_available", "completed"],
+      "rbac": ["field_user", "reviewer", "ops_owner", "tenant_admin"],
+      "deps": ["answers", "source-list"],
       "status": "spec"
     },
     {

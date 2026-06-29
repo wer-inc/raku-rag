@@ -35,7 +35,7 @@ export const WORKSPACE_IDENTITY = {
 export const REVIEW_BADGE_COUNT = 2;
 
 export type NavIconName =
-  | "home" | "answers" | "history" | "sources" | "documents" | "search"
+  | "home" | "answers" | "chatbot" | "history" | "sources" | "documents" | "search"
   | "ingestion" | "reviewqueue" | "approvalsettings" | "operations" | "safety"
   | "quality" | "audit" | "compliance" | "users" | "roles" | "integrations"
   | "apikeys" | "billing" | "support" | "provider" | "retrieval" | "logging" | "improvements";
@@ -62,6 +62,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "回答",
     items: [
       { href: "/", label: "質問する", icon: "answers" },
+      { href: "/chatbot", label: "チャットボット", icon: "chatbot" },
       { href: "/answers/history", label: "回答履歴", icon: "history" },
     ],
   },

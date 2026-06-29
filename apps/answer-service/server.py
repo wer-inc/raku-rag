@@ -81,6 +81,7 @@ from workers.ingest.provider_policy import (  # noqa: E402
     ProviderRequest,
     capability_for,
 )
+from raku_rag.chatbot import ChatbotService  # noqa: E402
 
 _LOCAL_DEMO_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _LOCAL_DEMO_DBS = {"raku", "raku_demo", "raku_parity"}
@@ -1394,6 +1395,11 @@ def make_handler(system: ProductionSystem):
     admin_settings = _AdminSettingsStore(system, datasource_repo=datasource_repo)
     eval_feedback = _EvalFeedbackStore(system)
     manufacturing_system = build_manufacturing_system_for_base(system)
+    chatbot = ChatbotService(
+        lambda principal, query, collection_id: _manufacturing_answer_json(
+            manufacturing_system.answer(principal, query, collection_id)
+        )
+    )
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()
     investment_api = InvestmentApiService()
@@ -1406,6 +1412,10 @@ def make_handler(system: ProductionSystem):
             self.send_header("content-length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def _send_result(self, result: tuple[int, dict]) -> None:
+            code, payload = result
+            self._send(code, _jsonable(payload))
 
         def _body(self) -> dict:
             n = int(self.headers.get("content-length") or 0)
@@ -1435,6 +1445,32 @@ def make_handler(system: ProductionSystem):
                 parts = [unquote(p) for p in path.split("/") if p]
                 if path == "/healthz":
                     self._send(200, {"status": "ok", "backend": "production-system"})
+                elif parts == ["internal", "chat", "sessions"]:
+                    qs = parse_qs(parsed.query)
+                    self._send_result(chatbot.list_sessions(_claims_from_headers(self.headers), qs))
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "chat", "sessions"]
+                    and parts[3] != "export"
+                ):
+                    self._send_result(
+                        chatbot.get_session(_claims_from_headers(self.headers), parts[3])
+                    )
+                elif (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "chat", "handoffs"]
+                ):
+                    self._send_result(
+                        chatbot.get_handoff(_claims_from_headers(self.headers), parts[3])
+                    )
+                elif parts == ["internal", "chat", "metrics"]:
+                    self._send_result(chatbot.metrics(_claims_from_headers(self.headers)))
+                elif parts == ["internal", "chat", "retention-policy"]:
+                    self._send_result(chatbot.retention_policy(_claims_from_headers(self.headers)))
+                elif parts == ["internal", "chat", "source-exposure-policies"]:
+                    self._send_result(chatbot.list_source_policies(_claims_from_headers(self.headers)))
+                elif parts == ["internal", "chat", "scenarios"]:
+                    self._send_result(chatbot.list_scenarios(_claims_from_headers(self.headers)))
                 elif parts == ["internal", "industries"]:
                     self._send(200, industry_api.list_industries(tenant_id=self._tenant_header()))
                 elif (
@@ -1831,6 +1867,70 @@ def make_handler(system: ProductionSystem):
                     query = str(body.get("query") or "")
                     collection_id = body.get("collection_id")
                     self._send(200, _answer_json(system.answer(principal, query, collection_id)))
+                elif parts == ["internal", "chat", "sessions"]:
+                    self._send_result(chatbot.create_session(_claims_from_headers(self.headers), body))
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "chat", "sessions"]
+                    and parts[4] == "messages"
+                ):
+                    self._send_result(
+                        chatbot.submit_message(_claims_from_headers(self.headers), parts[3], body)
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "chat", "sessions"]
+                    and parts[4] == "handoff"
+                ):
+                    self._send_result(
+                        chatbot.request_handoff(_claims_from_headers(self.headers), parts[3], body)
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "chat", "sessions"]
+                    and parts[4] == "feedback"
+                ):
+                    self._send_result(
+                        chatbot.submit_feedback(_claims_from_headers(self.headers), parts[3], body)
+                    )
+                elif parts == ["internal", "chat", "sessions", "export"]:
+                    self._send_result(chatbot.export_sessions(_claims_from_headers(self.headers)))
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "chat", "sessions"]
+                    and parts[4] == "delete-request"
+                ):
+                    self._send_result(
+                        chatbot.delete_request(_claims_from_headers(self.headers), parts[3])
+                    )
+                elif parts == ["internal", "chat", "source-exposure-policies", "validate"]:
+                    self._send_result(
+                        chatbot.validate_source_policy(_claims_from_headers(self.headers), body)
+                    )
+                elif parts == ["internal", "chat", "scenarios"]:
+                    self._send_result(chatbot.create_scenario(_claims_from_headers(self.headers), body))
+                elif (
+                    len(parts) == 7
+                    and parts[:3] == ["internal", "chat", "scenarios"]
+                    and parts[4] == "versions"
+                ):
+                    self._send_result(
+                        chatbot.scenario_action(
+                            _claims_from_headers(self.headers),
+                            parts[3],
+                            parts[5],
+                            parts[6],
+                            body,
+                        )
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "chat", "scenarios"]
+                    and parts[4] == "rollback"
+                ):
+                    self._send_result(
+                        chatbot.rollback_scenario(_claims_from_headers(self.headers), parts[3])
+                    )
                 elif path == "/internal/manufacturing/answer":
                     # P2-1: the manufacturing safety overlay (high-risk gate, approved+effective
                     # evidence requirement, draft/obsolete never primary) on the deployed answer path.
@@ -2532,8 +2632,29 @@ def make_handler(system: ProductionSystem):
             try:
                 body = self._body()
                 path = urlparse(self.path).path
+                if not self._internal_auth_ok(path):
+                    return
                 parts = [unquote(p) for p in path.split("/") if p]
                 if (
+                    len(parts) == 4
+                    and parts[:3] == ["internal", "chat", "source-exposure-policies"]
+                ):
+                    self._send_result(
+                        chatbot.upsert_source_policy(
+                            _claims_from_headers(self.headers), parts[3], body
+                        )
+                    )
+                elif (
+                    len(parts) == 6
+                    and parts[:3] == ["internal", "chat", "scenarios"]
+                    and parts[4] == "versions"
+                ):
+                    self._send_result(
+                        chatbot.upsert_scenario_version(
+                            _claims_from_headers(self.headers), parts[3], parts[5], body
+                        )
+                    )
+                elif (
                     len(parts) == 4
                     and parts[:2] == ["internal", "admin"]
                     and parts[2] in admin_settings._id_fields
@@ -2618,6 +2739,8 @@ def make_handler(system: ProductionSystem):
         def do_DELETE(self) -> None:  # noqa: N802
             try:
                 path = urlparse(self.path).path
+                if not self._internal_auth_ok(path):
+                    return
                 parts = [unquote(p) for p in path.split("/") if p]
                 if len(parts) == 3 and parts[:2] == ["internal", "documents"]:
                     tenant_id = self._tenant_header()

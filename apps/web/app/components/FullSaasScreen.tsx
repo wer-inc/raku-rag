@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type {
   AdminDataSource,
+  ChatAssistantMessage,
   Citation,
   DataSourceMappingProfile,
   DataSourceProfileType,
@@ -32,9 +33,13 @@ import {
   apiPostJson,
   apiPutJson,
   authHeaders,
+  chatMetrics,
+  createChatSession,
   ingestDocument,
   manufacturingAnswer,
+  requestChatHandoff,
   searchChunks,
+  sendChatMessage,
   manufacturingAssignReviewer,
   manufacturingAuditEvents,
   manufacturingAuditExport,
@@ -672,6 +677,405 @@ function AnswersBody() {
   );
 }
 
+type ChatTurn =
+  | { kind: "user"; id: string; text: string }
+  | {
+      kind: "assistant";
+      id: string;
+      message: ChatAssistantMessage;
+      ragStatus?: string | null;
+      handoffReason?: string | null;
+      ticketId?: string | null;
+    }
+  | { kind: "error"; id: string; text: string };
+
+function chatProgressLabel(state: "thinking" | "checking_rag" | "delayed"): string {
+  if (state === "checking_rag") return "根拠を確認しています";
+  if (state === "delayed") return "少し時間がかかっています";
+  return "返答を準備しています";
+}
+
+function chatActionLabel(action?: string | null): string {
+  switch (action) {
+    case "collect_slot":
+      return "確認中";
+    case "answer_with_citations":
+      return "根拠付き回答";
+    case "confirm_action":
+      return "最終確認";
+    case "ticket_created":
+      return "受付作成";
+    case "handoff":
+      return "引き継ぎ";
+    default:
+      return action || "応答";
+  }
+}
+
+function ChatAssistantBubble({
+  turn,
+  onQuickReply,
+  onOpenCitation,
+}: {
+  turn: Extract<ChatTurn, { kind: "assistant" }>;
+  onQuickReply: (label: string, value: string) => void;
+  onOpenCitation: (target: CitationViewTarget) => void;
+}) {
+  const message = turn.message;
+  return (
+    <article className="chat-bot-bubble">
+      <div className="chat-bubble-head">
+        <span className="status-badge">{chatActionLabel(message.ai_action)}</span>
+        {turn.ragStatus && <span className={`citation-chip status-${turn.ragStatus}`}>RAG {turn.ragStatus}</span>}
+        {turn.ticketId && <span className="citation-chip approval-approved">{turn.ticketId}</span>}
+        {turn.handoffReason && <span className="citation-chip approval-obsolete">{turn.handoffReason}</span>}
+      </div>
+      <p>{message.message}</p>
+
+      {message.citations.length > 0 && (
+        <div className="chat-citation-strip" aria-label="引用ソース">
+          {message.citations.map((citation, index) => (
+            <button
+              key={`${citation.document_id}-${citation.chunk_id ?? index}`}
+              type="button"
+              className="citation-open"
+              onClick={() =>
+                onOpenCitation({
+                  citation,
+                  answerId: message.message_id,
+                  groundedText: message.message,
+                  index: index + 1,
+                })
+              }
+            >
+              {citationLabel(citation)}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {message.quick_replies.length > 0 && (
+        <div className="chat-quick-replies" aria-label="返信候補">
+          {message.quick_replies.map((reply) => (
+            <button
+              key={`${message.message_id}-${reply.value}`}
+              type="button"
+              className="citation-open"
+              onClick={() => onQuickReply(reply.label, reply.value)}
+            >
+              {reply.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ChatBotBody() {
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [input, setInput] = useState("");
+  const [collectionId, setCollectionId] = useState(DEMO_COLLECTION);
+  const [collections, setCollections] = useState<string[]>([DEMO_COLLECTION]);
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [stateSummary, setStateSummary] = useState("idle");
+  const [progress, setProgress] = useState<"thinking" | "checking_rag" | "delayed" | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [viewer, setViewer] = useState<CitationViewTarget | null>(null);
+  const [metrics, setMetrics] = useState<{ conversation_count: number; handoff_rate: number } | null>(null);
+  const thinkingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const delayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setCollectionId(loadAnswerCollection());
+    void getSessionToken()
+      .then(async (token) => {
+        const [sources, metricResponse] = await Promise.all([
+          adminDataSources(token).catch(() => [] as AdminDataSource[]),
+          chatMetrics(token).catch(() => null),
+        ]);
+        const ids = [...new Set(sources.map((source) => source.collection_id).filter(Boolean))].sort();
+        if (ids.length > 0) setCollections(ids);
+        if (metricResponse) {
+          setMetrics({
+            conversation_count: metricResponse.summary.conversation_count,
+            handoff_rate: metricResponse.summary.handoff_rate,
+          });
+        }
+      })
+      .catch(() => {
+        /* keep default */
+      });
+    return () => {
+      if (thinkingTimer.current) clearTimeout(thinkingTimer.current);
+      if (delayTimer.current) clearTimeout(delayTimer.current);
+    };
+  }, []);
+
+  function onCollectionChange(value: string) {
+    setCollectionId(value);
+    saveAnswerCollection(value);
+  }
+
+  function beginRequest() {
+    setLoading(true);
+    setProgress("thinking");
+    if (thinkingTimer.current) clearTimeout(thinkingTimer.current);
+    if (delayTimer.current) clearTimeout(delayTimer.current);
+    thinkingTimer.current = setTimeout(() => setProgress("checking_rag"), 450);
+    delayTimer.current = setTimeout(() => setProgress("delayed"), 2200);
+  }
+
+  function endRequest() {
+    setLoading(false);
+    setProgress(null);
+    if (thinkingTimer.current) clearTimeout(thinkingTimer.current);
+    if (delayTimer.current) clearTimeout(delayTimer.current);
+  }
+
+  function appendAssistant(
+    message: ChatAssistantMessage | undefined,
+    extra: { ragStatus?: string | null; handoffReason?: string | null; ticketId?: string | null } = {},
+  ) {
+    if (!message) return;
+    setTurns((prev) => [
+      ...prev,
+      {
+        kind: "assistant",
+        id: message.message_id,
+        message,
+        ragStatus: extra.ragStatus,
+        handoffReason: extra.handoffReason,
+        ticketId: extra.ticketId,
+      },
+    ]);
+  }
+
+  async function submitText(text: string, displayText = text) {
+    const trimmed = text.trim();
+    if (!trimmed || loading) return;
+    const turnId = `${Date.now().toString(36)}-${turns.length}`;
+    setTurns((prev) => [...prev, { kind: "user", id: `${turnId}-u`, text: displayText }]);
+    setInput("");
+    beginRequest();
+    try {
+      const token = await getSessionToken();
+      if (!sessionId) {
+        const response = await createChatSession(
+          { channel: "web_chat", initial_message: trimmed, collection_id: collectionId },
+          token,
+        );
+        setSessionId(response.session_id);
+        setStateSummary(response.state?.status ?? response.status);
+        appendAssistant(response.assistant_message, {
+          ragStatus: response.rag?.status,
+          handoffReason: response.handoff?.reason,
+          ticketId: response.ticket?.ticket_id,
+        });
+      } else {
+        const response = await sendChatMessage(
+          sessionId,
+          { message: trimmed, collection_id: collectionId, stream: false },
+          token,
+        );
+        setStateSummary(response.state.status);
+        appendAssistant(response.assistant_message, {
+          ragStatus: response.rag?.status,
+          handoffReason: response.handoff?.reason,
+          ticketId: response.ticket?.ticket_id,
+        });
+      }
+      void chatMetrics(token).then((metricResponse) => {
+        setMetrics({
+          conversation_count: metricResponse.summary.conversation_count,
+          handoff_rate: metricResponse.summary.handoff_rate,
+        });
+      }).catch(() => undefined);
+    } catch (err) {
+      if (isAuthError(err)) {
+        clearSessionToken();
+        redirectToLoginAfterAuthError();
+      }
+      setTurns((prev) => [
+        ...prev,
+        { kind: "error", id: `${turnId}-e`, text: formatLoadError(err) },
+      ]);
+    } finally {
+      endRequest();
+    }
+  }
+
+  async function onSend(event: FormEvent) {
+    event.preventDefault();
+    await submitText(input);
+  }
+
+  async function onHandoff() {
+    if (loading) return;
+    if (!sessionId) {
+      await submitText("担当者に相談したい");
+      return;
+    }
+    beginRequest();
+    try {
+      const token = await getSessionToken();
+      const response = await requestChatHandoff(
+        sessionId,
+        { reason: "customer_requested_human", comment: "UI handoff action" },
+        token,
+      );
+      setStateSummary("handoff_pending");
+      appendAssistant({
+        message_id: `handoff-${response.handoff_package_id}`,
+        message: "担当者に引き継ぎました。会話内容と確認済み情報をキューに入れました。",
+        message_type: "text",
+        ai_action: "handoff",
+        quick_replies: [],
+        citations: [],
+      }, { handoffReason: response.reason });
+    } catch (err) {
+      setTurns((prev) => [...prev, { kind: "error", id: `handoff-${Date.now()}`, text: formatLoadError(err) }]);
+    } finally {
+      endRequest();
+    }
+  }
+
+  function onQuickReply(label: string, value: string) {
+    if (value === "handoff") {
+      void onHandoff();
+      return;
+    }
+    void submitText(value, label);
+  }
+
+  return (
+    <>
+      <div className="chatbot-layout">
+        <section className="chatbot-main" aria-label="ChatBot 会話">
+          <div className="chatbot-thread" aria-busy={loading}>
+            {turns.length === 0 && !loading && (
+              <div className="answer-empty-state">
+                <div className="answer-empty-mark" aria-hidden="true" />
+                <div>
+                  <strong>会話を開始してください</strong>
+                  <span>手続き相談、料金確認、根拠付き回答、人間引き継ぎまで同じ会話で扱います。</span>
+                </div>
+              </div>
+            )}
+
+            {turns.map((turn) => {
+              if (turn.kind === "user") {
+                return (
+                  <div className="answer-user-bubble" key={turn.id}>
+                    {turn.text}
+                  </div>
+                );
+              }
+              if (turn.kind === "error") {
+                return (
+                  <section className="result-panel error-panel" aria-live="polite" key={turn.id}>
+                    <h3>送信に失敗しました</h3>
+                    <p>{turn.text}</p>
+                  </section>
+                );
+              }
+              return (
+                <ChatAssistantBubble
+                  key={turn.id}
+                  turn={turn}
+                  onQuickReply={onQuickReply}
+                  onOpenCitation={setViewer}
+                />
+              );
+            })}
+
+            {progress && (
+              <div className="chat-progress" role="status" aria-live="polite">
+                <span aria-hidden="true" />
+                <strong>{chatProgressLabel(progress)}</strong>
+                {progress === "delayed" && (
+                  <button type="button" className="citation-open" onClick={() => void onHandoff()}>
+                    人間に相談する
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <form className="answers-composer" onSubmit={onSend}>
+            <div className="answers-composer-meta">
+              <label className="answers-collection-field">
+                <span>参照コレクション</span>
+                <select
+                  aria-label="ChatBot collection"
+                  value={collectionId}
+                  onChange={(event) => onCollectionChange(event.target.value)}
+                >
+                  {collections.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="citation-open"
+                onClick={() => void onHandoff()}
+                disabled={loading}
+              >
+                人間に相談する
+              </button>
+            </div>
+            <div className="answers-composer-inner">
+              <textarea
+                aria-label="Chat message"
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void submitText(input);
+                  }
+                }}
+                placeholder="相談内容を入力する…"
+                rows={1}
+              />
+              <button type="submit" disabled={loading || input.trim().length === 0}>
+                {loading ? "送信中" : "送信"}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <aside className="chatbot-side" aria-label="会話状態">
+          <div className="chatbot-state-row">
+            <span>セッション</span>
+            <strong>{sessionId ?? "未開始"}</strong>
+          </div>
+          <div className="chatbot-state-row">
+            <span>状態</span>
+            <strong>{stateSummary}</strong>
+          </div>
+          {metrics && (
+            <>
+              <div className="chatbot-state-row">
+                <span>会話数</span>
+                <strong>{metrics.conversation_count}</strong>
+              </div>
+              <div className="chatbot-state-row">
+                <span>引き継ぎ率</span>
+                <strong>{Math.round(metrics.handoff_rate * 100)}%</strong>
+              </div>
+            </>
+          )}
+        </aside>
+      </div>
+      <CitationViewer target={viewer} onClose={() => setViewer(null)} />
+    </>
+  );
+}
+
 function SourceSearchBody() {
   const [symptom, setSymptom] = useState("");
   const [collection, setCollection] = useState("manuals");
@@ -833,6 +1237,7 @@ function SourceSearchBody() {
 function screenTitle(screen: ManifestScreen): string {
   const titles: Record<string, string> = {
     answers: "質問する",
+    chatbot: "チャットボット",
     "answer-history": "回答履歴",
     "source-search": "ソース",
     "source-list": "ソース一覧",
@@ -2997,6 +3402,7 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
   return (
     <ScreenShell screen={screen}>
       {screen.id === "answers" && <AnswersBody />}
+      {screen.id === "chatbot" && <ChatBotBody />}
       {screen.id === "home-dashboard" && <HomeDashboardBody />}
       {screen.id === "answer-history" && <AnswerHistoryBody />}
       {screen.id === "source-search" && <SourceSearchBody />}
