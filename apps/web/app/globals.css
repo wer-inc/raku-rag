@@ -1358,6 +1358,228 @@ textarea {
   font-size: 12px;
 }
 
+
+.screen-actions button.is-secondary {
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--text);
+}
+
+.screen-actions button.is-secondary:hover {
+  background: #f6f6f7;
+}
+
+.document-library-shell {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.document-list-controls {
+  border-bottom: 1px solid var(--line);
+}
+
+.document-list-items {
+  display: grid;
+}
+
+.document-list-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.35fr) minmax(170px, 0.9fr) minmax(190px, 0.95fr) minmax(176px, max-content);
+  gap: 16px;
+  align-items: center;
+  padding: 16px 18px;
+  border-bottom: 1px solid #f0f0f2;
+  background: #ffffff;
+}
+
+.document-list-row:hover {
+  background: #fbfbfc;
+}
+
+.document-list-row:last-child {
+  border-bottom: 0;
+}
+
+.document-list-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.document-list-status-cell,
+.document-list-metrics {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.document-list-status-cell span:last-child,
+.document-list-metrics span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.document-list-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.document-list-actions a {
+  justify-content: center;
+  min-width: 74px;
+  min-height: 34px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.document-list-actions a:not(.secondary) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.knowledge-flow-grid,
+.policy-summary-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.knowledge-flow-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.knowledge-step-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.knowledge-step-card:hover {
+  background: #fbfbfc;
+}
+
+.knowledge-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-family: "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.knowledge-step-label,
+.policy-summary-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.knowledge-step-card strong {
+  font-size: 20px;
+  line-height: 1.1;
+  font-weight: 650;
+}
+
+.knowledge-step-state {
+  min-height: 36px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.knowledge-step-state.ok {
+  color: #15803d;
+}
+
+.knowledge-step-state.wait {
+  color: #b45309;
+}
+
+.knowledge-step-state.bad {
+  color: var(--danger);
+}
+
+.knowledge-step-action {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.policy-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.policy-summary-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.policy-summary-card strong {
+  font-size: 14px;
+}
+
+.policy-summary-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.policy-summary-card a {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.policy-summary-card a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 900px) {
+  .document-list-controls,
+  .document-list-row,
+  .knowledge-flow-grid,
+  .policy-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .document-list-actions {
+    justify-content: stretch;
+    max-width: none;
+  }
+
+  .document-list-actions > a {
+    flex: 1 1 130px;
+  }
+}
+
 .standalone-status {
   display: inline-flex;
   align-items: center;

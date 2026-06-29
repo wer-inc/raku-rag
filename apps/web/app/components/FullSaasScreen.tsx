@@ -4729,8 +4729,150 @@ const DOCUMENT_KIND_LABEL: Record<string, string> = {
   spec: "仕様書",
 };
 
+const DOCUMENT_LIST_PAGE_SIZE = 12;
+const DOCUMENT_LIST_FILTERS = [
+  { value: "all", label: "すべて" },
+  { value: "needs_review", label: "レビュー待ち" },
+  { value: "approved", label: "正式根拠" },
+  { value: "obsolete", label: "旧版" },
+  { value: "local", label: "取込直後" },
+] as const;
+type DocumentListFilter = (typeof DOCUMENT_LIST_FILTERS)[number]["value"];
+
+type DocumentListRow = {
+  document_id: string;
+  collection_id: string;
+  source_id: string;
+  document_kind: string | null;
+  approval_status: string;
+  effective_date: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  superseded_by: string | null;
+  equipment: string | null;
+  safety_category: string | null;
+  source: "server" | "local";
+  filename?: string;
+  chunk_count?: number;
+  ingested_at?: string;
+};
+
+function documentKindLabel(kind: string | null | undefined, fallback?: string): string {
+  if (!kind) return fallback ? sourceKindLabel(fallback) : "種別未設定";
+  return DOCUMENT_KIND_LABEL[kind] ?? kind;
+}
+
+function documentTitle(row: DocumentListRow): string {
+  return row.filename || row.document_id;
+}
+
+function documentApprovalView(status: string): { label: string; cls: string; description: string } {
+  if (status === "approved") {
+    return {
+      cls: "approval-approved",
+      description: "回答の正式な根拠として利用できます。",
+      label: "正式根拠",
+    };
+  }
+  if (status === "obsolete") {
+    return {
+      cls: "approval-obsolete",
+      description: "高リスク回答の正式根拠には使われません。",
+      label: "旧版",
+    };
+  }
+  if (status === "draft") {
+    return {
+      cls: "approval-draft",
+      description: "参考のみ。正式根拠化にはレビューが必要です。",
+      label: "ドラフト",
+    };
+  }
+  if (status === "pending_review") {
+    return {
+      cls: "approval-pending_review",
+      description: "承認すると正式な根拠になります。",
+      label: "レビュー待ち",
+    };
+  }
+  return {
+    cls: "approval-draft",
+    description: "状態を確認してください。",
+    label: status || "状態不明",
+  };
+}
+
+function documentNeedsReview(row: DocumentListRow): boolean {
+  return row.approval_status === "pending_review" || row.approval_status === "draft";
+}
+
+function documentMatchesFilter(row: DocumentListRow, filter: DocumentListFilter): boolean {
+  switch (filter) {
+    case "needs_review":
+      return documentNeedsReview(row);
+    case "approved":
+      return row.approval_status === "approved";
+    case "obsolete":
+      return row.approval_status === "obsolete";
+    case "local":
+      return row.source === "local";
+    default:
+      return true;
+  }
+}
+
+function documentSearchText(row: DocumentListRow): string {
+  const approval = documentApprovalView(row.approval_status);
+  return [
+    row.document_id,
+    row.filename,
+    row.collection_id,
+    row.source_id,
+    documentKindLabel(row.document_kind, row.source_id),
+    approval.label,
+    approval.description,
+    row.equipment,
+    row.safety_category,
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function documentFreshness(row: DocumentListRow): string {
+  if (row.effective_date) return `発効 ${row.effective_date}`;
+  if (row.approved_at) return `承認 ${new Date(row.approved_at).toLocaleDateString("ja-JP")}`;
+  if (row.ingested_at) return `取込 ${new Date(row.ingested_at).toLocaleString("ja-JP")}`;
+  return "発効日未設定";
+}
+
+function localUploadRows(uploaded: IngestedDoc[], serverDocs: ManufacturingDocumentSummary[]): DocumentListRow[] {
+  const serverIds = new Set(serverDocs.map((doc) => doc.document_id));
+  return uploaded
+    .filter((doc) => !serverIds.has(doc.document_id))
+    .map((doc) => ({
+      approved_at: null,
+      approved_by: null,
+      approval_status: doc.approval_status,
+      chunk_count: doc.chunk_count,
+      collection_id: doc.collection_id,
+      document_id: doc.document_id,
+      document_kind: null,
+      effective_date: doc.effective_date,
+      equipment: null,
+      filename: doc.filename,
+      ingested_at: doc.ingested_at,
+      safety_category: null,
+      source: "local" as const,
+      source_id: doc.source_id,
+      superseded_by: null,
+    }));
+}
+
 function DocumentListBody() {
   const [uploaded, setUploaded] = useState<IngestedDoc[]>([]);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<DocumentListFilter>("all");
+  const [page, setPage] = useState(1);
   const [docs, reloadDocs] = useLoad(
     async () => manufacturingDocuments(await getSessionToken(), DEMO_COLLECTION),
     [],
@@ -4744,23 +4886,51 @@ function DocumentListBody() {
     uploaded.length > 0
       ? "テナント一覧への反映を確認中です。直近アップロードは上の控えに表示されています。"
       : "ドキュメントはまだありません。「ソースを追加」から取り込めます。";
+  const serverDocs = docs.state === "ready" ? docs.data : [];
+  const rows: DocumentListRow[] =
+    docs.state === "ready"
+      ? [
+          ...serverDocs.map((doc) => ({ ...doc, source: "server" as const })),
+          ...localUploadRows(uploaded, serverDocs),
+        ]
+      : [];
+  const filteredRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (!documentMatchesFilter(row, filter)) return false;
+      if (!needle) return true;
+      return documentSearchText(row).includes(needle);
+    });
+  }, [filter, query, rows]);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / DOCUMENT_LIST_PAGE_SIZE));
+  const pageRows = filteredRows.slice((page - 1) * DOCUMENT_LIST_PAGE_SIZE, page * DOCUMENT_LIST_PAGE_SIZE);
+  const reviewCount = rows.filter(documentNeedsReview).length;
+  const approvedCount = rows.filter((row) => row.approval_status === "approved").length;
+  const obsoleteCount = rows.filter((row) => row.approval_status === "obsolete").length;
+
+  useEffect(() => {
+    setPage(1);
+  }, [filter, query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
 
   return (
     <>
       {uploaded.length > 0 && (
         <Section
-          title="最近アップロードしたドキュメント"
-          note="このブラウザから取り込んだドキュメントです（取込直後の控え。テナント全体は下の一覧に表示されます）。"
+          title="取込直後の控え"
+          note="このブラウザで開始した取込の控えです。テナント全体の正式な一覧は下に表示されます。"
         >
           <DataTable
-            columns={["文書", "承認状態", "チャンク", "コレクション", "取込日時"]}
+            columns={["文書", "承認状態", "チャンク", "取込日時"]}
             rows={uploaded.map((doc) => [
               <Link key={doc.document_id} href={`/documents/${doc.document_id}`}>
-                {doc.document_id}
+                {doc.filename || doc.document_id}
               </Link>,
               UPLOAD_APPROVAL_LABEL[doc.approval_status] ?? doc.approval_status,
               String(doc.chunk_count),
-              doc.collection_id,
               new Date(doc.ingested_at).toLocaleString("ja-JP"),
             ])}
             empty="アップロードはありません。"
@@ -4768,46 +4938,156 @@ function DocumentListBody() {
           <div className="screen-actions">
             <button
               type="button"
-              className="btn-reject"
+              className="is-secondary"
               onClick={() => {
                 clearIngestedDocs();
                 setUploaded([]);
               }}
             >
-              この控えを消去
+              このブラウザの控えを消去
             </button>
           </div>
         </Section>
       )}
       <Section
         title="ドキュメント"
-        note="テナントのナレッジベースに取り込まれ、検索・回答の根拠になっているドキュメントです。"
+        note="正式根拠、レビュー待ち、旧版を分けて確認できます。内部 ID や処理状態は詳細画面で確認できます。"
       >
         {docs.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ドキュメントを読み込み中…</p>}
         {docs.state === "error" && <ScreenLoadError error={docs.error} onRetry={reloadDocs} />}
-        {docs.state === "ready" && (
-          <DataTable
-            columns={["文書", "種別", "承認状態", "発効日", "ソース", "コレクション"]}
-            rows={docs.data.map((doc) => [
-              <Link key={doc.document_id} href={`/documents/${doc.document_id}`}>
-                {doc.document_id}
-              </Link>,
-              ((kind) => (kind ? DOCUMENT_KIND_LABEL[kind] ?? kind : "—"))(
-                doc.document_kind ?? doc.source_id,
-              ),
-              <span
-                key={`${doc.document_id}-status`}
-                className={`review-queue-status approval-${doc.approval_status}`}
-              >
-                {UPLOAD_APPROVAL_LABEL[doc.approval_status] ?? doc.approval_status}
-              </span>,
-              doc.effective_date ?? "—",
-              doc.source_id,
-              doc.collection_id,
-            ])}
-            empty={emptyDocumentMessage}
-          />
-        )}
+        {docs.state === "ready" &&
+          (rows.length === 0 ? (
+            <div className="standalone-empty-state">
+              <h4>ドキュメントはまだありません</h4>
+              <p>{emptyDocumentMessage}</p>
+              <Link className="standalone-empty-cta" href="/sources/new">
+                ソースを追加
+              </Link>
+            </div>
+          ) : (
+            <div className="document-library-shell">
+              <section className="source-list-controls document-list-controls" aria-label="ドキュメントの検索と絞り込み">
+                <label className="standalone-search source-list-search">
+                  <span aria-hidden="true">⌕</span>
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="文書名・ソース・状態で検索"
+                    aria-label="文書名・ソース・状態で検索"
+                  />
+                </label>
+                <div className="source-list-filter" role="group" aria-label="ドキュメント状態で絞り込み">
+                  {DOCUMENT_LIST_FILTERS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={filter === option.value ? "source-filter-button active" : "source-filter-button"}
+                      aria-pressed={filter === option.value}
+                      onClick={() => setFilter(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="source-list-summary" aria-live="polite">
+                  <span>{filteredRows.length} 件表示</span>
+                  <span>レビュー待ち {reviewCount} 件</span>
+                  <span>正式根拠 {approvedCount} 件</span>
+                  <span>旧版 {obsoleteCount} 件</span>
+                </div>
+              </section>
+              {filteredRows.length === 0 ? (
+                <div className="standalone-empty-state">
+                  <h4>条件に合うドキュメントはありません</h4>
+                  <p>検索語や絞り込みを変えると、別の文書を確認できます。</p>
+                  <button
+                    type="button"
+                    className="standalone-empty-cta"
+                    onClick={() => {
+                      setQuery("");
+                      setFilter("all");
+                    }}
+                  >
+                    条件をクリア
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="document-list-items" role="list">
+                    {pageRows.map((doc) => {
+                      const approval = documentApprovalView(doc.approval_status);
+                      const needsReview = documentNeedsReview(doc);
+                      return (
+                        <article className="document-list-row" key={`${doc.source}-${doc.document_id}`} role="listitem">
+                          <div className="document-list-main">
+                            <div className="standalone-source-mark" aria-hidden="true">
+                              {documentKindLabel(doc.document_kind, doc.source_id).slice(0, 2)}
+                            </div>
+                            <div className="source-list-title-block">
+                              <h4>
+                                <Link href={`/documents/${doc.document_id}`} className="source-title-link" aria-label={`${documentTitle(doc)} の詳細を見る`}>
+                                  {documentTitle(doc)}
+                                </Link>
+                              </h4>
+                              <p>
+                                {documentKindLabel(doc.document_kind, doc.source_id)}
+                                {doc.source === "local" ? " · 取込直後の控え" : ""}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="document-list-status-cell">
+                            <span className={`review-queue-status ${approval.cls}`}>{approval.label}</span>
+                            <span>{approval.description}</span>
+                          </div>
+                          <div className="document-list-metrics">
+                            <span>{documentFreshness(doc)}</span>
+                            <span>ソース: {sourceKindLabel(doc.source_id)}</span>
+                            <span>設備/分類: {doc.equipment || doc.safety_category || "—"}</span>
+                          </div>
+                          <div className="document-list-actions">
+                            {needsReview && (
+                              <Link href="/reviews/documents" className="button-link">
+                                レビューへ
+                              </Link>
+                            )}
+                            {doc.approval_status === "approved" && (
+                              <Link href="/" className="button-link secondary">
+                                質問で確認
+                              </Link>
+                            )}
+                            <Link href={`/documents/${doc.document_id}`} className="button-link secondary">
+                              詳細
+                            </Link>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  {totalPages > 1 && (
+                    <nav className="source-list-pagination" aria-label="ドキュメント一覧のページ">
+                      <button
+                        type="button"
+                        onClick={() => setPage((current) => Math.max(1, current - 1))}
+                        disabled={page <= 1}
+                      >
+                        前へ
+                      </button>
+                      <span>
+                        {page} / {totalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                        disabled={page >= totalPages}
+                      >
+                        次へ
+                      </button>
+                    </nav>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
       </Section>
     </>
   );
@@ -4903,32 +5183,138 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
   );
 }
 
+
+type KnowledgePreparationData = {
+  governance: GovernanceStatus;
+  sources: SourceListRow[];
+  documents: ManufacturingDocumentSummary[];
+  drafts: DraftArtifact[];
+};
+
+async function loadKnowledgePreparationData(): Promise<KnowledgePreparationData> {
+  const token = await getSessionToken();
+  const [governance, sources, documents, drafts] = await Promise.all([
+    manufacturingGovernanceStatus(token),
+    loadSourceListRows(),
+    manufacturingDocuments(token).catch(() => [] as ManufacturingDocumentSummary[]),
+    manufacturingListDrafts(token).catch(() => [] as DraftArtifact[]),
+  ]);
+  return { documents, drafts, governance, sources };
+}
+
+function draftNeedsHumanReview(draft: DraftArtifact): boolean {
+  return draft.status === "draft" || draft.status === "in_review";
+}
+
+function KnowledgePrepStep({
+  action,
+  description,
+  href,
+  index,
+  label,
+  metric,
+  tone,
+}: {
+  action: string;
+  description: string;
+  href: string;
+  index: string;
+  label: string;
+  metric: string;
+  tone: "ok" | "wait" | "bad";
+}) {
+  return (
+    <Link href={href} className="knowledge-step-card" role="listitem">
+      <span className="knowledge-step-index" aria-hidden="true">{index}</span>
+      <span className="knowledge-step-label">{label}</span>
+      <strong>{metric}</strong>
+      <span className={`knowledge-step-state ${tone}`}>{description}</span>
+      <span className="knowledge-step-action">{action}</span>
+    </Link>
+  );
+}
+
 function ApprovalWorkflowBody() {
-  const [state, reload] = useLoad(async () => {
-    const token = await getSessionToken();
-    return manufacturingGovernanceStatus(token);
-  }, []);
+  const [state, reload] = useLoad(loadKnowledgePreparationData, []);
   if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">ガバナンス状態を読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
+
+  const { documents, drafts, governance, sources } = state.data;
+  const sourceActionCount = sources.filter(sourceNeedsAction).length;
+  const activeSyncCount = sources.filter((row) => isSyncActive(row.sync?.status)).length;
+  const pendingDocumentCount = documents.filter((doc) => doc.approval_status === "pending_review" || doc.approval_status === "draft").length;
+  const approvedDocumentCount = documents.filter((doc) => doc.approval_status === "approved").length;
+  const openDraftCount = drafts.filter(draftNeedsHumanReview).length;
+
   return (
     <>
+      <Section title="ナレッジ準備" note="ソース接続から正式根拠化、AI生成物レビューまでの作業順です。件数が残っている段階から処理してください。">
+        <div className="knowledge-flow-grid" role="list" aria-label="ナレッジ準備の作業順">
+          <KnowledgePrepStep
+            index="1"
+            label="接続済みソース"
+            metric={`${sources.length} 件`}
+            description={sourceActionCount > 0 ? `${sourceActionCount} 件に対応が必要` : "利用状態を確認済み"}
+            tone={sourceActionCount > 0 ? "wait" : "ok"}
+            href="/sources/list"
+            action="ソースを確認"
+          />
+          <KnowledgePrepStep
+            index="2"
+            label="同期・取り込み"
+            metric={activeSyncCount > 0 ? `${activeSyncCount} 件実行中` : "取込ラン"}
+            description={activeSyncCount > 0 ? "完了まで自動更新を確認" : "失敗や部分成功を確認"}
+            tone={activeSyncCount > 0 ? "wait" : "ok"}
+            href="/ingestion-runs"
+            action="取込ランを見る"
+          />
+          <KnowledgePrepStep
+            index="3"
+            label="根拠文書レビュー"
+            metric={`${pendingDocumentCount} 件`}
+            description={pendingDocumentCount > 0 ? "正式根拠化が必要" : `${approvedDocumentCount} 件が正式根拠`}
+            tone={pendingDocumentCount > 0 ? "wait" : "ok"}
+            href="/reviews/documents"
+            action="文書をレビュー"
+          />
+          <KnowledgePrepStep
+            index="4"
+            label="AIドラフトレビュー"
+            metric={`${openDraftCount} 件`}
+            description={openDraftCount > 0 ? "人手レビュー待ち" : "未処理のドラフトなし"}
+            tone={openDraftCount > 0 ? "wait" : "ok"}
+            href="/reviews"
+            action="ドラフトを確認"
+          />
+        </div>
+      </Section>
+
       <Section title="ガバナンスベースのポリシー">
         <FieldGrid
           rows={[
-            ["AI生成物はドラフト固定", state.data.draft_review.ai_output_always_draft ? "はい" : "いいえ"],
-            ["AIドラフト承認に担当者必須", state.data.draft_review.reviewer_required_for_approval ? "はい" : "いいえ"],
-            ["高リスク回答は承認済み根拠が必須", state.data.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
+            ["AI生成物はドラフト固定", governance.draft_review.ai_output_always_draft ? "はい" : "いいえ"],
+            ["AIドラフト承認に担当者必須", governance.draft_review.reviewer_required_for_approval ? "はい" : "いいえ"],
+            ["高リスク回答は承認済み根拠が必須", governance.safety_gate.high_risk_requires_approved_citation ? "はい" : "いいえ"],
           ]}
         />
       </Section>
-      <Section title="同期・承認ポリシー">
-        <textarea
-          value="現在の画面では、ガバナンス設定とデータソースの信頼ポリシーを表示します。同期元を信頼するか、根拠文書レビューに回すかはデータソース追加時に選択します。"
-          readOnly
-          rows={5}
-          aria-label="同期・承認ポリシーの説明"
-        />
-        <p className="ops-note">この画面のポリシー編集 API は未接続です。</p>
+
+      <Section title="同期・承認ポリシー概要" note="同期元を信頼するか、根拠文書レビューに回すかはデータソース追加時に選択します。">
+        <div className="policy-summary-grid">
+          <article className="policy-summary-card">
+            <span className="policy-summary-label">レビューが必要</span>
+            <strong>pending_review で取り込み</strong>
+            <p>同期した文書は根拠文書レビューに入り、承認されるまで高リスク回答の正式根拠にはなりません。</p>
+            <Link href="/reviews/documents">根拠文書レビューへ</Link>
+          </article>
+          <article className="policy-summary-card">
+            <span className="policy-summary-label">信頼するソース</span>
+            <strong>承認済みとして取り込み</strong>
+            <p>source-of-truth として扱う同期元です。個別レビューを省略する代わりに、接続設定時の判断が監査上重要になります。</p>
+            <Link href="/sources/new">ソースを追加</Link>
+          </article>
+        </div>
+        <p className="ops-note">この画面では現在のポリシーと作業導線を表示します。承認ルール編集 API は未接続です。</p>
       </Section>
     </>
   );
