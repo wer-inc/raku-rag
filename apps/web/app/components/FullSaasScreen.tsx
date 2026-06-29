@@ -338,6 +338,63 @@ function citeApproval(status?: string | null): { label: string; cls: string } {
     : { label: status ? status : "承認状態不明", cls: "approval-draft" };
 }
 
+const ANSWER_STARTERS = [
+  "プレス機の異音が出たときの初動手順を教えて",
+  "旧版の手順書を参照してよい条件はありますか",
+  "出荷前検査で不一致が出た場合の承認フローを確認したい",
+];
+
+const CHAT_STARTERS = [
+  "交換部品の確認手順を案内して",
+  "担当者に引き継ぐ前に必要な情報を整理して",
+  "承認済みの規格だけで回答して",
+];
+
+type HistoryStatusFilter = "all" | ManufacturingAnswerResponse["status"];
+type HistorySafetyFilter = "all" | "normal" | "blocked" | "high_risk" | "obsolete";
+
+function collectionDisplayName(id?: string | null): string {
+  if (!id || id === DEMO_COLLECTION) return "デモナレッジ";
+  return id;
+}
+
+function confidenceLabel(confidence: number | null | undefined): string {
+  if (typeof confidence !== "number") return "未算出";
+  const value = confidence <= 1 ? Math.round(confidence * 100) : Math.round(confidence);
+  return `${value}%`;
+}
+
+function chatStateLabel(state: string, hasSession: boolean): string {
+  if (!hasSession) return "未開始";
+  switch (state) {
+    case "idle":
+      return "待機中";
+    case "handoff_pending":
+      return "担当者引き継ぎ中";
+    case "completed":
+      return "完了";
+    case "waiting_for_user":
+      return "ユーザー確認待ち";
+    case "active":
+    case "open":
+      return "会話中";
+    default:
+      return "会話中";
+  }
+}
+
+function ragStatusLabel(status: string): string {
+  if (status === "ok") return "根拠確認済み";
+  if (status === "insufficient_evidence") return "根拠不足";
+  if (status === "budget_exceeded") return "予算上限";
+  return "根拠確認中";
+}
+
+function handoffReasonLabel(reason: string): string {
+  if (reason === "customer_requested_human") return "ユーザー依頼";
+  return "引き継ぎ待ち";
+}
+
 function AnswerFeedback({ question, answerId }: { question: string; answerId: string }) {
   const [sent, setSent] = useState<null | "up" | "down">(null);
   const [showReasons, setShowReasons] = useState(false);
@@ -440,12 +497,11 @@ function AnswerPanel({
         <span className="answer-card-q-label">質問</span>
         <p>{turn.question}</p>
       </div>
-      <div className="result-head">
+      <div className="answer-summary-strip" aria-label="回答の状態">
         <span className={`status-badge status-${r.status}`}>{statusLabel(r.status)}</span>
-        {typeof r.confidence === "number" && (
-          <span className="answer-confidence">確信度 {r.confidence.toFixed(2)}</span>
-        )}
-        <span className="correlation-id">{r.correlation_id || "—"}</span>
+        <span className="answer-summary-item">安全: {safetyLabel(r)}</span>
+        <span className="answer-summary-item">引用 {r.citations.length}件</span>
+        <span className="answer-summary-item">確信度 {confidenceLabel(r.confidence)}</span>
       </div>
 
       {r.text ? (
@@ -458,6 +514,17 @@ function AnswerPanel({
               ? "承認済みの根拠が不足しているため、断定できません。文書の承認または追加が必要です。"
               : "対応する回答は返されませんでした。"}
         </p>
+      )}
+
+      {(blocked || insufficient) && (
+        <div className="answer-next-actions" aria-label="次の操作">
+          <strong>{blocked ? "確定回答を保留しました" : "承認済み根拠が不足しています"}</strong>
+          <span>必要な文書を承認するか、参照できる根拠を追加してから再質問してください。</span>
+          <div>
+            <Link className="citation-open" href="/reviews/documents">根拠文書レビュー</Link>
+            <Link className="citation-open" href="/documents">ドキュメントを確認</Link>
+          </div>
+        </div>
       )}
 
       <section className={`safety-panel ${blocked ? "safety-blocked" : ""}`}>
@@ -508,7 +575,12 @@ function AnswerPanel({
                     <span className={`citation-chip ${ap.cls}`}>{ap.label}</span>
                   </div>
                   <div className="citation-card-foot">
-                    <output>スコア {citation.retrieval_score.toFixed(3)}</output>
+                    <details className="citation-diagnostics">
+                      <summary>診断情報</summary>
+                      <span>
+                        {citation.source_id} · v{citation.version} · スコア {citation.retrieval_score.toFixed(3)}
+                      </span>
+                    </details>
                     <button
                       type="button"
                       className="citation-open"
@@ -533,6 +605,13 @@ function AnswerPanel({
         !blocked && <p className="ops-note">引用ソースはありません。</p>
       )}
 
+      {r.correlation_id && (
+        <details className="answer-diagnostics">
+          <summary>回答IDを表示</summary>
+          <span>{r.correlation_id}</span>
+        </details>
+      )}
+
       <AnswerFeedback question={turn.question} answerId={r.correlation_id} />
     </section>
   );
@@ -548,6 +627,10 @@ function AnswersBody() {
 
   useEffect(() => {
     setCollectionId(loadAnswerCollection());
+    if (typeof window !== "undefined") {
+      const initialQuestion = new URLSearchParams(window.location.search).get("q");
+      if (initialQuestion) setQuery(initialQuestion);
+    }
     void getSessionToken()
       .then((token) => adminDataSources(token))
       .then((sources) => {
@@ -580,7 +663,7 @@ function AnswersBody() {
         { query: trimmed, collection_id: targetCollection },
         token,
       );
-      recordAnswer(trimmed, response);
+      recordAnswer(trimmed, response, targetCollection);
       setTurns((prev) => [...prev, { kind: "answer", id: `${turnId}-a`, question: trimmed, response }]);
     } catch (err) {
       clearSessionToken();
@@ -603,11 +686,25 @@ function AnswersBody() {
       <p className="src-warning">承認済みソースだけを参照し、危険度や旧版参照を明示して回答します。</p>
       <div className="answers-thread">
         {turns.length === 0 && !loading && (
-          <div className="answer-empty-state">
+          <div className="answer-empty-state answer-empty-state-rich">
             <div className="answer-empty-mark" aria-hidden="true" />
-            <div>
-              <strong>質問を入力してください</strong>
-              <span>製造手順・規格・トラブル対応を横断検索します。</span>
+            <div className="answer-empty-copy">
+              <strong>承認済みナレッジに質問する</strong>
+              <span>
+                現場手順、規格、トラブル対応を横断し、根拠不足や安全保留も回答内で明示します。
+              </span>
+              <div className="answer-starter-list" aria-label="質問例">
+                {ANSWER_STARTERS.map((starter) => (
+                  <button key={starter} type="button" onClick={() => setQuery(starter)}>
+                    {starter}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="answer-empty-meta" aria-label="現在の参照範囲">
+              <span>参照範囲</span>
+              <strong>{collectionDisplayName(collectionId)}</strong>
+              <small>回答後はこのブラウザの履歴に保存されます。</small>
             </div>
           </div>
         )}
@@ -637,9 +734,9 @@ function AnswersBody() {
       <form className="answers-composer" onSubmit={onAsk}>
         <div className="answers-composer-meta">
           <label className="answers-collection-field">
-            <span>検索コレクション</span>
+            <span>参照範囲</span>
             <select
-              aria-label="Collection"
+              aria-label="回答の参照範囲"
               value={collectionId}
               onChange={(event) => onCollectionChange(event.target.value)}
             >
@@ -650,10 +747,11 @@ function AnswersBody() {
               ))}
             </select>
           </label>
+          <Link className="composer-meta-link" href="/answers/history">回答履歴</Link>
         </div>
         <div className="answers-composer-inner">
           <textarea
-            aria-label="Question"
+            aria-label="質問内容"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
@@ -721,13 +819,14 @@ function ChatAssistantBubble({
   onOpenCitation: (target: CitationViewTarget) => void;
 }) {
   const message = turn.message;
+  const ragClass = turn.ragStatus === "ok" ? "approval-approved" : "approval-draft";
   return (
     <article className="chat-bot-bubble">
       <div className="chat-bubble-head">
         <span className="status-badge">{chatActionLabel(message.ai_action)}</span>
-        {turn.ragStatus && <span className={`citation-chip status-${turn.ragStatus}`}>RAG {turn.ragStatus}</span>}
-        {turn.ticketId && <span className="citation-chip approval-approved">{turn.ticketId}</span>}
-        {turn.handoffReason && <span className="citation-chip approval-obsolete">{turn.handoffReason}</span>}
+        {turn.ragStatus && <span className={`citation-chip ${ragClass}`}>{ragStatusLabel(turn.ragStatus)}</span>}
+        {turn.ticketId && <span className="citation-chip approval-approved">受付 {turn.ticketId}</span>}
+        {turn.handoffReason && <span className="citation-chip approval-obsolete">{handoffReasonLabel(turn.handoffReason)}</span>}
       </div>
       <p>{message.message}</p>
 
@@ -814,6 +913,17 @@ function ChatBotBody() {
   function onCollectionChange(value: string) {
     setCollectionId(value);
     saveAnswerCollection(value);
+  }
+
+  function onNewConversation() {
+    if (loading) return;
+    setSessionId(null);
+    setInput("");
+    setTurns([]);
+    setStateSummary("idle");
+    setProgress(null);
+    if (thinkingTimer.current) clearTimeout(thinkingTimer.current);
+    if (delayTimer.current) clearTimeout(delayTimer.current);
   }
 
   function beginRequest() {
@@ -953,11 +1063,25 @@ function ChatBotBody() {
         <section className="chatbot-main" aria-label="ChatBot 会話">
           <div className="chatbot-thread" aria-busy={loading}>
             {turns.length === 0 && !loading && (
-              <div className="answer-empty-state">
+              <div className="answer-empty-state answer-empty-state-rich">
                 <div className="answer-empty-mark" aria-hidden="true" />
-                <div>
-                  <strong>会話を開始してください</strong>
-                  <span>手続き相談、料金確認、根拠付き回答、人間引き継ぎまで同じ会話で扱います。</span>
+                <div className="answer-empty-copy">
+                  <strong>根拠付きチャットを開始する</strong>
+                  <span>
+                    参照範囲内の承認済みナレッジを使い、必要な情報収集から担当者引き継ぎまで同じ会話で進めます。
+                  </span>
+                  <div className="answer-starter-list" aria-label="会話の開始例">
+                    {CHAT_STARTERS.map((starter) => (
+                      <button key={starter} type="button" onClick={() => void submitText(starter)}>
+                        {starter}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="answer-empty-meta" aria-label="チャットボットの参照範囲">
+                  <span>参照範囲</span>
+                  <strong>{collectionDisplayName(collectionId)}</strong>
+                  <small>外部公開設定ではなく、認証済みワークスペース内のプレビューです。</small>
                 </div>
               </div>
             )}
@@ -1004,9 +1128,9 @@ function ChatBotBody() {
           <form className="answers-composer" onSubmit={onSend}>
             <div className="answers-composer-meta">
               <label className="answers-collection-field">
-                <span>参照コレクション</span>
+                <span>参照範囲</span>
                 <select
-                  aria-label="ChatBot collection"
+                  aria-label="チャットボットの参照範囲"
                   value={collectionId}
                   onChange={(event) => onCollectionChange(event.target.value)}
                 >
@@ -1017,6 +1141,9 @@ function ChatBotBody() {
                   ))}
                 </select>
               </label>
+              <button type="button" className="citation-open" onClick={onNewConversation} disabled={loading}>
+                新しい会話
+              </button>
               <button
                 type="button"
                 className="citation-open"
@@ -1028,7 +1155,7 @@ function ChatBotBody() {
             </div>
             <div className="answers-composer-inner">
               <textarea
-                aria-label="Chat message"
+                aria-label="チャットメッセージ"
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
@@ -1048,13 +1175,21 @@ function ChatBotBody() {
         </section>
 
         <aside className="chatbot-side" aria-label="会話状態">
-          <div className="chatbot-state-row">
-            <span>セッション</span>
-            <strong>{sessionId ?? "未開始"}</strong>
+          <div className="chatbot-side-head">
+            <strong>会話の状態</strong>
+            <span>回答範囲と引き継ぎ状況</span>
           </div>
           <div className="chatbot-state-row">
-            <span>状態</span>
-            <strong>{stateSummary}</strong>
+            <span>進行状況</span>
+            <strong>{progress ? chatProgressLabel(progress) : chatStateLabel(stateSummary, Boolean(sessionId))}</strong>
+          </div>
+          <div className="chatbot-state-row">
+            <span>参照範囲</span>
+            <strong>{collectionDisplayName(collectionId)}</strong>
+          </div>
+          <div className="chatbot-state-row">
+            <span>セッション</span>
+            <strong>{sessionId ? "開始済み" : "未開始"}</strong>
           </div>
           {metrics && (
             <>
@@ -1067,6 +1202,13 @@ function ChatBotBody() {
                 <strong>{Math.round(metrics.handoff_rate * 100)}%</strong>
               </div>
             </>
+          )}
+          {(sessionId || stateSummary !== "idle") && (
+            <details className="chatbot-diagnostics">
+              <summary>診断情報</summary>
+              <span>session: {sessionId ?? "none"}</span>
+              <span>state: {stateSummary}</span>
+            </details>
           )}
         </aside>
       </div>
@@ -2236,6 +2378,10 @@ function SourcePreviewPanel({
 
 function AnswerHistoryBody() {
   const [entries, setEntries] = useState<AnswerHistoryEntry[]>([]);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>("all");
+  const [safetyFilter, setSafetyFilter] = useState<HistorySafetyFilter>("all");
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     setEntries(loadAnswerHistory());
@@ -2244,6 +2390,7 @@ function AnswerHistoryBody() {
   function onClear() {
     clearAnswerHistory();
     setEntries([]);
+    setConfirmClear(false);
   }
 
   function safetyTag(entry: AnswerHistoryEntry): string {
@@ -2253,30 +2400,135 @@ function AnswerHistoryBody() {
     return "正常";
   }
 
+  function safetyKey(entry: AnswerHistoryEntry): HistorySafetyFilter {
+    if (entry.blocked) return "blocked";
+    if (entry.high_risk) return "high_risk";
+    if (entry.obsolete) return "obsolete";
+    return "normal";
+  }
+
+  const filteredEntries = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return entries.filter((entry) => {
+      if (statusFilter !== "all" && entry.status !== statusFilter) return false;
+      if (safetyFilter !== "all" && safetyKey(entry) !== safetyFilter) return false;
+      if (!needle) return true;
+      return [entry.question, entry.answer_excerpt, entry.collection_id]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(needle);
+    });
+  }, [entries, query, statusFilter, safetyFilter]);
+
+  const stats = useMemo(() => ({
+    total: entries.length,
+    blocked: entries.filter((entry) => entry.blocked).length,
+    highRisk: entries.filter((entry) => entry.high_risk).length,
+    cited: entries.filter((entry) => entry.citation_count > 0).length,
+  }), [entries]);
+
   return (
     <Section
       title="回答履歴"
-      note="このブラウザで確認できる質問履歴です。"
+      note="このブラウザに保存された最近の回答です。監査ログや全社履歴ではありません。"
     >
       {entries.length === 0 ? (
-        <p className="ops-empty">まだ履歴はありません。「質問する」から質問すると、ここに残ります。</p>
+        <div className="history-empty">
+          <p className="ops-empty">まだ履歴はありません。「質問する」から質問すると、ここに残ります。</p>
+          <Link className="citation-open" href="/">質問する</Link>
+        </div>
       ) : (
         <>
-          <DataTable
-            columns={["質問", "状態", "安全", "引用", "日時"]}
-            rows={entries.map((entry) => [
-              entry.question,
-              statusLabel(entry.status),
-              safetyTag(entry),
-              String(entry.citation_count),
-              new Date(entry.asked_at).toLocaleString("ja-JP"),
-            ])}
-            empty="まだ履歴はありません。"
-          />
-          <div className="screen-actions">
-            <button type="button" className="btn-reject" onClick={onClear}>
-              履歴を消去
+          <div className="history-summary-grid" aria-label="履歴サマリ">
+            <Stat label="保存された回答" value={stats.total} />
+            <Stat label="保留" value={stats.blocked} />
+            <Stat label="高リスク" value={stats.highRisk} />
+            <Stat label="引用あり" value={stats.cited} />
+          </div>
+
+          <div className="history-toolbar">
+            <label className="history-search-field">
+              <span>検索</span>
+              <input
+                aria-label="回答履歴を検索"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="質問、回答抜粋、参照範囲"
+              />
+            </label>
+            <label className="history-filter-field">
+              <span>状態</span>
+              <select
+                aria-label="回答状態で絞り込み"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as HistoryStatusFilter)}
+              >
+                <option value="all">すべて</option>
+                <option value="ok">回答済み</option>
+                <option value="insufficient_evidence">根拠不足</option>
+                <option value="budget_exceeded">予算上限</option>
+                <option value="unavailable">利用不可</option>
+              </select>
+            </label>
+            <label className="history-filter-field">
+              <span>安全</span>
+              <select
+                aria-label="安全状態で絞り込み"
+                value={safetyFilter}
+                onChange={(event) => setSafetyFilter(event.target.value as HistorySafetyFilter)}
+              >
+                <option value="all">すべて</option>
+                <option value="normal">正常</option>
+                <option value="blocked">保留</option>
+                <option value="high_risk">高リスク</option>
+                <option value="obsolete">旧版参照</option>
+              </select>
+            </label>
+          </div>
+
+          {filteredEntries.length === 0 ? (
+            <p className="ops-empty">条件に一致する履歴はありません。</p>
+          ) : (
+            <div className="history-list" aria-label="回答履歴一覧">
+              {filteredEntries.map((entry) => (
+                <article className="history-card" key={entry.id}>
+                  <header>
+                    <div className="history-card-title">
+                      <strong>{entry.question}</strong>
+                      <span>{new Date(entry.asked_at).toLocaleString("ja-JP")}</span>
+                    </div>
+                    <div className="history-card-badges" aria-label="回答状態">
+                      <span className={`status-badge status-${entry.status}`}>{statusLabel(entry.status)}</span>
+                      <span className={`citation-chip ${entry.blocked ? "approval-obsolete" : entry.high_risk || entry.obsolete ? "approval-draft" : "approval-approved"}`}>
+                        {safetyTag(entry)}
+                      </span>
+                    </div>
+                  </header>
+                  {entry.answer_excerpt && <p>{entry.answer_excerpt}</p>}
+                  <footer>
+                    <span>引用 {entry.citation_count}件</span>
+                    {entry.collection_id && <span>参照範囲 {collectionDisplayName(entry.collection_id)}</span>}
+                    <Link className="citation-open" href={`/?q=${encodeURIComponent(entry.question)}`}>
+                      再質問
+                    </Link>
+                  </footer>
+                </article>
+              ))}
+            </div>
+          )}
+
+          <div className="screen-actions history-actions">
+            <button type="button" className="citation-open" onClick={() => setConfirmClear(true)}>
+              このブラウザの履歴を消去
             </button>
+            {confirmClear && (
+              <div className="history-clear-confirm" role="group" aria-label="履歴消去の確認">
+                <span>保存済みのローカル履歴を削除します。監査ログやサーバーデータは削除されません。</span>
+                <button type="button" className="btn-reject" onClick={onClear}>消去する</button>
+                <button type="button" className="citation-open" onClick={() => setConfirmClear(false)}>キャンセル</button>
+              </div>
+            )}
           </div>
         </>
       )}

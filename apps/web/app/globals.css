@@ -735,6 +735,69 @@ textarea {
   line-height: 1.5;
 }
 
+.answer-empty-state-rich {
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.answer-empty-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.answer-starter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.answer-starter-list button,
+.composer-meta-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.answer-starter-list button:hover,
+.composer-meta-link:hover {
+  background: #f6f6f7;
+}
+
+.answer-empty-meta {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 210px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.answer-empty-meta span,
+.answer-empty-meta small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.answer-empty-meta strong {
+  font-size: 14px;
+}
+
 .answers-composer {
   position: sticky;
   bottom: 0;
@@ -769,6 +832,10 @@ textarea {
 }
 
 .answers-composer-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   max-width: 800px;
   margin: 0 auto 8px;
 }
@@ -871,6 +938,24 @@ textarea {
   background: #ffffff;
 }
 
+.chatbot-side-head {
+  display: grid;
+  gap: 3px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chatbot-side-head strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.chatbot-side-head span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .chatbot-state-row {
   display: grid;
   gap: 3px;
@@ -892,6 +977,157 @@ textarea {
   overflow-wrap: anywhere;
   color: var(--text);
   font-size: 13px;
+}
+
+.chatbot-diagnostics,
+.answer-diagnostics,
+.citation-diagnostics {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chatbot-diagnostics summary,
+.answer-diagnostics summary,
+.citation-diagnostics summary {
+  width: fit-content;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chatbot-diagnostics span,
+.answer-diagnostics span,
+.citation-diagnostics span {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+
+.history-empty {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+}
+
+.history-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.history-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 180px) minmax(150px, 180px);
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.history-search-field,
+.history-filter-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.history-search-field input,
+.history-filter-field select {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.history-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.history-card header,
+.history-card footer,
+.history-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.history-card header {
+  justify-content: space-between;
+}
+
+.history-card-title {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.history-card-title strong {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.history-card-title span,
+.history-card footer span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.history-card p {
+  margin: 0;
+  color: #3f3f46;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.history-card footer {
+  justify-content: flex-start;
+  padding-top: 2px;
+}
+
+.history-card footer .citation-open {
+  margin-left: auto;
+}
+
+.history-actions {
+  align-items: flex-start;
+  margin-top: 14px;
+}
+
+.history-clear-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 720px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger-bg, #fee2e2);
+  border-radius: 10px;
+  background: #fff7f7;
+}
+
+.history-clear-confirm span {
+  flex: 1 1 240px;
+  color: #7f1d1d;
+  font-size: 12.5px;
+  line-height: 1.45;
 }
 
 @keyframes chat-pulse {
@@ -2495,8 +2731,22 @@ button:disabled {
     gap: 3px;
   }
 
+  .answer-empty-state-rich,
+  .answers-composer-meta,
+  .history-card header,
+  .history-card footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .answer-empty-meta {
+    min-width: 0;
+  }
+
   .field-grid,
   .metric-grid,
+  .history-summary-grid,
+  .history-toolbar,
   .home-task-grid,
   .quick-card-grid,
   .form-grid,
@@ -2512,6 +2762,10 @@ button:disabled {
   .chat-bot-bubble,
   .answer-user-bubble {
     max-width: 100%;
+  }
+
+  .history-card footer .citation-open {
+    margin-left: 0;
   }
 
   .review-queue-row {
@@ -3812,6 +4066,25 @@ button,
   color: #18181b;
 }
 
+.answer-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.answer-summary-item {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #f4f4f5;
+  color: #52525b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .answer-confidence {
   font-size: 12px;
   font-weight: 600;
@@ -3820,6 +4093,32 @@ button,
 
 .answer-text-muted {
   color: #71717a;
+}
+
+.answer-next-actions {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--warning-bg, #fef3c7);
+  border-radius: 10px;
+  background: #fffbeb;
+}
+
+.answer-next-actions strong {
+  color: #78350f;
+  font-size: 13.5px;
+}
+
+.answer-next-actions span {
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.answer-next-actions div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* Citation cards (richer than the old citation-row) */
