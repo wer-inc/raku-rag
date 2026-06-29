@@ -110,6 +110,7 @@ import {
   setImprovementStatus,
   type ImprovementItem,
 } from "../../lib/improvement-queue";
+import { useToast } from "../../lib/toast";
 
 type ViewState<T> =
   | { state: "loading" }
@@ -399,18 +400,17 @@ function AnswerFeedback({ question, answerId }: { question: string; answerId: st
   const [sent, setSent] = useState<null | "up" | "down">(null);
   const [showReasons, setShowReasons] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   async function sendUp() {
     if (busy || sent) return;
     setBusy(true);
-    setError(null);
     try {
       const token = await getSessionToken();
       await submitFeedback({ subject: "user", rating: 5, answer_id: answerId || undefined, comment: "answer:helpful" }, token);
       setSent("up");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "送信に失敗しました");
+      toast(err instanceof Error ? err.message : "送信に失敗しました", "error");
     } finally {
       setBusy(false);
     }
@@ -419,7 +419,6 @@ function AnswerFeedback({ question, answerId }: { question: string; answerId: st
   async function sendDown(reasonCode: string) {
     if (busy || sent) return;
     setBusy(true);
-    setError(null);
     try {
       const token = await getSessionToken();
       await submitFeedback(
@@ -430,7 +429,7 @@ function AnswerFeedback({ question, answerId }: { question: string; answerId: st
       setSent("down");
       setShowReasons(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "送信に失敗しました");
+      toast(err instanceof Error ? err.message : "送信に失敗しました", "error");
     } finally {
       setBusy(false);
     }
@@ -473,7 +472,6 @@ function AnswerFeedback({ question, answerId }: { question: string; answerId: st
           </div>
         </div>
       )}
-      {error && <span className="cv-foot-error" role="alert">{error}</span>}
     </div>
   );
 }
@@ -1468,7 +1466,6 @@ type SourceListRow = {
   approvedCount: number | null;
   pendingCount: number | null;
 };
-type SourceActionMessage = { tone: "success" | "error"; text: string };
 
 function syncFreshness(sync: ManufacturingSourceSyncStatus | null): string {
   const freshness = sync?.freshness;
@@ -1693,7 +1690,7 @@ function SourceListBody() {
   const [filter, setFilter] = useState<SourceListFilter>("all");
   const [page, setPage] = useState(1);
   const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
-  const [sourceActionMessage, setSourceActionMessage] = useState<SourceActionMessage | null>(null);
+  const toast = useToast();
   const polling = state.state === "ready" && state.data.some(({ sync }) => isSyncActive(sync?.status));
   const rows = state.state === "ready" ? state.data : [];
   const filteredRows = useMemo(() => {
@@ -1719,7 +1716,6 @@ function SourceListBody() {
 
   async function onResync(row: SourceListRow) {
     if (row.origin !== "registered" || syncingSourceId) return;
-    setSourceActionMessage(null);
     setSyncingSourceId(row.source.source_id);
     try {
       const token = await getSessionToken();
@@ -1738,11 +1734,11 @@ function SourceListBody() {
         failed_count: sync.failed_count,
         synced_at: new Date().toISOString(),
       });
-      setSourceActionMessage({ tone: "success", text: `${sourceName(row)} の再同期を依頼しました。` });
+      toast(`${sourceName(row)} の再同期を依頼しました。`, "success");
       reload();
     } catch (err) {
       if (isAuthError(err)) clearSessionToken();
-      setSourceActionMessage({ tone: "error", text: formatLoadError(err) });
+      toast(formatLoadError(err), "error");
     } finally {
       setSyncingSourceId(null);
     }
@@ -1793,15 +1789,6 @@ function SourceListBody() {
             <span>承認待ち {pendingReviewCount} 件</span>
           </div>
         </section>
-      )}
-      {sourceActionMessage && (
-        <p
-          className={`source-list-message ${sourceActionMessage.tone}`}
-          role={sourceActionMessage.tone === "error" ? "alert" : "status"}
-          aria-live={sourceActionMessage.tone === "error" ? "assertive" : "polite"}
-        >
-          {sourceActionMessage.text}
-        </p>
       )}
       {state.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ソースを読み込み中…</p>}
       {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
@@ -2637,8 +2624,8 @@ function HomeDashboardBody() {
 function SourceDetailBody({ sourceId }: { sourceId: string }) {
   const [syncState, setSyncState] = useState<ViewState<ManufacturingSourceSyncStatus>>({ state: "loading" });
   const [runState, setRunState] = useState<ViewState<ManufacturingIngestionRun | null>>({ state: "loading" });
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const toast = useToast();
 
   const reload = useCallback(() => setRefreshTick((value) => value + 1), []);
 
@@ -2680,13 +2667,12 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
 
   async function onSyncRequest(event: FormEvent) {
     event.preventDefault();
-    setSyncMessage(null);
     try {
       await runWithToken((token) => manufacturingRequestSourceSync(sourceId, { reason: "manual_refresh" }, token));
-      setSyncMessage("同期を依頼しました");
+      toast("同期を依頼しました", "success");
       reload();
     } catch (err) {
-      setSyncMessage(formatLoadError(err));
+      toast(formatLoadError(err), "error");
     }
   }
 
@@ -2703,7 +2689,6 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
           </button>
         </form>
         {polling && <p className="ops-note">同期中です — {SYNC_POLL_MS / 1000} 秒ごとに自動更新します。</p>}
-        {syncMessage && <p className="ops-note">{syncMessage}</p>}
       </Section>
 
       <SourcePreviewPanel
@@ -2780,8 +2765,7 @@ function DocumentApprovalQueueBody() {
     Array<{ document_id: string; approval_status: string; collection_id: string; effective_date: string | null }>
   >([]);
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   async function reload() {
     setDocs(loadIngestedDocs());
@@ -2819,8 +2803,6 @@ function DocumentApprovalQueueBody() {
   async function transition(doc: { document_id: string; approval_status: string; effective_date: string | null }, toStatus: string) {
     if (busy) return;
     setBusy(doc.document_id);
-    setError(null);
-    setMessage(null);
     try {
       const token = await getSessionToken();
       const res = await manufacturingDocumentApproval(doc.document_id, { to_status: toStatus }, token);
@@ -2831,9 +2813,9 @@ function DocumentApprovalQueueBody() {
         effective_date: state.effective_date ?? doc.effective_date,
       });
       await reload();
-      setMessage(`${doc.document_id} を「${DOC_APPROVAL_STATUS[nextStatus]?.label ?? nextStatus}」に更新しました。`);
+      toast(`${doc.document_id} を「${DOC_APPROVAL_STATUS[nextStatus]?.label ?? nextStatus}」に更新しました。`, "success");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "更新に失敗しました");
+      toast(err instanceof Error ? err.message : "更新に失敗しました", "error");
     } finally {
       setBusy(null);
     }
@@ -2898,8 +2880,6 @@ function DocumentApprovalQueueBody() {
             })}
           </div>
         )}
-        {message && <p className="cv-foot-done">{message}</p>}
-        {error && <p className="cv-foot-error" role="alert">{error}</p>}
       </Section>
     </>
   );
@@ -3283,7 +3263,7 @@ function ReviewQueueBody() {
   const [docIds, setDocIds] = useState("m1");
   const [collection, setCollection] = useState("manuals");
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   async function reloadDrafts() {
     try {
@@ -3312,7 +3292,6 @@ function ReviewQueueBody() {
     event.preventDefault();
     if (creating) return;
     setCreating(true);
-    setError(null);
     try {
       const token = await getSessionToken();
       const ids = docIds
@@ -3337,7 +3316,7 @@ function ReviewQueueBody() {
       });
       router.push(`/reviews/${draft.artifact_id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "ドラフト生成に失敗しました");
+      toast(err instanceof Error ? err.message : "ドラフト生成に失敗しました", "error");
       setCreating(false);
     }
   }
@@ -3400,7 +3379,6 @@ function ReviewQueueBody() {
               {creating ? "生成中…" : "ドラフトを生成"}
             </button>
           </form>
-          {error && <p className="cv-foot-error" role="alert">{error}</p>}
         </section>
       </div>
     </>
@@ -3635,17 +3613,16 @@ function pct(value: number | undefined): string {
 function QualityEvalSection() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<QualityEvalResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   async function run() {
     if (running) return;
     setRunning(true);
-    setError(null);
     try {
       const token = await getSessionToken();
       setResult(await runManufacturingQualityEval(QUALITY_EVAL_ITEMS, token));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "評価の実行に失敗しました");
+      toast(err instanceof Error ? err.message : "評価の実行に失敗しました", "error");
     } finally {
       setRunning(false);
     }
@@ -3666,7 +3643,6 @@ function QualityEvalSection() {
           {running ? "評価を実行中…" : "品質評価を実行"}
         </button>
       </div>
-      {error && <p className="cv-foot-error" role="alert">{error}</p>}
       {result && (
         <>
           <div className="metric-grid">
@@ -4330,12 +4306,11 @@ function AddSourceBody() {
     PREVIEW_REQUIRED_FIELDS_BY_PROFILE.auto.join(", "),
   );
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<IngestedDoc | null>(null);
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [configSaving, setConfigSaving] = useState(false);
-  const [configMessage, setConfigMessage] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const toast = useToast();
   const [syncResult, setSyncResult] = useState<AdminSourceSyncResponse | null>(null);
   // Google Drive OAuth connection (021-gdrive). connectionId is the only credential the form keeps;
   // the refresh token lives server-side. saveDatasource gates on it for google_drive.
@@ -4393,8 +4368,6 @@ function AddSourceBody() {
     setSelectedSource(sourceIdValue);
     setSourceId(sourceIdValue === "file" ? "upload" : sourceIdValue);
     setConfigValues({});
-    setConfigMessage(null);
-    setError(null);
     setResult(null);
     setSyncResult(null);
     setOauthStatus("idle");
@@ -4423,11 +4396,9 @@ function AddSourceBody() {
   async function saveDatasource(): Promise<string | null> {
     if (selectedSource === "file" || configSaving || syncing) return null;
     if (needsOAuthConnection && !oauthConnectionId) {
-      setError("先に「Google で接続」で OAuth 認可を完了してください。");
+      toast("先に「Google で接続」で OAuth 認可を完了してください。", "error");
       return null;
     }
-    setError(null);
-    setConfigMessage(null);
     setSyncResult(null);
     setConfigSaving(true);
     try {
@@ -4480,10 +4451,10 @@ function AddSourceBody() {
         },
         token,
       );
-      setConfigMessage(`${selectedSourceDef.name} の接続設定を保存しました。`);
+      toast(`${selectedSourceDef.name} の接続設定を保存しました。`, "success");
       return datasourceId;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "接続設定の保存に失敗しました");
+      toast(err instanceof Error ? err.message : "接続設定の保存に失敗しました", "error");
       return null;
     } finally {
       setConfigSaving(false);
@@ -4500,7 +4471,6 @@ function AddSourceBody() {
     const datasourceId = await saveDatasource();
     if (!datasourceId) return;
     setSyncing(true);
-    setError(null);
     try {
       const token = await getSessionToken();
       // No approval block here: the server derives every synced file's approval state from the saved
@@ -4529,9 +4499,9 @@ function AddSourceBody() {
         approvalPolicy === "trusted"
           ? `${sync.changed_count ?? 0} 件を「承認済み（信頼ソース）」として取り込みました。`
           : `${sync.changed_count ?? 0} 件を「承認待ち（pending_review）」として取り込みました。根拠文書レビューで承認すると正式な根拠になります。`;
-      setConfigMessage(`${selectedSourceDef.name} の同期を開始しました。${policyNote}`);
+      toast(`${selectedSourceDef.name} の同期を開始しました。${policyNote}`, "success");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "同期開始に失敗しました");
+      toast(err instanceof Error ? err.message : "同期開始に失敗しました", "error");
     } finally {
       setSyncing(false);
     }
@@ -4540,12 +4510,10 @@ function AddSourceBody() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (submitting) return;
-    setError(null);
     setResult(null);
-    setConfigMessage(null);
 
     if (selectedSource !== "file") {
-      setError("このソース種別は接続設定フォームから保存してください。");
+      toast("このソース種別は接続設定フォームから保存してください。", "error");
       return;
     }
 
@@ -4553,13 +4521,13 @@ function AddSourceBody() {
     if (mode === "text") {
       const trimmed = text.trim();
       if (!trimmed) {
-        setError("テキストを入力してください。");
+        toast("テキストを入力してください。", "error");
         return;
       }
       payload = new File([trimmed], `${documentId.trim() || "pasted"}.txt`, { type: "text/plain" });
     }
     if (!payload) {
-      setError("ファイルを選択してください。");
+      toast("ファイルを選択してください。", "error");
       return;
     }
 
@@ -4605,14 +4573,14 @@ function AddSourceBody() {
       recordIngestedDoc(record);
       setResult(record);
       if (ingest.failure_reason) {
-        setError(`取込は完了しましたが警告があります: ${ingest.failure_reason}`);
+        toast(`取込は完了しましたが警告があります: ${ingest.failure_reason}`, "warning");
       }
       // reset content inputs but keep settings for the next upload
       setFile(null);
       setText("");
       setDocumentId("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "取込に失敗しました");
+      toast(err instanceof Error ? err.message : "取込に失敗しました", "error");
     } finally {
       setSubmitting(false);
     }
@@ -4861,20 +4829,6 @@ function AddSourceBody() {
             </div>
           </Section>
         </form>
-      )}
-
-      {error && (
-        <section className="result-panel error-panel" aria-live="polite">
-          <h3>取込メッセージ</h3>
-          <p>{error}</p>
-        </section>
-      )}
-
-      {configMessage && (
-        <section className="result-panel config-success" aria-live="polite">
-          <h3>保存しました</h3>
-          <p>{configMessage}</p>
-        </section>
       )}
 
       {syncResult && (
@@ -5841,13 +5795,12 @@ function PermissionSimulator() {
   const [query, setQuery] = useState("What is the maintenance interval for pump P-12?");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SimResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   async function run(asUser: string) {
     if (loading) return;
     setUserId(asUser);
     setLoading(true);
-    setError(null);
     setResult(null);
     try {
       const token = await mintTokenFor(DEMO_TENANT, asUser);
@@ -5859,7 +5812,7 @@ function PermissionSimulator() {
         docs: Array.from(new Set(res.citations.map((c) => c.document_id))),
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "実行に失敗しました");
+      toast(err instanceof Error ? err.message : "実行に失敗しました", "error");
     } finally {
       setLoading(false);
     }
@@ -5891,7 +5844,6 @@ function PermissionSimulator() {
       </div>
 
       {loading && <p className="ops-empty" role="status" aria-live="polite">実行中…</p>}
-      {error && <p className="cv-foot-error" role="alert">{error}</p>}
       {result && (
         <div className={`sim-result ${accessible ? "sim-ok" : "sim-deny"}`}>
           <div className="result-head">
@@ -6080,14 +6032,13 @@ function RetrievalDebugBody() {
   const [collection, setCollection] = useState("manuals");
   const [topK, setTopK] = useState(8);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RetrievalDebugResult | null>(null);
+  const toast = useToast();
 
   async function run(event: FormEvent) {
     event.preventDefault();
     if (loading || !query.trim()) return;
     setLoading(true);
-    setError(null);
     setResult(null);
     try {
       const token = await getSessionToken();
@@ -6117,7 +6068,7 @@ function RetrievalDebugBody() {
         answerCorrelation: answerRes.correlation_id,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "実行に失敗しました");
+      toast(err instanceof Error ? err.message : "実行に失敗しました", "error");
     } finally {
       setLoading(false);
     }
@@ -6167,13 +6118,6 @@ function RetrievalDebugBody() {
           </div>
         </Section>
       </form>
-
-      {error && (
-        <section className="result-panel error-panel" role="alert">
-          <h3>診断に失敗しました</h3>
-          <p>{error}</p>
-        </section>
-      )}
 
       {result && (
         <>

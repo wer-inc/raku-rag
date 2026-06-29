@@ -7,6 +7,7 @@ import Sidebar from "./Sidebar";
 import SalesDemoDrawer from "./SalesDemoDrawer";
 import { getBrowserSessionState } from "../../lib/session";
 import { navAllowed, rolesForUser, type WorkspaceRole } from "../../lib/nav-rbac";
+import { ToastProvider } from "../../lib/toast";
 
 const AUTH_ROUTES = new Set(["/login", "/orgselect", "/onboarding"]);
 // B3: role-based navigation must hide unauthorized screens from the UI, not just from the sidebar —
@@ -109,6 +110,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const allowed = decided && navAllowed(pathname, roles);
 
   return (
+    <ToastProvider>
     <div className={`app-shell${navOpen ? " nav-open" : ""}`}>
       {/* Mobile-only header: gives the drawer a launch point when the sidebar is off-canvas. */}
       <header className="mobile-topbar">
@@ -157,5 +159,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
         />
       )}
     </div>
+    </ToastProvider>
   );
 }

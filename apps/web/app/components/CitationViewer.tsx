@@ -5,6 +5,7 @@ import type { Citation, CitationPreview } from "@raku-rag/shared";
 import { adminCitationView, adminDocumentFile, submitFeedback } from "../../lib/api-client";
 import { getSessionToken } from "../../lib/session";
 import { useDialog } from "../../lib/use-dialog";
+import { useToast } from "../../lib/toast";
 
 export interface CitationViewTarget {
   citation: Citation;
@@ -48,8 +49,8 @@ export default function CitationViewer({
 }) {
   const [sent, setSent] = useState<null | "correct" | "incorrect">(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [sourceText, setSourceText] = useState<string | null>(null);
+  const toast = useToast();
   const [preview, setPreview] = useState<CitationPreview | null>(null);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -57,7 +58,6 @@ export default function CitationViewer({
 
   useEffect(() => {
     setSent(null);
-    setError(null);
     setBusy(false);
     setSourceText(null);
     setPreview(null);
@@ -125,7 +125,6 @@ export default function CitationViewer({
   async function sendFeedback(verdict: "correct" | "incorrect") {
     if (busy) return;
     setBusy(true);
-    setError(null);
     try {
       const token = await getSessionToken();
       await submitFeedback(
@@ -139,7 +138,7 @@ export default function CitationViewer({
       );
       setSent(verdict);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "送信に失敗しました");
+      toast(err instanceof Error ? err.message : "送信に失敗しました", "error");
     } finally {
       setBusy(false);
     }
@@ -266,7 +265,6 @@ export default function CitationViewer({
             </button>
           </div>
           {sent && <span className="cv-foot-done">フィードバックを送信しました</span>}
-          {error && <span className="cv-foot-error">{error}</span>}
         </footer>
       </div>
     </div>
