@@ -257,7 +257,11 @@ class TestForwardOnlyTransitionGuard(unittest.TestCase):
         h.wf.import_external(
             _T,
             _DOC,
-            {"approval_status": "approved", "effective_date": "2026-06-01", "valid_until": "2027-06-01"},
+            {
+                "approval_status": "approved",
+                "effective_date": "2026-06-01",
+                "valid_until": "2027-06-01",
+            },
             _actor(),
         )
         self.assertEqual(h.metas[(_T, _DOC)].valid_until, "2027-06-01")
