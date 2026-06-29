@@ -4421,6 +4421,7 @@ function makeOAuthNonce(): string {
 }
 
 function AddSourceBody() {
+  const [step, setStep] = useState<"select" | "configure">("select");
   const [selectedSource, setSelectedSource] = useState<AddSourceTypeId>("file");
   const [mode, setMode] = useState<"file" | "text">("file");
   const [files, setFiles] = useState<File[]>([]);
@@ -4502,6 +4503,7 @@ function AddSourceBody() {
 
   function onSelectSource(sourceIdValue: AddSourceTypeId) {
     setSelectedSource(sourceIdValue);
+    setStep("select");
     setSourceId(defaultSourceIdFor(sourceIdValue));
     setSourceName("");
     setConfigValues({});
@@ -4790,31 +4792,48 @@ function AddSourceBody() {
 
   return (
     <>
-      <Section title="ソース種別" note="取り込むソースの種別を選択してください。">
-        <div className="source-type-grid">
-          {ADD_SOURCE_TYPES.filter((source) => source.readiness === "ready").map((source) => (
-            <button
-              key={source.id}
-              type="button"
-              className={`source-type-card ${selectedSource === source.id ? "active" : ""}`}
-              aria-pressed={selectedSource === source.id}
-              onClick={() => onSelectSource(source.id)}
-            >
-              <span className="source-type-mark">{source.mono}</span>
-              <span className="source-type-body">
-                <strong>{source.name}</strong>
-                <span>{source.desc}</span>
-              </span>
-              <span className={`source-type-status ${source.readiness}`}>
-                {sourceReadinessLabel(source.readiness)}
-              </span>
+      {step === "select" && (
+        <Section title="ソース種別" note="取り込むソースの種別を選択してください。">
+          <div className="source-type-grid">
+            {ADD_SOURCE_TYPES.filter((source) => source.readiness === "ready").map((source) => (
+              <button
+                key={source.id}
+                type="button"
+                className={`source-type-card ${selectedSource === source.id ? "active" : ""}`}
+                aria-pressed={selectedSource === source.id}
+                onClick={() => {
+                  setSelectedSource(source.id);
+                  setSourceId(defaultSourceIdFor(source.id));
+                }}
+              >
+                <span className="source-type-mark">{source.mono}</span>
+                <span className="source-type-body">
+                  <strong>{source.name}</strong>
+                  <span>{source.desc}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+          <p className="source-config-note">{selectedConfig.note}</p>
+          <div className="screen-actions">
+            <button type="button" onClick={() => setStep("configure")}>
+              次へ →
             </button>
-          ))}
-        </div>
-        <p className="source-config-note">{selectedConfig.note}</p>
-      </Section>
+          </div>
+        </Section>
+      )}
 
-      {selectedSource === "file" ? (
+      {step === "configure" && (
+        <button
+          type="button"
+          className="add-source-back"
+          onClick={() => setStep("select")}
+        >
+          ← ソース種別の選択に戻る
+        </button>
+      )}
+
+      {step === "configure" && selectedSource === "file" && (
         <form className="upload-form" onSubmit={onSubmit}>
           <Section title="ドキュメントを追加" note="対応形式: テキスト / Markdown / HTML / CSV / Word(.docx) / Excel(.xlsx) / PDF / 画像">
             <label className="source-name-field">
@@ -4888,7 +4907,9 @@ function AddSourceBody() {
             )}
           </Section>
         </form>
-      ) : (
+      )}
+
+      {step === "configure" && selectedSource !== "file" && (
         <form className="connector-form" onSubmit={onSaveDatasource}>
           <Section title={`${selectedSourceDef.name} の接続設定`} note={selectedSourceDef.desc}>
             <label className="source-name-field">

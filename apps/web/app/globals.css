@@ -4532,6 +4532,24 @@ button,
   line-height: 1.55;
 }
 
+.add-source-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 16px;
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--accent, #2563eb);
+  text-decoration: none;
+}
+
+.add-source-back:hover {
+  text-decoration: underline;
+}
+
 .connector-form {
   display: block;
 }
