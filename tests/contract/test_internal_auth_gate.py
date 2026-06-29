@@ -53,9 +53,25 @@ class InternalAuthGateTest(unittest.TestCase):
         # guard against a plain == regression (timing side-channel on the shared secret)
         self.assertIn("hmac.compare_digest", self.src)
 
-    def test_both_verbs_enforce_the_gate(self) -> None:
-        # do_GET and do_POST must call the gate before dispatching any internal route
-        self.assertEqual(self.src.count("if not self._internal_auth_ok(path):"), 2)
+    def _handler_method_source(self, method_name: str) -> str:
+        marker = f"        def {method_name}(self) -> None:"
+        start = self.src.index(marker)
+        next_method = self.src.find("\n        def do_", start + len(marker))
+        end = next_method if next_method != -1 else self.src.find("\n    return Handler", start)
+        return self.src[start:end]
+
+    def test_internal_verbs_enforce_the_gate_before_dispatch(self) -> None:
+        # Every internal HTTP verb must call the gate before body parsing or route dispatch.
+        for method_name in ("do_GET", "do_POST", "do_PUT", "do_DELETE"):
+            with self.subTest(method_name=method_name):
+                body = self._handler_method_source(method_name)
+                gate = "if not self._internal_auth_ok(path):"
+                self.assertIn(gate, body)
+                gate_index = body.index(gate)
+                for dispatch_token in ("body = self._body()", "parts = [unquote("):
+                    token_index = body.find(dispatch_token)
+                    if token_index != -1:
+                        self.assertLess(gate_index, token_index)
 
 
 if __name__ == "__main__":

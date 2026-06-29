@@ -355,9 +355,7 @@ class _AdminSettingsStore:
     ) -> list[dict]:
         if resource == "datasources" and self._datasource_repo is not None:
             return self._datasource_repo.list(tenant_id, collection_id=collection_id)
-        if resource == "provider-policies" and hasattr(
-            self._provider_policy_repo, "list_mappings"
-        ):
+        if resource == "provider-policies" and hasattr(self._provider_policy_repo, "list_mappings"):
             items = self._provider_policy_repo.list_mappings(tenant_id, collection_id)
             if items:
                 return [copy.deepcopy(item) for item in items]
@@ -771,9 +769,7 @@ def _citation_json(c, *, include_approval: bool = False) -> dict:
         "column_name": getattr(c, "column_name", "") or None,
         "pixel_derived": bool(getattr(c, "pixel_derived", False)),
         "visual_evidence_verified": bool(getattr(c, "visual_evidence_verified", False)),
-        "visual_verifier_verdicts": _jsonable(
-            getattr(c, "visual_verifier_verdicts", ())
-        ),
+        "visual_verifier_verdicts": _jsonable(getattr(c, "visual_verifier_verdicts", ())),
     }
     if include_approval:
         item.update(
@@ -1456,10 +1452,7 @@ def make_handler(system: ProductionSystem):
                     self._send_result(
                         chatbot.get_session(_claims_from_headers(self.headers), parts[3])
                     )
-                elif (
-                    len(parts) == 4
-                    and parts[:3] == ["internal", "chat", "handoffs"]
-                ):
+                elif len(parts) == 4 and parts[:3] == ["internal", "chat", "handoffs"]:
                     self._send_result(
                         chatbot.get_handoff(_claims_from_headers(self.headers), parts[3])
                     )
@@ -1468,7 +1461,9 @@ def make_handler(system: ProductionSystem):
                 elif parts == ["internal", "chat", "retention-policy"]:
                     self._send_result(chatbot.retention_policy(_claims_from_headers(self.headers)))
                 elif parts == ["internal", "chat", "source-exposure-policies"]:
-                    self._send_result(chatbot.list_source_policies(_claims_from_headers(self.headers)))
+                    self._send_result(
+                        chatbot.list_source_policies(_claims_from_headers(self.headers))
+                    )
                 elif parts == ["internal", "chat", "scenarios"]:
                     self._send_result(chatbot.list_scenarios(_claims_from_headers(self.headers)))
                 elif parts == ["internal", "industries"]:
@@ -1868,7 +1863,9 @@ def make_handler(system: ProductionSystem):
                     collection_id = body.get("collection_id")
                     self._send(200, _answer_json(system.answer(principal, query, collection_id)))
                 elif parts == ["internal", "chat", "sessions"]:
-                    self._send_result(chatbot.create_session(_claims_from_headers(self.headers), body))
+                    self._send_result(
+                        chatbot.create_session(_claims_from_headers(self.headers), body)
+                    )
                 elif (
                     len(parts) == 5
                     and parts[:3] == ["internal", "chat", "sessions"]
@@ -1908,7 +1905,9 @@ def make_handler(system: ProductionSystem):
                         chatbot.validate_source_policy(_claims_from_headers(self.headers), body)
                     )
                 elif parts == ["internal", "chat", "scenarios"]:
-                    self._send_result(chatbot.create_scenario(_claims_from_headers(self.headers), body))
+                    self._send_result(
+                        chatbot.create_scenario(_claims_from_headers(self.headers), body)
+                    )
                 elif (
                     len(parts) == 7
                     and parts[:3] == ["internal", "chat", "scenarios"]
@@ -2524,7 +2523,9 @@ def make_handler(system: ProductionSystem):
                     except Exception as exc:
                         self._send(400, {"ok": False, "error": str(exc)})
                 elif (
-                    len(parts) == 4 and parts[:2] == ["internal", "sources"] and parts[3] == "preview"
+                    len(parts) == 4
+                    and parts[:2] == ["internal", "sources"]
+                    and parts[3] == "preview"
                 ):
                     tenant_id = self._tenant_header()
                     try:
@@ -2630,15 +2631,16 @@ def make_handler(system: ProductionSystem):
 
         def do_PUT(self) -> None:  # noqa: N802
             try:
-                body = self._body()
                 path = urlparse(self.path).path
                 if not self._internal_auth_ok(path):
                     return
+                body = self._body()
                 parts = [unquote(p) for p in path.split("/") if p]
-                if (
-                    len(parts) == 4
-                    and parts[:3] == ["internal", "chat", "source-exposure-policies"]
-                ):
+                if len(parts) == 4 and parts[:3] == [
+                    "internal",
+                    "chat",
+                    "source-exposure-policies",
+                ]:
                     self._send_result(
                         chatbot.upsert_source_policy(
                             _claims_from_headers(self.headers), parts[3], body
