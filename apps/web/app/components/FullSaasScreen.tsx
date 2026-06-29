@@ -4801,10 +4801,7 @@ function AddSourceBody() {
                 type="button"
                 className={`source-type-card ${selectedSource === source.id ? "active" : ""}`}
                 aria-pressed={selectedSource === source.id}
-                onClick={() => {
-                  setSelectedSource(source.id);
-                  setSourceId(defaultSourceIdFor(source.id));
-                }}
+                onClick={() => onSelectSource(source.id)}
               >
                 <span className="source-type-mark">{source.mono}</span>
                 <span className="source-type-body">
