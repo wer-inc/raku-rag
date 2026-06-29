@@ -157,7 +157,6 @@ const SYNC_ACTIVE_STATUSES = new Set([
   "syncing",
   "queued",
   "observing",
-  "partially_succeeded",
 ]);
 
 function isSyncActive(status: string | undefined | null): boolean {
@@ -1240,7 +1239,7 @@ function screenTitle(screen: ManifestScreen): string {
     chatbot: "チャットボット",
     "answer-history": "回答履歴",
     "source-search": "ソース",
-    "source-list": "ソース一覧",
+    "source-list": "接続済みソース",
     "source-detail": "ソース詳細",
     "add-source": "ソースを追加",
     "ingestion-runs": "取り込み実行",
@@ -1309,15 +1308,15 @@ function MockBanner({ screen }: { screen: ManifestScreen }) {
   );
 }
 
-const SOURCE_SYNC_STATUS: Record<string, { label: string; key: string }> = {
-  succeeded: { label: "同期済み", key: "ok" },
-  idle: { label: "待機", key: "ok" },
-  partially_succeeded: { label: "一部成功", key: "wait" },
-  syncing: { label: "同期中", key: "wait" },
-  queued: { label: "待機中", key: "wait" },
-  observing: { label: "確認中", key: "wait" },
-  failed: { label: "失敗", key: "bad" },
-};
+const SOURCE_LIST_PAGE_SIZE = 10;
+const SOURCE_LIST_FILTERS = [
+  { value: "all", label: "すべて" },
+  { value: "needs_action", label: "要対応" },
+  { value: "pending_review", label: "承認待ちあり" },
+  { value: "failed", label: "同期失敗" },
+  { value: "unsynced", label: "未同期" },
+] as const;
+type SourceListFilter = (typeof SOURCE_LIST_FILTERS)[number]["value"];
 
 type SourceListRow = {
   source: AdminDataSource;
@@ -1327,13 +1326,143 @@ type SourceListRow = {
   approvedCount: number | null;
   pendingCount: number | null;
 };
+type SourceActionMessage = { tone: "success" | "error"; text: string };
+
+function syncFreshness(sync: ManufacturingSourceSyncStatus | null): string {
+  const freshness = sync?.freshness;
+  if (freshness && typeof freshness === "object") {
+    const value = (freshness as { last_successful_sync_at?: unknown }).last_successful_sync_at;
+    if (typeof value === "string" && value) return value;
+  }
+  return "";
+}
+
+function sourceLastSyncedAt(row: SourceListRow): string {
+  return syncFreshness(row.sync) || row.source.last_synced_at || "";
+}
 
 function sourceFreshness(row: SourceListRow): string {
-  const at = row.source.last_synced_at;
+  const at = sourceLastSyncedAt(row);
   if (row.origin === "documents" && !at) return "取込済み";
   if (!at) return "未同期";
   const parsed = new Date(at);
   return Number.isNaN(parsed.getTime()) ? at : parsed.toLocaleString("ja-JP");
+}
+
+function sourceConfig(row: SourceListRow): Record<string, unknown> {
+  return (row.source.config ?? {}) as Record<string, unknown>;
+}
+
+function sourceName(row: SourceListRow): string {
+  const config = sourceConfig(row);
+  return String(config.display_name || row.source.source_id);
+}
+
+function sourceKind(row: SourceListRow): string {
+  const config = sourceConfig(row);
+  return String(config.source_type || row.source.type || "source");
+}
+
+function sourceKindLabel(kind: string): string {
+  const normalized = kind.toLowerCase().replace(/-/g, "_");
+  const labels: Record<string, string> = {
+    box: "Box",
+    confluence: "Confluence",
+    database: "データベース",
+    file: "ファイル",
+    google_drive: "Google Drive",
+    googledrive: "Google Drive",
+    kintone: "kintone",
+    mysql: "MySQL",
+    notion: "Notion",
+    object_storage: "S3 / オブジェクトストレージ",
+    postgres: "PostgreSQL",
+    postgresql: "PostgreSQL",
+    s3: "S3",
+    upload: "ファイルアップロード",
+    url: "URL",
+  };
+  return labels[normalized] ?? kind;
+}
+
+function sourceDocumentCount(row: SourceListRow): number | null {
+  return row.documentCount ?? row.sync?.summary?.observed_count ?? null;
+}
+
+function sourceOperationalStatus(row: SourceListRow): { label: string; key: string; reason: string } {
+  const syncStatus = row.sync?.status ?? "";
+  if (row.source.status !== "active") {
+    return { label: "停止中", key: "bad", reason: "このソースは現在利用対象外です。" };
+  }
+  if (isSyncActive(syncStatus)) {
+    return { label: "同期中", key: "wait", reason: "更新内容を確認しています。" };
+  }
+  if (syncStatus === "failed") {
+    return { label: "同期失敗", key: "bad", reason: "詳細を確認して再同期してください。" };
+  }
+  if (syncStatus === "partially_succeeded") {
+    return { label: "確認が必要", key: "wait", reason: "一部の文書を取り込めませんでした。" };
+  }
+  if ((row.pendingCount ?? 0) > 0) {
+    return { label: "確認が必要", key: "wait", reason: "承認待ちの文書があります。" };
+  }
+  if (row.origin === "registered" && !sourceLastSyncedAt(row) && !sourceDocumentCount(row)) {
+    return { label: "未同期", key: "wait", reason: "初回同期を実行してください。" };
+  }
+  if (syncStatus === "not_found") {
+    return { label: "未同期", key: "wait", reason: "同期履歴がまだありません。" };
+  }
+  return { label: "利用可", key: "ok", reason: "回答の根拠として利用できます。" };
+}
+
+function sourceApprovalSummary(row: SourceListRow): string {
+  const total = sourceDocumentCount(row);
+  if (total === null) return "承認状況未取得";
+  const pending = row.pendingCount ?? 0;
+  if (pending > 0) return `${pending} 件の承認待ち`;
+  return `承認済み ${row.approvedCount ?? 0} / ${total}`;
+}
+
+function sourceNeedsAction(row: SourceListRow): boolean {
+  const status = sourceOperationalStatus(row);
+  return (
+    status.label === "確認が必要" ||
+    status.label === "同期失敗" ||
+    status.label === "未同期" ||
+    status.label === "停止中"
+  );
+}
+
+function sourceMatchesFilter(row: SourceListRow, filter: SourceListFilter): boolean {
+  const status = sourceOperationalStatus(row);
+  switch (filter) {
+    case "needs_action":
+      return sourceNeedsAction(row);
+    case "pending_review":
+      return (row.pendingCount ?? 0) > 0;
+    case "failed":
+      return row.sync?.status === "failed" || status.label === "同期失敗";
+    case "unsynced":
+      return status.label === "未同期";
+    default:
+      return true;
+  }
+}
+
+function sourceSearchText(row: SourceListRow): string {
+  const kind = sourceKind(row);
+  const status = sourceOperationalStatus(row);
+  return [
+    sourceName(row),
+    sourceKindLabel(kind),
+    kind,
+    row.source.source_id,
+    row.source.collection_id,
+    status.label,
+    status.reason,
+  ]
+    .join(" ")
+    .toLowerCase();
 }
 
 function valueLabel(value: unknown): string {
@@ -1418,13 +1547,71 @@ function SourceListBody() {
     pollIntervalMs: SYNC_POLL_MS,
     shouldPoll: (rows) => rows.some(({ sync }) => isSyncActive(sync?.status)),
   });
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<SourceListFilter>("all");
+  const [page, setPage] = useState(1);
+  const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
+  const [sourceActionMessage, setSourceActionMessage] = useState<SourceActionMessage | null>(null);
   const polling = state.state === "ready" && state.data.some(({ sync }) => isSyncActive(sync?.status));
+  const rows = state.state === "ready" ? state.data : [];
+  const filteredRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (!sourceMatchesFilter(row, filter)) return false;
+      if (!needle) return true;
+      return sourceSearchText(row).includes(needle);
+    });
+  }, [filter, query, rows]);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / SOURCE_LIST_PAGE_SIZE));
+  const pageRows = filteredRows.slice((page - 1) * SOURCE_LIST_PAGE_SIZE, page * SOURCE_LIST_PAGE_SIZE);
+  const needsActionCount = rows.filter(sourceNeedsAction).length;
+  const pendingReviewCount = rows.reduce((sum, row) => sum + (row.pendingCount ?? 0), 0);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filter, query]);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+
+  async function onResync(row: SourceListRow) {
+    if (row.origin !== "registered" || syncingSourceId) return;
+    setSourceActionMessage(null);
+    setSyncingSourceId(row.source.source_id);
+    try {
+      const token = await getSessionToken();
+      const sync = await adminSourceSync(
+        row.source.source_id,
+        { collection_id: row.source.collection_id || DEMO_COLLECTION, reason: "manual_refresh" },
+        token,
+      );
+      recordConnectorRun({
+        ingestion_run_id: sync.ingestion_run_id,
+        source_id: sync.source_id,
+        collection_id: sync.collection_id,
+        status: sync.status,
+        observed_count: sync.observed_count,
+        changed_count: sync.changed_count,
+        failed_count: sync.failed_count,
+        synced_at: new Date().toISOString(),
+      });
+      setSourceActionMessage({ tone: "success", text: `${sourceName(row)} の再同期を依頼しました。` });
+      reload();
+    } catch (err) {
+      if (isAuthError(err)) clearSessionToken();
+      setSourceActionMessage({ tone: "error", text: formatLoadError(err) });
+    } finally {
+      setSyncingSourceId(null);
+    }
+  }
 
   return (
     <div className="standalone-list-shell">
       <header className="standalone-list-head">
         <div className="standalone-list-head-title">
-          <h3>ソース</h3>
+          <h3>同期・承認状況</h3>
+          <p>RAG が参照するデータソースの同期・承認状態を確認できます。</p>
           {polling && <span className="sync-poll-badge">同期中 — 自動更新</span>}
         </div>
         <div className="standalone-list-tools">
@@ -1434,6 +1621,46 @@ function SourceListBody() {
           <Link href="/sources/new">ソースを追加</Link>
         </div>
       </header>
+      {state.state === "ready" && state.data.length > 0 && (
+        <section className="source-list-controls" aria-label="接続済みソースの検索と絞り込み">
+          <label className="standalone-search source-list-search">
+            <span aria-hidden="true">⌕</span>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="ソース名・種類で検索"
+              aria-label="ソース名・種類で検索"
+            />
+          </label>
+          <div className="source-list-filter" role="group" aria-label="ソース状態で絞り込み">
+            {SOURCE_LIST_FILTERS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={filter === option.value ? "source-filter-button active" : "source-filter-button"}
+                aria-pressed={filter === option.value}
+                onClick={() => setFilter(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="source-list-summary" aria-live="polite">
+            <span>{filteredRows.length} 件表示</span>
+            <span>要対応 {needsActionCount} 件</span>
+            <span>承認待ち {pendingReviewCount} 件</span>
+          </div>
+        </section>
+      )}
+      {sourceActionMessage && (
+        <p
+          className={`source-list-message ${sourceActionMessage.tone}`}
+          role={sourceActionMessage.tone === "error" ? "alert" : "status"}
+          aria-live={sourceActionMessage.tone === "error" ? "assertive" : "polite"}
+        >
+          {sourceActionMessage.text}
+        </p>
+      )}
       {state.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ソースを読み込み中…</p>}
       {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
       {state.state === "ready" &&
@@ -1453,59 +1680,98 @@ function SourceListBody() {
               ソースを追加
             </Link>
           </div>
-        ) : (
-          <div className="standalone-table-wrap" role="table">
-            <div className="standalone-table-head" role="row">
-              <div role="columnheader">ソース</div>
-              <div role="columnheader">種別</div>
-              <div role="columnheader">ステータス</div>
-              <div className="is-right" role="columnheader">文書数</div>
-              <div className="is-right" role="columnheader">最終同期</div>
-              <div role="columnheader">コレクション</div>
-              <div role="columnheader">承認内訳</div>
-            </div>
-            {state.data.map((row) => {
-              const { source, sync } = row;
-              const config = (source.config ?? {}) as Record<string, unknown>;
-              const name = (config.display_name as string) || source.source_id;
-              const kind = (config.source_type as string) || source.type;
-              const status =
-                row.origin === "documents" && !sync
-                  ? { label: "取込済み", key: "ok" }
-                  : sync?.status
-                    ? SOURCE_SYNC_STATUS[sync.status] ?? { label: sync.status, key: "wait" }
-                    : { label: "未同期", key: "wait" };
-              const changed = row.documentCount ?? sync?.summary?.changed_count;
-              const approval =
-                row.documentCount != null
-                  ? `承認済み ${row.approvedCount ?? 0} / 承認待ち ${row.pendingCount ?? 0}`
-                  : "プレビュー";
-              const href = row.origin === "documents" ? "/documents" : `/sources/${source.source_id}`;
-              return (
-                <Link
-                  key={source.source_id}
-                  href={href}
-                  className="standalone-table-row"
-                  role="row"
-                >
-                  <div className="standalone-source-cell" role="cell">
-                    <div className="standalone-source-mark">{kind.slice(0, 2).toUpperCase()}</div>
-                    <span>{name}</span>
-                  </div>
-                  <div role="cell">{kind}</div>
-                  <div role="cell">
-                    <span className={`standalone-status ${status.key}`}>{status.label}</span>
-                  </div>
-                  <div className="is-right mono" role="cell">{changed ?? "—"}</div>
-                  <div className="is-right muted" role="cell">{sourceFreshness(row)}</div>
-                  <div className="muted" role="cell">{source.collection_id}</div>
-                  <div role="cell">
-                    <span className="standalone-status wait">{approval}</span>
-                  </div>
-                </Link>
-              );
-            })}
+        ) : filteredRows.length === 0 ? (
+          <div className="standalone-empty-state">
+            <h4>条件に合うソースはありません</h4>
+            <p>検索語や絞り込みを変えると、別のソースを確認できます。</p>
+            <button
+              type="button"
+              className="standalone-empty-cta"
+              onClick={() => {
+                setQuery("");
+                setFilter("all");
+              }}
+            >
+              条件をクリア
+            </button>
           </div>
+        ) : (
+          <>
+            <div className="source-list-items" role="list">
+              {pageRows.map((row) => {
+                const kind = sourceKind(row);
+                const status = sourceOperationalStatus(row);
+                const documents = sourceDocumentCount(row);
+                const href = row.origin === "documents" ? "/documents" : `/sources/${row.source.source_id}`;
+                const isSyncing = syncingSourceId === row.source.source_id;
+                const rowSyncActive = isSyncActive(row.sync?.status);
+                return (
+                  <article className="source-list-row" key={row.source.source_id} role="listitem">
+                    <div className="source-list-main">
+                      <div className="standalone-source-mark" aria-hidden="true">
+                        {kind.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="source-list-title-block">
+                        <h4>{sourceName(row)}</h4>
+                        <p>{sourceKindLabel(kind)}</p>
+                      </div>
+                    </div>
+                    <div className="source-list-status-cell">
+                      <span className={`standalone-status ${status.key}`}>{status.label}</span>
+                      <span>{status.reason}</span>
+                    </div>
+                    <div className="source-list-metrics" aria-label={`${sourceName(row)} の文書と承認状態`}>
+                      <span>
+                        <strong>{documents ?? "—"}</strong> 文書
+                      </span>
+                      <span>{sourceApprovalSummary(row)}</span>
+                      <span>最終同期: {sourceFreshness(row)}</span>
+                    </div>
+                    <div className="source-list-actions">
+                      {(row.pendingCount ?? 0) > 0 && (
+                        <Link href="/reviews/documents" className="button-link secondary">
+                          レビューへ
+                        </Link>
+                      )}
+                      {row.origin === "registered" && (
+                        <button
+                          type="button"
+                          onClick={() => onResync(row)}
+                          disabled={Boolean(syncingSourceId) || rowSyncActive}
+                        >
+                          {isSyncing || rowSyncActive ? "同期中" : "再同期を依頼"}
+                        </button>
+                      )}
+                      <Link href={href} className="button-link secondary">
+                        詳細
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            {totalPages > 1 && (
+              <nav className="source-list-pagination" aria-label="接続済みソースのページ">
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={page <= 1}
+                >
+                  前へ
+                </button>
+                <span>
+                  {page} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  disabled={page >= totalPages}
+                >
+                  次へ
+                </button>
+              </nav>
+            )}
+          </>
         ))}
     </div>
   );

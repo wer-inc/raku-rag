@@ -15,9 +15,24 @@ const DISPLAY_NAME_KEY = "raku.session.display_name";
 const COLLECTION_KEY = "raku.answerCollection";
 const COGNITO_ID_TOKEN_KEY = "raku.cognito.id_token";
 const COGNITO_ACCESS_TOKEN_KEY = "raku.cognito.access_token";
+const COGNITO_REFRESH_TOKEN_KEY = "raku.cognito.refresh_token";
 const COGNITO_STATE_KEY = "raku.cognito.pkce.state";
 const COGNITO_VERIFIER_KEY = "raku.cognito.pkce.verifier";
 const COGNITO_RETURN_TO_KEY = "raku.cognito.return_to";
+const REMEMBER_LOGIN_KEY = "raku.session.remember_login";
+const AUTH_STORAGE_KEYS = [
+  STORAGE_KEY,
+  USER_KEY,
+  TENANT_KEY,
+  ROLES_KEY,
+  DISPLAY_NAME_KEY,
+  COGNITO_ID_TOKEN_KEY,
+  COGNITO_ACCESS_TOKEN_KEY,
+  COGNITO_REFRESH_TOKEN_KEY,
+  COGNITO_STATE_KEY,
+  COGNITO_VERIFIER_KEY,
+  COGNITO_RETURN_TO_KEY,
+];
 
 export interface AuthConfig {
   auth_mode: string;
@@ -43,6 +58,70 @@ export type CognitoPasswordLoginResult =
   | { status: "new_password_required"; session: string; username: string };
 
 let authConfigPromise: Promise<AuthConfig> | null = null;
+let refreshInflight: Promise<string | null> | null = null;
+
+function storageGet(storage: Storage, key: string): string | null {
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(storage: Storage, key: string, value: string): void {
+  try {
+    storage.setItem(key, value);
+  } catch {
+    /* best-effort */
+  }
+}
+
+function storageRemove(storage: Storage, key: string): void {
+  try {
+    storage.removeItem(key);
+  } catch {
+    /* best-effort */
+  }
+}
+
+function storedSessionValue(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  return storageGet(window.sessionStorage, key) ?? storageGet(window.localStorage, key);
+}
+
+function rememberLoginEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  return storageGet(window.localStorage, REMEMBER_LOGIN_KEY) === "true";
+}
+
+export function loadRememberLoginPreference(): boolean {
+  return rememberLoginEnabled();
+}
+
+function setRememberLoginPreference(remember: boolean): void {
+  if (typeof window === "undefined") return;
+  if (remember) {
+    storageSet(window.localStorage, REMEMBER_LOGIN_KEY, "true");
+  } else {
+    storageRemove(window.localStorage, REMEMBER_LOGIN_KEY);
+  }
+}
+
+function writeSessionValue(key: string, value: string, remember = false): void {
+  if (typeof window === "undefined") return;
+  storageSet(window.sessionStorage, key, value);
+  if (remember) {
+    storageSet(window.localStorage, key, value);
+  } else {
+    storageRemove(window.localStorage, key);
+  }
+}
+
+function removeSessionValue(key: string): void {
+  if (typeof window === "undefined") return;
+  storageRemove(window.sessionStorage, key);
+  storageRemove(window.localStorage, key);
+}
 
 function normalizeDomain(raw: string): string {
   if (!raw.trim()) return "";
@@ -175,13 +254,20 @@ function unexpiredJwt(token: string): boolean {
   return typeof exp !== "number" || exp > Math.floor(Date.now() / 1000) + 30;
 }
 
-function loadCognitoToken(): string | null {
-  if (typeof window === "undefined") return null;
-  const idToken = window.sessionStorage.getItem(COGNITO_ID_TOKEN_KEY);
-  if (idToken && unexpiredJwt(idToken)) return idToken;
-  const accessToken = window.sessionStorage.getItem(COGNITO_ACCESS_TOKEN_KEY);
-  if (accessToken && unexpiredJwt(accessToken)) return accessToken;
+function unexpiredStoredJwt(key: string): string | null {
+  const token = storedSessionValue(key);
+  if (!token) return null;
+  if (unexpiredJwt(token)) return token;
+  removeSessionValue(key);
   return null;
+}
+
+function loadCognitoToken(): string | null {
+  return unexpiredStoredJwt(COGNITO_ID_TOKEN_KEY) ?? unexpiredStoredJwt(COGNITO_ACCESS_TOKEN_KEY);
+}
+
+function loadCognitoRefreshToken(): string | null {
+  return storedSessionValue(COGNITO_REFRESH_TOKEN_KEY);
 }
 
 function safeReturnTo(value: string | null | undefined): string {
@@ -195,20 +281,31 @@ function safeReturnTo(value: string | null | undefined): string {
   return candidate;
 }
 
-function storeCognitoTokens(idToken: string, accessToken = ""): void {
+function storeCognitoTokens(
+  idToken: string,
+  accessToken = "",
+  refreshToken = "",
+  remember = rememberLoginEnabled(),
+): void {
   if (typeof window === "undefined" || !idToken) return;
-  window.sessionStorage.setItem(COGNITO_ID_TOKEN_KEY, idToken);
+  setRememberLoginPreference(remember);
+  writeSessionValue(COGNITO_ID_TOKEN_KEY, idToken, remember);
   if (accessToken) {
-    window.sessionStorage.setItem(COGNITO_ACCESS_TOKEN_KEY, accessToken);
+    writeSessionValue(COGNITO_ACCESS_TOKEN_KEY, accessToken, remember);
+  } else {
+    removeSessionValue(COGNITO_ACCESS_TOKEN_KEY);
+  }
+  if (refreshToken) {
+    writeSessionValue(COGNITO_REFRESH_TOKEN_KEY, refreshToken, remember);
   }
   const claims = decodeJwtPayload(idToken);
   const user = userFromClaims(claims);
   if (user) {
-    window.sessionStorage.setItem(USER_KEY, user);
+    writeSessionValue(USER_KEY, user, remember);
   }
-  window.sessionStorage.setItem(TENANT_KEY, tenantFromClaims(claims));
-  window.sessionStorage.setItem(DISPLAY_NAME_KEY, displayNameFromClaims(claims));
-  window.sessionStorage.setItem(ROLES_KEY, JSON.stringify(rolesFromClaims(claims)));
+  writeSessionValue(TENANT_KEY, tenantFromClaims(claims), remember);
+  writeSessionValue(DISPLAY_NAME_KEY, displayNameFromClaims(claims), remember);
+  writeSessionValue(ROLES_KEY, JSON.stringify(rolesFromClaims(claims)), remember);
 }
 
 export async function startCognitoLogin(returnTo = "/home"): Promise<boolean> {
@@ -277,6 +374,8 @@ export async function finishCognitoLogin(code: string, state: string): Promise<s
   storeCognitoTokens(
     payload.id_token,
     typeof payload.access_token === "string" ? payload.access_token : "",
+    typeof payload.refresh_token === "string" ? payload.refresh_token : "",
+    rememberLoginEnabled(),
   );
   return returnTo;
 }
@@ -294,18 +393,47 @@ async function postCognitoPassword(body: Record<string, string>): Promise<Record
   return payload;
 }
 
-function persistPasswordAuth(payload: Record<string, unknown>): void {
+function persistPasswordAuth(payload: Record<string, unknown>, remember = false, fallbackRefreshToken = ""): void {
   const idToken = typeof payload.id_token === "string" ? payload.id_token : "";
   const accessToken = typeof payload.access_token === "string" ? payload.access_token : "";
+  const refreshToken =
+    typeof payload.refresh_token === "string" && payload.refresh_token
+      ? payload.refresh_token
+      : fallbackRefreshToken;
   if (!idToken) {
     throw new Error("Cognito token is missing");
   }
-  storeCognitoTokens(idToken, accessToken);
+  storeCognitoTokens(idToken, accessToken, refreshToken, remember);
+}
+
+async function refreshCognitoSession(): Promise<string | null> {
+  const refreshToken = loadCognitoRefreshToken();
+  if (!refreshToken) return null;
+  if (!refreshInflight) {
+    refreshInflight = postCognitoPassword({ action: "refresh", refresh_token: refreshToken })
+      .then((payload) => {
+        persistPasswordAuth(payload, rememberLoginEnabled(), refreshToken);
+        return loadCognitoToken();
+      })
+      .catch(() => {
+        clearSessionToken();
+        return null;
+      })
+      .finally(() => {
+        refreshInflight = null;
+      });
+  }
+  return refreshInflight;
+}
+
+async function ensureCognitoToken(): Promise<string | null> {
+  return loadCognitoToken() ?? refreshCognitoSession();
 }
 
 export async function signInWithCognitoPassword(
   email: string,
   password: string,
+  remember = false,
 ): Promise<CognitoPasswordLoginResult> {
   const payload = await postCognitoPassword({ action: "sign_in", email, password });
   if (payload.challenge === "NEW_PASSWORD_REQUIRED") {
@@ -314,7 +442,7 @@ export async function signInWithCognitoPassword(
     if (!session) throw new Error("Cognito challenge session is missing");
     return { session, status: "new_password_required", username };
   }
-  persistPasswordAuth(payload);
+  persistPasswordAuth(payload, remember);
   return { status: "authenticated" };
 }
 
@@ -323,6 +451,7 @@ export async function completeCognitoNewPassword(
   newPassword: string,
   session: string,
   challengeUsername = email,
+  remember = false,
 ): Promise<CognitoPasswordLoginResult> {
   const payload = await postCognitoPassword({
     action: "complete_new_password",
@@ -331,7 +460,7 @@ export async function completeCognitoNewPassword(
     new_password: newPassword,
     session,
   });
-  persistPasswordAuth(payload);
+  persistPasswordAuth(payload, remember);
   return { status: "authenticated" };
 }
 
@@ -378,7 +507,7 @@ export async function getSessionToken(
   tenantId: string = DEMO_TENANT,
   userId: string = loadSessionUserId() ?? DEMO_USER,
 ): Promise<string> {
-  const cognitoToken = loadCognitoToken();
+  const cognitoToken = await ensureCognitoToken();
   if (cognitoToken) return cognitoToken;
   const authConfig = await loadAuthConfig();
   if (authConfig.auth_mode === "cognito" && authConfig.cognito_domain && authConfig.cognito_client_id) {
@@ -412,15 +541,15 @@ export function loadSessionUserId(): string | null {
     const user = userFromClaims(decodeJwtPayload(token));
     if (user) return user;
   }
-  return window.sessionStorage.getItem(USER_KEY);
+  return storedSessionValue(USER_KEY);
 }
 
 export function saveSessionUserId(userId: string): void {
   if (typeof window === "undefined") return;
-  window.sessionStorage.setItem(USER_KEY, userId.trim());
-  window.sessionStorage.setItem(TENANT_KEY, DEMO_TENANT);
-  window.sessionStorage.setItem(ROLES_KEY, JSON.stringify(rolesForUser(userId.trim())));
-  window.sessionStorage.setItem(DISPLAY_NAME_KEY, userId.trim());
+  writeSessionValue(USER_KEY, userId.trim());
+  writeSessionValue(TENANT_KEY, DEMO_TENANT);
+  writeSessionValue(ROLES_KEY, JSON.stringify(rolesForUser(userId.trim())));
+  writeSessionValue(DISPLAY_NAME_KEY, userId.trim());
 }
 
 export function loadSessionTenantId(): string {
@@ -429,7 +558,7 @@ export function loadSessionTenantId(): string {
   if (token) {
     return tenantFromClaims(decodeJwtPayload(token));
   }
-  return window.sessionStorage.getItem(TENANT_KEY) || DEMO_TENANT;
+  return storedSessionValue(TENANT_KEY) || DEMO_TENANT;
 }
 
 export function loadSessionRoles(): WorkspaceRole[] {
@@ -439,7 +568,7 @@ export function loadSessionRoles(): WorkspaceRole[] {
     const roles = rolesFromClaims(decodeJwtPayload(token));
     return roles.length ? roles : ["field_user"];
   }
-  const raw = window.sessionStorage.getItem(ROLES_KEY);
+  const raw = storedSessionValue(ROLES_KEY);
   if (raw) {
     try {
       const parsed = JSON.parse(raw);
@@ -460,14 +589,14 @@ export function loadSessionDisplayName(): string {
   if (token) {
     return displayNameFromClaims(decodeJwtPayload(token));
   }
-  return window.sessionStorage.getItem(DISPLAY_NAME_KEY) || loadSessionUserId() || DEMO_USER;
+  return storedSessionValue(DISPLAY_NAME_KEY) || loadSessionUserId() || DEMO_USER;
 }
 
 export async function getBrowserSessionState(): Promise<BrowserSessionState> {
   const config = await loadAuthConfig();
   const isCognito = config.auth_mode === "cognito";
   const isConfigured = Boolean(config.cognito_domain && config.cognito_client_id);
-  const token = loadCognitoToken();
+  const token = await ensureCognitoToken();
   const userId = loadSessionUserId() ?? DEMO_USER;
   const roles = loadSessionRoles();
   return {
@@ -491,16 +620,8 @@ export function isSalesDemoUser(userId: string, roles: WorkspaceRole[]): boolean
 /** Forget the cached token (e.g. on auth failure) so the next call re-mints. */
 export function clearSessionToken(): void {
   if (typeof window !== "undefined") {
-    window.sessionStorage.removeItem(STORAGE_KEY);
-    window.sessionStorage.removeItem(USER_KEY);
-    window.sessionStorage.removeItem(TENANT_KEY);
-    window.sessionStorage.removeItem(ROLES_KEY);
-    window.sessionStorage.removeItem(DISPLAY_NAME_KEY);
-    window.sessionStorage.removeItem(COGNITO_ID_TOKEN_KEY);
-    window.sessionStorage.removeItem(COGNITO_ACCESS_TOKEN_KEY);
-    window.sessionStorage.removeItem(COGNITO_STATE_KEY);
-    window.sessionStorage.removeItem(COGNITO_VERIFIER_KEY);
-    window.sessionStorage.removeItem(COGNITO_RETURN_TO_KEY);
+    AUTH_STORAGE_KEYS.forEach(removeSessionValue);
+    setRememberLoginPreference(false);
   }
 }
 

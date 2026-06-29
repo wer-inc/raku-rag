@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   completeCognitoNewPassword,
   getBrowserSessionState,
+  loadRememberLoginPreference,
   signInWithCognitoPassword,
 } from "../../lib/session";
 
@@ -26,6 +27,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [rememberLogin, setRememberLogin] = useState(false);
   const [challengeSession, setChallengeSession] = useState("");
   const [challengeUsername, setChallengeUsername] = useState("");
   const [state, setState] = useState<LoginViewState>({
@@ -37,6 +39,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     let active = true;
+    setRememberLogin(loadRememberLoginPreference());
     getBrowserSessionState()
       .then((session) => {
         if (!active) return;
@@ -67,10 +70,19 @@ export default function LoginPage() {
 
   const signIn = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const rememberInput = event.currentTarget.elements.namedItem("remember_login");
+    const remember =
+      rememberInput instanceof HTMLInputElement ? rememberInput.checked : rememberLogin;
     setState((current) => ({ ...current, error: null, loading: true }));
     const login = challengeSession
-      ? completeCognitoNewPassword(email, newPassword, challengeSession, challengeUsername)
-      : signInWithCognitoPassword(email, password);
+      ? completeCognitoNewPassword(
+          email,
+          newPassword,
+          challengeSession,
+          challengeUsername,
+          remember,
+        )
+      : signInWithCognitoPassword(email, password, remember);
     void login
       .then((result) => {
         if (result.status === "new_password_required") {
@@ -201,6 +213,21 @@ export default function LoginPage() {
                   />
                 </label>
               )}
+              <label className="auth-remember">
+                <input
+                  checked={rememberLogin}
+                  name="remember_login"
+                  onChange={(event) => setRememberLogin(event.target.checked)}
+                  type="checkbox"
+                  aria-describedby="remember-login-note"
+                />
+                <span className="auth-remember-copy">
+                  <span className="auth-remember-title">ログインを保持する</span>
+                  <span className="auth-remember-note" id="remember-login-note">
+                    共有端末ではオフにしてください。
+                  </span>
+                </span>
+              </label>
               <div className="auth-login-actions">
                 <button
                   className="auth-primary"
