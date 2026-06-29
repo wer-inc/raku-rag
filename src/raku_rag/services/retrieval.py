@@ -62,11 +62,6 @@ class RetrievalService:
         self._metrics = metrics
         self._tracer = tracer
 
-    def is_visible(self, principal: IdentityClaims, chunk: Chunk) -> bool:
-        """Return whether a chunk is visible under the same ACL predicate retrieval uses."""
-
-        return bool(self._acl.visibility(principal)(chunk))
-
     def retrieve(
         self,
         principal: IdentityClaims,

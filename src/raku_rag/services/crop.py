@@ -140,9 +140,7 @@ class CropService:
         )
         raw_crop_uri = _raw_crop_uri(self.store, region, crop_id)
         redacted_crop_uri = (
-            _redacted_crop_uri_for_store(self.store, region, crop_id)
-            if redaction_required
-            else ""
+            _redacted_crop_uri_for_store(self.store, region, crop_id) if redaction_required else ""
         )
         crop = CropArtifact(
             tenant_id=region.tenant_id,

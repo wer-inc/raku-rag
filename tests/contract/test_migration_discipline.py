@@ -50,7 +50,9 @@ class MigrationDisciplineContractTest(unittest.TestCase):
         for text, name in ((runner, "Python runner"), (shell_runner, "Postgres shell runner")):
             with self.subTest(runner=name):
                 self.assertIn("schema_migrations", text)
-                self.assertRegex(text, re.compile(r"CREATE TABLE IF NOT EXISTS .*schema_migrations", re.S))
+                self.assertRegex(
+                    text, re.compile(r"CREATE TABLE IF NOT EXISTS .*schema_migrations", re.S)
+                )
                 self.assertIn("PRIMARY KEY", text)
 
     def test_postgres_migration_smoke_discovers_all_numbered_migrations(self) -> None:

@@ -35,14 +35,12 @@ class TestWorkerRuntime(unittest.TestCase):
             "RAKU_CROP_STORAGE_URI": "s3://bucket/visual-crops",
             "RAKU_VISUAL_EVIDENCE_PROMOTION": "true",
         }
-        with patch.dict(os.environ, env, clear=False), patch(
-            "raku_rag.production.ProductionSystem", FakeProductionSystem
-        ), patch(
-            "raku_rag.persistence.postgres.PostgresIngestionRunStore", FakeRunStore
-        ), patch.object(
-            worker_module, "PostgresDataSourceRepository", FakeDataSourceRepository
-        ), patch.object(
-            worker_module, "SourceSyncService", lambda **kwargs: object()
+        with (
+            patch.dict(os.environ, env, clear=False),
+            patch("raku_rag.production.ProductionSystem", FakeProductionSystem),
+            patch("raku_rag.persistence.postgres.PostgresIngestionRunStore", FakeRunStore),
+            patch.object(worker_module, "PostgresDataSourceRepository", FakeDataSourceRepository),
+            patch.object(worker_module, "SourceSyncService", lambda **kwargs: object()),
         ):
             built = worker_module.build_worker_from_env()
 

@@ -63,7 +63,9 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertEqual(status, 201)
 
         status, turn = service.submit_message(
-            _principal(), created["session_id"], {"message": "料金を教えてください", "collection_id": "manuals"}
+            _principal(),
+            created["session_id"],
+            {"message": "料金を教えてください", "collection_id": "manuals"},
         )
 
         self.assertEqual(status, 200)
@@ -76,7 +78,9 @@ class ChatbotServiceTest(unittest.TestCase):
         _, created = service.create_session(_principal(), {"channel": "web_chat"})
 
         status, turn = service.submit_message(
-            _principal(), created["session_id"], {"message": "料金を教えてください", "collection_id": "manuals"}
+            _principal(),
+            created["session_id"],
+            {"message": "料金を教えてください", "collection_id": "manuals"},
         )
 
         self.assertEqual(status, 200)
@@ -101,7 +105,9 @@ class ChatbotServiceTest(unittest.TestCase):
         _, created = service.create_session(_principal(), {"channel": "web_chat"})
 
         status, turn = service.submit_message(
-            _principal(), created["session_id"], {"message": "料金を教えてください", "collection_id": "manuals"}
+            _principal(),
+            created["session_id"],
+            {"message": "料金を教えてください", "collection_id": "manuals"},
         )
 
         self.assertEqual(status, 200)
@@ -116,7 +122,9 @@ class ChatbotServiceTest(unittest.TestCase):
         _, created = service.create_session(_principal(), {})
 
         status, turn = service.submit_message(
-            _principal(), created["session_id"], {"message": "特別割引できますか", "collection_id": "manuals"}
+            _principal(),
+            created["session_id"],
+            {"message": "特別割引できますか", "collection_id": "manuals"},
         )
 
         self.assertEqual(status, 200)
@@ -188,7 +196,9 @@ class ChatbotServiceTest(unittest.TestCase):
     def test_scenario_publish_requires_approved_version(self):
         service = ChatbotService(_rag_ok)
         admin = _principal(roles=("tenant_admin",))
-        service.upsert_scenario_version(admin, "cancel-basic", "csv_2", {"required_slots": ["email"]})
+        service.upsert_scenario_version(
+            admin, "cancel-basic", "csv_2", {"required_slots": ["email"]}
+        )
 
         status, payload = service.scenario_action(admin, "cancel-basic", "csv_2", "publish", {})
 
@@ -199,7 +209,9 @@ class ChatbotServiceTest(unittest.TestCase):
         service = ChatbotService(_rag_ok)
         _, created = service.create_session(_principal("tenant_a", "alice"), {})
 
-        status, payload = service.get_session(_principal("tenant_b", "mallory"), created["session_id"])
+        status, payload = service.get_session(
+            _principal("tenant_b", "mallory"), created["session_id"]
+        )
 
         self.assertEqual(status, 404)
         self.assertEqual(payload["error"], "not_found")
@@ -292,7 +304,10 @@ class ChatbotServiceTest(unittest.TestCase):
             {
                 "channel": "public_widget",
                 "collection_id": "manuals",
-                "metadata": {"chat_mode": "external_anonymous", "widget_origin": "https://example.com"},
+                "metadata": {
+                    "chat_mode": "external_anonymous",
+                    "widget_origin": "https://example.com",
+                },
             },
         )
 
@@ -326,7 +341,10 @@ class ChatbotServiceTest(unittest.TestCase):
             {
                 "channel": "public_widget",
                 "collection_id": "manuals",
-                "metadata": {"chat_mode": "external_anonymous", "widget_origin": "https://evil.example"},
+                "metadata": {
+                    "chat_mode": "external_anonymous",
+                    "widget_origin": "https://evil.example",
+                },
             },
         )
 

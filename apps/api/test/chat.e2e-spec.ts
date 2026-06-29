@@ -26,8 +26,8 @@ describe("chat facade (e2e)", () => {
     savedInternalSecret = process.env.RAKU_INTERNAL_AUTH_SECRET;
     savedWidgetSecret = process.env.RAKU_CHAT_WIDGET_SECRET;
     savedWidgetRateLimit = process.env.RAKU_CHAT_WIDGET_RATE_LIMIT_PER_MINUTE;
-    process.env.RAKU_INTERNAL_AUTH_SECRET = "chat-secret";
-    process.env.RAKU_CHAT_WIDGET_SECRET = "widget-secret";
+    process.env.RAKU_INTERNAL_AUTH_SECRET = "chat-secret"; // pragma: allowlist secret -- test-only dummy secret
+    process.env.RAKU_CHAT_WIDGET_SECRET = "widget-secret"; // pragma: allowlist secret -- test-only dummy secret
     process.env.RAKU_CHAT_WIDGET_RATE_LIMIT_PER_MINUTE = "60";
     upstream = http.createServer((req, res) => {
       const url = new URL(req.url ?? "/", "http://answer-service.local");

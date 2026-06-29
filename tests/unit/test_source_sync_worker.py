@@ -80,7 +80,9 @@ class TestSourceSyncWorker(unittest.TestCase):
         self.assertIsNotNone(system.registry.get("tenant_a", "doc_from_url"))
         self.assertEqual(worker.stats.processed, 1)
 
-    def test_source_sync_enqueues_pdf_child_and_finalizes_parent_after_child_completes(self) -> None:
+    def test_source_sync_enqueues_pdf_child_and_finalizes_parent_after_child_completes(
+        self,
+    ) -> None:
         runs = IngestionRunStore()
 
         class QueueingVisualSystem(MvpSystem):

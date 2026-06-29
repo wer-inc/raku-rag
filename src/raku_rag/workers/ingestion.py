@@ -1012,9 +1012,7 @@ def _append_page_aggregate_regions(
             for region in page_regions
             if region.transcription_confidence is not None
         ]
-        confidence = (
-            sum(confidence_values) / len(confidence_values) if confidence_values else None
-        )
+        confidence = sum(confidence_values) / len(confidence_values) if confidence_values else None
         labels = sorted(
             {
                 str(label)
@@ -1023,8 +1021,7 @@ def _append_page_aggregate_regions(
             }
         )
         redaction_required = any(
-            bool(region.metadata.get("visual_region_redaction_required"))
-            for region in page_regions
+            bool(region.metadata.get("visual_region_redaction_required")) for region in page_regions
         ) or bool(labels)
         metadata = {
             "page_aggregate": True,

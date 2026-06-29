@@ -290,7 +290,9 @@ class ChatbotService:
                 "handoff",
                 quick_replies=[],
             )
-            return 200, self._turn_response(principal, session, user_message, assistant, handoff=handoff)
+            return 200, self._turn_response(
+                principal, session, user_message, assistant, handoff=handoff
+            )
 
         if intent == "high_risk":
             handoff = self._create_handoff(
@@ -302,11 +304,15 @@ class ChatbotService:
                 "handoff",
                 quick_replies=[],
             )
-            return 200, self._turn_response(principal, session, user_message, assistant, handoff=handoff)
+            return 200, self._turn_response(
+                principal, session, user_message, assistant, handoff=handoff
+            )
 
         if intent in {"cancel_subscription", "confirm"} or session.scenario_id == "cancel-basic":
             assistant, ticket = self._run_cancel_scenario(session, text, intent)
-            return 200, self._turn_response(principal, session, user_message, assistant, ticket=ticket)
+            return 200, self._turn_response(
+                principal, session, user_message, assistant, ticket=ticket
+            )
 
         assistant, rag, handoff = self._run_rag_turn(
             principal,
@@ -324,12 +330,22 @@ class ChatbotService:
             return 404, {"error": "not_found"}
         return 200, self._session_detail(principal, session)
 
-    def list_sessions(self, principal: IdentityClaims, query: dict | None = None) -> tuple[int, dict]:
+    def list_sessions(
+        self, principal: IdentityClaims, query: dict | None = None
+    ) -> tuple[int, dict]:
         if not self._has_any_role(principal, SESSION_ADMIN_ROLES):
             return 403, {"error": "chat_role_required"}
         query = query or {}
-        intent = str((query.get("intent") or [""])[0] if isinstance(query.get("intent"), list) else query.get("intent") or "")
-        status = str((query.get("status") or [""])[0] if isinstance(query.get("status"), list) else query.get("status") or "")
+        intent = str(
+            (query.get("intent") or [""])[0]
+            if isinstance(query.get("intent"), list)
+            else query.get("intent") or ""
+        )
+        status = str(
+            (query.get("status") or [""])[0]
+            if isinstance(query.get("status"), list)
+            else query.get("status") or ""
+        )
         items = []
         for (tenant_id, _), session in self._sessions.items():
             if tenant_id != principal.tenant_id or not self._can_read_session(principal, session):
@@ -366,7 +382,9 @@ class ChatbotService:
         except KeyError:
             return 404, {"error": "not_found"}
         reason = str(body.get("reason") or "customer_requested_human")
-        handoff = self._create_handoff(session, reason=reason, comment=str(body.get("comment") or ""))
+        handoff = self._create_handoff(
+            session, reason=reason, comment=str(body.get("comment") or "")
+        )
         return 200, {
             **_tenant_body(principal, _id("corr")),
             "session_id": session.session_id,
@@ -421,7 +439,9 @@ class ChatbotService:
         ]
         count = len(sessions)
         handoff_count = sum(1 for s in sessions if s.handoff_required)
-        unanswered_count = sum(1 for s in sessions if s.last_rag and not s.last_rag.get("answerable"))
+        unanswered_count = sum(
+            1 for s in sessions if s.last_rag and not s.last_rag.get("answerable")
+        )
         resolved_count = sum(1 for s in sessions if s.status in {"resolved", "ticket_created"})
         rag_count = sum(1 for s in sessions if s.last_rag)
         rag_answerable = sum(1 for s in sessions if s.last_rag and s.last_rag.get("answerable"))
@@ -447,9 +467,7 @@ class ChatbotService:
                 "p95_response_latency_ms": 0,
             },
             "top_intents": [{"key": k, "count": v} for k, v in sorted(intents.items())],
-            "top_handoff_reasons": [
-                {"key": k, "count": v} for k, v in sorted(reasons.items())
-            ],
+            "top_handoff_reasons": [{"key": k, "count": v} for k, v in sorted(reasons.items())],
         }
 
     # --- source exposure policies ------------------------------------------
@@ -525,9 +543,7 @@ class ChatbotService:
     # --- scenarios ----------------------------------------------------------
 
     def list_scenarios(self, principal: IdentityClaims) -> tuple[int, dict]:
-        if not self._has_any_role(
-            principal, SCENARIO_MANAGE_ROLES | SCENARIO_APPROVE_ROLES
-        ):
+        if not self._has_any_role(principal, SCENARIO_MANAGE_ROLES | SCENARIO_APPROVE_ROLES):
             return 403, {"error": "chat_role_required"}
         scenarios = [
             s.public(principal.tenant_id)
@@ -584,8 +600,15 @@ class ChatbotService:
             required_slots=self._required_slots_from_definition(
                 body, fallback=existing.required_slots if existing else []
             ),
-            optional_slots=[str(x) for x in (body.get("optional_slots") or (existing.optional_slots if existing else []))],
-            steps=[dict(step) for step in (body.get("steps") or (existing.steps if existing else []))],
+            optional_slots=[
+                str(x)
+                for x in (
+                    body.get("optional_slots") or (existing.optional_slots if existing else [])
+                )
+            ],
+            steps=[
+                dict(step) for step in (body.get("steps") or (existing.steps if existing else []))
+            ],
             validation_rules=[
                 dict(rule)
                 for rule in (
@@ -593,7 +616,10 @@ class ChatbotService:
                 )
             ],
             rag_policy=dict(body.get("rag_policy") or (existing.rag_policy if existing else {})),
-            actions=[dict(action) for action in (body.get("actions") or (existing.actions if existing else []))],
+            actions=[
+                dict(action)
+                for action in (body.get("actions") or (existing.actions if existing else []))
+            ],
             response_templates=dict(
                 body.get("response_templates") or (existing.response_templates if existing else {})
             ),
@@ -666,7 +692,10 @@ class ChatbotService:
             if action == "archive" and scenario.active_version_id == version.version_id:
                 scenario.active_version_id = None
             scenario.status = version.status
-            return 200, {**_tenant_body(principal, _id("corr")), **scenario.public(principal.tenant_id)}
+            return 200, {
+                **_tenant_body(principal, _id("corr")),
+                **scenario.public(principal.tenant_id),
+            }
         return 404, {"error": "not_found"}
 
     def rollback_scenario(self, principal: IdentityClaims, scenario_id: str) -> tuple[int, dict]:
@@ -808,7 +837,9 @@ class ChatbotService:
         rag_response = self._rag_answerer(principal, text, collection_id)
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_citations = [dict(c) for c in (rag_response.get("citations") or [])]
-        citations, policy_ids = self._filter_chatbot_citations(session, raw_citations, collection_id)
+        citations, policy_ids = self._filter_chatbot_citations(
+            session, raw_citations, collection_id
+        )
         status = str(rag_response.get("status") or "temporarily_unavailable")
         source_policy_blocked = False
         if status == "ok" and raw_citations and not citations:
@@ -824,9 +855,7 @@ class ChatbotService:
         no_answer_reason = (
             None
             if answerable
-            else "source_not_enabled_for_chatbot"
-            if source_policy_blocked
-            else status
+            else "source_not_enabled_for_chatbot" if source_policy_blocked else status
         )
         rag = {
             "rag_interaction_id": _id("rag_chat"),
@@ -1073,7 +1102,10 @@ class ChatbotService:
             allowed_origins = {
                 _origin(str(domain)) for domain in (policy.get("allowed_domains") or [])
             }
-            if not allowed_origins or _origin(str(session.metadata.get("widget_origin") or "")) not in allowed_origins:
+            if (
+                not allowed_origins
+                or _origin(str(session.metadata.get("widget_origin") or "")) not in allowed_origins
+            ):
                 return False
             if mode == "external_anonymous" and not policy.get("required_document_tags"):
                 return False
@@ -1092,9 +1124,14 @@ class ChatbotService:
         normalized = text.lower()
         if self._is_confirmation(text):
             return "confirm"
-        if any(word in normalized for word in ("人間", "担当者", "オペレーター", "human", "operator")):
+        if any(
+            word in normalized for word in ("人間", "担当者", "オペレーター", "human", "operator")
+        ):
             return "human_handoff"
-        if any(word in normalized for word in ("返金保証", "補償", "訴訟", "法的", "損害賠償", "medical", "legal")):
+        if any(
+            word in normalized
+            for word in ("返金保証", "補償", "訴訟", "法的", "損害賠償", "medical", "legal")
+        ):
             return "high_risk"
         if any(word in normalized for word in ("解約", "キャンセル", "退会", "cancel")):
             return "cancel_subscription"
@@ -1172,7 +1209,9 @@ class ChatbotService:
                     rag_policy=dict(version.rag_policy),
                     actions=[dict(action) for action in version.actions],
                     response_templates=dict(version.response_templates),
-                    handoff_conditions=[dict(condition) for condition in version.handoff_conditions],
+                    handoff_conditions=[
+                        dict(condition) for condition in version.handoff_conditions
+                    ],
                     updated_at=version.updated_at,
                     approved_by=version.approved_by,
                     approved_at=version.approved_at,

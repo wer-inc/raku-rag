@@ -585,10 +585,7 @@ class ManufacturingAnswerService:
             approved_lookup_meta = [
                 m
                 for s in approved_lookup_evidence
-                if (
-                    m := self._get_mfg_meta(principal.tenant_id, s.chunk.document_id)
-                )
-                is not None
+                if (m := self._get_mfg_meta(principal.tenant_id, s.chunk.document_id)) is not None
             ]
             if _missing_query_identifiers(query, approved_lookup_evidence, approved_lookup_meta):
                 block_reason = (
@@ -635,9 +632,9 @@ class ManufacturingAnswerService:
             if classification.is_high_risk and self._visual_evidence_promotion
             else mfg_citations
         )
-        final_used_chunks = tuple(
-            c.chunk_id for c in final_citations if c.chunk_id is not None
-        ) or base.used_chunks
+        final_used_chunks = (
+            tuple(c.chunk_id for c in final_citations if c.chunk_id is not None) or base.used_chunks
+        )
 
         # (FR-MFG-006 / SC-MFG-011) T066 integration glue: the pre-gate ``has_usable_primary`` check
         # confirms SOME candidate is non-draft/non-obsolete, but the REUSED 001 answer path may still
