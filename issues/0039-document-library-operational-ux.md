@@ -1,6 +1,6 @@
 # 0039 — ドキュメント一覧が運用ライブラリとして判断しづらい(系統 = ux / documents / information-architecture)
 
-> Priority: **P2/Medium** / Status: Open / Labels: `ux`, `documents`, `information-architecture`, `review`
+> Priority: **P2/Medium** / Status: In Progress / Labels: `ux`, `documents`, `information-architecture`, `review`
 
 ## 背景(なぜ今)
 
@@ -24,7 +24,7 @@ UI/UX Pro Max 監査で、`/documents` はテナント内ドキュメントを�
 - 文書一覧で、正式根拠として使える文書、レビュー待ち、旧版、処理失敗/未処理がすぐ分かる。
 - 承認待ち文書から `根拠文書レビュー` へ自然に移動できる。
 - 文書量が増えても検索・フィルタ・ページングで目的の文書にたどり着ける。
-- ローカル控え、テナント全体、診断/内部 ID が UI 上で明確に分かれる。
+- 直近アップロードとテナント全体の正式一覧が同じ文書一覧の中で扱われ、実装都合の別枠に見えない。
 
 実際の挙動:
 
@@ -60,7 +60,8 @@ UI/UX Pro Max 監査で、`/documents` はテナント内ドキュメントを�
    - raw `document_id` / `collection_id` / processing JSON は既定表示から下げ、詳細または診断セクションへ移す。
 2. UI/UX 方針:
    - 主表示は「文書名または分かるタイトル」「正式根拠としての状態」「発効/鮮度」「ソース」「次の操作」に寄せる。
-   - ローカル控えは「取込直後のこのブラウザ控え」として控えめに表示し、`この控えを消去` は destructive に見えすぎない文言と確認にする。
+   - 直近アップロードは別セクションにせず、同じ文書一覧へ `直近アップロード（一覧反映待ち）` として統合する。
+   - ローカル履歴の削除は `この端末の履歴だけ消去` と明記し、テナント文書削除ではないことを文言で示す。
    - 詳細画面はレビュア向け概要、承認/根拠状態、ファイル/引用プレビュー、診断情報を分ける。
 3. テスト方針:
    - Playwright で承認待ち、承認済み、旧版、空状態、多数件の表示とフィルタを確認する。
@@ -72,10 +73,10 @@ UI/UX Pro Max 監査で、`/documents` はテナント内ドキュメントを�
 ## QA checklist
 
 - [ ] 再現テストがある。
-- [ ] 正常系が確認できる。
+- [x] 正常系が確認できる。
 - [ ] 失敗時の表示/応答が確認できる。
 - [ ] tenant/ACL 境界を越えない。
-- [ ] security/safety gate を弱めていない。
+- [x] security/safety gate を弱めていない。
 - [ ] Playwright または API smoke で確認できる。
 - [ ] AWS stg/live smoke が必要な場合は correlation id を保存する。
 
@@ -84,7 +85,7 @@ UI/UX Pro Max 監査で、`/documents` はテナント内ドキュメントを�
 - 文書一覧で正式根拠、承認待ち、旧版、処理異常が一目で区別できる。
 - 検索・フィルタ・ページングにより多数文書でも運用できる。
 - 承認待ち文書から根拠文書レビューへ移動できる。
-- ローカル控えとテナント文書一覧の違いが誤解なく伝わる。
+- 直近アップロードとテナント文書一覧が分断されず、一覧内で状態として理解できる。
 - 詳細画面で業務情報と診断情報が分離されている。
 - 既存の安全ルール、ACL、監査要件を弱めていない。
 
@@ -101,6 +102,8 @@ UI/UX Pro Max 監査で、`/documents` はテナント内ドキュメントを�
 - `apps/web/app/components/FullSaasScreen.tsx:4732`
 - `apps/web/app/components/FullSaasScreen.tsx:4783`
 - `apps/web/app/components/FullSaasScreen.tsx:4816`
+- 2026-06-29 partial fix: `取込直後の控え` セクションを廃止し、`直近アップロード` フィルタと
+  一覧内の `直近アップロード（一覧反映待ち）` 表示へ統合。
 - `specs/full-saas/screens.manifest.json:204`
 - `specs/full-saas/gaps.md:15`
 - `issues/0014-approval-rules-settings-non-functional.md`

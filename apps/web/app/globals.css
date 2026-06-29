@@ -226,6 +226,25 @@ textarea {
   font-weight: 700;
 }
 
+.add-source-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.add-source-plus {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .button-link.secondary {
   background: var(--surface-muted);
 }
@@ -4544,32 +4563,6 @@ button,
   font-size: 13.5px;
 }
 
-.connector-mapping-panel {
-  display: grid;
-  gap: 12px;
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px solid var(--line, #ececec);
-  border-radius: 8px;
-  background: #fafafa;
-}
-
-.connector-mapping-head {
-  display: grid;
-  gap: 3px;
-}
-
-.connector-mapping-head strong {
-  color: var(--text);
-  font-size: 13.5px;
-}
-
-.connector-mapping-head span {
-  color: #71717a;
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-
 .connector-oauth {
   display: flex;
   align-items: center;
@@ -4683,6 +4676,32 @@ button,
   font-size: 14px;
   line-height: 1.6;
   resize: vertical;
+}
+
+.source-name-field {
+  display: grid;
+  gap: 5px;
+  max-width: 520px;
+}
+
+.source-name-field span {
+  color: #71717a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.source-name-field input {
+  padding: 9px 11px;
+  border: 1px solid var(--line, #ececec);
+  border-radius: 8px;
+  background: #ffffff;
+  font-size: 13.5px;
+}
+
+.source-name-field small {
+  color: #71717a;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .upload-fields {

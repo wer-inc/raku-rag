@@ -134,6 +134,22 @@ class S3Connector(Connector):
         body = obj["Body"]
         return body.read()
 
+    def object_info(self, ref: str) -> dict[str, object]:
+        bucket, key = self._parse_ref(ref)
+        assert self.client is not None
+        obj = self.client.head_object(Bucket=bucket, Key=key)
+        metadata = {
+            str(k).lower(): str(v)
+            for k, v in dict(obj.get("Metadata") or {}).items()
+            if k is not None
+        }
+        return {
+            "bucket": bucket,
+            "key": key,
+            "content_length": int(obj.get("ContentLength") or 0),
+            "metadata": metadata,
+        }
+
     def put_bytes(
         self,
         key: str,
@@ -208,8 +224,13 @@ class S3Connector(Connector):
 
 
 def default_connector_from_env() -> Connector:
-    if os.environ.get("RAKU_INGEST_CONNECTOR") == "s3" or os.environ.get("S3_BUCKET"):
-        inner: Connector = S3Connector(bucket=os.environ.get("S3_BUCKET"))
+    bucket = (
+        os.environ.get("S3_BUCKET")
+        or os.environ.get("RAKU_UPLOAD_BUCKET")
+        or os.environ.get("DOCUMENT_BUCKET")
+    )
+    if os.environ.get("RAKU_INGEST_CONNECTOR") == "s3" or bucket:
+        inner: Connector = S3Connector(bucket=bucket)
     else:
         inner = FileConnector()
     # Always accept inline data: refs on top of the configured store, so an uploader in a different

@@ -1379,7 +1379,7 @@ function screenTitle(screen: ManifestScreen): string {
     chatbot: "チャットボット",
     "answer-history": "回答履歴",
     "source-search": "ソース",
-    "source-list": "データソース",
+    "source-list": "ソース",
     "source-detail": "ソース詳細",
     "add-source": "ソースを追加",
     "ingestion-runs": "取り込み実行",
@@ -1411,12 +1411,24 @@ function screenTitle(screen: ManifestScreen): string {
   return titles[screen.id] ?? screen.title;
 }
 
-function ScreenShell({ screen, children }: { screen: ManifestScreen; children: ReactNode }) {
+function AddSourceCta({ className }: { className?: string }) {
   return (
-    <section className="workspace full-saas-workspace" aria-label={screen.title}>
+    <Link className={className ? `${className} add-source-cta` : "add-source-cta"} href="/sources/new">
+      <span className="add-source-plus" aria-hidden="true">
+        +
+      </span>
+      <span>ソースを追加</span>
+    </Link>
+  );
+}
+
+function ScreenShell({ screen, children }: { screen: ManifestScreen; children: ReactNode }) {
+  const title = screenTitle(screen);
+  return (
+    <section className="workspace full-saas-workspace" aria-label={title}>
       <header className="topbar">
         <div>
-          <h2>{screenTitle(screen)}</h2>
+          <h2>{title}</h2>
         </div>
       </header>
       {children}
@@ -1504,6 +1516,7 @@ function sourceKind(row: SourceListRow): string {
 
 function sourceKindLabel(kind: string): string {
   const normalized = kind.toLowerCase().replace(/-/g, "_");
+  if (normalized.startsWith("file_") || normalized.startsWith("upload_")) return "ファイル";
   const labels: Record<string, string> = {
     box: "Box",
     confluence: "Confluence",
@@ -1518,7 +1531,7 @@ function sourceKindLabel(kind: string): string {
     postgres: "PostgreSQL",
     postgresql: "PostgreSQL",
     s3: "S3",
-    upload: "ファイルアップロード",
+    upload: "ファイル",
     url: "URL",
   };
   return labels[normalized] ?? kind;
@@ -1617,11 +1630,44 @@ async function loadSourceListRows(): Promise<SourceListRow[]> {
     adminDataSources(token),
     manufacturingDocuments(token).catch(() => [] as ManufacturingDocumentSummary[]),
   ]);
+  const localUploads = loadIngestedDocs();
+  const localByDocumentId = new Map(localUploads.map((doc) => [doc.document_id, doc]));
   const docStats = new Map<
     string,
-    { sourceId: string; collectionId: string; documentCount: number; approvedCount: number; pendingCount: number }
+    {
+      sourceId: string;
+      collectionId: string;
+      documentCount: number;
+      approvedCount: number;
+      pendingCount: number;
+      displayName?: string;
+      sourceType?: string;
+    }
   >();
   for (const doc of documents) {
+    const sourceId = doc.source_id || "upload";
+    const local = localByDocumentId.get(doc.document_id);
+    const current =
+      docStats.get(sourceId) ??
+      {
+        approvedCount: 0,
+        collectionId: doc.collection_id || DEMO_COLLECTION,
+        documentCount: 0,
+        displayName: local?.source_name,
+        pendingCount: 0,
+        sourceId,
+        sourceType: local?.source_type,
+      };
+    current.displayName = current.displayName || local?.source_name;
+    current.sourceType = current.sourceType || local?.source_type;
+    current.documentCount += 1;
+    if (doc.approval_status === "approved") current.approvedCount += 1;
+    if (doc.approval_status === "pending_review") current.pendingCount += 1;
+    docStats.set(sourceId, current);
+  }
+  const serverDocIds = new Set(documents.map((doc) => doc.document_id));
+  for (const doc of localUploads) {
+    if (serverDocIds.has(doc.document_id)) continue;
     const sourceId = doc.source_id || "upload";
     const current =
       docStats.get(sourceId) ??
@@ -1629,9 +1675,13 @@ async function loadSourceListRows(): Promise<SourceListRow[]> {
         approvedCount: 0,
         collectionId: doc.collection_id || DEMO_COLLECTION,
         documentCount: 0,
+        displayName: doc.source_name,
         pendingCount: 0,
         sourceId,
+        sourceType: doc.source_type,
       };
+    current.displayName = current.displayName || doc.source_name;
+    current.sourceType = current.sourceType || doc.source_type;
     current.documentCount += 1;
     if (doc.approval_status === "approved") current.approvedCount += 1;
     if (doc.approval_status === "pending_review") current.pendingCount += 1;
@@ -1668,8 +1718,8 @@ async function loadSourceListRows(): Promise<SourceListRow[]> {
         audit_events: [],
         collection_id: stat.collectionId,
         config: {
-          display_name: stat.sourceId === "upload" ? "ファイルアップロード" : stat.sourceId,
-          source_type: "upload",
+          display_name: stat.displayName || (stat.sourceId === "upload" ? "ファイル" : stat.sourceId),
+          source_type: stat.sourceType || "file",
         },
         source_id: stat.sourceId,
         status: "active",
@@ -1749,18 +1799,18 @@ function SourceListBody() {
       <header className="standalone-list-head">
         <div className="standalone-list-head-title">
           <h3>同期・承認状況</h3>
-          <p>RAG が参照するデータソースの同期・承認状態を確認できます。</p>
+          <p>RAG が参照するソースの同期・承認状態を確認できます。</p>
           {polling && <span className="sync-poll-badge">同期中 — 自動更新</span>}
         </div>
         <div className="standalone-list-tools">
           <button type="button" className="is-secondary" onClick={reload}>
             更新
           </button>
-          <Link href="/sources/new">ソースを追加</Link>
+          <AddSourceCta />
         </div>
       </header>
       {state.state === "ready" && state.data.length > 0 && (
-        <section className="source-list-controls" aria-label="データソースの検索と絞り込み">
+        <section className="source-list-controls" aria-label="ソースの検索と絞り込み">
           <label className="standalone-search source-list-search">
             <span aria-hidden="true">⌕</span>
             <input
@@ -1803,11 +1853,9 @@ function SourceListBody() {
             </div>
             <h4>まだソースが登録されていません</h4>
             <p>
-              社内ドキュメントやデータソースを接続すると、根拠付きで横断検索・回答できるようになります。
+              社内ドキュメントやソースを接続すると、根拠付きで横断検索・回答できるようになります。
             </p>
-            <Link className="standalone-empty-cta" href="/sources/new">
-              ソースを追加
-            </Link>
+            <AddSourceCta className="standalone-empty-cta" />
           </div>
         ) : filteredRows.length === 0 ? (
           <div className="standalone-empty-state">
@@ -1882,7 +1930,7 @@ function SourceListBody() {
               })}
             </div>
             {totalPages > 1 && (
-              <nav className="source-list-pagination" aria-label="データソースのページ">
+              <nav className="source-list-pagination" aria-label="ソースのページ">
                 <button
                   type="button"
                   onClick={() => setPage((current) => Math.max(1, current - 1))}
@@ -2593,7 +2641,7 @@ function HomeDashboardBody() {
             </Link>
             <Link href="/sources/list" className="action-card">
               <strong>ソース一覧</strong>
-              <span>データソースと同期状態を確認する</span>
+              <span>ソースと同期状態を確認する</span>
             </Link>
             <Link href="/reviews" className="action-card">
               <strong>AIドラフトレビュー</strong>
@@ -3443,7 +3491,7 @@ function IngestionRunsBody() {
           note="「ソースを追加」から開始した同期です。実行 ID で詳細を確認できます。"
         >
           <DataTable
-            columns={["実行 ID", "ソース", "コレクション", "状態", "変更", "日時"]}
+            columns={["実行 ID", "ソース", "種別", "状態", "変更", "日時"]}
             rows={connectorRuns.map((run) => [
               <button
                 type="button"
@@ -3456,8 +3504,8 @@ function IngestionRunsBody() {
               >
                 {run.ingestion_run_id}
               </button>,
-              run.source_id,
-              run.collection_id,
+              run.source_name || run.source_id,
+              sourceKindLabel(run.source_type || run.source_id),
               connectorStatusLabel(run.status),
               String(run.changed_count),
               new Date(run.synced_at).toLocaleString("ja-JP"),
@@ -3469,7 +3517,7 @@ function IngestionRunsBody() {
       {uploads.length > 0 && (
         <Section title="最近のアップロード取込（このブラウザ）" note="ファイルアップロードから作成された取込ランです。">
           <DataTable
-            columns={["実行 ID", "ドキュメント", "状態", "チャンク", "日時"]}
+            columns={["実行 ID", "ソース", "状態", "チャンク", "日時"]}
             rows={uploads.map((doc) => [
               <button
                 type="button"
@@ -3482,7 +3530,7 @@ function IngestionRunsBody() {
               >
                 {doc.ingestion_run_id}
               </button>,
-              doc.document_id,
+              doc.source_name || doc.filename || doc.document_id,
               doc.status === "succeeded" ? "成功" : doc.status,
               String(doc.chunk_count),
               new Date(doc.ingested_at).toLocaleString("ja-JP"),
@@ -3935,13 +3983,6 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
   );
 }
 
-const APPROVAL_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "approved", label: "承認済み（すぐ正式根拠に使える）" },
-  { value: "pending_review", label: "承認待ち" },
-  { value: "draft", label: "ドラフト（参照のみ）" },
-  { value: "obsolete", label: "旧版（参照のみ・警告）" },
-];
-
 const ACCEPT_EXT = ".txt,.md,.markdown,.csv,.html,.htm,.docx,.xlsx,.pdf,.png,.jpg,.jpeg";
 
 type AddSourceTypeId =
@@ -4210,12 +4251,98 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function defaultSourceIdFor(sourceType: AddSourceTypeId): string {
+  if (sourceType === "file") return `file-${Date.now().toString(36)}`;
+  return `${sourceType}-${Date.now().toString(36)}`;
+}
+
+function sourceTypeForConfig(sourceType: AddSourceTypeId): string {
+  return sourceType === "googledrive" ? "google_drive" : sourceType;
+}
+
 interface UploadForIngestResult {
   ref: string;
   filename: string;
   content_type: string;
   size?: number;
   storage?: string;
+}
+
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function cleanDocumentIdPart(value: string): string {
+  return value
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^A-Za-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+}
+
+function fileNameStemForDisplay(fileName: string): string {
+  return (fileName || "").replace(/\.[^.]+$/, "").trim();
+}
+
+function sourceDisplayName(params: {
+  rawName: string;
+  fallback: string;
+  files?: File[];
+}): string {
+  const rawName = params.rawName.trim();
+  if (rawName) return rawName;
+  const files = params.files ?? [];
+  if (files.length === 1) {
+    return fileNameStemForDisplay(files[0]?.name ?? "") || params.fallback;
+  }
+  if (files.length > 1) return `${params.fallback} ${files.length}件`;
+  return params.fallback;
+}
+
+function documentIdForUpload(params: {
+  fileName: string;
+  index: number;
+  total: number;
+}): string {
+  const stem = cleanDocumentIdPart(params.fileName || "upload");
+  if (params.total <= 1) {
+    return stem || `doc-${Date.now().toString(36)}`;
+  }
+  const base = stem || `doc-${Date.now().toString(36)}`;
+  const suffix = `-${params.index + 1}`;
+  return `${base.slice(0, Math.max(1, 96 - suffix.length))}${suffix}`;
+}
+
+function selectedFilesTitle(files: File[]): string {
+  if (files.length === 0) return "ファイルを選択（複数可・または、ここにドロップ）";
+  if (files.length === 1) return files[0]?.name || "1 ファイルを選択";
+  return `${files.length} 件のファイルを選択`;
+}
+
+function selectedFilesDetail(files: File[]): string {
+  if (files.length === 0) {
+    return ".txt / .md / .csv / .html / .docx / .xlsx / .pdf / .png / .jpg・各ファイル最大25MB";
+  }
+  const totalBytes = files.reduce((sum, item) => sum + item.size, 0);
+  if (files.length === 1) return formatFileSize(files[0]?.size ?? 0);
+  const sampleNames = files.slice(0, 3).map((item) => item.name || "upload.bin");
+  const suffix = files.length > sampleNames.length ? ` ほか${files.length - sampleNames.length}件` : "";
+  return `${sampleNames.join(" / ")}${suffix}・合計 ${formatFileSize(totalBytes)}`;
+}
+
+function uploadResultOk(status: string): boolean {
+  return status === "succeeded" || status === "queued" || status === "running";
+}
+
+function uploadResultStatusLabel(status: string): string {
+  if (status === "succeeded") return "成功";
+  if (status === "queued") return "処理待ち";
+  if (status === "running") return "処理中";
+  if (status === "failed") return "失敗";
+  return status;
 }
 
 async function fallbackInlineUpload(file: File): Promise<UploadForIngestResult> {
@@ -4244,9 +4371,17 @@ async function uploadForIngest(file: File, token: string): Promise<UploadForInge
       typeof presign.content_type === "string"
         ? presign.content_type
         : file.type || "application/octet-stream";
+    const uploadHeaders =
+      presign.headers && typeof presign.headers === "object"
+        ? Object.fromEntries(
+            Object.entries(presign.headers).filter(
+              (entry): entry is [string, string] => typeof entry[1] === "string",
+            ),
+          )
+        : { "content-type": contentType };
     const uploadRes = await fetch(presign.upload_url, {
       method: "PUT",
-      headers: { "content-type": contentType },
+      headers: uploadHeaders,
       body: file,
     });
     if (!uploadRes.ok) throw new Error(`S3 アップロードに失敗しました (HTTP ${uploadRes.status})`);
@@ -4288,25 +4423,26 @@ function makeOAuthNonce(): string {
 function AddSourceBody() {
   const [selectedSource, setSelectedSource] = useState<AddSourceTypeId>("file");
   const [mode, setMode] = useState<"file" | "text">("file");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [text, setText] = useState("");
-  const [documentId, setDocumentId] = useState("");
+  const [sourceName, setSourceName] = useState("");
   const [collectionId, setCollectionId] = useState("manuals");
-  const [sourceId, setSourceId] = useState("upload");
-  const [approvalStatus, setApprovalStatus] = useState("approved");
-  const [effectiveDate, setEffectiveDate] = useState(todayIso());
+  const [sourceId, setSourceId] = useState(() => defaultSourceIdFor("file"));
+  const [approvalStatus] = useState("pending_review");
+  const [effectiveDate] = useState(todayIso());
   // Connector (multi-file) trust policy. Default review_required so synced files land in the review
   // queue (pending_review) — never auto-approved. 'trusted' inherits approval from the source of
   // truth (approval_source=imported) so a governed source approves all its files at sync time.
-  const [approvalPolicy, setApprovalPolicy] = useState<"review_required" | "trusted">(
-    "review_required",
-  );
+  const [approvalPolicy] = useState<"review_required" | "trusted">("review_required");
   const [mappingProfileType, setMappingProfileType] = useState<DataSourceProfileType>("auto");
   const [mappingRequiredFields, setMappingRequiredFields] = useState(
     PREVIEW_REQUIRED_FIELDS_BY_PROFILE.auto.join(", "),
   );
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<IngestedDoc | null>(null);
+  const [uploadProgress, setUploadProgress] = useState("");
+  const [uploadFailures, setUploadFailures] = useState<string[]>([]);
+  const [result, setResult] = useState<IngestedDoc[]>([]);
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [configSaving, setConfigSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -4366,9 +4502,14 @@ function AddSourceBody() {
 
   function onSelectSource(sourceIdValue: AddSourceTypeId) {
     setSelectedSource(sourceIdValue);
-    setSourceId(sourceIdValue === "file" ? "upload" : sourceIdValue);
+    setSourceId(defaultSourceIdFor(sourceIdValue));
+    setSourceName("");
     setConfigValues({});
-    setResult(null);
+    setFiles([]);
+    setFileInputKey((current) => current + 1);
+    setResult([]);
+    setUploadProgress("");
+    setUploadFailures([]);
     setSyncResult(null);
     setOauthStatus("idle");
     setOauthConnectionId("");
@@ -4377,24 +4518,23 @@ function AddSourceBody() {
     setMappingRequiredFields(PREVIEW_REQUIRED_FIELDS_BY_PROFILE.auto.join(", "));
   }
 
-  function onMappingProfileTypeChange(value: DataSourceProfileType) {
-    setMappingProfileType(value);
-    setMappingRequiredFields(PREVIEW_REQUIRED_FIELDS_BY_PROFILE[value].join(", "));
-  }
-
   function onConfigChange(fieldId: string, value: string) {
     setConfigValues((current) => ({ ...current, [fieldId]: value }));
   }
 
-  function onPickFile(picked: File | null) {
-    setFile(picked);
-    if (picked && !documentId.trim()) {
-      setDocumentId(picked.name.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 80));
-    }
+  function onPickFiles(picked: File[]) {
+    setFiles(picked);
+    setResult([]);
+    setUploadProgress("");
+    setUploadFailures([]);
   }
 
   async function saveDatasource(): Promise<string | null> {
     if (selectedSource === "file" || configSaving || syncing) return null;
+    if (!sourceName.trim()) {
+      toast("ソース名を入力してください。", "error");
+      return null;
+    }
     if (needsOAuthConnection && !oauthConnectionId) {
       toast("先に「Google で接続」で OAuth 認可を完了してください。", "error");
       return null;
@@ -4403,6 +4543,10 @@ function AddSourceBody() {
     setConfigSaving(true);
     try {
       const datasourceId = sourceId.trim() || selectedSource;
+      const displayName = sourceDisplayName({
+        rawName: sourceName,
+        fallback: selectedSourceDef.name,
+      });
       const token = await getSessionToken();
       const credentialFieldIds = new Set(
         selectedConfig.fields.filter((field) => field.type === "password").map((field) => field.id),
@@ -4428,7 +4572,7 @@ function AddSourceBody() {
             // Backend dispatch key. It matches the AddSourceTypeId for every connector EXCEPT
             // google_drive (UI id 'googledrive' -> dispatch/type 'google_drive').
             source_type: selectedSource === "googledrive" ? "google_drive" : selectedSource,
-            display_name: selectedSourceDef.name,
+            display_name: displayName,
             oauth_provider: selectedConfig.oauth ?? null,
             // OAuth connection id (google_drive): sync resolves the refresh token by this id. The
             // refresh token itself is never in the config — it lives in the server SecretStore.
@@ -4451,7 +4595,7 @@ function AddSourceBody() {
         },
         token,
       );
-      toast(`${selectedSourceDef.name} の接続設定を保存しました。`, "success");
+      toast(`${displayName} の接続設定を保存しました。`, "success");
       return datasourceId;
     } catch (err) {
       toast(err instanceof Error ? err.message : "接続設定の保存に失敗しました", "error");
@@ -4488,6 +4632,11 @@ function AddSourceBody() {
       recordConnectorRun({
         ingestion_run_id: sync.ingestion_run_id,
         source_id: sync.source_id,
+        source_name: sourceDisplayName({
+          rawName: sourceName,
+          fallback: selectedSourceDef.name,
+        }),
+        source_type: sourceTypeForConfig(selectedSource),
         collection_id: sync.collection_id,
         status: sync.status,
         observed_count: sync.observed_count,
@@ -4495,11 +4644,7 @@ function AddSourceBody() {
         failed_count: sync.failed_count,
         synced_at: new Date().toISOString(),
       });
-      const policyNote =
-        approvalPolicy === "trusted"
-          ? `${sync.changed_count ?? 0} 件を「承認済み（信頼ソース）」として取り込みました。`
-          : `${sync.changed_count ?? 0} 件を「承認待ち（pending_review）」として取り込みました。根拠文書レビューで承認すると正式な根拠になります。`;
-      toast(`${selectedSourceDef.name} の同期を開始しました。${policyNote}`, "success");
+      toast(`${sourceDisplayName({ rawName: sourceName, fallback: selectedSourceDef.name })} の同期を開始しました。`, "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "同期開始に失敗しました", "error");
     } finally {
@@ -4510,85 +4655,142 @@ function AddSourceBody() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (submitting) return;
-    setResult(null);
+    setResult([]);
+    setUploadFailures([]);
+    setUploadProgress("");
 
     if (selectedSource !== "file") {
       toast("このソース種別は接続設定フォームから保存してください。", "error");
       return;
     }
+    if (!sourceName.trim()) {
+      toast("ソース名を入力してください。", "error");
+      return;
+    }
 
-    let payload: File | null = file;
+    let payloads: File[] = files;
     if (mode === "text") {
       const trimmed = text.trim();
       if (!trimmed) {
         toast("テキストを入力してください。", "error");
         return;
       }
-      payload = new File([trimmed], `${documentId.trim() || "pasted"}.txt`, { type: "text/plain" });
+      const textFileBase = cleanDocumentIdPart(sourceName.trim()) || `pasted-${Date.now().toString(36)}`;
+      payloads = [
+        new File([trimmed], `${textFileBase}.txt`, {
+          type: "text/plain",
+        }),
+      ];
     }
-    if (!payload) {
+    if (payloads.length === 0) {
       toast("ファイルを選択してください。", "error");
       return;
     }
 
     setSubmitting(true);
+    const records: IngestedDoc[] = [];
+    const failures: string[] = [];
+    const failedFiles: File[] = [];
+    const displayName = sourceDisplayName({
+      rawName: sourceName,
+      fallback: selectedSourceDef.name,
+      files: payloads,
+    });
+    const displayType = sourceTypeForConfig(selectedSource);
+    const requestSourceId = sourceId.trim() || defaultSourceIdFor("file");
     try {
       const token = await getSessionToken();
-      const up = await uploadForIngest(payload, token);
+      for (const [index, payload] of payloads.entries()) {
+        setUploadProgress(`${payloads.length}件中 ${index + 1}件目を取込中: ${payload.name || "upload.bin"}`);
+        try {
+          const up = await uploadForIngest(payload, token);
+          const docId = documentIdForUpload({
+            fileName: up.filename,
+            index,
+            total: payloads.length,
+          });
 
-      const docId =
-        documentId.trim() ||
-        up.filename.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 80) ||
-        `doc-${Date.now().toString(36)}`;
+          const ingest = await ingestDocument(
+            {
+              collection_id: collectionId.trim() || "manuals",
+              source_id: requestSourceId,
+              document_id: docId,
+              ref: up.ref,
+              content_type: up.content_type,
+              manufacturing: {
+                approval_status: approvalStatus as "approved" | "pending_review" | "draft" | "obsolete",
+                effective_date: effectiveDate || null,
+                approval_source: "workflow",
+              },
+            },
+            token,
+          );
 
-      const ingest = await ingestDocument(
-        {
-          collection_id: collectionId.trim() || "manuals",
-          source_id: sourceId.trim() || "upload",
-          document_id: docId,
-          ref: up.ref,
-          content_type: up.content_type,
-          manufacturing: {
-            approval_status: approvalStatus as "approved" | "pending_review" | "draft" | "obsolete",
+          const record: IngestedDoc = {
+            document_id: ingest.document_id ?? docId,
+            collection_id: collectionId.trim() || "manuals",
+            source_id: requestSourceId,
+            source_name: displayName,
+            source_type: displayType,
+            filename: up.filename,
+            content_type: up.content_type,
+            approval_status: approvalStatus,
             effective_date: effectiveDate || null,
-            approval_source: "workflow",
-          },
-        },
-        token,
-      );
-
-      const record: IngestedDoc = {
-        document_id: ingest.document_id ?? docId,
-        collection_id: collectionId.trim() || "manuals",
-        source_id: sourceId.trim() || "upload",
-        filename: up.filename,
-        content_type: up.content_type,
-        approval_status: approvalStatus,
-        effective_date: effectiveDate || null,
-        ingestion_run_id: ingest.ingestion_run_id,
-        status: ingest.status,
-        chunk_count: ingest.chunk_count ?? 0,
-        ingested_at: new Date().toISOString(),
-      };
-      recordIngestedDoc(record);
-      setResult(record);
-      if (ingest.failure_reason) {
-        toast(`取込は完了しましたが警告があります: ${ingest.failure_reason}`, "warning");
+            ingestion_run_id: ingest.ingestion_run_id,
+            status: ingest.status,
+            chunk_count: ingest.chunk_count ?? 0,
+            ingested_at: new Date().toISOString(),
+          };
+          recordIngestedDoc(record);
+          records.push(record);
+          if (ingest.failure_reason || ingest.status === "failed") {
+            if (mode === "file" && ingest.status === "failed") failedFiles.push(payload);
+            failures.push(`${up.filename}: ${ingest.failure_reason || "取込に失敗しました"}`);
+          }
+        } catch (err) {
+          failedFiles.push(payload);
+          failures.push(`${payload.name || "upload.bin"}: ${err instanceof Error ? err.message : "取込に失敗しました"}`);
+        }
       }
-      // reset content inputs but keep settings for the next upload
-      setFile(null);
-      setText("");
-      setDocumentId("");
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "取込に失敗しました", "error");
+      setResult(records);
+      setUploadFailures(failures);
+      const acceptedCount = records.filter((item) => uploadResultOk(item.status)).length;
+      if (mode === "file") {
+        setFiles(failedFiles);
+        if (failedFiles.length === 0) {
+          setFileInputKey((current) => current + 1);
+          setSourceId(defaultSourceIdFor("file"));
+          setSourceName("");
+        }
+      } else if (failures.length === 0) {
+        setText("");
+        setSourceId(defaultSourceIdFor("file"));
+        setSourceName("");
+      }
+      if (failures.length === 0) {
+        toast(`${acceptedCount} 件の取込を受け付けました。`, "success");
+      } else if (acceptedCount > 0) {
+        toast(`${acceptedCount} 件受付、${failures.length} 件は要確認です。${failures[0]}`, "warning");
+      } else {
+        toast(`${failures.length} 件の取込に失敗しました。${failures[0]}`, "error");
+      }
     } finally {
+      setUploadProgress("");
       setSubmitting(false);
     }
   }
 
+  const resultAcceptedCount = result.filter((item) => uploadResultOk(item.status)).length;
+  const resultAttentionCount = result.length - resultAcceptedCount + uploadFailures.length;
+  const resultAttemptCount = result.length + uploadFailures.length;
+  const resultSourceName =
+    result.find((item) => item.source_name)?.source_name ||
+    sourceDisplayName({ rawName: sourceName, fallback: selectedSourceDef.name, files });
+  const resultSourceType = result.find((item) => item.source_type)?.source_type || sourceTypeForConfig(selectedSource);
+
   return (
     <>
-      <Section title="データソース種別" note="取り込むデータソースの種別を選択してください。">
+      <Section title="ソース種別" note="取り込むソースの種別を選択してください。">
         <div className="source-type-grid">
           {ADD_SOURCE_TYPES.filter((source) => source.readiness === "ready").map((source) => (
             <button
@@ -4614,93 +4816,95 @@ function AddSourceBody() {
 
       {selectedSource === "file" ? (
         <form className="upload-form" onSubmit={onSubmit}>
-        <Section title="ドキュメントを追加" note="対応形式: テキスト / Markdown / HTML / CSV / Word(.docx) / Excel(.xlsx) / PDF / 画像">
-          <div className="upload-mode-tabs">
-            <button
-              type="button"
-              aria-pressed={mode === "file"}
-              className={`upload-mode-tab ${mode === "file" ? "active" : ""}`}
-              onClick={() => setMode("file")}
-            >
-              ファイル
-            </button>
-            <button
-              type="button"
-              aria-pressed={mode === "text"}
-              className={`upload-mode-tab ${mode === "text" ? "active" : ""}`}
-              onClick={() => setMode("text")}
-            >
-              テキストを貼り付け
-            </button>
-          </div>
-
-          {mode === "file" ? (
-            <label className="upload-drop">
+          <Section title="ドキュメントを追加" note="対応形式: テキスト / Markdown / HTML / CSV / Word(.docx) / Excel(.xlsx) / PDF / 画像">
+            <label className="source-name-field">
+              <span>ソース名</span>
               <input
-                type="file"
-                accept={ACCEPT_EXT}
-                onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+                value={sourceName}
+                onChange={(e) => setSourceName(e.target.value)}
+                placeholder="例: 品質保証マニュアル"
+                required
+                aria-describedby="file-source-name-help"
               />
-              <span className="upload-drop-main">{file ? file.name : "ファイルを選択（または、ここにドロップ）"}</span>
-              <span className="upload-drop-sub">
-                {file
-                  ? `${(file.size / 1024).toFixed(1)} KB`
-                  : ".txt / .md / .csv / .html / .docx / .xlsx / .pdf / .png / .jpg・最大25MB"}
-              </span>
+              <small id="file-source-name-help">
+                {sourceKindLabel(sourceTypeForConfig(selectedSource))} として登録されます。
+              </small>
             </label>
-          ) : (
-            <textarea
-              className="upload-textarea"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="ここに手順・規格・トラブル対応の本文を貼り付け…"
-              rows={6}
-            />
-          )}
 
-          <div className="upload-fields">
-            <label>
-              <span>ドキュメント ID</span>
-              <input
-                value={documentId}
-                onChange={(e) => setDocumentId(e.target.value)}
-                placeholder="例: WI-0457（空ならファイル名から生成）"
+            <div className="upload-mode-tabs">
+              <button
+                type="button"
+                aria-pressed={mode === "file"}
+                className={`upload-mode-tab ${mode === "file" ? "active" : ""}`}
+                onClick={() => setMode("file")}
+              >
+                ファイル
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === "text"}
+                className={`upload-mode-tab ${mode === "text" ? "active" : ""}`}
+                onClick={() => setMode("text")}
+              >
+                テキストを貼り付け
+              </button>
+            </div>
+
+            {mode === "file" ? (
+              <label className="upload-drop">
+                <input
+                  key={fileInputKey}
+                  type="file"
+                  accept={ACCEPT_EXT}
+                  multiple
+                  onChange={(e) => onPickFiles(Array.from(e.target.files ?? []))}
+                />
+                <span className="upload-drop-main">{selectedFilesTitle(files)}</span>
+                <span className="upload-drop-sub">{selectedFilesDetail(files)}</span>
+              </label>
+            ) : (
+              <textarea
+                className="upload-textarea"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="ここに手順・規格・トラブル対応の本文を貼り付け…"
+                rows={6}
               />
-            </label>
-            <label>
-              <span>コレクション</span>
-              <input value={collectionId} onChange={(e) => setCollectionId(e.target.value)} />
-            </label>
-            <label>
-              <span>ソース</span>
-              <input value={sourceId} onChange={(e) => setSourceId(e.target.value)} />
-            </label>
-            <label>
-              <span>承認状態</span>
-              <select value={approvalStatus} onChange={(e) => setApprovalStatus(e.target.value)}>
-                {APPROVAL_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>発効日</span>
-              <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
-            </label>
-          </div>
+            )}
 
-          <div className="screen-actions">
-            <button type="submit" disabled={submitting}>
-              {submitting ? "取込中…" : "アップロードして取込"}
-            </button>
-          </div>
-        </Section>
+            <div className="screen-actions">
+              <button type="submit" disabled={submitting}>
+                {submitting
+                  ? "取込中…"
+                  : mode === "file" && files.length > 1
+                    ? `${files.length} 件をアップロードして取込`
+                    : "アップロードして取込"}
+              </button>
+            </div>
+            {uploadProgress && (
+              <p className="source-config-note" role="status" aria-live="polite">
+                {uploadProgress}
+              </p>
+            )}
+          </Section>
         </form>
       ) : (
         <form className="connector-form" onSubmit={onSaveDatasource}>
           <Section title={`${selectedSourceDef.name} の接続設定`} note={selectedSourceDef.desc}>
+            <label className="source-name-field">
+              <span>ソース名</span>
+              <input
+                value={sourceName}
+                onChange={(e) => setSourceName(e.target.value)}
+                placeholder={`例: ${selectedSourceDef.name} ナレッジ`}
+                required
+                aria-describedby="connector-source-name-help"
+              />
+              <small id="connector-source-name-help">
+                {sourceKindLabel(sourceTypeForConfig(selectedSource))} として登録されます。
+              </small>
+            </label>
+
             {selectedConfig.oauth && needsOAuthConnection && (
               <div className="connector-oauth">
                 <div>
@@ -4742,34 +4946,6 @@ function AddSourceBody() {
             )}
 
             <div className="connector-form-grid">
-              <label>
-                <span>コレクション</span>
-                <input value={collectionId} onChange={(e) => setCollectionId(e.target.value)} />
-              </label>
-              <label>
-                <span>ソース ID</span>
-                <input value={sourceId} onChange={(e) => setSourceId(e.target.value)} />
-              </label>
-              <label>
-                <span>信頼ポリシー</span>
-                <select
-                  value={approvalPolicy}
-                  onChange={(e) => setApprovalPolicy(e.target.value as "review_required" | "trusted")}
-                >
-                  <option value="review_required">レビューが必要（pending_review で取込）</option>
-                  <option value="trusted">信頼する（承認済みとして取込）</option>
-                </select>
-              </label>
-              {approvalPolicy === "trusted" && (
-                <label>
-                  <span>発効日（信頼ソース）</span>
-                  <input
-                    type="date"
-                    value={effectiveDate}
-                    onChange={(e) => setEffectiveDate(e.target.value)}
-                  />
-                </label>
-              )}
               {selectedConfig.fields.map((field) => (
                 <label key={field.id}>
                   <span>{field.label}</span>
@@ -4782,42 +4958,6 @@ function AddSourceBody() {
                 </label>
               ))}
             </div>
-
-            <div className="connector-mapping-panel">
-              <div className="connector-mapping-head">
-                <strong>データ解釈</strong>
-                <span>FAQ、マニュアル、設備データなどの列名差分を標準項目に寄せる設定です。</span>
-              </div>
-              <div className="connector-form-grid">
-                <label>
-                  <span>データ種別</span>
-                  <select
-                    value={mappingProfileType}
-                    onChange={(e) => onMappingProfileTypeChange(e.target.value as DataSourceProfileType)}
-                  >
-                    {PREVIEW_PROFILE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <span>必須項目</span>
-                  <input
-                    value={mappingRequiredFields}
-                    onChange={(e) => setMappingRequiredFields(e.target.value)}
-                    placeholder="例: question, answer"
-                  />
-                </label>
-              </div>
-            </div>
-
-            <p className="ops-note">
-              {approvalPolicy === "trusted"
-                ? "信頼ソース: 同期した全ファイルを承認済み（source-of-truth）として取り込みます。1件ずつのレビューは行いません。"
-                : "既定: 同期した全ファイルは pending_review で取り込まれ、根拠文書レビューで承認するまで高リスク回答の正式な根拠にはなりません。"}
-            </p>
 
             <div className="screen-actions">
               <button type="submit" disabled={configSaving}>
@@ -4841,8 +4981,8 @@ function AddSourceBody() {
           </div>
           <FieldGrid
             rows={[
-              ["ソース", syncResult.source_id],
-              ["コレクション", syncResult.collection_id],
+              ["ソース名", sourceDisplayName({ rawName: sourceName, fallback: selectedSourceDef.name })],
+              ["種別", sourceKindLabel(sourceTypeForConfig(selectedSource))],
               ["対象ドキュメント", String(syncResult.observed_count)],
               ["開始した取込", String(syncResult.changed_count)],
               ["失敗", String(syncResult.failed_count)],
@@ -4856,28 +4996,49 @@ function AddSourceBody() {
         </section>
       )}
 
-      {result && (
+      {(result.length > 0 || uploadFailures.length > 0) && (
         <section className="result-panel" aria-live="polite">
           <div className="result-head">
-            <span className={`status-badge status-${result.status === "succeeded" ? "ok" : "temporarily_unavailable"}`}>
-              {result.status === "succeeded" ? "取込成功" : result.status}
+            <span className={`status-badge status-${resultAttentionCount === 0 ? "ok" : "temporarily_unavailable"}`}>
+              {resultAttentionCount === 0 ? "取込受付" : "一部要確認"}
             </span>
-            <span className="correlation-id">{result.ingestion_run_id}</span>
+            <span className="correlation-id">{resultAttemptCount} 件</span>
           </div>
           <FieldGrid
             rows={[
-              ["ドキュメント", result.document_id],
-              ["ファイル", result.filename],
-              ["チャンク数", String(result.chunk_count)],
-              ["承認状態", APPROVAL_OPTIONS.find((o) => o.value === result.approval_status)?.label ?? result.approval_status],
-              ["発効日", result.effective_date ?? "—"],
-              ["コレクション", result.collection_id],
+              ["ソース名", resultSourceName],
+              ["種別", sourceKindLabel(resultSourceType)],
+              ["取込件数", `${resultAttemptCount} 件`],
+              ["受付/成功", `${resultAcceptedCount} 件`],
+              ["要確認", `${resultAttentionCount} 件`],
             ]}
           />
+          {result.length > 0 && (
+            <DataTable
+              columns={["ファイル", "状態", "チャンク", "取込ラン"]}
+              rows={result.map((item) => [
+                <Link key={item.document_id} href={`/documents/${item.document_id}`}>
+                  {item.filename || item.document_id}
+                </Link>,
+                uploadResultStatusLabel(item.status),
+                String(item.chunk_count),
+                item.ingestion_run_id,
+              ])}
+              empty="取込結果はまだありません。"
+            />
+          )}
+          {uploadFailures.length > 0 && (
+            <p className="source-config-note" role="alert">
+              要確認: {uploadFailures.slice(0, 3).join(" / ")}
+              {uploadFailures.length > 3 ? ` ほか${uploadFailures.length - 3}件` : ""}
+            </p>
+          )}
           <div className="screen-actions">
-            <Link className="button-link" href="/">
-              質問するで根拠を確認
-            </Link>
+            {resultAcceptedCount > 0 && (
+              <Link className="button-link" href="/">
+                質問するで根拠を確認
+              </Link>
+            )}
             <Link className="button-link secondary" href="/ingestion-runs">
               取込ランを見る
             </Link>
@@ -4949,7 +5110,7 @@ const DOCUMENT_LIST_FILTERS = [
   { value: "needs_review", label: "レビュー待ち" },
   { value: "approved", label: "正式根拠" },
   { value: "obsolete", label: "旧版" },
-  { value: "local", label: "取込直後" },
+  { value: "local", label: "直近アップロード" },
 ] as const;
 type DocumentListFilter = (typeof DOCUMENT_LIST_FILTERS)[number]["value"];
 
@@ -4957,6 +5118,8 @@ type DocumentListRow = {
   document_id: string;
   collection_id: string;
   source_id: string;
+  source_name?: string;
+  source_type?: string;
   document_kind: string | null;
   approval_status: string;
   effective_date: string | null;
@@ -5042,7 +5205,9 @@ function documentSearchText(row: DocumentListRow): string {
     row.filename,
     row.collection_id,
     row.source_id,
-    documentKindLabel(row.document_kind, row.source_id),
+    row.source_name,
+    row.source_type,
+    documentKindLabel(row.document_kind, row.source_type || row.source_id),
     approval.label,
     approval.description,
     row.equipment,
@@ -5078,8 +5243,15 @@ function localUploadRows(uploaded: IngestedDoc[], serverDocs: ManufacturingDocum
       safety_category: null,
       source: "local" as const,
       source_id: doc.source_id,
+      source_name: doc.source_name,
+      source_type: doc.source_type,
       superseded_by: null,
     }));
+}
+
+function documentSourceDisplay(row: DocumentListRow): string {
+  const typeLabel = sourceKindLabel(row.source_type || row.source_id);
+  return row.source_name ? `${row.source_name}（${typeLabel}）` : typeLabel;
 }
 
 function DocumentListBody() {
@@ -5096,10 +5268,7 @@ function DocumentListBody() {
     setUploaded(loadIngestedDocs());
   }, []);
 
-  const emptyDocumentMessage =
-    uploaded.length > 0
-      ? "テナント一覧への反映を確認中です。直近アップロードは上の控えに表示されています。"
-      : "ドキュメントはまだありません。「ソースを追加」から取り込めます。";
+  const emptyDocumentMessage = "ドキュメントはまだありません。「ソースを追加」から取り込めます。";
   const serverDocs = docs.state === "ready" ? docs.data : [];
   const rows: DocumentListRow[] =
     docs.state === "ready"
@@ -5132,40 +5301,9 @@ function DocumentListBody() {
 
   return (
     <>
-      {uploaded.length > 0 && (
-        <Section
-          title="取込直後の控え"
-          note="このブラウザで開始した取込の控えです。テナント全体の正式な一覧は下に表示されます。"
-        >
-          <DataTable
-            columns={["文書", "承認状態", "チャンク", "取込日時"]}
-            rows={uploaded.map((doc) => [
-              <Link key={doc.document_id} href={`/documents/${doc.document_id}`}>
-                {doc.filename || doc.document_id}
-              </Link>,
-              UPLOAD_APPROVAL_LABEL[doc.approval_status] ?? doc.approval_status,
-              String(doc.chunk_count),
-              new Date(doc.ingested_at).toLocaleString("ja-JP"),
-            ])}
-            empty="アップロードはありません。"
-          />
-          <div className="screen-actions">
-            <button
-              type="button"
-              className="is-secondary"
-              onClick={() => {
-                clearIngestedDocs();
-                setUploaded([]);
-              }}
-            >
-              このブラウザの控えを消去
-            </button>
-          </div>
-        </Section>
-      )}
       <Section
         title="ドキュメント"
-        note="正式根拠、レビュー待ち、旧版を分けて確認できます。内部 ID や処理状態は詳細画面で確認できます。"
+        note="正式根拠、レビュー待ち、旧版を分けて確認できます。直近アップロードは一覧反映までこの画面に残ります。"
       >
         {docs.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ドキュメントを読み込み中…</p>}
         {docs.state === "error" && <ScreenLoadError error={docs.error} onRetry={reloadDocs} />}
@@ -5174,9 +5312,7 @@ function DocumentListBody() {
             <div className="standalone-empty-state">
               <h4>ドキュメントはまだありません</h4>
               <p>{emptyDocumentMessage}</p>
-              <Link className="standalone-empty-cta" href="/sources/new">
-                ソースを追加
-              </Link>
+              <AddSourceCta className="standalone-empty-cta" />
             </div>
           ) : (
             <div className="document-library-shell">
@@ -5208,7 +5344,20 @@ function DocumentListBody() {
                   <span>レビュー待ち {reviewCount} 件</span>
                   <span>正式根拠 {approvedCount} 件</span>
                   <span>旧版 {obsoleteCount} 件</span>
+                  {uploaded.length > 0 && <span>直近アップロード {uploaded.length} 件</span>}
                 </div>
+                {uploaded.length > 0 && (
+                  <button
+                    type="button"
+                    className="source-filter-button"
+                    onClick={() => {
+                      clearIngestedDocs();
+                      setUploaded([]);
+                    }}
+                  >
+                    この端末の履歴だけ消去
+                  </button>
+                )}
               </section>
               {filteredRows.length === 0 ? (
                 <div className="standalone-empty-state">
@@ -5235,7 +5384,7 @@ function DocumentListBody() {
                         <article className="document-list-row" key={`${doc.source}-${doc.document_id}`} role="listitem">
                           <div className="document-list-main">
                             <div className="standalone-source-mark" aria-hidden="true">
-                              {documentKindLabel(doc.document_kind, doc.source_id).slice(0, 2)}
+                              {documentKindLabel(doc.document_kind, doc.source_type || doc.source_id).slice(0, 2)}
                             </div>
                             <div className="source-list-title-block">
                               <h4>
@@ -5244,8 +5393,8 @@ function DocumentListBody() {
                                 </Link>
                               </h4>
                               <p>
-                                {documentKindLabel(doc.document_kind, doc.source_id)}
-                                {doc.source === "local" ? " · 取込直後の控え" : ""}
+                                {documentKindLabel(doc.document_kind, doc.source_type || doc.source_id)}
+                                {doc.source === "local" ? " · 直近アップロード（一覧反映待ち）" : ""}
                               </p>
                             </div>
                           </div>
@@ -5255,7 +5404,7 @@ function DocumentListBody() {
                           </div>
                           <div className="document-list-metrics">
                             <span>{documentFreshness(doc)}</span>
-                            <span>ソース: {sourceKindLabel(doc.source_id)}</span>
+                            <span>ソース: {documentSourceDisplay(doc)}</span>
                             <span>設備/分類: {doc.equipment || doc.safety_category || "—"}</span>
                           </div>
                           <div className="document-list-actions">
@@ -5466,7 +5615,7 @@ function ApprovalWorkflowBody() {
         <div className="knowledge-flow-grid" role="list" aria-label="ナレッジ準備の作業順">
           <KnowledgePrepStep
             index="1"
-            label="データソース"
+            label="ソース"
             metric={`${sources.length} 件`}
             description={sourceActionCount > 0 ? `${sourceActionCount} 件に対応が必要` : "利用状態を確認済み"}
             tone={sourceActionCount > 0 ? "wait" : "ok"}
@@ -5513,7 +5662,7 @@ function ApprovalWorkflowBody() {
         />
       </Section>
 
-      <Section title="同期・承認ポリシー概要" note="同期元を信頼するか、根拠文書レビューに回すかはデータソース追加時に選択します。">
+      <Section title="同期・承認ポリシー概要" note="同期元を信頼するか、根拠文書レビューに回すかはソース追加時に選択します。">
         <div className="policy-summary-grid">
           <article className="policy-summary-card">
             <span className="policy-summary-label">レビューが必要</span>
@@ -5525,7 +5674,7 @@ function ApprovalWorkflowBody() {
             <span className="policy-summary-label">信頼するソース</span>
             <strong>承認済みとして取り込み</strong>
             <p>source-of-truth として扱う同期元です。個別レビューを省略する代わりに、接続設定時の判断が監査上重要になります。</p>
-            <Link href="/sources/new">ソースを追加</Link>
+            <AddSourceCta />
           </article>
         </div>
         <p className="ops-note">この画面では現在のポリシーと作業導線を表示します。承認ルール編集 API は未接続です。</p>

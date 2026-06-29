@@ -60,6 +60,26 @@ function safeFilename(rawName: string): string {
   return (rawName || "upload.bin").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);
 }
 
+function safeObjectSegment(value: string): string {
+  return encodeURIComponent(value).slice(0, 180);
+}
+
+type VerifiedPrincipal = {
+  tenant_id: string;
+  user_id: string;
+};
+
+function principalFromWhoami(value: unknown): VerifiedPrincipal | null {
+  if (!value || typeof value !== "object") return null;
+  const principal = (value as { principal?: unknown }).principal;
+  if (!principal || typeof principal !== "object") return null;
+  const tenantId = (principal as { tenant_id?: unknown }).tenant_id;
+  const userId = (principal as { user_id?: unknown }).user_id;
+  if (typeof tenantId !== "string" || !tenantId.trim()) return null;
+  if (typeof userId !== "string" || !userId.trim()) return null;
+  return { tenant_id: tenantId.trim(), user_id: userId.trim() };
+}
+
 function publicOrigin(req: Request): string {
   const url = new URL(req.url);
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
@@ -67,7 +87,7 @@ function publicOrigin(req: Request): string {
   return `${proto}://${host}`;
 }
 
-async function assertAppSession(req: Request): Promise<Response | null> {
+async function assertAppSession(req: Request): Promise<{ principal: VerifiedPrincipal } | Response> {
   const authorization = req.headers.get("authorization") || "";
   if (!authorization.toLowerCase().startsWith("bearer ")) {
     return jsonError("Cognito session is missing; sign in again", 401);
@@ -87,10 +107,14 @@ async function assertAppSession(req: Request): Promise<Response | null> {
     if (!res.ok) {
       return jsonError("Cognito session is invalid; sign in again", 401);
     }
+    const principal = principalFromWhoami(await res.json().catch(() => null));
+    if (!principal) {
+      return jsonError("could not resolve tenant before upload", 401);
+    }
+    return { principal };
   } catch {
     return jsonError("could not verify session before upload", 502);
   }
-  return null;
 }
 
 export async function POST(req: Request) {
@@ -102,8 +126,8 @@ export async function POST(req: Request) {
     return jsonError("S3 upload bucket is not configured", 501);
   }
 
-  const authFailure = await assertAppSession(req);
-  if (authFailure) return authFailure;
+  const session = await assertAppSession(req);
+  if (session instanceof Response) return session;
 
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) {
@@ -122,28 +146,42 @@ export async function POST(req: Request) {
   const ext = path.extname(filename).toLowerCase();
   const requestedContentType = text(body.content_type);
   const contentType = EXT_CONTENT_TYPE[ext] ?? (requestedContentType || "application/octet-stream");
-  const stage = (process.env.STAGE_NAME || "local").replace(/[^A-Za-z0-9._-]/g, "-");
+  const uploadId = randomUUID();
+  const tenantSegment = safeObjectSegment(session.principal.tenant_id);
+  const userSegment = safeObjectSegment(session.principal.user_id);
   const day = new Date().toISOString().slice(0, 10);
-  const key = `web-uploads/${stage}/${day}/${randomUUID()}${ext || ".bin"}`;
+  const key = `tenants/${tenantSegment}/uploads/${day}/${uploadId}${ext || ".bin"}`;
   const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "ap-northeast-1";
+  const metadataHeaders = {
+    "x-amz-meta-raku-tenant-id": tenantSegment,
+    "x-amz-meta-raku-user-id": userSegment,
+    "x-amz-meta-raku-upload-id": uploadId,
+  };
 
   const client = new S3Client({ region });
   const command = new PutObjectCommand({
     Bucket: bucket,
     Key: key,
     ContentType: contentType,
+    Metadata: {
+      "raku-tenant-id": tenantSegment,
+      "raku-user-id": userSegment,
+      "raku-upload-id": uploadId,
+    },
   });
   const uploadUrl = await getSignedUrl(client, command, { expiresIn: SIGNED_URL_TTL_SECONDS });
 
   return NextResponse.json({
     upload_url: uploadUrl,
     method: "PUT",
-    headers: { "content-type": contentType },
+    headers: { "content-type": contentType, ...metadataHeaders },
     ref: `s3://${bucket}/${key}`,
+    upload_id: uploadId,
     filename,
     size,
     content_type: contentType,
     storage: "s3",
+    tenant_prefix: `tenants/${tenantSegment}/uploads/`,
     expires_in: SIGNED_URL_TTL_SECONDS,
   });
 }

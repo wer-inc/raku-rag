@@ -262,6 +262,8 @@ class CdkInfrastructureContractTest(unittest.TestCase):
 
         self.assertIn("RAKU_ENABLE_UPLOAD_PRESIGN", self.presign_route)
         self.assertIn("assertAppSession(req)", self.presign_route)
+        self.assertIn("tenants/${tenantSegment}/uploads/${day}/${uploadId}", self.presign_route)
+        self.assertIn("x-amz-meta-raku-tenant-id", self.presign_route)
         self.assertNotIn("RAKU_ENABLE_UPLOAD_PRESIGN", self.inline_upload_route)
         self.assertIn("presignRes.status === 501", self.full_saas)
         self.assertIn("この環境ではファイルアップロードが無効です", self.full_saas)

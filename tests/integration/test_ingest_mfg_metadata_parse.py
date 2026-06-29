@@ -10,8 +10,10 @@ body block (tenancy boundary).
 from __future__ import annotations
 
 import importlib.util
+import os
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus, DocumentKind
 
@@ -169,6 +171,102 @@ class TestSyncApprovalPolicy(unittest.TestCase):
         self.assertEqual(meta.extra["datasource_profile_type"], "faq")
         self.assertEqual(meta.extra["datasource_required_fields"], ["question", "answer"])
         self.assertEqual(meta.extra["datasource_mapped_fields"], ["answer", "question"])
+
+
+class _HeadOnlyConnector:
+    def __init__(self, info: dict[str, object]) -> None:
+        self.info = info
+        self.seen_refs: list[str] = []
+
+    def object_info(self, ref: str) -> dict[str, object]:
+        self.seen_refs.append(ref)
+        return self.info
+
+
+class TestUploadS3RefVerification(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.server = _load_server()
+
+    def test_accepts_tenant_prefixed_ref_with_matching_metadata_and_size(self) -> None:
+        connector = _HeadOnlyConnector(
+            {
+                "content_length": 4,
+                "metadata": {"raku-tenant-id": "tenant_a", "raku-upload-id": "upload_1"},
+            }
+        )
+        ref = "s3://bucket/tenants/tenant_a/uploads/2026-06-29/doc.txt"
+
+        with mock.patch.dict(
+            os.environ,
+            {"RAKU_ALLOWED_INGEST_BUCKETS": "bucket", "RAKU_MAX_DOCUMENT_BYTES": "5"},
+            clear=True,
+        ):
+            self.server._verify_upload_s3_ref(connector, ref, "tenant_a")
+
+        self.assertEqual(connector.seen_refs, [ref])
+
+    def test_rejects_other_tenant_prefix_before_head_object(self) -> None:
+        connector = _HeadOnlyConnector(
+            {
+                "content_length": 4,
+                "metadata": {"raku-tenant-id": "tenant_b", "raku-upload-id": "upload_1"},
+            }
+        )
+
+        with mock.patch.dict(os.environ, {"RAKU_ALLOWED_INGEST_BUCKETS": "bucket"}, clear=True):
+            with self.assertRaises(PermissionError):
+                self.server._verify_upload_s3_ref(
+                    connector,
+                    "s3://bucket/tenants/tenant_b/uploads/2026-06-29/doc.txt",
+                    "tenant_a",
+                )
+
+        self.assertEqual(connector.seen_refs, [])
+
+    def test_rejects_metadata_tenant_mismatch(self) -> None:
+        connector = _HeadOnlyConnector(
+            {
+                "content_length": 4,
+                "metadata": {"raku-tenant-id": "tenant_b", "raku-upload-id": "upload_1"},
+            }
+        )
+
+        with mock.patch.dict(os.environ, {"RAKU_ALLOWED_INGEST_BUCKETS": "bucket"}, clear=True):
+            with self.assertRaises(PermissionError):
+                self.server._verify_upload_s3_ref(
+                    connector,
+                    "s3://bucket/tenants/tenant_a/uploads/2026-06-29/doc.txt",
+                    "tenant_a",
+                )
+
+    def test_rejects_oversized_s3_object(self) -> None:
+        connector = _HeadOnlyConnector(
+            {
+                "content_length": 6,
+                "metadata": {"raku-tenant-id": "tenant_a", "raku-upload-id": "upload_1"},
+            }
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {"RAKU_ALLOWED_INGEST_BUCKETS": "bucket", "RAKU_MAX_DOCUMENT_BYTES": "5"},
+            clear=True,
+        ):
+            with self.assertRaises(ValueError):
+                self.server._verify_upload_s3_ref(
+                    connector,
+                    "s3://bucket/tenants/tenant_a/uploads/2026-06-29/doc.txt",
+                    "tenant_a",
+                )
+
+    def test_ignores_inline_data_refs(self) -> None:
+        connector = _HeadOnlyConnector({})
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.server._verify_upload_s3_ref(connector, "data:text/plain,hello", "tenant_a")
+
+        self.assertEqual(connector.seen_refs, [])
 
 
 if __name__ == "__main__":

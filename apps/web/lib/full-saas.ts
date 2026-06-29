@@ -67,9 +67,9 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "ナレッジ",
+    label: "データ",
     items: [
-      { href: "/sources/list", label: "データソース", icon: "sources" },
+      { href: "/sources/list", label: "外部接続", icon: "sources" },
       { href: "/documents", label: "ドキュメント", icon: "documents" },
       { href: "/sources", label: "事例検索", icon: "search" },
       { href: "/ingestion-runs", label: "取込ラン", icon: "ingestion" },

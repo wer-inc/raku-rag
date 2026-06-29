@@ -62,7 +62,11 @@ const OPENAPI_DOC = {
           collection_id: { type: "string" },
           source_id: { type: "string" },
           document_id: { type: "string" },
-          ref: { type: "string" },
+          ref: {
+            type: "string",
+            description:
+              "Connector ref. Production S3 uploads must use an allowed bucket and tenants/<tenant>/uploads/... key.",
+          },
           content_type: { type: "string" },
           manufacturing: { $ref: "#/components/schemas/ManufacturingIngestMetadata" },
         },

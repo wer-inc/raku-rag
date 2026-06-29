@@ -7,6 +7,8 @@ export interface IngestedDoc {
   document_id: string;
   collection_id: string;
   source_id: string;
+  source_name?: string;
+  source_type?: string;
   filename: string;
   content_type: string;
   approval_status: string;

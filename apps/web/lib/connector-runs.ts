@@ -4,6 +4,8 @@
 export interface ConnectorRunRecord {
   ingestion_run_id: string;
   source_id: string;
+  source_name?: string;
+  source_type?: string;
   collection_id: string;
   status: string;
   observed_count: number;

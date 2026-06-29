@@ -85,6 +85,7 @@ from raku_rag.chatbot import ChatbotService  # noqa: E402
 
 _LOCAL_DEMO_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _LOCAL_DEMO_DBS = {"raku", "raku_demo", "raku_parity"}
+_DEFAULT_MAX_UPLOAD_OBJECT_BYTES = 25 * 1024 * 1024
 
 
 def _now() -> str:
@@ -1272,6 +1273,79 @@ def _mfg_metadata_for_sync(body: dict, datasource: dict, tenant_id: str, documen
     )
 
 
+def _tenant_upload_prefix(tenant_id: str) -> str:
+    return f"tenants/{quote(tenant_id, safe='')[:180]}/uploads/"
+
+
+def _allowed_ingest_buckets() -> set[str]:
+    raw: list[str] = []
+    for name in ("RAKU_ALLOWED_INGEST_BUCKETS", "RAKU_UPLOAD_BUCKET", "DOCUMENT_BUCKET", "S3_BUCKET"):
+        value = os.environ.get(name, "")
+        raw.extend(part.strip() for part in value.split(",") if part.strip())
+    return set(raw)
+
+
+def _max_upload_object_bytes() -> int:
+    raw = os.environ.get("RAKU_MAX_UPLOAD_OBJECT_BYTES") or os.environ.get("RAKU_MAX_DOCUMENT_BYTES")
+    try:
+        value = int(raw) if raw else _DEFAULT_MAX_UPLOAD_OBJECT_BYTES
+    except ValueError:
+        value = _DEFAULT_MAX_UPLOAD_OBJECT_BYTES
+    return value if value > 0 else _DEFAULT_MAX_UPLOAD_OBJECT_BYTES
+
+
+def _parse_s3_ref(ref: str) -> tuple[str, str]:
+    parsed = urlparse(ref)
+    bucket = parsed.netloc
+    key = parsed.path.lstrip("/")
+    if parsed.scheme != "s3" or not bucket or not key:
+        raise ValueError("invalid s3 document_ref")
+    return bucket, key
+
+
+def _verify_upload_s3_ref(connector, document_ref: str, tenant_id: str) -> None:
+    if not document_ref.startswith("s3://"):
+        return
+    bucket, key = _parse_s3_ref(document_ref)
+    allowed = _allowed_ingest_buckets()
+    if not allowed:
+        raise ValueError("S3 ingest bucket is not configured")
+    if bucket not in allowed:
+        raise PermissionError("S3 document_ref bucket is not allowed")
+    tenant_prefix = _tenant_upload_prefix(tenant_id)
+    if not key.startswith(tenant_prefix):
+        raise PermissionError("S3 document_ref is not owned by the authenticated tenant")
+
+    object_info = getattr(connector, "object_info", None)
+    if not callable(object_info):
+        raise ValueError("S3 connector cannot verify upload object metadata")
+    info = object_info(document_ref)
+    content_length = int(info.get("content_length") or 0)
+    if content_length > _max_upload_object_bytes():
+        raise ValueError("S3 upload object exceeds maximum ingest size")
+    metadata = {
+        str(k).lower(): str(v)
+        for k, v in dict(info.get("metadata") or {}).items()
+        if k is not None
+    }
+    tenant_marker = metadata.get("raku-tenant-id")
+    if tenant_marker != quote(tenant_id, safe="")[:180]:
+        raise PermissionError("S3 upload metadata tenant mismatch")
+    if not metadata.get("raku-upload-id"):
+        raise ValueError("S3 upload metadata is missing upload id")
+
+
+def _failed_ingest_response(body: dict, reason: str) -> dict:
+    return {
+        "ingestion_run_id": "",
+        "document_id": str(body.get("document_id") or ""),
+        "status": "failed",
+        "status_url": "",
+        "failure_reason": reason,
+        "chunk_count": 0,
+    }
+
+
 def _job_summary_json(run) -> dict:
     return {
         "job_id": run.ingestion_run_id,
@@ -2140,6 +2214,16 @@ def make_handler(system: ProductionSystem):
                     original_ref = str(body["document_ref"])
                     content_type = str(body.get("content_type") or "text/plain")
                     try:
+                        _verify_upload_s3_ref(connector, original_ref, principal.tenant_id)
+                    except Exception as verify_exc:
+                        self._send(
+                            200,
+                            _failed_ingest_response(
+                                body, f"invalid s3 document_ref: {verify_exc}"
+                            ),
+                        )
+                        return
+                    try:
                         raw = connector.fetch(original_ref)
                     except Exception as fetch_exc:
                         # A document_ref the connector can't resolve (e.g. a file:// path from another
@@ -2149,14 +2233,9 @@ def make_handler(system: ProductionSystem):
                         # 502, so this MUST stay 2xx for the client to see the real reason.
                         self._send(
                             200,
-                            {
-                                "ingestion_run_id": "",
-                                "document_id": str(body["document_id"]),
-                                "status": "failed",
-                                "status_url": "",
-                                "failure_reason": f"could not fetch document_ref: {fetch_exc}",
-                                "chunk_count": 0,
-                            },
+                            _failed_ingest_response(
+                                body, f"could not fetch document_ref: {fetch_exc}"
+                            ),
                         )
                         return
                     mfg_meta = _mfg_metadata_from_body(

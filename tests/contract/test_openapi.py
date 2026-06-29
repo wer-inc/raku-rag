@@ -132,6 +132,10 @@ class OpenApiContractTest(unittest.TestCase):
             "#/components/schemas/SearchResultItem",
         )
         self.assertIn("dead_letter", schemas["IngestResponse"]["properties"]["status"]["enum"])
+        self.assertIn(
+            "tenants/<tenant>/uploads/",
+            schemas["IngestRequest"]["properties"]["ref"]["description"],
+        )
 
     def test_admin_settings_surface_is_published(self) -> None:
         expected_paths = {

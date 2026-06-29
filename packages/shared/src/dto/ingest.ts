@@ -29,7 +29,7 @@ export interface IngestRequest {
   collection_id: string;
   source_id: string;
   document_id: string;
-  /** object-storage ref (MinIO/S3) or inline upload id */
+  /** object-storage ref. Production S3 uploads must use tenants/<tenant>/uploads/... refs. */
   ref: string;
   content_type?: string;
   /** optional manufacturing approval/safety metadata (drives the safety overlay) */

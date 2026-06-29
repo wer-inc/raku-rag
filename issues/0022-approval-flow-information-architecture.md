@@ -1,6 +1,6 @@
 # 0022 — 同期→根拠文書レビュー→AIドラフトレビューの全体フローが直感的に見えない(系統 = approval / workflow / ia)
 
-> Priority: **P2 / Medium** / Status: Open / Labels: `approval`, `workflow`, `information-architecture`, `ux`, `onboarding`
+> Priority: **P2 / Medium** / Status: In Progress / Labels: `approval`, `workflow`, `information-architecture`, `ux`, `onboarding`
 
 ## 背景(なぜ今)
 
@@ -37,7 +37,7 @@
 
 ## どこで起きたか
 
-- 画面: `/sources/new` のデータソース追加・信頼ポリシー選択
+- 画面: `/sources/new` のソース追加・アップロード/接続設定
 - 画面: `/reviews/documents` の根拠文書レビュー
 - 画面: `/reviews` の AIドラフトレビュー
 - 画面: `/reviews/settings` の同期・承認ポリシー
@@ -113,6 +113,8 @@
 
 - `apps/web/app/components/FullSaasScreen.tsx`
 - `apps/web/lib/full-saas.ts`
+- 2026-06-29 partial fix: `/sources/new` は `ソース名` と接続/アップロードに必要な項目へ絞り、
+  `ドキュメント ID`、`ソース ID`、`コレクション`、`承認状態`、`発効日` を初回入力から除外。
 - [0014-approval-rules-settings-non-functional.md](0014-approval-rules-settings-non-functional.md)
 - [0015-review-detail-ux-state-machine-mismatch.md](0015-review-detail-ux-state-machine-mismatch.md)
 - [0021-obsolete-action-recovery-ux.md](0021-obsolete-action-recovery-ux.md)

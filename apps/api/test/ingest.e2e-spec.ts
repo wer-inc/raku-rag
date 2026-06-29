@@ -9,9 +9,11 @@ describe("ingest facade (e2e)", () => {
   let app: INestApplication;
   let upstream: http.Server;
   let received: Record<string, unknown> | null = null;
+  const previousUploadBucket = process.env.RAKU_UPLOAD_BUCKET;
 
   beforeAll(async () => {
     process.env.NODE_ENV = "test";
+    process.env.RAKU_UPLOAD_BUCKET = "bucket";
     upstream = http.createServer((req, res) => {
       let data = "";
       req.on("data", (c) => (data += c));
@@ -40,7 +42,16 @@ describe("ingest facade (e2e)", () => {
     await app.init();
   });
 
+  beforeEach(() => {
+    received = null;
+  });
+
   afterAll(async () => {
+    if (previousUploadBucket === undefined) {
+      delete process.env.RAKU_UPLOAD_BUCKET;
+    } else {
+      process.env.RAKU_UPLOAD_BUCKET = previousUploadBucket;
+    }
     await app?.close();
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
   });
@@ -61,7 +72,7 @@ describe("ingest facade (e2e)", () => {
         collection_id: "manuals",
         source_id: "upload",
         document_id: "doc1",
-        ref: "s3://bucket/doc1.txt",
+        ref: "s3://bucket/tenants/tenant_a/uploads/2026-06-29/doc1.txt",
         content_type: "text/plain",
       });
 
@@ -69,7 +80,61 @@ describe("ingest facade (e2e)", () => {
     expect(res.body.status).toBe("succeeded");
     expect(received?.tenant_id).toBe("tenant_a");
     expect(received?.user_id).toBe("alice");
-    expect(received?.document_ref).toBe("s3://bucket/doc1.txt");
+    expect(received?.document_ref).toBe("s3://bucket/tenants/tenant_a/uploads/2026-06-29/doc1.txt");
     expect(received?.document_id).toBe("doc1");
+  });
+
+  it("POST /v1/ingest rejects S3 refs owned by another tenant before forwarding", async () => {
+    const token = makeUserToken({ tenant_id: "tenant_a", user_id: "alice", groups: ["ops"], roles: ["writer"] });
+    const res = await request(app.getHttpServer())
+      .post("/v1/ingest")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", token)
+      .send({
+        collection_id: "manuals",
+        source_id: "upload",
+        document_id: "doc1",
+        ref: "s3://bucket/tenants/tenant_b/uploads/2026-06-29/doc1.txt",
+        content_type: "text/plain",
+      });
+
+    expect(res.status).toBe(403);
+    expect(received).toBeNull();
+  });
+
+  it("POST /v1/ingest rejects S3 refs outside the configured upload bucket", async () => {
+    const token = makeUserToken({ tenant_id: "tenant_a", user_id: "alice", groups: ["ops"], roles: ["writer"] });
+    const res = await request(app.getHttpServer())
+      .post("/v1/ingest")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", token)
+      .send({
+        collection_id: "manuals",
+        source_id: "upload",
+        document_id: "doc1",
+        ref: "s3://other-bucket/tenants/tenant_a/uploads/2026-06-29/doc1.txt",
+        content_type: "text/plain",
+      });
+
+    expect(res.status).toBe(403);
+    expect(received).toBeNull();
+  });
+
+  it("POST /v1/ingest rejects S3 refs without the tenant upload prefix", async () => {
+    const token = makeUserToken({ tenant_id: "tenant_a", user_id: "alice", groups: ["ops"], roles: ["writer"] });
+    const res = await request(app.getHttpServer())
+      .post("/v1/ingest")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", token)
+      .send({
+        collection_id: "manuals",
+        source_id: "upload",
+        document_id: "doc1",
+        ref: "s3://bucket/web-uploads/prod/2026-06-29/doc1.txt",
+        content_type: "text/plain",
+      });
+
+    expect(res.status).toBe(403);
+    expect(received).toBeNull();
   });
 });

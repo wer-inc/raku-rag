@@ -19,9 +19,15 @@ from raku_rag.providers.connectors import (
 
 
 class FakeS3Client:
-    def __init__(self, objects: dict[tuple[str, str], bytes]) -> None:
+    def __init__(
+        self,
+        objects: dict[tuple[str, str], bytes],
+        metadata: dict[tuple[str, str], dict[str, str]] | None = None,
+    ) -> None:
         self.objects = objects
+        self.metadata = metadata or {}
         self.requests: list[dict] = []
+        self.head_requests: list[dict] = []
         self.list_requests: list[dict] = []
         self.put_requests: list[dict] = []
         self.presign_requests: list[dict] = []
@@ -32,6 +38,16 @@ class FakeS3Client:
         if key not in self.objects:
             raise FileNotFoundError(key)
         return {"Body": io.BytesIO(self.objects[key])}
+
+    def head_object(self, **kwargs):
+        self.head_requests.append(kwargs)
+        key = (kwargs["Bucket"], kwargs["Key"])
+        if key not in self.objects:
+            raise FileNotFoundError(key)
+        return {
+            "ContentLength": len(self.objects[key]),
+            "Metadata": self.metadata.get(key, {}),
+        }
 
     def list_objects_v2(self, **kwargs):
         self.list_requests.append(kwargs)
@@ -47,6 +63,7 @@ class FakeS3Client:
     def put_object(self, **kwargs):
         self.put_requests.append(kwargs)
         self.objects[(kwargs["Bucket"], kwargs["Key"])] = bytes(kwargs["Body"])
+        self.metadata[(kwargs["Bucket"], kwargs["Key"])] = dict(kwargs.get("Metadata") or {})
         return {"ETag": "etag"}
 
     def generate_presigned_url(self, operation, *, Params, ExpiresIn):
@@ -109,6 +126,21 @@ class TestConnectors(unittest.TestCase):
         self.assertEqual(client.objects[("docs", "uploads/doc.pdf")], b"%PDF")
         self.assertEqual(client.put_requests[0]["ContentType"], "application/pdf")
         self.assertEqual(url, "https://signed.example/docs/uploads/doc.pdf?ttl=120")
+
+    def test_s3_connector_reads_object_info(self) -> None:
+        client = FakeS3Client(
+            {("docs", "uploads/doc.txt"): b"hello"},
+            metadata={("docs", "uploads/doc.txt"): {"Raku-Tenant-Id": "tenant_a"}},
+        )
+        connector = S3Connector(bucket="docs", client=client)
+
+        info = connector.object_info("s3://docs/uploads/doc.txt")
+
+        self.assertEqual(info["bucket"], "docs")
+        self.assertEqual(info["key"], "uploads/doc.txt")
+        self.assertEqual(info["content_length"], 5)
+        self.assertEqual(info["metadata"], {"raku-tenant-id": "tenant_a"})
+        self.assertEqual(client.head_requests[0], {"Bucket": "docs", "Key": "uploads/doc.txt"})
 
 
 class TestDataUriConnector(unittest.TestCase):

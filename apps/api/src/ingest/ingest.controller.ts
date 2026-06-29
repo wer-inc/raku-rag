@@ -2,6 +2,7 @@ import { BadGatewayException, Body, Controller, HttpCode, Post, Req } from "@nes
 import type { Request } from "express";
 import type { IngestRequest, IngestResponse } from "@raku-rag/shared";
 import { internalAuthHeaders } from "../auth/internal-auth";
+import { assertDocumentRefOwnedByTenant } from "./s3-ref-ownership";
 
 @Controller({ path: "ingest", version: "1" })
 export class IngestController {
@@ -9,6 +10,7 @@ export class IngestController {
   @HttpCode(202)
   async ingest(@Req() req: Request, @Body() body: IngestRequest): Promise<IngestResponse> {
     const p = req.principal!;
+    assertDocumentRefOwnedByTenant(body?.ref, p.tenant_id);
     const base = process.env.ANSWER_SERVICE_URL ?? "http://127.0.0.1:8088";
     const payload = {
       tenant_id: p.tenant_id,
