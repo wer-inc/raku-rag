@@ -87,38 +87,6 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   ...(APPROVAL_WORKFLOW_ENABLED ? [REVIEW_NAV_GROUP] : []),
-  {
-    label: "運用・監査",
-    items: [
-      { href: "/operations", label: "運用ダッシュボード", icon: "operations" },
-      { href: "/operations/safety", label: "安全テレメトリ", icon: "safety" },
-      { href: "/operations/quality", label: "品質・KPI", icon: "quality" },
-      { href: "/operations/impact-report", label: "導入効果レポート", icon: "operations" },
-      { href: "/operations/improvements", label: "ナレッジ改善", icon: "improvements" },
-      { href: "/audit", label: "監査ログ", icon: "audit" },
-      { href: "/compliance/export", label: "コンプラ出力", icon: "compliance" },
-    ],
-  },
-  {
-    label: "管理",
-    items: [
-      { href: "/admin/users", label: "ユーザー", icon: "users" },
-      { href: "/admin/access", label: "ロール・権限", icon: "roles" },
-      { href: "/admin/integrations", label: "連携", icon: "integrations" },
-      { href: "/admin/api", label: "API・Webhook", icon: "apikeys" },
-      { href: "/admin/billing", label: "利用・課金", icon: "billing" },
-      { href: "/admin/support", label: "サポート", icon: "support" },
-    ],
-  },
-  {
-    label: "設定",
-    items: [
-      { href: "/admin/provider-policy", label: "プロバイダ", icon: "provider" },
-      { href: "/admin/retrieval", label: "Retrieval", icon: "retrieval" },
-      { href: "/admin/retrieval/debug", label: "検索診断", icon: "search" },
-      { href: "/admin/logging-privacy", label: "ログ・プライバシー", icon: "logging" },
-    ],
-  },
 ];
 
 // All nav hrefs, used by the sidebar to resolve the single active item by
