@@ -32,6 +32,6 @@
     "prompt_template_version": "answer-grounded-contract-v1",
     "injection_guard_version": "prompt-injection-guard-v1",
     "extra": {},
-    "registry_version": "eval_registry_5fee593f95e9b022"
+    "registry_version": "eval_registry_19d2e954bc0c4a15"
   }
 }
