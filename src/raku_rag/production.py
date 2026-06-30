@@ -259,9 +259,17 @@ class ProductionSystem(MvpSystem):
         )
         run, created = self.ingestion_runs.create_queued(message, trigger="api")
         if not created and run.status == JobStatus.SUCCEEDED.value:
-            if manufacturing_metadata is not None:
-                self.attach_manufacturing_metadata(tenant_id, document_id, manufacturing_metadata)
-            return run
+            existing_doc = self.registry.get(tenant_id, document_id)
+            if existing_doc is not None and not existing_doc.tombstone:
+                if manufacturing_metadata is not None:
+                    self.attach_manufacturing_metadata(
+                        tenant_id, document_id, manufacturing_metadata
+                    )
+                return run
+            # A previously deleted document may be re-seeded with identical bytes. The ingestion-run
+            # idempotency key is still present, but retrieval must not leave the registry/chunks
+            # tombstoned. Reuse the existing run row and project a fresh processing lifecycle.
+            self.ingestion_runs.mark_queued(run)
         if _is_pdf_content_type(content_type):
             # Multi-page PDFs are async: the API creates the run and the worker owns submit/poll/persist.
             if run.status not in {JobStatus.QUEUED.value, JobStatus.RUNNING.value}:
