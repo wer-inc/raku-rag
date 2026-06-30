@@ -46,15 +46,116 @@ CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
 SECRET_RE = re.compile(
     r"(?i)\b(?:bearer|api[_-]?key|secret|token|password)\s*[:=]\s*[A-Za-z0-9._~+/=-]{6,}"
 )
+DETAILS_QUICK_REPLY_LABEL = "この根拠でもう少し詳しく"
+HANDOFF_QUICK_REPLY_LABEL = "担当者に確認依頼"
+FOLLOWUP_QUICK_REPLY_LABELS = {
+    "details": DETAILS_QUICK_REPLY_LABEL,
+    "steps": "手順だけ見る",
+    "cautions": "注意点を確認",
+    "criteria_table": "判断基準を表にする",
+    "evidence": "根拠を確認する",
+}
 DETAILS_QUICK_REPLY_VALUES = {
     "details",
     "detail",
     "more_details",
     "more details",
+    DETAILS_QUICK_REPLY_LABEL,
     "もう少し詳しく",
     "詳しく",
     "詳細",
 }
+FOLLOWUP_QUICK_REPLY_ALIASES = {
+    "steps": {
+        "steps",
+        "procedure",
+        "procedures",
+        "手順",
+        "手順だけ",
+        "手順だけ見る",
+        "作業手順",
+    },
+    "cautions": {
+        "cautions",
+        "caution",
+        "注意",
+        "注意点",
+        "注意点を確認",
+        "リスク",
+        "安全注意",
+    },
+    "criteria_table": {
+        "criteria",
+        "criteria_table",
+        "table",
+        "判断基準",
+        "判断基準を表にする",
+        "基準を表にする",
+        "表にする",
+    },
+    "evidence": {
+        "evidence",
+        "sources",
+        "citations",
+        "根拠",
+        "根拠を確認",
+        "根拠を確認する",
+        "引用",
+    },
+}
+PROCEDURE_TERMS = (
+    "手順",
+    "順",
+    "点検",
+    "確認",
+    "交換",
+    "実施",
+    "測定",
+    "記録",
+    "停止",
+    "復旧",
+    "対応",
+    "原因",
+    "対策",
+    "アラーム",
+    "異常",
+)
+CRITERIA_TERMS = (
+    "判定",
+    "基準",
+    "条件",
+    "表",
+    "閾値",
+    "しきい値",
+    "以上",
+    "以下",
+    "未満",
+    "超",
+    "AQL",
+    "Ac=",
+    "Re=",
+    "N・m",
+    "N·m",
+    "mm",
+    "℃",
+    "ヶ月",
+    "時間",
+    "%",
+)
+CAUTION_TERMS = (
+    "注意",
+    "安全",
+    "危険",
+    "禁止",
+    "停止",
+    "異常",
+    "損傷",
+    "焼損",
+    "漏れ",
+    "超える",
+    "保全",
+    "高リスク",
+)
 
 
 def _redact(text: str) -> str:
@@ -309,7 +410,7 @@ class ChatbotService:
             )
             assistant = self._assistant(
                 session,
-                "担当者に引き継ぎます。会話内容と確認済み情報をまとめてキューに入れました。",
+                "確認依頼を受け付けました。担当者が会話内容と確認済み情報を確認します。",
                 "handoff",
                 quick_replies=[],
             )
@@ -323,7 +424,7 @@ class ChatbotService:
             )
             assistant = self._assistant(
                 session,
-                "この内容はBotだけでは確定できません。担当者が確認できるよう引き継ぎます。",
+                "この内容はBotだけでは確定できません。担当者に確認依頼しました。",
                 "handoff",
                 quick_replies=[],
             )
@@ -800,7 +901,7 @@ class ChatbotService:
                 session,
                 f"承知しました。手続きを確認するため、{label}を教えてください。",
                 "collect_slot",
-                quick_replies=[{"label": "人間に相談する", "value": "handoff"}],
+                quick_replies=[{"label": HANDOFF_QUICK_REPLY_LABEL, "value": "handoff"}],
             )
             return assistant, None
 
@@ -811,7 +912,7 @@ class ChatbotService:
             "confirm_action",
             quick_replies=[
                 {"label": "進める", "value": "confirm"},
-                {"label": "人間に相談する", "value": "handoff"},
+                {"label": HANDOFF_QUICK_REPLY_LABEL, "value": "handoff"},
             ],
         )
         return assistant, None
@@ -847,7 +948,7 @@ class ChatbotService:
             )
             assistant = self._assistant(
                 session,
-                "承認済みの根拠だけでは回答を確定できません。担当者が確認できるよう引き継ぎます。",
+                "承認済みの根拠だけでは回答を確定できません。担当者に確認依頼しました。",
                 "handoff",
                 quick_replies=[],
             )
@@ -890,15 +991,13 @@ class ChatbotService:
         session.last_rag = rag
 
         if answerable:
+            answer_text = str(rag_response.get("text"))
             assistant = self._assistant(
                 session,
-                str(rag_response.get("text")),
+                self._format_chatbot_answer(answer_text, text, collection_id, citations),
                 "answer_with_citations",
                 citations=citations,
-                quick_replies=[
-                    {"label": "もう少し詳しく", "value": "details"},
-                    {"label": "人間に相談する", "value": "handoff"},
-                ],
+                quick_replies=self._quick_replies_for_answer(text, answer_text),
             )
             return assistant, rag, None
 
@@ -910,7 +1009,7 @@ class ChatbotService:
         )
         assistant = self._assistant(
             session,
-            "承認済みの根拠だけでは回答を確定できません。担当者が確認できるよう引き継ぎます。",
+            "承認済みの根拠だけでは回答を確定できません。担当者に確認依頼しました。",
             "handoff",
             quick_replies=[],
         )
@@ -1006,18 +1105,84 @@ class ChatbotService:
             quick_replies=quick_replies,
         )
 
+    def _format_chatbot_answer(
+        self,
+        answer_text: str,
+        question: str,
+        collection_id: str | None,
+        citations: list[dict],
+    ) -> str:
+        answer = answer_text.strip()
+        if not answer:
+            return answer
+
+        conclusion = self._strip_leading_section_label(answer)
+        procedure_lines = self._extract_relevant_lines(answer, PROCEDURE_TERMS, limit=3)
+        caution_lines = self._extract_relevant_lines(answer, CAUTION_TERMS, limit=3)
+        evidence_lines = self._evidence_lines(citations)
+        condition_lines = [
+            f"参照範囲: {collection_id or '選択中の参照範囲'}",
+            f"質問: {self._compact_line(question, limit=96)}",
+            "承認済みデータの引用がある範囲で回答しています。",
+        ]
+
+        if not procedure_lines:
+            procedure_lines = ["文書内で明示された手順は、上記の回答範囲に限定されます。"]
+        if not caution_lines:
+            caution_lines = ["追加の注意点は引用内で確認できる範囲に限定されます。"]
+
+        sections = [
+            ("結論", conclusion),
+            ("条件", self._bullet_lines(condition_lines)),
+            ("手順", self._bullet_lines(procedure_lines)),
+            ("注意点", self._bullet_lines(caution_lines)),
+            ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
+            (
+                "不明点",
+                self._bullet_lines(
+                    ["根拠にない条件、例外、最新運用ルールは断定しません。必要なら担当者に確認依頼してください。"]
+                ),
+            ),
+        ]
+        return "\n\n".join(f"{title}:\n{body}" for title, body in sections)
+
+    def _quick_replies_for_answer(self, question: str, answer_text: str) -> list[dict]:
+        blob = f"{question}\n{answer_text}"
+        actions = ["details"]
+        if self._contains_any(blob, PROCEDURE_TERMS):
+            actions.append("steps")
+        if self._contains_any(blob, CRITERIA_TERMS):
+            actions.append("criteria_table")
+        if self._contains_any(blob, CAUTION_TERMS):
+            actions.append("cautions")
+        actions.append("evidence")
+
+        replies: list[dict] = []
+        seen: set[str] = set()
+        for action in actions:
+            if action in seen or action not in FOLLOWUP_QUICK_REPLY_LABELS:
+                continue
+            seen.add(action)
+            replies.append({"label": FOLLOWUP_QUICK_REPLY_LABELS[action], "value": action})
+            if len(replies) >= 4:
+                break
+        return replies
+
     def _display_text_for_quick_reply(self, text: str) -> str:
-        if self._is_details_quick_reply(text):
-            return "もう少し詳しく"
+        action = self._quick_reply_action(text)
+        if action:
+            return FOLLOWUP_QUICK_REPLY_LABELS[action]
         return text
 
     def _expand_quick_reply_for_rag(self, session: ChatSession, text: str) -> str:
-        if not self._is_details_quick_reply(text):
+        action = self._quick_reply_action(text)
+        if not action:
             return text
 
         context = self._last_answer_context(session)
         if not context:
-            return "前回の回答について、同じ根拠に基づいてもう少し詳しく説明してください。"
+            instruction = self._followup_instruction(action)
+            return f"前回の回答について、同じ根拠に基づいて{instruction}"
 
         previous_question = context.get("question") or "前回の質問"
         previous_answer = context.get("answer") or ""
@@ -1030,13 +1195,81 @@ class ChatbotService:
             answer_hint = " 前回回答: " + previous_answer[:240] + "。"
         return (
             f"前回の質問「{previous_question}」について、同じ承認済み根拠に基づき、"
-            "結論、手順、注意点、根拠をもう少し詳しく説明してください。"
+            f"{self._followup_instruction(action)}"
             "文書にない内容は推測しないでください。"
             f"{document_hint}{answer_hint}"
         )
 
     def _is_details_quick_reply(self, text: str) -> bool:
-        return text.strip().lower() in DETAILS_QUICK_REPLY_VALUES
+        return self._quick_reply_action(text) == "details"
+
+    def _quick_reply_action(self, text: str) -> str | None:
+        normalized = text.strip().lower()
+        if normalized in DETAILS_QUICK_REPLY_VALUES:
+            return "details"
+        for action, aliases in FOLLOWUP_QUICK_REPLY_ALIASES.items():
+            if normalized in {alias.lower() for alias in aliases}:
+                return action
+        return None
+
+    def _followup_instruction(self, action: str) -> str:
+        if action == "steps":
+            return "手順だけを番号付きで整理してください。"
+        if action == "cautions":
+            return "注意点、禁止事項、安全確認、例外条件だけを整理してください。"
+        if action == "criteria_table":
+            return "判断基準、閾値、数値条件を表形式に近い形で整理してください。"
+        if action == "evidence":
+            return "根拠文書、引用箇所、根拠から言えることだけを整理してください。"
+        return "結論、条件、手順、注意点、根拠をもう少し詳しく説明してください。"
+
+    def _strip_leading_section_label(self, text: str) -> str:
+        return re.sub(r"^\s*(?:結論|回答)\s*[:：]\s*", "", text.strip())
+
+    def _extract_relevant_lines(
+        self, text: str, terms: tuple[str, ...], *, limit: int
+    ) -> list[str]:
+        lines: list[str] = []
+        for sentence in self._answer_sentences(text):
+            if self._contains_any(sentence, terms):
+                lines.append(self._compact_line(sentence))
+            if len(lines) >= limit:
+                break
+        return list(dict.fromkeys(lines))
+
+    def _answer_sentences(self, text: str) -> list[str]:
+        normalized = re.sub(r"\s+", " ", text.strip())
+        parts = re.findall(r"[^。！？!?\n;]+[。！？!?]?", normalized)
+        sentences = [self._compact_line(part) for part in parts if part.strip()]
+        return sentences or [self._compact_line(normalized)]
+
+    def _evidence_lines(self, citations: list[dict]) -> list[str]:
+        lines: list[str] = []
+        for citation in citations[:3]:
+            document_id = str(citation.get("document_id") or "document")
+            chunk_id = citation.get("chunk_id")
+            version = citation.get("version")
+            suffix = []
+            if version is not None:
+                suffix.append(f"version {version}")
+            if chunk_id:
+                suffix.append(str(chunk_id))
+            detail = f" ({', '.join(suffix)})" if suffix else ""
+            lines.append(f"{document_id}{detail}")
+        return lines
+
+    def _bullet_lines(self, lines: list[str]) -> str:
+        return "\n".join(f"- {self._compact_line(line)}" for line in lines if line)
+
+    def _compact_line(self, text: str, *, limit: int = 220) -> str:
+        compact = re.sub(r"\s+", " ", text.strip(" \t\r\n-・"))
+        if len(compact) <= limit:
+            return compact
+        return compact[: limit - 1].rstrip() + "…"
+
+    def _contains_any(self, text: str, terms: tuple[str, ...]) -> bool:
+        lower = text.lower()
+        return any(term.lower() in lower for term in terms)
 
     def _last_answer_context(self, session: ChatSession) -> dict | None:
         answer_index = -1

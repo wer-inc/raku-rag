@@ -1,6 +1,14 @@
 # 0057 — ChatBotのquick replyを回答内容に応じて文脈付きにする(系統 = chatbot / conversational-ux)
 
-> Priority: **P2/Medium** / Status: Open / Labels: `chatbot`, `ux`, `conversation`, `rag-quality`
+> Priority: **P2/Medium** / Status: In progress / Labels: `chatbot`, `ux`, `conversation`, `rag-quality`
+
+## 実装メモ(2026-06-30)
+
+- 通常の根拠付き回答では `人間に相談する` quick reply を出さず、`この根拠でもう少し詳しく` のみにした。
+- `details` は引き続きサーバー側で前回質問・前回回答・引用 document_id に展開し、文脈なし検索を避ける。
+- 人間対応の文言は `担当者に確認依頼` に統一し、通常回答時は常時表示しない。
+- 回答内容に応じて `手順だけ見る`, `注意点を確認`, `判断基準を表にする`, `根拠を確認する` を最大4個で出し分けるようにした。
+- quick reply value は短い action のまま、サーバー側で前回質問・前回回答・引用 document_id を含む follow-up 検索文へ展開する。
 
 ## 背景(なぜ今)
 
@@ -41,12 +49,12 @@
 
 ## QA checklist
 
-- [ ] 再現テストがある。
-- [ ] 正常系が確認できる。
+- [x] 再現テストがある。
+- [x] 正常系が確認できる。
 - [ ] 失敗時の表示/応答が確認できる。
-- [ ] tenant/ACL 境界を越えない。
-- [ ] security/safety gate を弱めていない。
-- [ ] Playwright または API smoke で確認できる。
+- [x] tenant/ACL 境界を越えない。
+- [x] security/safety gate を弱めていない。
+- [x] Playwright または API smoke で確認できる。
 - [ ] AWS stg/live smoke が必要な場合は correlation id を保存する。
 
 ## 受け入れ条件(DoD)
@@ -68,4 +76,3 @@
 - `src/raku_rag/chatbot/service.py`
 - `apps/web/app/components/FullSaasScreen.tsx`
 - `packages/shared/src/dto/chat.ts`
-

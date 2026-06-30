@@ -53,7 +53,7 @@ describe("chat facade (e2e)", () => {
                 message: "登録メールアドレスを教えてください。",
                 message_type: "text",
                 ai_action: "collect_slot",
-                quick_replies: [{ label: "人間に相談する", value: "handoff" }],
+                quick_replies: [{ label: "担当者に確認依頼", value: "handoff" }],
                 citations: [],
               },
               state: {
@@ -84,7 +84,7 @@ describe("chat facade (e2e)", () => {
                 message: "会社名を教えてください。",
                 message_type: "text",
                 ai_action: "collect_slot",
-                quick_replies: [{ label: "人間に相談する", value: "handoff" }],
+                quick_replies: [{ label: "担当者に確認依頼", value: "handoff" }],
                 citations: [],
               },
               state: { status: "waiting_user", response_state: "completed", missing_slots: ["company_name"] },

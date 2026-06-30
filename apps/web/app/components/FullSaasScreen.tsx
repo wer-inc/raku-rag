@@ -498,7 +498,7 @@ function chatStateLabel(state: string, hasSession: boolean): string {
     case "idle":
       return "待機中";
     case "handoff_pending":
-      return "担当者に引き継ぎ済み";
+      return "確認依頼済み";
     case "completed":
       return "完了";
     case "waiting_for_user":
@@ -537,7 +537,7 @@ function ragStatusLabel(status: string): string {
 
 function handoffReasonLabel(reason: string): string {
   if (reason === "customer_requested_human") return "ユーザー依頼";
-  return "引き継ぎ待ち";
+  return "確認待ち";
 }
 
 function AnswerFeedback({ question, answerId }: { question: string; answerId: string }) {
@@ -931,6 +931,7 @@ type ChatTurn =
       message: ChatAssistantMessage;
       ragStatus?: string | null;
       handoffReason?: string | null;
+      handoffPackageId?: string | null;
       ticketId?: string | null;
     }
   | { kind: "error"; id: string; text: string };
@@ -952,7 +953,7 @@ function chatActionLabel(action?: string | null): string {
     case "ticket_created":
       return "受付作成";
     case "handoff":
-      return "引き継ぎ";
+      return "確認依頼";
     default:
       return action || "応答";
   }
@@ -960,17 +961,26 @@ function chatActionLabel(action?: string | null): string {
 
 function chatProgressDetail(state: "thinking" | "checking_rag" | "delayed"): string {
   if (state === "checking_rag") return "承認済みナレッジと引用候補を照合しています。";
-  if (state === "delayed") return "確認に時間がかかっています。必要なら担当者に引き継げます。";
+  if (state === "delayed") return "確認に時間がかかっています。必要なら担当者に確認依頼できます。";
   return "質問の意図を整理しています。";
 }
 
 function ChatThinkingBubble({
   state,
   onHandoff,
+  handoffQueued,
+  handoffRequested,
 }: {
   state: "thinking" | "checking_rag" | "delayed";
   onHandoff: () => void;
+  handoffQueued: boolean;
+  handoffRequested: boolean;
 }) {
+  const handoffButtonLabel = handoffRequested
+    ? "確認依頼済み"
+    : handoffQueued
+      ? "回答後に確認依頼します"
+      : "担当者に確認依頼";
   return (
     <article className="chat-bot-bubble chat-thinking-bubble">
       <div role="status" aria-live="polite">
@@ -988,8 +998,13 @@ function ChatThinkingBubble({
         </div>
       </div>
       {state === "delayed" && (
-        <button type="button" className="citation-open" onClick={onHandoff}>
-          人間に相談する
+        <button
+          type="button"
+          className="citation-open"
+          onClick={onHandoff}
+          disabled={handoffQueued || handoffRequested}
+        >
+          {handoffButtonLabel}
         </button>
       )}
     </article>
@@ -1013,6 +1028,7 @@ function ChatAssistantBubble({
         <span className="status-badge">{chatActionLabel(message.ai_action)}</span>
         {turn.ragStatus && <span className={`citation-chip ${ragClass}`}>{ragStatusLabel(turn.ragStatus)}</span>}
         {turn.ticketId && <span className="citation-chip approval-approved">受付 {turn.ticketId}</span>}
+        {turn.handoffPackageId && <span className="citation-chip approval-approved">確認依頼 {turn.handoffPackageId}</span>}
         {turn.handoffReason && <span className="citation-chip approval-obsolete">{handoffReasonLabel(turn.handoffReason)}</span>}
       </div>
       <p>{message.message}</p>
@@ -1068,11 +1084,13 @@ function ChatBotBody() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [stateSummary, setStateSummary] = useState("idle");
   const [progress, setProgress] = useState<"thinking" | "checking_rag" | "delayed" | null>(null);
+  const [handoffQueued, setHandoffQueued] = useState(false);
   const [loading, setLoading] = useState(false);
   const [viewer, setViewer] = useState<CitationViewTarget | null>(null);
   const [metrics, setMetrics] = useState<{ conversation_count: number; handoff_rate: number } | null>(null);
   const thinkingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const delayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingHandoffAfterResponse = useRef(false);
   const sessionRoles = useMemo(() => loadSessionRoles(), []);
   const showOpsInfo = canViewChatbotOps(sessionRoles);
   const selectedScope = referenceScopes.find((scope) => scope.collection_id === collectionId) ?? null;
@@ -1081,8 +1099,12 @@ function ChatBotBody() {
   ) ?? null;
   const referenceScopeReady = policyAccess === "ready" && Boolean(selectedScope && selectedPolicy);
   const usageLabel = chatUsageLabel(referenceScopeReady, policyAccess, progress);
-  const handoffLabel =
-    stateSummary === "handoff_pending" ? "担当者に引き継ぎ済み" : "必要時に相談できます";
+  const handoffRequested = stateSummary === "handoff_pending";
+  const handoffLabel = handoffRequested
+    ? "確認依頼済み"
+    : handoffQueued
+      ? "回答後に確認依頼します"
+      : "必要時に確認依頼できます";
   const syncedDataLabel = selectedScope
     ? `同期済みデータ ${selectedScope.source_count}件`
     : "利用できるナレッジを確認できません";
@@ -1161,6 +1183,8 @@ function ChatBotBody() {
     setTurns([]);
     setStateSummary("idle");
     setProgress(null);
+    setHandoffQueued(false);
+    pendingHandoffAfterResponse.current = false;
     if (thinkingTimer.current) clearTimeout(thinkingTimer.current);
     if (delayTimer.current) clearTimeout(delayTimer.current);
   }
@@ -1183,7 +1207,12 @@ function ChatBotBody() {
 
   function appendAssistant(
     message: ChatAssistantMessage | undefined,
-    extra: { ragStatus?: string | null; handoffReason?: string | null; ticketId?: string | null } = {},
+    extra: {
+      ragStatus?: string | null;
+      handoffReason?: string | null;
+      handoffPackageId?: string | null;
+      ticketId?: string | null;
+    } = {},
   ) {
     if (!message) return;
     setTurns((prev) => [
@@ -1194,9 +1223,32 @@ function ChatBotBody() {
         message,
         ragStatus: extra.ragStatus,
         handoffReason: extra.handoffReason,
+        handoffPackageId: extra.handoffPackageId,
         ticketId: extra.ticketId,
       },
     ]);
+  }
+
+  async function requestHandoffForSession(targetSessionId: string, token: string) {
+    const response = await requestChatHandoff(
+      targetSessionId,
+      { reason: "customer_requested_human", comment: "UI confirmation request" },
+      token,
+    );
+    pendingHandoffAfterResponse.current = false;
+    setHandoffQueued(false);
+    setStateSummary("handoff_pending");
+    appendAssistant({
+      message_id: `handoff-${response.handoff_package_id}`,
+      message: `確認依頼を受け付けました。受付ID: ${response.handoff_package_id}。担当者が会話内容と根拠を確認します。`,
+      message_type: "text",
+      ai_action: "handoff",
+      quick_replies: [],
+      citations: [],
+    }, {
+      handoffReason: response.reason,
+      handoffPackageId: response.handoff_package_id,
+    });
   }
 
   async function submitText(
@@ -1216,16 +1268,26 @@ function ChatBotBody() {
     beginRequest();
     try {
       const token = await getSessionToken();
+      let activeSessionId = sessionId;
+      let handoffAlreadyCreated = false;
       if (!sessionId) {
         const response = await createChatSession(
           { channel: "web_chat", initial_message: trimmed, collection_id: collectionId },
           token,
         );
+        activeSessionId = response.session_id;
         setSessionId(response.session_id);
         setStateSummary(response.state?.status ?? response.status);
+        handoffAlreadyCreated = Boolean(response.handoff?.handoff_package_id)
+          || (response.state?.status ?? response.status) === "handoff_pending";
+        if (handoffAlreadyCreated) {
+          pendingHandoffAfterResponse.current = false;
+          setHandoffQueued(false);
+        }
         appendAssistant(response.assistant_message, {
           ragStatus: response.rag?.status,
           handoffReason: response.handoff?.reason,
+          handoffPackageId: response.handoff?.handoff_package_id,
           ticketId: response.ticket?.ticket_id,
         });
       } else {
@@ -1235,9 +1297,16 @@ function ChatBotBody() {
           token,
         );
         setStateSummary(response.state.status);
+        handoffAlreadyCreated = Boolean(response.handoff?.handoff_package_id)
+          || response.state.status === "handoff_pending";
+        if (handoffAlreadyCreated) {
+          pendingHandoffAfterResponse.current = false;
+          setHandoffQueued(false);
+        }
         appendAssistant(response.assistant_message, {
           ragStatus: response.rag?.status,
           handoffReason: response.handoff?.reason,
+          handoffPackageId: response.handoff?.handoff_package_id,
           ticketId: response.ticket?.ticket_id,
         });
       }
@@ -1247,6 +1316,9 @@ function ChatBotBody() {
           handoff_rate: metricResponse.summary.handoff_rate,
         });
       }).catch(() => undefined);
+      if (pendingHandoffAfterResponse.current && activeSessionId && !handoffAlreadyCreated) {
+        await requestHandoffForSession(activeSessionId, token);
+      }
     } catch (err) {
       if (isAuthError(err)) {
         clearSessionToken();
@@ -1256,6 +1328,8 @@ function ChatBotBody() {
         ...prev,
         { kind: "error", id: `${turnId}-e`, text: formatLoadError(err) },
       ]);
+      pendingHandoffAfterResponse.current = false;
+      setHandoffQueued(false);
     } finally {
       endRequest();
     }
@@ -1267,9 +1341,14 @@ function ChatBotBody() {
   }
 
   async function onHandoff() {
-    if (loading) return;
+    if (handoffRequested || handoffQueued) return;
+    if (loading) {
+      pendingHandoffAfterResponse.current = true;
+      setHandoffQueued(true);
+      return;
+    }
     if (!sessionId) {
-      await submitText("担当者に相談したい", "担当者に相談したい", {
+      await submitText("担当者に確認依頼したい", "担当者に確認依頼したい", {
         allowWithoutReferenceScope: true,
       });
       return;
@@ -1277,21 +1356,10 @@ function ChatBotBody() {
     beginRequest();
     try {
       const token = await getSessionToken();
-      const response = await requestChatHandoff(
-        sessionId,
-        { reason: "customer_requested_human", comment: "UI handoff action" },
-        token,
-      );
-      setStateSummary("handoff_pending");
-      appendAssistant({
-        message_id: `handoff-${response.handoff_package_id}`,
-        message: "担当者に引き継ぎました。会話内容と確認済み情報をキューに入れました。",
-        message_type: "text",
-        ai_action: "handoff",
-        quick_replies: [],
-        citations: [],
-      }, { handoffReason: response.reason });
+      await requestHandoffForSession(sessionId, token);
     } catch (err) {
+      pendingHandoffAfterResponse.current = false;
+      setHandoffQueued(false);
       setTurns((prev) => [...prev, { kind: "error", id: `handoff-${Date.now()}`, text: formatLoadError(err) }]);
     } finally {
       endRequest();
@@ -1317,7 +1385,7 @@ function ChatBotBody() {
                 <div className="answer-empty-copy">
                   <strong>根拠付きチャットを開始する</strong>
                   <span>
-                    参照範囲内の承認済みナレッジを使い、必要な情報収集から担当者引き継ぎまで同じ会話で進めます。
+                    参照範囲内の承認済みナレッジを使い、回答できない内容は担当者への確認依頼につなげます。
                   </span>
                   <div className="answer-starter-list" aria-label="会話の開始例">
                     {CHAT_STARTERS.map((starter) => (
@@ -1367,7 +1435,12 @@ function ChatBotBody() {
             })}
 
             {progress && (
-              <ChatThinkingBubble state={progress} onHandoff={() => void onHandoff()} />
+              <ChatThinkingBubble
+                state={progress}
+                onHandoff={() => void onHandoff()}
+                handoffQueued={handoffQueued}
+                handoffRequested={handoffRequested}
+              />
             )}
           </div>
 
@@ -1391,14 +1464,6 @@ function ChatBotBody() {
               </label>
               <button type="button" className="citation-open" onClick={onNewConversation} disabled={loading}>
                 新しい会話
-              </button>
-              <button
-                type="button"
-                className="citation-open"
-                onClick={() => void onHandoff()}
-                disabled={loading}
-              >
-                人間に相談する
               </button>
             </div>
             <p
@@ -1462,7 +1527,7 @@ function ChatBotBody() {
               <strong>承認済みデータのみ使用</strong>
             </div>
             <div className="chatbot-state-row">
-              <span>人間への相談</span>
+              <span>確認依頼</span>
               <strong>{handoffLabel}</strong>
             </div>
           </section>
@@ -1478,7 +1543,7 @@ function ChatBotBody() {
                       <strong>{metrics.conversation_count}</strong>
                     </div>
                     <div className="chatbot-state-row">
-                      <span>引き継ぎ率</span>
+                      <span>確認依頼率</span>
                       <strong>{Math.round(metrics.handoff_rate * 100)}%</strong>
                     </div>
                   </>

@@ -92,6 +92,75 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
         self.assertTrue(turn["rag"]["answerable"])
         self.assertEqual(turn["assistant_message"]["citations"][0]["document_id"], "doc_1")
+        self.assertIn("結論:", turn["assistant_message"]["message"])
+        self.assertIn("条件:", turn["assistant_message"]["message"])
+        self.assertIn("根拠:", turn["assistant_message"]["message"])
+        self.assertIn("不明点:", turn["assistant_message"]["message"])
+        self.assertEqual(
+            turn["assistant_message"]["quick_replies"],
+            [
+                {"label": "この根拠でもう少し詳しく", "value": "details"},
+                {"label": "根拠を確認する", "value": "evidence"},
+            ],
+        )
+
+    def test_contextual_quick_replies_follow_answer_type(self):
+        def rag_answerer(_principal, _query, _collection_id):
+            return _rag_answer(
+                text=(
+                    "AL-21 は過負荷を示します。非常停止後にVベルト張力を点検し、"
+                    "電流が12Aを超える場合は保全へ連絡します。"
+                ),
+                document_id="eq-alarm-e152-al21",
+            )
+
+        service = ChatbotService(rag_answerer)
+        _enable_internal_chat_collection(service)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+
+        _, turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "AL-21 が出た時の点検手順と注意点を教えて", "collection_id": "manuals"},
+        )
+
+        labels = [reply["label"] for reply in turn["assistant_message"]["quick_replies"]]
+        self.assertIn("手順だけ見る", labels)
+        self.assertIn("注意点を確認", labels)
+        self.assertIn("判断基準を表にする", labels)
+        self.assertLessEqual(len(labels), 4)
+
+    def test_contextual_quick_reply_expands_to_previous_answer_context(self):
+        queries = []
+
+        def rag_answerer(_principal, query, _collection_id):
+            queries.append(query)
+            return _rag_answer(
+                text="点検手順は非常停止、張力確認、電流確認の順です。",
+                document_id="eq-alarm-e152-al21",
+            )
+
+        service = ChatbotService(rag_answerer)
+        _enable_internal_chat_collection(service)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+        service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "AL-21 の点検手順を教えて", "collection_id": "manuals"},
+        )
+
+        status, turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "steps", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
+        self.assertNotEqual(queries[-1], "steps")
+        self.assertIn("AL-21 の点検手順", queries[-1])
+        self.assertIn("手順だけを番号付き", queries[-1])
+        self.assertIn("eq-alarm-e152-al21", queries[-1])
 
     def test_details_quick_reply_uses_previous_answer_context_for_rag(self):
         queries = []
@@ -122,7 +191,11 @@ class ChatbotServiceTest(unittest.TestCase):
         )
         self.assertEqual(
             first_turn["assistant_message"]["quick_replies"][0],
-            {"label": "もう少し詳しく", "value": "details"},
+            {"label": "この根拠でもう少し詳しく", "value": "details"},
+        )
+        self.assertNotIn(
+            {"label": "担当者に確認依頼", "value": "handoff"},
+            first_turn["assistant_message"]["quick_replies"],
         )
 
         status, details_turn = service.submit_message(
@@ -145,7 +218,7 @@ class ChatbotServiceTest(unittest.TestCase):
             service.get_session(_principal(), created["session_id"])[1]["messages"][-2][
                 "content_redacted"
             ],
-            "もう少し詳しく",
+            "この根拠でもう少し詳しく",
         )
 
     def test_rag_citation_without_chatbot_source_policy_fails_closed(self):

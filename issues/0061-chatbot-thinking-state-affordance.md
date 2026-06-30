@@ -2,6 +2,12 @@
 
 > Priority: **P2/Medium** / Status: In progress / Labels: `ux`, `chatbot`
 
+## 実装メモ(2026-06-30)
+
+- 回答待ちが長い場合の導線を `人間に相談する` ではなく `担当者に確認依頼` に統一した。
+- 回答生成中に確認依頼を押した場合は、現在の回答完了後に既存 handoff package を作成する予約動作にした。
+- 確認依頼後は受付IDを会話内に表示し、同じ会話で重複依頼しない状態表示にした。
+
 ## 背景(なぜ今)
 
 stg の `/chatbot` 画面確認中に、ユーザーから「chatbot としての演出」「少し考えてるみたいな演出」が必要ではないかという指摘があった。
@@ -37,10 +43,10 @@ stg の `/chatbot` 画面確認中に、ユーザーから「chatbot として�
 ## QA checklist
 
 - [ ] 再現テストがある。
-- [ ] 正常系が確認できる。
+- [x] 正常系が確認できる。
 - [ ] 失敗時の表示/応答が確認できる。
-- [ ] tenant/ACL 境界を越えない。
-- [ ] security/safety gate を弱めていない。
+- [x] tenant/ACL 境界を越えない。
+- [x] security/safety gate を弱めていない。
 - [ ] Playwright または API smoke で確認できる。
 - [ ] AWS stg/live smoke が必要な場合は correlation id を保存する。
 

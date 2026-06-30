@@ -1,6 +1,15 @@
 # 0055 — ChatBot回答を結論/手順/注意/根拠の型で構造化する(系統 = chatbot / answer-composition)
 
-> Priority: **P1/High** / Status: Open / Labels: `chatbot`, `answer-composer`, `rag-quality`, `manufacturing`
+> Priority: **P1/High** / Status: In progress / Labels: `chatbot`, `answer-composer`, `rag-quality`, `manufacturing`
+
+## 実装メモ(2026-06-30)
+
+- ChatBot の answerable な RAG回答に、表示用の固定フォーマットを追加した。
+- 構造は `結論`, `条件`, `手順`, `注意点`, `根拠`, `不明点`。
+- 元のRAG回答本文は `結論` に保持し、`条件` と `根拠` は collection/citation metadata から作る。
+- `手順` と `注意点` は回答本文内の関連文だけを抽出し、根拠外の具体手順や注意事項は追加しない。
+- `不明点` では、根拠にない条件や例外を断定しないことを明示する。
+- 残り: v2 scorecard で required_sections / completeness の改善幅を確認し、必要なら answer composer 本体側へ拡張する。
 
 ## 背景(なぜ今)
 
@@ -46,11 +55,11 @@ stg の 17問 smoke は PASS しているが、v2品質テストでは回答系2
 
 ## QA checklist
 
-- [ ] 再現テストがある。
-- [ ] 正常系が確認できる。
+- [x] 再現テストがある。
+- [x] 正常系が確認できる。
 - [ ] 失敗時の表示/応答が確認できる。
-- [ ] tenant/ACL 境界を越えない。
-- [ ] security/safety gate を弱めていない。
+- [x] tenant/ACL 境界を越えない。
+- [x] security/safety gate を弱めていない。
 - [ ] Playwright または API smoke で確認できる。
 - [ ] AWS stg/live smoke が必要な場合は correlation id を保存する。
 
@@ -73,4 +82,3 @@ stg の 17問 smoke は PASS しているが、v2品質テストでは回答系2
 - `src/raku_rag/services/answer.py`
 - `docs/production-readiness/chatbot-sellable-quality-plan.md`
 - `issues/0051-chatbot-sellable-answer-quality-roadmap.md`
-
