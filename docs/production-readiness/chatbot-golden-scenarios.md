@@ -42,18 +42,22 @@ retrieved context or credentials.
 
 ## Current Staging Baseline
 
-On 2026-06-30, staging with a temporary `tenant_admin + sales_demo` user produced:
+On 2026-06-30, staging deploy
+[`28436589691`](https://github.com/wer-inc/raku-rag/actions/runs/28436589691) at head `8874795`
+with a temporary `tenant_admin + sales_demo` user produced:
 
 - 17 total scenarios
-- 7 passed / 10 failed
+- 17 passed / 0 failed
 - refusal/security controls: 5/5 passed
-- answerable rate: 0.529
-- citation hit rate for answer scenarios: 0.750
-- thin answer count: 2 by the summary threshold, with 8 answer scenarios failing their per-scenario
-  completeness thresholds
+- answerable rate: 0.706
+- citation hit rate for answer scenarios: 1.000
+- thin answer count: 1 by the summary threshold, with all per-scenario citation, required-term, and
+  minimum-length checks passing
+- seeded `manuals` inventory visible through `/v1/manufacturing/documents`: 18 live documents
 
-This means the immediate quality problem is not authentication or the page. It is answer quality and
-coverage: some expected documents are not retrieved, and many retrieved answers omit required facts.
+This is the current minimum staging quality bar for the deterministic `hashing` + `extractive`
+profile. Regressions should be treated as either retrieval/indexing/source-policy failures or
+extractive completeness failures before changing safety rules.
 
 ## 2026-06-30 Fix Notes
 
@@ -66,11 +70,17 @@ place. It changes only retrieval/generation quality:
   chunks instead of pre-filtering with a CJK-weak `to_tsvector` predicate.
 - `extractive-mvp` now expands procedure/troubleshooting/threshold questions over the best evidence
   document, which keeps required steps and countermeasures without mixing in nearby unrelated docs.
+- Demo seeding now grants demo ACL first, purges every live document in the seeded collection through
+  the existing deletion service, then re-ingests the curated corpus. This prevents stale URL-sync/debug
+  documents from polluting retrieval.
+- `ProductionSystem.ingest_document` now re-indexes a duplicate upload when the registry document is
+  tombstoned, so same-checksum demo re-seeds restore deleted documents instead of returning the old
+  succeeded ingestion run.
 
 Local in-memory reproduction against `scripts/demo/demo_docs.json` passed all 12 answer scenarios
-after the fix, with expected citations and required terms present. The live staging score must still
-be measured after deploy because it verifies Postgres state, re-embedding, ACL grants, and policy
-persistence together.
+after the fix, with expected citations and required terms present. The live staging score above
+verifies Postgres state, re-embedding, ACL grants, source policy persistence, and seed cleanup
+together.
 
 ## Interpreting Results
 

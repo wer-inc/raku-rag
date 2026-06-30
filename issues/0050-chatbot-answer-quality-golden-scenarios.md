@@ -1,6 +1,6 @@
 # 0050 — チャットボット回答品質のGolden Scenario不足(系統 = chatbot / quality-eval)
 
-> Priority: **P1/High** / Status: Open / Labels: `chatbot`, `quality`, `eval`, `stg`
+> Priority: **P1/High** / Status: Resolved / Labels: `chatbot`, `quality`, `eval`, `stg`
 
 ## 背景(なぜ今)
 
@@ -34,6 +34,13 @@ stg の `/chatbot` は参照範囲設定後に動作するようになったが�
     に到達する前に日本語候補を落とし得た。
   - `extractive-mvp` が上位数文だけを返すため、手順・原因対策・しきい値の質問で近接する重要文を
     落としていた。
+  - 旧URL同期/デバッグ文書が同じ `manuals` collection に残り、期待文書より上位に出ていた。
+  - 削除後の同一checksum再seedが既存成功 ingestion run に当たり、通常文書14件が tombstone から
+    復活しない状態になっていた。
+- 2026-06-30 final stg scorecard:
+  - deploy run: `28436589691`, head `8874795`
+  - `tenant_admin + sales_demo`: 17件中17件PASS。回答系12件は全て期待citation/required termsを満たす。
+  - `/v1/manufacturing/documents?collection_id=manuals`: 18 live documents。
 
 ## 影響
 
@@ -61,7 +68,7 @@ stg の `/chatbot` は参照範囲設定後に動作するようになったが�
 - [x] tenant/ACL 境界を越えない。
 - [x] security/safety gate を弱めていない。
 - [x] Playwright または API smoke で確認できる。
-- [ ] AWS stg/live smoke が必要な場合は correlation id を保存する。
+- [x] AWS stg/live smoke が必要な場合は correlation id/run id を保存する。
 
 ## 受け入れ条件(DoD)
 
@@ -69,6 +76,7 @@ stg の `/chatbot` は参照範囲設定後に動作するようになったが�
 - 薄い回答、引用不足、期待事実不足、安全 refusal 失敗が個別に失敗理由として出る。
 - デモ用の承認済み文書と expected terms/citations を更新する運用がドキュメント化されている。
 - 既存の安全ルール、ACL、監査要件を弱めていない。
+- stg deterministic profile で 17/17 PASS を確認済み。
 
 ## スコープ外
 
