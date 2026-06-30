@@ -57,7 +57,7 @@ describe("evaluation and feedback facades (e2e)", () => {
               gate_result: "passed",
               version_registry: {
                 dataset_version: "dataset_stub",
-                embedding_model_version: "hashing-bow-v1",
+                embedding_model_version: "hashing-bow-v2",
                 prompt_template_version: "answer-grounded-contract-v1",
               },
             }),

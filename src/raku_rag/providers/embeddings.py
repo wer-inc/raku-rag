@@ -24,7 +24,9 @@ class EmbeddingCapability:
 
 
 class HashingEmbeddingProvider(EmbeddingProvider):
-    model_version = "hashing-bow-v1"
+    # v2 includes the Japanese-aware retrieval tokenizer (CJK bigrams). The version bump is load
+    # bearing: unchanged raw documents must be re-embedded on deploy instead of diff-sync skipping.
+    model_version = "hashing-bow-v2"
 
     def __init__(self, dim: int = 256) -> None:
         self.dim = dim

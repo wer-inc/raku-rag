@@ -601,14 +601,14 @@ class PostgresVectorStore(VectorStore):
     ) -> list[ScoredChunk]:
         """Lexical keyword leg for deployed hybrid retrieval.
 
-        The SQL predicate narrows to tenant/RLS-live chunks containing at least one query content
-        term. The shared Python scorer then applies coverage/density/recency scoring so Tier A and
-        Postgres stay behaviorally aligned.
+        The shared Python scorer owns matching semantics so Tier A and Postgres stay behaviorally
+        aligned, including Japanese-aware tokenization. SQL only applies tenant/RLS/live narrowing
+        here; a simple tsvector predicate misses CJK bigram matches and can silently remove the exact
+        manual before the shared scorer sees it.
         """
         terms = lexical_query_terms(query)
         if not terms or top_k <= 0:
             return []
-        tsquery = " | ".join(f"{term}:*" for term in terms)
         _use_tenant(self._conn, tenant_id)
         with self._conn.cursor() as cur:
             cur.execute(
@@ -618,9 +618,8 @@ class PostgresVectorStore(VectorStore):
                 "FROM chunks c JOIN documents d "
                 "ON d.document_id = c.document_id AND d.tenant_id = c.tenant_id "
                 "WHERE c.tenant_id = %s AND c.tombstone = false AND d.tombstone = false "
-                "AND to_tsvector('simple', c.text) @@ to_tsquery('simple', %s) "
                 "ORDER BY c.position, c.chunk_id",
-                (tenant_id, tsquery),
+                (tenant_id,),
             )
             rows = cur.fetchall()
         candidates: list[ScoredChunk] = []

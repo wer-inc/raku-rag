@@ -89,6 +89,40 @@ def _field_lookup(query: str) -> bool:
     )
 
 
+def _complete_answer_query(query: str) -> bool:
+    return any(
+        marker in (query or "")
+        for marker in (
+            "手順",
+            "順番",
+            "抜け漏れ",
+            "原因",
+            "対策",
+            "恒久",
+            "整理",
+            "注意点",
+            "必要",
+            "保護具",
+            "保持時間",
+            "速度",
+            "管理値",
+            "合否判定",
+            "しきい値",
+        )
+    )
+
+
+def _sentence_score(query: str, query_terms: set[str], sentence: str) -> int:
+    score = len(query_terms & _terms(sentence))
+    if "原因" in query and "【原因" in sentence:
+        score += 3
+    if any(marker in query for marker in ("対策", "恒久")) and "【対策" in sentence:
+        score += 3
+    if "手順" in query and re.search(r"(?:^|[。．\s])\d+\)", sentence):
+        score += 2
+    return score
+
+
 class ExtractiveLLMProvider(LLMProvider):
     model = "extractive-mvp"
 
@@ -122,19 +156,54 @@ class ExtractiveLLMProvider(LLMProvider):
                 (len(anchors & _terms(chunk.text)) for chunk in context), default=0
             )
         best: list[tuple[int, int, int, str]] = []
+        by_chunk: list[list[tuple[int, int, str]]] = []
         for chunk_index, chunk in enumerate(context):
             if anchor_threshold and len(anchors & _terms(chunk.text)) < anchor_threshold:
+                by_chunk.append([])
                 continue
+            chunk_items: list[tuple[int, int, str]] = []
             for sentence_index, sent in enumerate(_SENT.findall(chunk.text)):
                 s = sent.strip()
                 if not s:
                     continue
-                overlap = len(q & _terms(s))
-                if overlap:
-                    best.append((overlap, chunk_index, sentence_index, s))
+                score = _sentence_score(query, q, s)
+                if score:
+                    best.append((score, chunk_index, sentence_index, s))
+                    chunk_items.append((score, sentence_index, s))
+            by_chunk.append(chunk_items)
         if not best:
             # No supporting sentence in authorized context → empty (gate will catch it).
             return ""
+
+        if _complete_answer_query(query):
+            chunk_scores = [
+                (max((score for score, _idx, _s in items), default=0), idx)
+                for idx, items in enumerate(by_chunk)
+            ]
+            best_chunk_score = max((score for score, _idx in chunk_scores), default=0)
+            best_chunk_index = next(
+                idx for score, idx in sorted(chunk_scores, key=lambda item: (-item[0], item[1]))
+                if score == best_chunk_score
+            )
+            best_document_id = context[best_chunk_index].document_id
+            target_chunks = {
+                idx
+                for score, idx in chunk_scores
+                if score > 0 and context[idx].document_id == best_document_id
+            }
+            selected_complete: list[tuple[int, int, str]] = []
+            for chunk_index, chunk in enumerate(context):
+                if chunk_index not in target_chunks:
+                    continue
+                for sentence_index, sent in enumerate(_SENT.findall(chunk.text)):
+                    s = sent.strip()
+                    if s:
+                        selected_complete.append((chunk_index, sentence_index, s))
+                if len(selected_complete) >= 8:
+                    break
+            if selected_complete:
+                return " ".join(s for _, _, s in selected_complete[:8])
+
         best_overlap = max(overlap for overlap, _, _, _ in best)
         min_overlap = max(1, best_overlap // 3)
         selected = sorted(

@@ -49,7 +49,7 @@ class TestEvalVersionRegistry(unittest.TestCase):
 
         self.assertEqual(run.version_registry["dataset_version"], eval_set.dataset_version)
         self.assertEqual(run.version_registry["embedding_provider"], "local")
-        self.assertEqual(run.version_registry["embedding_model_version"], "hashing-bow-v1")
+        self.assertEqual(run.version_registry["embedding_model_version"], "hashing-bow-v2")
         self.assertEqual(run.version_registry["embedding_dimension"], 256)
         self.assertEqual(run.version_registry["llm_model_version"], "extractive-mvp")
         self.assertEqual(

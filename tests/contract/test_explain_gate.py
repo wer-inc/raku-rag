@@ -59,7 +59,7 @@ class ExplainGateContractTest(unittest.TestCase):
     def test_core_lexical_recency_leg_is_deployed(self) -> None:
         self.assertIn("lexical_matches", POSTGRES)
         self.assertIn("lexical_match_score", POSTGRES)
-        self.assertIn("to_tsvector('simple', c.text) @@ to_tsquery('simple'", POSTGRES)
+        self.assertIn("including Japanese-aware tokenization", POSTGRES)
         self.assertIn("LEXICAL_RECENCY_BOOST_MAX", HYBRID)
         self.assertIn("effective_date", HYBRID)
 

@@ -24,6 +24,7 @@ class TestEmbeddingConfiguration(unittest.TestCase):
         )
 
         self.assertIsInstance(provider, HashingEmbeddingProvider)
+        self.assertEqual(provider.model_version, "hashing-bow-v2")
         self.assertEqual(embedding_dimension(provider), 64)
         self.assertEqual(len(provider.embed(["pump alarm"])[0]), 64)
 

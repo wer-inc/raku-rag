@@ -25,7 +25,7 @@
   "version_registry": {
     "dataset_version": "dataset_31a7e3de3c7f6036",
     "embedding_provider": "local",
-    "embedding_model_version": "hashing-bow-v1",
+    "embedding_model_version": "hashing-bow-v2",
     "embedding_dimension": 256,
     "llm_model_version": "extractive-mvp",
     "vlm_model_version": "extractive-vlm-v1",

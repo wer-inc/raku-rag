@@ -162,7 +162,7 @@ class TestRunnerPersistenceWiring(unittest.TestCase):
         self.assertEqual(stored.metrics["recall_at_k"], run.metrics["recall_at_k"])
         self.assertTrue(stored.probes_executed)
         self.assertEqual(stored.version_registry["dataset_version"], self.eval_set.dataset_version)
-        self.assertEqual(stored.version_registry["embedding_model_version"], "hashing-bow-v1")
+        self.assertEqual(stored.version_registry["embedding_model_version"], "hashing-bow-v2")
         self.assertEqual(stored.version_registry["llm_model_version"], "extractive-mvp")
 
     def test_runner_without_repository_is_unchanged(self) -> None:

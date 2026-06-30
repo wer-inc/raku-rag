@@ -68,7 +68,7 @@ class TestEvalPersistenceEndpoint(unittest.TestCase):
         self.assertIn("metrics", got)
         self.assertIn("probes_executed", got)  # provenance persisted, not just gate_result
         self.assertIn("gate_result", got)
-        self.assertEqual(got["version_registry"]["embedding_model_version"], "hashing-bow-v1")
+        self.assertEqual(got["version_registry"]["embedding_model_version"], "hashing-bow-v2")
         self.assertTrue(got["version_registry"]["dataset_version"].startswith("dataset_"))
 
     def test_list_runs_is_trendable_and_tenant_isolated(self) -> None:

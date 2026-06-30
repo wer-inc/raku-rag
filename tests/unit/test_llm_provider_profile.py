@@ -133,6 +133,29 @@ class LlmProviderProfileTest(unittest.TestCase):
         self.assertIn("temperature sensor overheat", out)
         self.assertNotIn("hydraulic pressure drop", out)
 
+    def test_complete_procedure_query_keeps_steps_from_best_document_only(self) -> None:
+        out = ExtractiveLLMProvider().generate(
+            "受電盤 MCC-3 420V の点検前に必要な LOTO と検電の手順を、抜け漏れなく並べて",
+            [
+                _chunk(
+                    "受電盤MCC-3(420V)の点検時の感電防止LOTO手順。"
+                    "1)上位ブレーカQF-12を開放しロックを施錠、本人キー保持。"
+                    "2)タグアウト札を取付け作業者名・日時記入。"
+                    "3)検電器(低圧用)で三相全相の無電圧を確認。"
+                    "4)残留電荷を放電し接地金具で接地。",
+                    document_id="safe-0331-loto",
+                ),
+                _chunk(
+                    "一般点検メモ。外観点検を行い、異音がないことを確認する。",
+                    document_id="generic",
+                ),
+            ],
+        )
+
+        for expected in ("QF-12", "タグアウト", "三相", "放電", "接地"):
+            self.assertIn(expected, out)
+        self.assertNotIn("一般点検メモ", out)
+
 
 if __name__ == "__main__":
     unittest.main()
