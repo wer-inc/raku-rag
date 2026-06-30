@@ -10,6 +10,7 @@ import base64
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -23,11 +24,32 @@ INTERNAL_AUTH = os.environ.get("RAKU_INTERNAL_AUTH_SECRET", "")
 TENANT = os.environ.get("DEMO_TENANT", "demo")
 COLLECTION = os.environ.get("DEMO_COLLECTION", "manuals")
 
+# The demo identities the dev-token issuer (apps/web/app/api/dev-token/route.ts) recognizes. ACL is
+# deny-by-default, so WITHOUT a grant every ingested doc is invisible and search/answer return empty.
+# Grant each demo user READ on the demo collection so any demo login can retrieve. Cognito sales users
+# authenticate as real email users with the ``sales_demo`` group/role, not as one of the local dev-token
+# users below. Granting the role keeps ACL deny-by-default intact while letting sales-demo accounts
+# retrieve the prepared corpus.
+DEMO_USERS = ["alice", "misaki", "bob", "carol", "dave"]
+DEMO_ROLES = ["sales_demo"]
 
-def _post(path: str, body: dict) -> tuple[str, object]:
-    headers = {"content-type": "application/json"}
+
+def _internal_headers(*, content_type: bool = False, principal: bool = False) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    if content_type:
+        headers["content-type"] = "application/json"
+    if principal:
+        headers["x-raku-tenant-id"] = TENANT
+        headers["x-raku-user-id"] = "alice"
+        headers["x-raku-groups"] = json.dumps([])
+        headers["x-raku-roles"] = json.dumps(DEMO_ROLES)
     if INTERNAL_AUTH:
         headers["X-Internal-Auth"] = INTERNAL_AUTH
+    return headers
+
+
+def _post(path: str, body: dict) -> tuple[str, object]:
+    headers = _internal_headers(content_type=True)
     req = urllib.request.Request(
         AS_URL + path, data=json.dumps(body).encode("utf-8"), headers=headers
     )
@@ -47,13 +69,7 @@ def delete_existing_doc(document_id: str) -> tuple[str, object]:
     leave a live registry row with stale embedding metadata, causing a same-checksum re-seed to skip the
     re-embedding that demo deployments rely on.
     """
-    headers = {
-        "content-type": "application/json",
-        "x-raku-tenant-id": TENANT,
-        "x-raku-user-id": "alice",
-    }
-    if INTERNAL_AUTH:
-        headers["X-Internal-Auth"] = INTERNAL_AUTH
+    headers = _internal_headers(content_type=True, principal=True)
     req = urllib.request.Request(
         AS_URL + f"/internal/documents/{document_id}",
         data=None,
@@ -63,6 +79,34 @@ def delete_existing_doc(document_id: str) -> tuple[str, object]:
     try:
         res = json.load(urllib.request.urlopen(req, timeout=30))
         return str(res.get("status") or "?"), res.get("purged_chunks")
+    except urllib.error.HTTPError as exc:
+        return "ERROR", exc.read().decode("utf-8", "replace")[:160]
+    except Exception as exc:  # noqa: BLE001
+        return "ERROR", str(exc)[:160]
+
+
+def list_existing_collection_docs() -> tuple[str, object]:
+    """List every live document currently visible in the demo collection.
+
+    The seed first grants collection READ to the demo role, so this ACL-filtered inventory becomes a
+    tenant/collection-scoped cleanup list without adding a raw database delete path.
+    """
+    query = urllib.parse.urlencode({"collection_id": COLLECTION})
+    req = urllib.request.Request(
+        AS_URL + f"/internal/manufacturing/documents?{query}",
+        headers=_internal_headers(principal=True),
+    )
+    try:
+        res = json.load(urllib.request.urlopen(req, timeout=30))
+        docs = res.get("documents") or []
+        document_ids = sorted(
+            {
+                str(doc.get("document_id") or "")
+                for doc in docs
+                if isinstance(doc, dict) and str(doc.get("document_id") or "")
+            }
+        )
+        return "listed", document_ids
     except urllib.error.HTTPError as exc:
         return "ERROR", exc.read().decode("utf-8", "replace")[:160]
     except Exception as exc:  # noqa: BLE001
@@ -160,20 +204,11 @@ def ingest(doc: dict) -> tuple[str, object]:
         return "ERROR", str(exc)[:160]
 
 
-# The demo identities the dev-token issuer (apps/web/app/api/dev-token/route.ts) recognizes. ACL is
-# deny-by-default, so WITHOUT a grant every ingested doc is invisible and search/answer return empty —
-# this is what made the seeded KB look empty even after ingestion succeeded. Grant each demo user READ
-# on the demo collection so any demo login can retrieve. (Persisted in acl_grants; idempotent.)
-DEMO_USERS = ["alice", "misaki", "bob", "carol", "dave"]
-DEMO_ROLES = ["sales_demo"]
-
-
 def grant_demo_acl() -> tuple[str, object]:
     """PUT /internal/admin/acl — collection-scoped READ grant for demo users/roles.
 
-    Cognito sales users authenticate as real email users with the ``sales_demo`` group/role, not as
-    one of the local dev-token users above. Granting the role keeps ACL deny-by-default intact while
-    letting the sales account retrieve the prepared demo corpus.
+    The grant is persisted in acl_grants and is idempotent. The seed applies it before cleanup so the
+    ACL-filtered document inventory can see and purge stale same-collection demo documents.
     """
     grants = [
         {
@@ -193,9 +228,7 @@ def grant_demo_acl() -> tuple[str, object]:
         }
         for role in DEMO_ROLES
     )
-    headers = {"content-type": "application/json", "x-raku-tenant-id": TENANT, "x-raku-user-id": "alice"}
-    if INTERNAL_AUTH:
-        headers["X-Internal-Auth"] = INTERNAL_AUTH
+    headers = _internal_headers(content_type=True, principal=True)
     req = urllib.request.Request(
         AS_URL + "/internal/admin/acl",
         data=json.dumps({"grants": grants, "reason": "demo seed: collection read for demo users"}).encode(
@@ -215,20 +248,34 @@ def grant_demo_acl() -> tuple[str, object]:
 
 def main() -> None:
     ok = 0
-    print(f"[demo-seed] tombstoning existing curated documents in {TENANT}/{COLLECTION}")
-    for doc in DOCS:
-        status, purged = delete_existing_doc(doc["document_id"])
-        print(f"  {status:10} {doc['document_id']:22} purged_chunks={purged}")
+    principals = ", ".join(DEMO_USERS + [f"role:{role}" for role in DEMO_ROLES])
+    acl_status, acl_info = grant_demo_acl()
+    print(f"[demo-seed] acl grant ({principals} -> read {COLLECTION}): {acl_status} {acl_info}")
+
+    curated_ids = {str(doc["document_id"]) for doc in DOCS}
+    list_status, existing = list_existing_collection_docs()
+    if list_status == "listed":
+        existing_ids = set(existing if isinstance(existing, list) else [])
+        purge_ids = sorted(existing_ids | curated_ids)
+        print(
+            f"[demo-seed] tombstoning {len(purge_ids)} live/curated documents "
+            f"in {TENANT}/{COLLECTION}"
+        )
+    else:
+        purge_ids = sorted(curated_ids)
+        print(
+            f"[demo-seed] collection inventory failed ({existing}); "
+            f"falling back to {len(purge_ids)} curated documents"
+        )
+    for document_id in purge_ids:
+        status, purged = delete_existing_doc(document_id)
+        print(f"  {status:10} {document_id:22} purged_chunks={purged}")
     print(f"[demo-seed] ingesting {len(DOCS)} documents into {TENANT}/{COLLECTION} via {AS_URL}")
     for doc in DOCS:
         status, chunks = ingest(doc)
         if status == "succeeded":
             ok += 1
         print(f"  {status:10} {doc['document_id']:22} {doc['approval_status']:14} chunks={chunks}")
-    # Without this grant, deny-by-default ACL hides every doc from search/answer (empty KB symptom).
-    acl_status, acl_info = grant_demo_acl()
-    principals = ", ".join(DEMO_USERS + [f"role:{role}" for role in DEMO_ROLES])
-    print(f"[demo-seed] acl grant ({principals} -> read {COLLECTION}): {acl_status} {acl_info}")
     print(f"[demo-seed] done: {ok}/{len(DOCS)} succeeded")
 
 
