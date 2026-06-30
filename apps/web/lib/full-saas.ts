@@ -29,10 +29,16 @@ export const WORKSPACE_IDENTITY = {
   userInitial: "田",
 } as const;
 
+// Temporarily keep the document approval workflow out of the main E2E path.
+// Server-side safety gates and AI draft review rules still apply; this only changes product
+// navigation/default ingest policy. Set NEXT_PUBLIC_RAKU_APPROVAL_WORKFLOW=on to restore the queue.
+export const APPROVAL_WORKFLOW_ENABLED =
+  (process.env.NEXT_PUBLIC_RAKU_APPROVAL_WORKFLOW ?? "off").trim().toLowerCase() === "on";
+
 // Count shown on the AIドラフトレビュー nav badge (pending review drafts).
 // Matches the workspace default; replace with a live count once
 // `GET /v1/manufacturing/drafts` exists (see specs/full-saas/gaps.md).
-export const REVIEW_BADGE_COUNT = 2;
+export const REVIEW_BADGE_COUNT = APPROVAL_WORKFLOW_ENABLED ? 2 : 0;
 
 export type NavIconName =
   | "home" | "answers" | "chatbot" | "history" | "sources" | "documents" | "search"
@@ -55,6 +61,15 @@ export interface NavGroup {
 // Single top-level item rendered above the grouped nav (standalone parity).
 export const HOME_NAV: NavItem = { href: "/home", label: "ホーム", icon: "home" };
 
+const REVIEW_NAV_GROUP: NavGroup = {
+  label: "レビュー",
+  items: [
+    { href: "/reviews", label: "AIドラフトレビュー", icon: "reviewqueue", badge: "review" },
+    { href: "/reviews/documents", label: "根拠文書レビュー", icon: "documents" },
+    { href: "/reviews/settings", label: "同期・承認ポリシー", icon: "approvalsettings" },
+  ],
+};
+
 // Grouped navigation — order, labels, icons, and grouping mirror the
 // standalone sidebar. Each href targets an existing workspace route.
 export const NAV_GROUPS: NavGroup[] = [
@@ -76,14 +91,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/ingestion-runs", label: "取込ラン", icon: "ingestion" },
     ],
   },
-  {
-    label: "レビュー",
-    items: [
-      { href: "/reviews", label: "AIドラフトレビュー", icon: "reviewqueue", badge: "review" },
-      { href: "/reviews/documents", label: "根拠文書レビュー", icon: "documents" },
-      { href: "/reviews/settings", label: "同期・承認ポリシー", icon: "approvalsettings" },
-    ],
-  },
+  ...(APPROVAL_WORKFLOW_ENABLED ? [REVIEW_NAV_GROUP] : []),
   {
     label: "運用・監査",
     items: [

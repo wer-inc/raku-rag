@@ -79,7 +79,11 @@ import {
   mintTokenFor,
   saveAnswerCollection,
 } from "../../lib/session";
-import { missingApis, type ManifestScreen } from "../../lib/full-saas";
+import {
+  APPROVAL_WORKFLOW_ENABLED,
+  missingApis,
+  type ManifestScreen,
+} from "../../lib/full-saas";
 import CitationViewer, { type CitationViewTarget } from "./CitationViewer";
 import { useDialog } from "../../lib/use-dialog";
 import {
@@ -342,7 +346,7 @@ function citeApproval(status?: string | null): { label: string; cls: string } {
 const ANSWER_STARTERS = [
   "プレス機の異音が出たときの初動手順を教えて",
   "旧版の手順書を参照してよい条件はありますか",
-  "出荷前検査で不一致が出た場合の承認フローを確認したい",
+  "出荷前検査で不一致が出た場合の初動を確認したい",
 ];
 
 const CHAT_STARTERS = [
@@ -517,9 +521,16 @@ function AnswerPanel({
       {(blocked || insufficient) && (
         <div className="answer-next-actions" aria-label="次の操作">
           <strong>{blocked ? "確定回答を保留しました" : "承認済み根拠が不足しています"}</strong>
-          <span>必要な文書を承認するか、参照できる根拠を追加してから再質問してください。</span>
+          <span>
+            {APPROVAL_WORKFLOW_ENABLED
+              ? "必要な文書を承認するか、参照できる根拠を追加してから再質問してください。"
+              : "参照できる根拠を追加または再同期してから再質問してください。"}
+          </span>
           <div>
-            <Link className="citation-open" href="/reviews/documents">根拠文書レビュー</Link>
+            {APPROVAL_WORKFLOW_ENABLED && (
+              <Link className="citation-open" href="/reviews/documents">根拠文書レビュー</Link>
+            )}
+            <Link className="citation-open" href="/sources/list">ソースを確認</Link>
             <Link className="citation-open" href="/documents">ドキュメントを確認</Link>
           </div>
         </div>
@@ -1462,14 +1473,16 @@ function MockBanner({ screen }: { screen: ManifestScreen }) {
 }
 
 const SOURCE_LIST_PAGE_SIZE = 10;
-const SOURCE_LIST_FILTERS = [
+type SourceListFilter = "all" | "needs_action" | "pending_review" | "failed" | "unsynced";
+const SOURCE_LIST_FILTERS: Array<{ value: SourceListFilter; label: string }> = [
   { value: "all", label: "すべて" },
   { value: "needs_action", label: "要対応" },
-  { value: "pending_review", label: "承認待ちあり" },
+  ...(APPROVAL_WORKFLOW_ENABLED
+    ? [{ value: "pending_review" as const, label: "承認待ちあり" }]
+    : []),
   { value: "failed", label: "同期失敗" },
   { value: "unsynced", label: "未同期" },
-] as const;
-type SourceListFilter = (typeof SOURCE_LIST_FILTERS)[number]["value"];
+];
 
 type SourceListRow = {
   source: AdminDataSource;
@@ -1557,7 +1570,7 @@ function sourceOperationalStatus(row: SourceListRow): { label: string; key: stri
   if (syncStatus === "partially_succeeded") {
     return { label: "確認が必要", key: "wait", reason: "一部の文書を取り込めませんでした。" };
   }
-  if ((row.pendingCount ?? 0) > 0) {
+  if (APPROVAL_WORKFLOW_ENABLED && (row.pendingCount ?? 0) > 0) {
     return { label: "確認が必要", key: "wait", reason: "承認待ちの文書があります。" };
   }
   if (row.origin === "registered" && !sourceLastSyncedAt(row) && !sourceDocumentCount(row)) {
@@ -1571,7 +1584,8 @@ function sourceOperationalStatus(row: SourceListRow): { label: string; key: stri
 
 function sourceApprovalSummary(row: SourceListRow): string {
   const total = sourceDocumentCount(row);
-  if (total === null) return "承認状況未取得";
+  if (total === null) return APPROVAL_WORKFLOW_ENABLED ? "承認状況未取得" : "文書数未取得";
+  if (!APPROVAL_WORKFLOW_ENABLED) return `同期済み ${total} 件`;
   const pending = row.pendingCount ?? 0;
   if (pending > 0) return `${pending} 件の承認待ち`;
   return `承認済み ${row.approvedCount ?? 0} / ${total}`;
@@ -1625,7 +1639,9 @@ function dataSourceKind(source: AdminDataSource): string {
 }
 
 function isExternalConnectionSource(source: AdminDataSource): boolean {
-  return !isFileUploadSource(source.source_id, dataSourceKind(source));
+  const kind = dataSourceKind(source).toLowerCase().replace(/-/g, "_");
+  if (kind === "text") return false;
+  return !isFileUploadSource(source.source_id, kind);
 }
 
 function valueLabel(value: unknown): string {
@@ -1758,9 +1774,10 @@ function SourceListBody() {
     setSyncingSourceId(row.source.source_id);
     try {
       const token = await getSessionToken();
+      const syncSource = (await ensureTrustedDatasourceForE2E(row.source.source_id, token, row.source)) ?? row.source;
       const sync = await adminSourceSync(
         row.source.source_id,
-        { collection_id: row.source.collection_id || DEMO_COLLECTION, reason: "manual_refresh" },
+        { collection_id: syncSource.collection_id || DEMO_COLLECTION, reason: "manual_refresh" },
         token,
       );
       recordConnectorRun({
@@ -1788,7 +1805,7 @@ function SourceListBody() {
       <header className="standalone-list-head">
         <div className="standalone-list-head-title">
           <h3>外部接続</h3>
-          <p>接続設定を保存した外部ソースの同期・承認状態を確認できます。</p>
+          <p>接続設定を保存した外部ソースの同期状態を確認できます。</p>
           {polling && <span className="sync-poll-badge">同期中 — 自動更新</span>}
         </div>
         <div className="standalone-list-tools">
@@ -1825,7 +1842,7 @@ function SourceListBody() {
           <div className="source-list-summary" aria-live="polite">
             <span>{filteredRows.length} 件表示</span>
             <span>要対応 {needsActionCount} 件</span>
-            <span>承認待ち {pendingReviewCount} 件</span>
+            {APPROVAL_WORKFLOW_ENABLED && <span>承認待ち {pendingReviewCount} 件</span>}
           </div>
         </section>
       )}
@@ -1891,7 +1908,7 @@ function SourceListBody() {
                       <span className={`standalone-status ${status.key}`}>{status.label}</span>
                       <span>{status.reason}</span>
                     </div>
-                    <div className="source-list-metrics" aria-label={`${name} の文書と承認状態`}>
+                    <div className="source-list-metrics" aria-label={`${name} の文書と同期状態`}>
                       <span>
                         <strong>{documents ?? "—"}</strong> 文書
                       </span>
@@ -1899,11 +1916,14 @@ function SourceListBody() {
                       <span>最終同期: {sourceFreshness(row)}</span>
                     </div>
                     <div className="source-list-actions">
-                      {(row.pendingCount ?? 0) > 0 && (
+                      {APPROVAL_WORKFLOW_ENABLED && (row.pendingCount ?? 0) > 0 && (
                         <Link href="/reviews/documents" className="button-link secondary">
                           レビューへ
                         </Link>
                       )}
+                      <Link href={href} className="button-link secondary">
+                        編集
+                      </Link>
                       {row.origin === "registered" && (
                         <button
                           type="button"
@@ -2136,8 +2156,12 @@ function SourcePreviewPanel({
     try {
       const defaults: Record<string, unknown> = {};
       if (documentKind) defaults.document_kind = documentKind;
-      if (approvalStatus) defaults.approval_status = approvalStatus;
-      if (effectiveDate) defaults.effective_date = effectiveDate;
+      if (APPROVAL_WORKFLOW_ENABLED) {
+        if (approvalStatus) defaults.approval_status = approvalStatus;
+        if (effectiveDate) defaults.effective_date = effectiveDate;
+      } else {
+        Object.assign(defaults, datasourceMappingApprovalDefaults("trusted", todayIso()));
+      }
 
       const fieldMapping = useEditedMapping
         ? Object.fromEntries(
@@ -2186,8 +2210,12 @@ function SourcePreviewPanel({
     try {
       const defaults: Record<string, unknown> = {};
       if (documentKind) defaults.document_kind = documentKind;
-      if (approvalStatus) defaults.approval_status = approvalStatus;
-      if (effectiveDate) defaults.effective_date = effectiveDate;
+      if (APPROVAL_WORKFLOW_ENABLED) {
+        if (approvalStatus) defaults.approval_status = approvalStatus;
+        if (effectiveDate) defaults.effective_date = effectiveDate;
+      } else {
+        Object.assign(defaults, datasourceMappingApprovalDefaults("trusted", todayIso()));
+      }
       const fieldMapping = Object.fromEntries(
         Object.entries(mappingEdits).filter(([, target]) => target.trim()),
       );
@@ -2207,19 +2235,20 @@ function SourcePreviewPanel({
         defaults,
         required_fields: required,
       };
+      const configForSave = applyApprovalWorkflowModeToConfig(nextConfig);
       await apiPutJson(
         `/admin/datasources/${encodeURIComponent(sourceId)}`,
         {
           collection_id: current.collection_id,
           type: current.type,
-          config: nextConfig,
+          config: configForSave,
           sync_schedule: current.sync_schedule ?? null,
           status: current.status,
           reason: "mapping_profile_saved_from_preview",
         },
         token,
       );
-      setDatasource({ ...current, config: nextConfig });
+      setDatasource({ ...current, config: configForSave });
       setMessage("マッピング設定を保存しました。次回同期からこの設定を使います。");
     } catch (err) {
       setMessage(formatLoadError(err));
@@ -2274,20 +2303,24 @@ function SourcePreviewPanel({
             ))}
           </select>
         </label>
-        <label>
-          <span>承認状態</span>
-          <select value={approvalStatus} onChange={(e) => setApprovalStatus(e.target.value)}>
-            {PREVIEW_APPROVAL_OPTIONS.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>発効日</span>
-          <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
-        </label>
+        {APPROVAL_WORKFLOW_ENABLED && (
+          <>
+            <label>
+              <span>承認状態</span>
+              <select value={approvalStatus} onChange={(e) => setApprovalStatus(e.target.value)}>
+                {PREVIEW_APPROVAL_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>発効日</span>
+              <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
+            </label>
+          </>
+        )}
         <label>
           <span>必須項目</span>
           <input value={requiredFields} onChange={(e) => setRequiredFields(e.target.value)} />
@@ -2583,15 +2616,27 @@ function HomeDashboardBody() {
     <>
       <Section title="今日のタスク" note="ホームでは今日の作業をひと目で確認できます。">
         <div className="home-task-grid">
-          <Link href="/reviews" className="home-task-card">
-            <div className="home-task-head">
-              <span className="home-task-label">AIドラフト</span>
-              <span className="home-task-dot" />
-            </div>
-            <strong>{dashboard.unanswered_question_count}</strong>
-            <span>未回答の質問</span>
-            <span className="home-task-cta">レビューへ</span>
-          </Link>
+          {APPROVAL_WORKFLOW_ENABLED ? (
+            <Link href="/reviews" className="home-task-card">
+              <div className="home-task-head">
+                <span className="home-task-label">AIドラフト</span>
+                <span className="home-task-dot" />
+              </div>
+              <strong>{dashboard.unanswered_question_count}</strong>
+              <span>未回答の質問</span>
+              <span className="home-task-cta">レビューへ</span>
+            </Link>
+          ) : (
+            <Link href="/sources/list" className="home-task-card">
+              <div className="home-task-head">
+                <span className="home-task-label">ソース</span>
+                <span className="home-task-dot home-task-dot-ok" />
+              </div>
+              <strong>同期</strong>
+              <span>外部接続とファイルを整える</span>
+              <span className="home-task-cta">ソースを見る</span>
+            </Link>
+          )}
           <Link href="/operations/safety" className="home-task-card">
             <div className="home-task-head">
               <span className="home-task-label">安全ブロック</span>
@@ -2632,10 +2677,17 @@ function HomeDashboardBody() {
               <strong>ソース一覧</strong>
               <span>ソースと同期状態を確認する</span>
             </Link>
-            <Link href="/reviews" className="action-card">
-              <strong>AIドラフトレビュー</strong>
-              <span>AI ドラフトを確認する</span>
-            </Link>
+            {APPROVAL_WORKFLOW_ENABLED ? (
+              <Link href="/reviews" className="action-card">
+                <strong>AIドラフトレビュー</strong>
+                <span>AI ドラフトを確認する</span>
+              </Link>
+            ) : (
+              <Link href="/chatbot" className="action-card">
+                <strong>チャットボット</strong>
+                <span>公開前の動作を確認する</span>
+              </Link>
+            )}
             <Link href="/operations" className="action-card">
               <strong>運用</strong>
               <span>安全性と KPI を見る</span>
@@ -2705,7 +2757,9 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
   async function onSyncRequest(event: FormEvent) {
     event.preventDefault();
     try {
-      await runWithToken((token) => manufacturingRequestSourceSync(sourceId, { reason: "manual_refresh" }, token));
+      const token = await getSessionToken();
+      await ensureTrustedDatasourceForE2E(sourceId, token);
+      await manufacturingRequestSourceSync(sourceId, { reason: "manual_refresh" }, token);
       toast("同期を依頼しました", "success");
       reload();
     } catch (err) {
@@ -2717,6 +2771,8 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
 
   return (
     <>
+      <SourceConnectionEditPanel sourceId={sourceId} onSaved={reload} />
+
       <Section title="ソース操作" note="同期操作は明示的で監査可能です。">
         <form className="src-inline-form" onSubmit={onSyncRequest}>
           <input value={sourceId} readOnly aria-label="ソース ID" />
@@ -2796,7 +2852,38 @@ const DOC_LIFECYCLE_RANK: Record<string, number> = {
   obsolete: 3,
 };
 
+function ApprovalWorkflowPausedBody() {
+  return (
+    <>
+      <p className="src-warning" role="status">
+        文書承認フローは一時停止中です。新しく追加・同期した文書は、ソースを信頼する前提で質問に使える状態として取り込みます。
+      </p>
+      <Section title="次に進む" note="まずはソース追加、同期、質問・チャットの end to end を優先します。">
+        <div className="quick-card-grid">
+          <Link href="/sources/new" className="action-card">
+            <strong>ソースを追加</strong>
+            <span>外部接続を設定する</span>
+          </Link>
+          <Link href="/files" className="action-card">
+            <strong>ファイル</strong>
+            <span>ファイルを直接アップロードする</span>
+          </Link>
+          <Link href="/chatbot" className="action-card">
+            <strong>チャットボット</strong>
+            <span>取り込んだナレッジで応答を確認する</span>
+          </Link>
+        </div>
+      </Section>
+    </>
+  );
+}
+
 function DocumentApprovalQueueBody() {
+  if (!APPROVAL_WORKFLOW_ENABLED) return <ApprovalWorkflowPausedBody />;
+  return <DocumentApprovalQueueEnabledBody />;
+}
+
+function DocumentApprovalQueueEnabledBody() {
   const [docs, setDocs] = useState<IngestedDoc[]>([]);
   const [serverDocs, setServerDocs] = useState<
     Array<{ document_id: string; approval_status: string; collection_id: string; effective_date: string | null }>
@@ -3157,20 +3244,22 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
         </div>
       </Section>
 
-      <Section title="根拠文書レビュー">
-        <div className="form-grid">
-          <input value={docId} onChange={(e) => setDocId(e.target.value)} placeholder="document_id" aria-label="ドキュメントID" />
-          <select value={approvalState} onChange={(e) => setApprovalState(e.target.value)} aria-label="承認状態">
-            <option value="pending_review">pending_review</option>
-            <option value="approved">approved</option>
-            <option value="obsolete">obsolete</option>
-            <option value="draft">draft</option>
-          </select>
-          <button type="button" onClick={() => void onApproveDocument()} disabled={!docId.trim() || saving}>
-            {saving ? "処理中…" : "変更"}
-          </button>
-        </div>
-      </Section>
+      {APPROVAL_WORKFLOW_ENABLED && (
+        <Section title="根拠文書レビュー">
+          <div className="form-grid">
+            <input value={docId} onChange={(e) => setDocId(e.target.value)} placeholder="document_id" aria-label="ドキュメントID" />
+            <select value={approvalState} onChange={(e) => setApprovalState(e.target.value)} aria-label="承認状態">
+              <option value="pending_review">pending_review</option>
+              <option value="approved">approved</option>
+              <option value="obsolete">obsolete</option>
+              <option value="draft">draft</option>
+            </select>
+            <button type="button" onClick={() => void onApproveDocument()} disabled={!docId.trim() || saving}>
+              {saving ? "処理中…" : "変更"}
+            </button>
+          </div>
+        </Section>
+      )}
       {actionError && (
         <p className="src-warning" role="alert">
           {actionError}
@@ -4119,7 +4208,9 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   text: {
     fields: [],
     dataSourceType: "upload",
-    note: "本文を貼り付けて、レビュー待ちのナレッジとして取込します。",
+    note: APPROVAL_WORKFLOW_ENABLED
+      ? "本文を貼り付けて、レビュー待ちのナレッジとして取込します。"
+      : "本文を貼り付けて、すぐ質問に使えるナレッジとして取込します。",
   },
   url: {
     fields: [
@@ -4240,6 +4331,65 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+type IngestApprovalStatus = "approved" | "pending_review" | "draft" | "obsolete";
+type IngestApprovalSource = "imported" | "workflow";
+type DatasourceApprovalPolicy = "review_required" | "trusted";
+
+function defaultIngestApprovalStatus(): IngestApprovalStatus {
+  return APPROVAL_WORKFLOW_ENABLED ? "pending_review" : "approved";
+}
+
+function defaultIngestApprovalSource(): IngestApprovalSource {
+  return APPROVAL_WORKFLOW_ENABLED ? "workflow" : "imported";
+}
+
+function defaultDatasourceApprovalPolicy(): DatasourceApprovalPolicy {
+  return APPROVAL_WORKFLOW_ENABLED ? "review_required" : "trusted";
+}
+
+function defaultApprovalEffectiveDate(): string | null {
+  return defaultIngestApprovalStatus() === "approved" ? todayIso() : null;
+}
+
+function datasourceMappingApprovalDefaults(
+  policy: DatasourceApprovalPolicy,
+  effectiveDate?: string | null,
+): Record<string, unknown> {
+  const approved = policy === "trusted";
+  const defaults: Record<string, unknown> = {
+    approval_status: approved ? "approved" : "pending_review",
+  };
+  if (approved) {
+    defaults.effective_date = effectiveDate || todayIso();
+  }
+  return defaults;
+}
+
+function applyApprovalWorkflowModeToConfig(config: Record<string, unknown>): Record<string, unknown> {
+  if (APPROVAL_WORKFLOW_ENABLED) return config;
+  const next: Record<string, unknown> = {
+    ...config,
+    approval_policy: "trusted",
+    approval_effective_date: todayIso(),
+  };
+  if (next.mapping_profile && typeof next.mapping_profile === "object" && !Array.isArray(next.mapping_profile)) {
+    const profile = next.mapping_profile as Record<string, unknown>;
+    const defaults =
+      profile.defaults && typeof profile.defaults === "object" && !Array.isArray(profile.defaults)
+        ? (profile.defaults as Record<string, unknown>)
+        : {};
+    next.mapping_profile = {
+      ...profile,
+      defaults: {
+        ...defaults,
+        approval_status: "approved",
+        effective_date: todayIso(),
+      },
+    };
+  }
+  return next;
+}
+
 function defaultSourceIdFor(sourceType: AddSourceTypeId): string {
   if (sourceType === "text") return `text-${Date.now().toString(36)}`;
   return `${sourceType}-${Date.now().toString(36)}`;
@@ -4248,6 +4398,294 @@ function defaultSourceIdFor(sourceType: AddSourceTypeId): string {
 function sourceTypeForConfig(sourceType: AddSourceTypeId): string {
   if (sourceType === "text") return "text";
   return sourceType === "googledrive" ? "google_drive" : sourceType;
+}
+
+function addSourceTypeForDataSource(source: AdminDataSource): AddSourceTypeId | null {
+  const config = (source.config ?? {}) as Record<string, unknown>;
+  const rawKind = String(config.source_type || source.type || "").toLowerCase().replace(/-/g, "_");
+  switch (rawKind) {
+    case "box":
+    case "confluence":
+    case "notion":
+    case "slack":
+    case "kintone":
+    case "sharepoint":
+    case "onedrive":
+    case "garoon":
+    case "s3":
+    case "url":
+      return rawKind;
+    case "google_drive":
+    case "googledrive":
+      return "googledrive";
+    case "database":
+    case "db":
+    case "mysql":
+    case "postgres":
+    case "postgresql":
+      return "db";
+    case "object_storage":
+      if (config.target_url) return "url";
+      if (config.subdomain || config.app_id) return "kintone";
+      if (config.document_library) return "sharepoint";
+      if (config.target_folder) return "onedrive";
+      if (config.target_space || config.login_name) return "garoon";
+      return "s3";
+    default:
+      return null;
+  }
+}
+
+function editableConfigValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function editableConnectionValues(source: AdminDataSource, selectedConfig: AddSourceConfig): Record<string, string> {
+  const config = (source.config ?? {}) as Record<string, unknown>;
+  return Object.fromEntries(
+    selectedConfig.fields.map((field) => {
+      if (field.type === "password") return [field.id, ""];
+      const value = field.id === "sync_schedule" ? source.sync_schedule ?? config[field.id] : config[field.id];
+      return [field.id, editableConfigValue(value)];
+    }),
+  );
+}
+
+function hasStoredCredential(source: AdminDataSource): boolean {
+  const config = (source.config ?? {}) as Record<string, unknown>;
+  return Boolean(config.credential_status || config.credential_ref);
+}
+
+async function loadDataSourceDetail(sourceId: string): Promise<AdminDataSource> {
+  const token = await getSessionToken();
+  return apiGetJson<AdminDataSource>(`/admin/datasources/${encodeURIComponent(sourceId)}`, token);
+}
+
+async function ensureTrustedDatasourceForE2E(
+  sourceId: string,
+  token: string,
+  source?: AdminDataSource,
+): Promise<AdminDataSource | null> {
+  if (APPROVAL_WORKFLOW_ENABLED) return source ?? null;
+  const current =
+    source ??
+    (await apiGetJson<AdminDataSource>(
+      `/admin/datasources/${encodeURIComponent(sourceId)}`,
+      token,
+    ));
+  const currentConfig = (current.config ?? {}) as Record<string, unknown>;
+  if (currentConfig.approval_policy === "trusted" && currentConfig.approval_effective_date) {
+    return current;
+  }
+  const nextConfig = applyApprovalWorkflowModeToConfig(currentConfig);
+  await apiPutJson(
+    `/admin/datasources/${encodeURIComponent(current.source_id)}`,
+    {
+      collection_id: current.collection_id || DEMO_COLLECTION,
+      type: current.type,
+      config: nextConfig,
+      sync_schedule: current.sync_schedule ?? null,
+      status: current.status,
+      reason: "approval_workflow_disabled_trusted_sync",
+    },
+    token,
+  );
+  return { ...current, config: nextConfig };
+}
+
+function SourceConnectionEditPanel({ sourceId, onSaved }: { sourceId: string; onSaved?: () => void }) {
+  const [state, reload] = useLoad(() => loadDataSourceDetail(sourceId), [sourceId]);
+  const [sourceName, setSourceName] = useState("");
+  const [configValues, setConfigValues] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const toast = useToast();
+
+  const datasource = state.state === "ready" ? state.data : null;
+  const selectedSource = datasource ? addSourceTypeForDataSource(datasource) : null;
+  const selectedConfig = selectedSource ? ADD_SOURCE_CONFIGS[selectedSource] : null;
+  const selectedSourceDef = selectedSource
+    ? ADD_SOURCE_TYPES.find((source) => source.id === selectedSource) ?? null
+    : null;
+  const credentialConfigured = datasource ? hasStoredCredential(datasource) : false;
+
+  useEffect(() => {
+    if (state.state !== "ready") return;
+    const nextSelectedSource = addSourceTypeForDataSource(state.data);
+    const nextConfig = nextSelectedSource ? ADD_SOURCE_CONFIGS[nextSelectedSource] : null;
+    const config = (state.data.config ?? {}) as Record<string, unknown>;
+    setSourceName(String(config.display_name || ""));
+    setConfigValues(nextConfig ? editableConnectionValues(state.data, nextConfig) : {});
+    setMessage(null);
+  }, [state]);
+
+  function onConfigChange(fieldId: string, value: string) {
+    setConfigValues((current) => ({ ...current, [fieldId]: value }));
+  }
+
+  async function saveConnection(event: FormEvent) {
+    event.preventDefault();
+    if (!datasource || !selectedConfig || !selectedSource || saving) return;
+    if (!sourceName.trim()) {
+      setMessage({ tone: "error", text: "ソース名を入力してください。" });
+      return;
+    }
+
+    setSaving(true);
+    setMessage(null);
+    try {
+      const credentialFieldIds = new Set(
+        selectedConfig.fields.filter((field) => field.type === "password").map((field) => field.id),
+      );
+      const credentials = Object.fromEntries(
+        Object.entries(configValues)
+          .filter(([key, value]) => credentialFieldIds.has(key) && value.trim())
+          .map(([key, value]) => [key, value.trim()]),
+      );
+      const safeConfigValues = Object.fromEntries(
+        Object.entries(configValues).filter(([key]) => !credentialFieldIds.has(key)),
+      );
+      const displayName = sourceDisplayName({
+        rawName: sourceName,
+        fallback: selectedSourceDef?.name ?? datasource.source_id,
+      });
+      const nextConfig = applyApprovalWorkflowModeToConfig({
+        ...(datasource.config ?? {}),
+        source_type: sourceTypeForConfig(selectedSource),
+        display_name: displayName,
+        oauth_provider: selectedConfig.oauth ?? null,
+        ...safeConfigValues,
+      });
+      const hasSyncScheduleField = selectedConfig.fields.some((field) => field.id === "sync_schedule");
+      const token = await getSessionToken();
+      await apiPutJson(
+        `/admin/datasources/${encodeURIComponent(datasource.source_id)}`,
+        {
+          collection_id: datasource.collection_id || DEMO_COLLECTION,
+          type: datasource.type,
+          config: nextConfig,
+          credentials,
+          sync_schedule: hasSyncScheduleField
+            ? configValues.sync_schedule || null
+            : datasource.sync_schedule ?? null,
+          status: datasource.status,
+          reason: "connection_settings_updated_from_source_detail",
+        },
+        token,
+      );
+      setMessage({ tone: "success", text: "接続設定を保存しました。変更を反映するには再同期してください。" });
+      toast(`${displayName} の接続設定を保存しました。`, "success");
+      onSaved?.();
+    } catch (err) {
+      const text = err instanceof Error ? err.message : "接続設定の保存に失敗しました";
+      setMessage({ tone: "error", text });
+      toast(text, "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (state.state === "loading") {
+    return <p className="ops-empty" role="status" aria-live="polite">接続設定を読み込み中…</p>;
+  }
+  if (state.state === "error") {
+    return <ScreenLoadError error={state.error} onRetry={reload} />;
+  }
+  if (!datasource || !selectedConfig || !selectedSource) {
+    return (
+      <Section title="接続設定">
+        <p className="source-config-note" role="alert">
+          この接続種別は編集フォームに対応していません。設定を変更する場合は新しい外部接続を追加してください。
+        </p>
+      </Section>
+    );
+  }
+
+  return (
+    <form className="connector-form" onSubmit={saveConnection}>
+      <Section
+        title="接続設定"
+        note="保存済みの外部接続名と同期対象を編集できます。認証情報は表示せず、入力した場合だけ差し替えます。"
+      >
+        <label className="source-name-field">
+          <span>ソース名</span>
+          <input
+            value={sourceName}
+            onChange={(e) => setSourceName(e.target.value)}
+            placeholder={`例: ${selectedSourceDef?.name ?? "外部接続"} ナレッジ`}
+            required
+            aria-describedby="edit-source-name-help"
+          />
+          <small id="edit-source-name-help">
+            {sourceKindLabel(sourceTypeForConfig(selectedSource))} として登録されています。
+          </small>
+        </label>
+
+        {selectedConfig.oauth && (
+          <div className="connector-oauth">
+            <div>
+              <strong>{selectedConfig.oauth} OAuth</strong>
+              <span>
+                {datasource.config?.connection_id
+                  ? "OAuth 接続済みです。対象フォルダなどの設定を変更できます。"
+                  : "OAuth 接続情報がまだありません。再接続が必要です。"}
+              </span>
+            </div>
+            <Link className="button-link secondary" href="/sources/new">
+              再接続
+            </Link>
+          </div>
+        )}
+
+        <div className="connector-form-grid">
+          {selectedConfig.fields.map((field) => (
+            <label key={field.id}>
+              <span>{field.label}</span>
+              <input
+                type={field.type ?? "text"}
+                value={configValues[field.id] ?? ""}
+                onChange={(e) => onConfigChange(field.id, e.target.value)}
+                placeholder={
+                  field.type === "password" && credentialConfigured
+                    ? "変更する場合だけ入力"
+                    : field.placeholder
+                }
+                aria-describedby={field.type === "password" ? `edit-${field.id}-help` : undefined}
+              />
+              {field.type === "password" && (
+                <small id={`edit-${field.id}-help`} className="connector-field-help">
+                  {credentialConfigured
+                    ? "保存済みの認証情報は表示しません。空欄のまま保存すると既存値を維持します。"
+                    : "同期に必要な認証情報を入力してください。"}
+                </small>
+              )}
+            </label>
+          ))}
+        </div>
+
+        {message && (
+          <p
+            className={`source-list-message ${
+              message.tone === "success" ? "success" : "error"
+            } connection-edit-message`}
+            role={message.tone === "error" ? "alert" : "status"}
+            aria-live="polite"
+          >
+            {message.text}
+          </p>
+        )}
+
+        <div className="screen-actions add-source-actions">
+          <button type="submit" disabled={saving}>
+            {saving ? "保存中…" : "接続設定を保存"}
+          </button>
+        </div>
+      </Section>
+    </form>
+  );
 }
 
 interface UploadForIngestResult {
@@ -4435,14 +4873,13 @@ type FileBrowserFileRow = {
   source: "local" | "server";
 };
 
-const FILE_BROWSER_FILTERS = [
+type FileBrowserFilter = "all" | "needs_review" | "approved" | "obsolete";
+const FILE_BROWSER_FILTERS: Array<{ label: string; value: FileBrowserFilter }> = [
   { label: "すべて", value: "all" },
-  { label: "レビュー待ち", value: "needs_review" },
+  ...(APPROVAL_WORKFLOW_ENABLED ? [{ label: "レビュー待ち", value: "needs_review" as const }] : []),
   { label: "正式根拠", value: "approved" },
   { label: "旧版", value: "obsolete" },
-] as const;
-
-type FileBrowserFilter = (typeof FILE_BROWSER_FILTERS)[number]["value"];
+];
 
 function loadFileBrowserFolders(): FileBrowserFolder[] {
   if (typeof window === "undefined") return [];
@@ -4801,6 +5238,9 @@ function FileBrowserBody() {
     const failures: string[] = [];
     try {
       const token = await getSessionToken();
+      const approvalStatus = defaultIngestApprovalStatus();
+      const approvalEffectiveDate = defaultApprovalEffectiveDate();
+      const approvalSource = defaultIngestApprovalSource();
       for (const [i, file] of files.entries()) {
         setUploadProgress(`${files.length} 件中 ${i + 1} 件目: ${file.name}`);
         try {
@@ -4814,9 +5254,9 @@ function FileBrowserBody() {
               ref: up.ref,
               content_type: up.content_type,
               manufacturing: {
-                approval_status: "pending_review",
-                effective_date: todayIso(),
-                approval_source: "workflow",
+                approval_status: approvalStatus,
+                effective_date: approvalEffectiveDate,
+                approval_source: approvalSource,
               },
             },
             token,
@@ -4832,8 +5272,8 @@ function FileBrowserBody() {
             source_type: "upload",
             filename: up.filename,
             content_type: up.content_type,
-            approval_status: "pending_review",
-            effective_date: todayIso(),
+            approval_status: approvalStatus,
+            effective_date: approvalEffectiveDate,
             ingestion_run_id: ingest.ingestion_run_id,
             status: ingest.status,
             chunk_count: ingest.chunk_count ?? 0,
@@ -5161,7 +5601,7 @@ function FileBrowserBody() {
         </div>
         <div className="source-list-summary" aria-live="polite">
           <span>{filteredRows.length} 件表示</span>
-          <span>レビュー待ち {reviewCount} 件</span>
+          {APPROVAL_WORKFLOW_ENABLED && <span>レビュー待ち {reviewCount} 件</span>}
           <span>正式根拠 {approvedCount} 件</span>
         </div>
       </section>
@@ -5225,12 +5665,9 @@ function AddSourceBody() {
   const [sourceName, setSourceName] = useState("");
   const [collectionId, setCollectionId] = useState("manuals");
   const [sourceId, setSourceId] = useState(() => defaultSourceIdFor("text"));
-  const [approvalStatus] = useState("pending_review");
-  const [effectiveDate] = useState(todayIso());
-  // Connector (multi-file) trust policy. Default review_required so synced files land in the review
-  // queue (pending_review) — never auto-approved. 'trusted' inherits approval from the source of
-  // truth (approval_source=imported) so a governed source approves all its files at sync time.
-  const [approvalPolicy] = useState<"review_required" | "trusted">("review_required");
+  const [approvalStatus] = useState<IngestApprovalStatus>(() => defaultIngestApprovalStatus());
+  const [effectiveDate] = useState(() => defaultApprovalEffectiveDate() ?? todayIso());
+  const [approvalPolicy] = useState<DatasourceApprovalPolicy>(() => defaultDatasourceApprovalPolicy());
   const [mappingProfileType, setMappingProfileType] = useState<DataSourceProfileType>("auto");
   const [mappingRequiredFields, setMappingRequiredFields] = useState(
     PREVIEW_REQUIRED_FIELDS_BY_PROFILE.auto.join(", "),
@@ -5346,12 +5783,7 @@ function AddSourceBody() {
       const safeConfigValues = Object.fromEntries(
         Object.entries(configValues).filter(([key]) => !credentialFieldIds.has(key)),
       );
-      const mappingDefaults: Record<string, unknown> = {
-        approval_status: approvalPolicy === "trusted" ? "approved" : "pending_review",
-      };
-      if (approvalPolicy === "trusted" && effectiveDate) {
-        mappingDefaults.effective_date = effectiveDate;
-      }
+      const mappingDefaults = datasourceMappingApprovalDefaults(approvalPolicy, effectiveDate);
       await apiPutJson(
         `/admin/datasources/${encodeURIComponent(datasourceId)}`,
         {
@@ -5408,7 +5840,7 @@ function AddSourceBody() {
       const token = await getSessionToken();
       // No approval block here: the server derives every synced file's approval state from the saved
       // datasource trust policy (config.approval_policy), so the sync request can never self-grant
-      // 'approved'. review_required => files land in pending_review for the review queue.
+      // 'approved'. In the current E2E mode the UI saves trusted sources so synced docs are usable.
       const sync = await adminSourceSync(
         datasourceId,
         {
@@ -5498,9 +5930,9 @@ function AddSourceBody() {
               ref: up.ref,
               content_type: up.content_type,
               manufacturing: {
-                approval_status: approvalStatus as "approved" | "pending_review" | "draft" | "obsolete",
+                approval_status: approvalStatus,
                 effective_date: effectiveDate || null,
-                approval_source: "workflow",
+                approval_source: defaultIngestApprovalSource(),
               },
             },
             token,
@@ -5601,7 +6033,14 @@ function AddSourceBody() {
 
       {step === "configure" && selectedSource === "text" && (
         <form className="upload-form" onSubmit={onSubmit}>
-          <Section title="テキストを貼り付け" note="手順・規格・トラブル対応などの本文を貼り付けて、レビュー待ちのナレッジとして取込します。">
+          <Section
+            title="テキストを貼り付け"
+            note={
+              APPROVAL_WORKFLOW_ENABLED
+                ? "手順・規格・トラブル対応などの本文を貼り付けて、レビュー待ちのナレッジとして取込します。"
+                : "手順・規格・トラブル対応などの本文を貼り付けて、すぐ質問に使えるナレッジとして取込します。"
+            }
+          >
             <label className="source-name-field">
               <span>ソース名</span>
               <input
@@ -5857,14 +6296,14 @@ const DOCUMENT_KIND_LABEL: Record<string, string> = {
 };
 
 const DOCUMENT_LIST_PAGE_SIZE = 12;
-const DOCUMENT_LIST_FILTERS = [
+type DocumentListFilter = "all" | "needs_review" | "approved" | "obsolete" | "local";
+const DOCUMENT_LIST_FILTERS: Array<{ value: DocumentListFilter; label: string }> = [
   { value: "all", label: "すべて" },
-  { value: "needs_review", label: "レビュー待ち" },
+  ...(APPROVAL_WORKFLOW_ENABLED ? [{ value: "needs_review" as const, label: "レビュー待ち" }] : []),
   { value: "approved", label: "正式根拠" },
   { value: "obsolete", label: "旧版" },
   { value: "local", label: "直近アップロード" },
-] as const;
-type DocumentListFilter = (typeof DOCUMENT_LIST_FILTERS)[number]["value"];
+];
 
 type DocumentListRow = {
   document_id: string;
@@ -5913,15 +6352,19 @@ function documentApprovalView(status: string): { label: string; cls: string; des
   if (status === "draft") {
     return {
       cls: "approval-draft",
-      description: "参考のみ。正式根拠化にはレビューが必要です。",
+      description: APPROVAL_WORKFLOW_ENABLED
+        ? "参考のみ。正式根拠化にはレビューが必要です。"
+        : "参考のみ。新規取り込みは利用可能として扱います。",
       label: "ドラフト",
     };
   }
   if (status === "pending_review") {
     return {
       cls: "approval-pending_review",
-      description: "承認すると正式な根拠になります。",
-      label: "レビュー待ち",
+      description: APPROVAL_WORKFLOW_ENABLED
+        ? "承認すると正式な根拠になります。"
+        : "既存の承認待ちデータです。再同期すると利用可能になります。",
+      label: APPROVAL_WORKFLOW_ENABLED ? "レビュー待ち" : "再同期推奨",
     };
   }
   return {
@@ -6055,7 +6498,11 @@ function DocumentListBody() {
     <>
       <Section
         title="ドキュメント"
-        note="正式根拠、レビュー待ち、旧版を分けて確認できます。直近アップロードは一覧反映までこの画面に残ります。"
+        note={
+          APPROVAL_WORKFLOW_ENABLED
+            ? "正式根拠、レビュー待ち、旧版を分けて確認できます。直近アップロードは一覧反映までこの画面に残ります。"
+            : "質問に使えるドキュメントと旧版を確認できます。直近アップロードは一覧反映までこの画面に残ります。"
+        }
       >
         {docs.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ドキュメントを読み込み中…</p>}
         {docs.state === "error" && <ScreenLoadError error={docs.error} onRetry={reloadDocs} />}
@@ -6093,7 +6540,7 @@ function DocumentListBody() {
                 </div>
                 <div className="source-list-summary" aria-live="polite">
                   <span>{filteredRows.length} 件表示</span>
-                  <span>レビュー待ち {reviewCount} 件</span>
+                  {APPROVAL_WORKFLOW_ENABLED && <span>レビュー待ち {reviewCount} 件</span>}
                   <span>正式根拠 {approvedCount} 件</span>
                   <span>旧版 {obsoleteCount} 件</span>
                   {uploaded.length > 0 && <span>直近アップロード {uploaded.length} 件</span>}
@@ -6160,7 +6607,7 @@ function DocumentListBody() {
                             <span>設備/分類: {doc.equipment || doc.safety_category || "—"}</span>
                           </div>
                           <div className="document-list-actions">
-                            {needsReview && (
+                            {APPROVAL_WORKFLOW_ENABLED && needsReview && (
                               <Link href="/reviews/documents" className="button-link">
                                 レビューへ
                               </Link>
@@ -6264,7 +6711,7 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
         <FieldGrid
           rows={[
             ["文書 ID", documentId],
-            ["承認状態", "pending_review"],
+            ["利用状態", APPROVAL_WORKFLOW_ENABLED ? "pending_review" : "利用可"],
             ["ソース", "取り込みソース"],
             [
               "状態",
@@ -6350,6 +6797,11 @@ function KnowledgePrepStep({
 }
 
 function ApprovalWorkflowBody() {
+  if (!APPROVAL_WORKFLOW_ENABLED) return <ApprovalWorkflowPausedBody />;
+  return <ApprovalWorkflowEnabledBody />;
+}
+
+function ApprovalWorkflowEnabledBody() {
   const [state, reload] = useLoad(loadKnowledgePreparationData, []);
   if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">ガバナンス状態を読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;

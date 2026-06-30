@@ -1539,7 +1539,7 @@ textarea {
   justify-content: flex-end;
   gap: 8px;
   min-width: 0;
-  max-width: 220px;
+  max-width: 300px;
 }
 
 .source-list-actions button,
@@ -4585,6 +4585,12 @@ button,
   font-weight: 600;
 }
 
+.connector-field-help {
+  color: #71717a;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 .connector-form-grid input,
 .connector-form-grid select {
   padding: 8px 10px;
@@ -4623,6 +4629,12 @@ button,
 
 .connector-oauth button {
   flex: none;
+}
+
+.connection-edit-message {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
 .config-success {

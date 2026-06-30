@@ -1,4 +1,11 @@
-import { ALL_NAV_HREFS, HOME_NAV, NAV_GROUPS, type NavGroup, type NavItem } from "./full-saas";
+import {
+  ALL_NAV_HREFS,
+  APPROVAL_WORKFLOW_ENABLED,
+  HOME_NAV,
+  NAV_GROUPS,
+  type NavGroup,
+  type NavItem,
+} from "./full-saas";
 
 /** Dev/demo role slugs — mirror apps/web/app/api/dev-token/route.ts DEV_ROLES_BY_USER. */
 export type WorkspaceRole =
@@ -22,8 +29,7 @@ const FIELD_USER_HREFS = new Set(["/home", "/", "/chatbot", "/answers/history"])
 
 const REVIEWER_HREFS = new Set([
   ...FIELD_USER_HREFS,
-  "/reviews",
-  "/reviews/documents",
+  ...(APPROVAL_WORKFLOW_ENABLED ? ["/reviews", "/reviews/documents"] : []),
   // NOTE: /reviews/settings is tenant_admin-only (screens.manifest.json approval-workflow-settings
   // rbac=[tenant_admin]; see issue 0011 DoD#4 / 0014). It is intentionally NOT granted to reviewer.
 ]);
@@ -31,7 +37,9 @@ const REVIEWER_HREFS = new Set([
 // Paths only tenant_admin/platform_admin may see, even when a less-privileged role holds the parent
 // path (e.g. a reviewer holds /reviews). Without this, navAllowed's subpath rule would leak
 // /reviews/settings to reviewers. Mirrors screens.manifest.json per-screen rbac.
-const TENANT_ADMIN_ONLY_HREFS = new Set(["/reviews/settings"]);
+const TENANT_ADMIN_ONLY_HREFS = new Set(
+  APPROVAL_WORKFLOW_ENABLED ? ["/reviews/settings"] : [],
+);
 
 // ops_owner ("ナレッジ管理者") manages sources/documents/operations but is NOT a review-cluster role:
 // screens.manifest.json review-queue/review-detail/document-approval-queue rbac=[reviewer, tenant_admin]
