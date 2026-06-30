@@ -379,9 +379,11 @@ function chatPolicyIdForCollection(collectionId: string): string {
 function syncedReferenceScopes(
   sources: AdminDataSource[],
   documents: ManufacturingDocumentSummary[] = [],
+  syncStatuses: ManufacturingSourceSyncStatus[] = [],
 ): ChatReferenceScope[] {
   const scopes = new Map<string, ChatReferenceScope>();
   const sourceKeysByCollection = new Map<string, Set<string>>();
+  const sourcesById = new Map(sources.map((source) => [source.source_id, source]));
 
   function upsertScope(collectionId: string, sourceKey: string, lastSyncedAt?: string | null) {
     if (!collectionId) return;
@@ -410,14 +412,46 @@ function syncedReferenceScopes(
     upsertScope(doc.collection_id, sourceKey);
   }
 
+  const syncedSourceIds = new Set<string>();
+  for (const sync of syncStatuses) {
+    const source = sourcesById.get(sync.source_id);
+    const collectionId = sync.collection_id || source?.collection_id || "";
+    if (!collectionId || !sourceSyncHasUsableDocuments(sync)) continue;
+    syncedSourceIds.add(sync.source_id);
+    upsertScope(collectionId, sync.source_id, sourceSyncLastIndexedAt(sync));
+  }
+
   for (const source of sources) {
     if (!source.collection_id || source.status !== "active") continue;
-    if (!source.last_synced_at && !documentSources.has(`${source.collection_id}\u0000${source.source_id}`)) {
+    if (
+      !source.last_synced_at &&
+      !documentSources.has(`${source.collection_id}\u0000${source.source_id}`) &&
+      !syncedSourceIds.has(source.source_id)
+    ) {
       continue;
     }
     upsertScope(source.collection_id, source.source_id, source.last_synced_at);
   }
   return [...scopes.values()].sort((a, b) => a.collection_id.localeCompare(b.collection_id));
+}
+
+function sourceSyncHasUsableDocuments(sync: ManufacturingSourceSyncStatus): boolean {
+  if (sync.status === "succeeded" || sync.status === "partially_succeeded") return true;
+  if ((sync.summary?.observed_count ?? 0) > 0) return true;
+  return sync.documents.some((doc) => {
+    const indexStatus = typeof doc.index_status === "string" ? doc.index_status : "";
+    return doc.status === "succeeded" || indexStatus === "succeeded";
+  });
+}
+
+function sourceSyncLastIndexedAt(sync: ManufacturingSourceSyncStatus): string | undefined {
+  const values = sync.documents
+    .map((doc) => {
+      const indexed = typeof doc.last_indexed_at === "string" ? doc.last_indexed_at : "";
+      return indexed || doc.updated_at || "";
+    })
+    .filter(Boolean);
+  return values.sort().at(-1);
 }
 
 function isInternalChatPolicyForCollection(
@@ -985,7 +1019,18 @@ function ChatBotBody() {
           chatSourceExposurePolicies(token).catch(() => null),
           chatMetrics(token).catch(() => null),
         ]);
-        const scopes = syncedReferenceScopes(sources, documents);
+        const syncStatuses = await Promise.all(
+          sources.map((source) =>
+            manufacturingSourceSyncStatus(source.source_id, token).catch(
+              () => null as ManufacturingSourceSyncStatus | null,
+            ),
+          ),
+        );
+        const scopes = syncedReferenceScopes(
+          sources,
+          documents,
+          syncStatuses.filter((sync): sync is ManufacturingSourceSyncStatus => Boolean(sync)),
+        );
         setReferenceScopes(scopes);
         setCollectionId((current) => {
           const saved = current || DEMO_COLLECTION;
