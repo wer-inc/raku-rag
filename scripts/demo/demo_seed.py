@@ -13,7 +13,8 @@ import urllib.error
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DOCS = json.load(open(os.path.join(HERE, "demo_docs.json"), encoding="utf-8"))
+with open(os.path.join(HERE, "demo_docs.json"), encoding="utf-8") as _docs_file:
+    DOCS = json.load(_docs_file)
 AS_URL = os.environ.get("ANSWER_SERVICE_URL", "http://127.0.0.1:8088")
 # The answer-service enforces the internal-boundary shared secret when RAKU_INTERNAL_AUTH_SECRET is
 # set (demo_up.sh exports it). Seeding posts straight to /internal/ingest, so it must present the same
@@ -33,6 +34,35 @@ def _post(path: str, body: dict) -> tuple[str, object]:
     try:
         res = json.load(urllib.request.urlopen(req, timeout=30))
         return res.get("status", "?"), res.get("chunk_count")
+    except urllib.error.HTTPError as exc:
+        return "ERROR", exc.read().decode("utf-8", "replace")[:160]
+    except Exception as exc:  # noqa: BLE001
+        return "ERROR", str(exc)[:160]
+
+
+def delete_existing_doc(document_id: str) -> tuple[str, object]:
+    """Tombstone/purge the existing demo doc through the service before re-ingest.
+
+    This keeps the registry, chunks, cache, and ingestion idempotency state aligned. Raw SQL deletes can
+    leave a live registry row with stale embedding metadata, causing a same-checksum re-seed to skip the
+    re-embedding that demo deployments rely on.
+    """
+    headers = {
+        "content-type": "application/json",
+        "x-raku-tenant-id": TENANT,
+        "x-raku-user-id": "alice",
+    }
+    if INTERNAL_AUTH:
+        headers["X-Internal-Auth"] = INTERNAL_AUTH
+    req = urllib.request.Request(
+        AS_URL + f"/internal/documents/{document_id}",
+        data=None,
+        headers=headers,
+        method="DELETE",
+    )
+    try:
+        res = json.load(urllib.request.urlopen(req, timeout=30))
+        return str(res.get("status") or "?"), res.get("purged_chunks")
     except urllib.error.HTTPError as exc:
         return "ERROR", exc.read().decode("utf-8", "replace")[:160]
     except Exception as exc:  # noqa: BLE001
@@ -185,6 +215,10 @@ def grant_demo_acl() -> tuple[str, object]:
 
 def main() -> None:
     ok = 0
+    print(f"[demo-seed] tombstoning existing curated documents in {TENANT}/{COLLECTION}")
+    for doc in DOCS:
+        status, purged = delete_existing_doc(doc["document_id"])
+        print(f"  {status:10} {doc['document_id']:22} purged_chunks={purged}")
     print(f"[demo-seed] ingesting {len(DOCS)} documents into {TENANT}/{COLLECTION} via {AS_URL}")
     for doc in DOCS:
         status, chunks = ingest(doc)

@@ -13,7 +13,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
-from raku_rag.core.text import content_tokens
+from raku_rag.core.text import retrieval_tokens
 
 HOT_IDENTIFIER_FIELDS: tuple[str, ...] = (
     "equipment_id",
@@ -93,7 +93,11 @@ def metadata_identifier_matches(
 
 def lexical_query_terms(query: str) -> tuple[str, ...]:
     """Content terms used by the lexical retrieval leg."""
-    terms = {term.casefold() for term in content_tokens(query) if len(term) >= 3}
+    terms = {
+        term.casefold()
+        for term in retrieval_tokens(query)
+        if _lexical_term_is_signal(term)
+    }
     return tuple(sorted(terms))
 
 
@@ -109,7 +113,7 @@ def lexical_match_score(
     query_terms = lexical_query_terms(query)
     if not query_terms:
         return 0.0
-    text_terms = content_tokens(text)
+    text_terms = retrieval_tokens(text)
     if not text_terms:
         return 0.0
     text_term_set = set(text_terms)
@@ -172,6 +176,19 @@ def _metadata_date_value(metadata: Mapping[str, Any] | object = None) -> object:
             if value:
                 return value
     return None
+
+
+def _lexical_term_is_signal(term: str) -> bool:
+    """Keep Japanese bigrams and compact equipment terms without admitting every tiny token."""
+    if len(term) >= 3:
+        return True
+    if _contains_cjk(term):
+        return True
+    return len(term) >= 2 and any(ch.isdigit() for ch in term)
+
+
+def _contains_cjk(term: str) -> bool:
+    return any("\u3040" <= ch <= "\u30ff" or "\u3400" <= ch <= "\u9fff" for ch in term)
 
 
 def _value_matches(value: object, identifiers: frozenset[str]) -> bool:
