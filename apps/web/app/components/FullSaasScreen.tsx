@@ -958,6 +958,44 @@ function chatActionLabel(action?: string | null): string {
   }
 }
 
+function chatProgressDetail(state: "thinking" | "checking_rag" | "delayed"): string {
+  if (state === "checking_rag") return "承認済みナレッジと引用候補を照合しています。";
+  if (state === "delayed") return "確認に時間がかかっています。必要なら担当者に引き継げます。";
+  return "質問の意図を整理しています。";
+}
+
+function ChatThinkingBubble({
+  state,
+  onHandoff,
+}: {
+  state: "thinking" | "checking_rag" | "delayed";
+  onHandoff: () => void;
+}) {
+  return (
+    <article className="chat-bot-bubble chat-thinking-bubble">
+      <div role="status" aria-live="polite">
+        <div className="chat-thinking-head">
+          <span className="chat-bot-avatar" aria-hidden="true">AI</span>
+          <div className="chat-thinking-copy">
+            <strong>{chatProgressLabel(state)}</strong>
+            <span>{chatProgressDetail(state)}</span>
+          </div>
+        </div>
+        <div className="chat-thinking-dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+      {state === "delayed" && (
+        <button type="button" className="citation-open" onClick={onHandoff}>
+          人間に相談する
+        </button>
+      )}
+    </article>
+  );
+}
+
 function ChatAssistantBubble({
   turn,
   onQuickReply,
@@ -1329,15 +1367,7 @@ function ChatBotBody() {
             })}
 
             {progress && (
-              <div className="chat-progress" role="status" aria-live="polite">
-                <span aria-hidden="true" />
-                <strong>{chatProgressLabel(progress)}</strong>
-                {progress === "delayed" && (
-                  <button type="button" className="citation-open" onClick={() => void onHandoff()}>
-                    人間に相談する
-                  </button>
-                )}
-              </div>
+              <ChatThinkingBubble state={progress} onHandoff={() => void onHandoff()} />
             )}
           </div>
 
@@ -2949,9 +2979,9 @@ function HomeDashboardBody() {
       <div className="home-split">
         <Section title="クイックアクセス" note="主要ワークスペースへすぐ移動できます。">
           <div className="quick-card-grid">
-            <Link href="/" className="action-card">
-              <strong>質問する</strong>
-              <span>根拠付きの質問を投げる</span>
+            <Link href="/chatbot" className="action-card">
+              <strong>チャットボット</strong>
+              <span>取り込んだナレッジで応答を確認する</span>
             </Link>
             <Link href="/sources/list" className="action-card">
               <strong>ソース一覧</strong>
@@ -2963,9 +2993,9 @@ function HomeDashboardBody() {
                 <span>AI ドラフトを確認する</span>
               </Link>
             ) : (
-              <Link href="/chatbot" className="action-card">
-                <strong>チャットボット</strong>
-                <span>公開前の動作を確認する</span>
+              <Link href="/files" className="action-card">
+                <strong>ファイル</strong>
+                <span>ナレッジを追加する</span>
               </Link>
             )}
             <Link href="/operations" className="action-card">

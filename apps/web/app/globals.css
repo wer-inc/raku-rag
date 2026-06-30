@@ -921,31 +921,74 @@ textarea {
   align-items: center;
 }
 
-.chat-progress {
+.chat-thinking-bubble {
+  width: fit-content;
+  min-width: min(100%, 320px);
+  max-width: min(100%, 460px);
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--line));
+  background: color-mix(in srgb, var(--accent-soft) 38%, #ffffff);
+}
+
+.chat-thinking-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: fit-content;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: #ffffff;
-  color: var(--muted);
-  font-size: 13px;
 }
 
-.chat-progress span {
-  width: 8px;
-  height: 8px;
+.chat-bot-avatar {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chat-thinking-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat-thinking-copy strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.chat-thinking-copy span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chat-thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-left: 40px;
+}
+
+.chat-thinking-dots span {
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: var(--accent);
-  animation: chat-pulse 1.2s ease-in-out infinite;
+  opacity: 0.35;
+  animation: chat-thinking-dot 1.05s ease-in-out infinite;
 }
 
-.chat-progress strong {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
+.chat-thinking-dots span:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.chat-thinking-dots span:nth-child(3) {
+  animation-delay: 0.28s;
 }
 
 .chatbot-side {
@@ -1215,15 +1258,15 @@ textarea {
   line-height: 1.45;
 }
 
-@keyframes chat-pulse {
+@keyframes chat-thinking-dot {
   0%,
   100% {
     opacity: 0.35;
-    transform: scale(0.9);
+    transform: translateY(0) scale(0.92);
   }
   50% {
     opacity: 1;
-    transform: scale(1);
+    transform: translateY(-3px) scale(1);
   }
 }
 
@@ -5510,8 +5553,9 @@ button,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-progress span {
+  .chat-thinking-dots span {
     animation: none;
+    opacity: 0.6;
   }
 
   .sidebar,

@@ -76,9 +76,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "回答",
     items: [
-      { href: "/", label: "質問する", icon: "answers" },
       { href: "/chatbot", label: "チャットボット", icon: "chatbot" },
-      { href: "/answers/history", label: "回答履歴", icon: "history" },
     ],
   },
   {
@@ -86,9 +84,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/sources/list", label: "外部接続", icon: "sources" },
       { href: "/files", label: "ファイル", icon: "documents" },
-      { href: "/documents", label: "ドキュメント", icon: "documents" },
-      { href: "/sources", label: "事例検索", icon: "search" },
-      { href: "/ingestion-runs", label: "取込ラン", icon: "ingestion" },
     ],
   },
   ...(APPROVAL_WORKFLOW_ENABLED ? [REVIEW_NAV_GROUP] : []),
