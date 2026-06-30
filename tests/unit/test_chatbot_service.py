@@ -42,6 +42,25 @@ def _rag_should_not_run(_principal, _query, _collection_id):
     raise AssertionError("RAG answerer must not run without a pre-RAG ChatBot source scope")
 
 
+def _rag_answer(text="根拠に基づく回答です。", document_id="doc_1"):
+    return {
+        "status": "ok",
+        "text": text,
+        "citations": [
+            {
+                "kind": "text",
+                "document_id": document_id,
+                "chunk_id": f"{document_id}:0",
+                "source_id": "src",
+                "version": 1,
+                "retrieval_score": 0.91,
+            }
+        ],
+        "confidence": 0.88,
+        "correlation_id": "trace_rag",
+    }
+
+
 def _enable_internal_chat_collection(service: ChatbotService, principal=None):
     principal = principal or _principal(roles=("tenant_admin",))
     return service.upsert_source_policy(
@@ -73,6 +92,61 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
         self.assertTrue(turn["rag"]["answerable"])
         self.assertEqual(turn["assistant_message"]["citations"][0]["document_id"], "doc_1")
+
+    def test_details_quick_reply_uses_previous_answer_context_for_rag(self):
+        queries = []
+
+        def rag_answerer(_principal, query, _collection_id):
+            queries.append(query)
+            if len(queries) == 1:
+                return _rag_answer(
+                    text="モータ M8 は端子台 25 N・m、基礎ボルト M16 は 95 N・m です。",
+                    document_id="eq-motor-m8-torque",
+                )
+            return _rag_answer(
+                text="結論: 同じ根拠に基づき、端子台と基礎ボルトを分けて確認します。",
+                document_id="eq-motor-m8-torque",
+            )
+
+        service = ChatbotService(rag_answerer)
+        _enable_internal_chat_collection(service)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+
+        _, first_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {
+                "message": "モータ M8 の締付トルクを教えて",
+                "collection_id": "manuals",
+            },
+        )
+        self.assertEqual(
+            first_turn["assistant_message"]["quick_replies"][0],
+            {"label": "もう少し詳しく", "value": "details"},
+        )
+
+        status, details_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "details", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(details_turn["assistant_message"]["ai_action"], "answer_with_citations")
+        self.assertTrue(details_turn["rag"]["answerable"])
+        self.assertEqual(
+            details_turn["assistant_message"]["citations"][0]["document_id"],
+            "eq-motor-m8-torque",
+        )
+        self.assertNotEqual(queries[-1], "details")
+        self.assertIn("モータ M8 の締付トルク", queries[-1])
+        self.assertIn("eq-motor-m8-torque", queries[-1])
+        self.assertEqual(
+            service.get_session(_principal(), created["session_id"])[1]["messages"][-2][
+                "content_redacted"
+            ],
+            "もう少し詳しく",
+        )
 
     def test_rag_citation_without_chatbot_source_policy_fails_closed(self):
         service = ChatbotService(_rag_ok)

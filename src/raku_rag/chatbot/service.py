@@ -46,6 +46,15 @@ CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
 SECRET_RE = re.compile(
     r"(?i)\b(?:bearer|api[_-]?key|secret|token|password)\s*[:=]\s*[A-Za-z0-9._~+/=-]{6,}"
 )
+DETAILS_QUICK_REPLY_VALUES = {
+    "details",
+    "detail",
+    "more_details",
+    "more details",
+    "もう少し詳しく",
+    "詳しく",
+    "詳細",
+}
 
 
 def _redact(text: str) -> str:
@@ -286,14 +295,17 @@ class ChatbotService:
         if not text:
             return 400, {"error": "message_required"}
 
-        user_message = self._add_message(session, "user", text)
-        intent = self._classify_intent(text, session.current_intent)
+        display_text = self._display_text_for_quick_reply(text)
+        rag_text = self._expand_quick_reply_for_rag(session, text)
+
+        user_message = self._add_message(session, "user", display_text)
+        intent = self._classify_intent(rag_text, session.current_intent)
         session.current_intent = intent if intent != "confirm" else session.current_intent
         session.last_message_at = _now()
 
         if intent == "human_handoff":
             handoff = self._create_handoff(
-                session, reason="customer_requested_human", comment=text, priority="normal"
+                session, reason="customer_requested_human", comment=display_text, priority="normal"
             )
             assistant = self._assistant(
                 session,
@@ -307,7 +319,7 @@ class ChatbotService:
 
         if intent == "high_risk":
             handoff = self._create_handoff(
-                session, reason="unsupported_high_risk", comment=text, priority="high"
+                session, reason="unsupported_high_risk", comment=display_text, priority="high"
             )
             assistant = self._assistant(
                 session,
@@ -320,7 +332,7 @@ class ChatbotService:
             )
 
         if intent in {"cancel_subscription", "confirm"} or session.scenario_id == "cancel-basic":
-            assistant, ticket = self._run_cancel_scenario(session, text, intent)
+            assistant, ticket = self._run_cancel_scenario(session, display_text, intent)
             return 200, self._turn_response(
                 principal, session, user_message, assistant, ticket=ticket
             )
@@ -328,7 +340,7 @@ class ChatbotService:
         assistant, rag, handoff = self._run_rag_turn(
             principal,
             session,
-            text,
+            rag_text,
             collection_id=body.get("collection_id") or session.metadata.get("collection_id"),
         )
         return 200, self._turn_response(
@@ -993,6 +1005,71 @@ class ChatbotService:
             citations=citations,
             quick_replies=quick_replies,
         )
+
+    def _display_text_for_quick_reply(self, text: str) -> str:
+        if self._is_details_quick_reply(text):
+            return "もう少し詳しく"
+        return text
+
+    def _expand_quick_reply_for_rag(self, session: ChatSession, text: str) -> str:
+        if not self._is_details_quick_reply(text):
+            return text
+
+        context = self._last_answer_context(session)
+        if not context:
+            return "前回の回答について、同じ根拠に基づいてもう少し詳しく説明してください。"
+
+        previous_question = context.get("question") or "前回の質問"
+        previous_answer = context.get("answer") or ""
+        document_ids = context.get("document_ids") or []
+        document_hint = ""
+        if document_ids:
+            document_hint = " 参照文書ID: " + ", ".join(document_ids) + "。"
+        answer_hint = ""
+        if previous_answer:
+            answer_hint = " 前回回答: " + previous_answer[:240] + "。"
+        return (
+            f"前回の質問「{previous_question}」について、同じ承認済み根拠に基づき、"
+            "結論、手順、注意点、根拠をもう少し詳しく説明してください。"
+            "文書にない内容は推測しないでください。"
+            f"{document_hint}{answer_hint}"
+        )
+
+    def _is_details_quick_reply(self, text: str) -> bool:
+        return text.strip().lower() in DETAILS_QUICK_REPLY_VALUES
+
+    def _last_answer_context(self, session: ChatSession) -> dict | None:
+        answer_index = -1
+        answer_message: StoredMessage | None = None
+        for index in range(len(session.messages) - 1, -1, -1):
+            message = session.messages[index]
+            if (
+                message.role == "assistant"
+                and message.ai_action == "answer_with_citations"
+                and message.citations
+            ):
+                answer_index = index
+                answer_message = message
+                break
+        if answer_message is None:
+            return None
+
+        previous_question = ""
+        for message in reversed(session.messages[:answer_index]):
+            if message.role == "user":
+                previous_question = message.content_redacted
+                break
+
+        document_ids = [
+            str(citation.get("document_id") or "")
+            for citation in answer_message.citations
+            if citation.get("document_id")
+        ]
+        return {
+            "question": previous_question,
+            "answer": answer_message.content_redacted,
+            "document_ids": list(dict.fromkeys(document_ids)),
+        }
 
     def _create_handoff(
         self, session: ChatSession, *, reason: str, comment: str, priority: str = "normal"

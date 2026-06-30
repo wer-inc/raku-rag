@@ -66,7 +66,6 @@ import {
   manufacturingTroubleCaseSearch,
   manufacturingUpdateDocumentMetadata,
   submitFeedback,
-  upsertChatSourceExposurePolicy,
 } from "../../lib/api-client";
 import {
   loadConnectorRuns,
@@ -79,6 +78,7 @@ import {
   DEMO_TENANT,
   getSessionToken,
   loadAnswerCollection,
+  loadSessionRoles,
   mintTokenFor,
   saveAnswerCollection,
 } from "../../lib/session";
@@ -258,6 +258,26 @@ function Stat({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
+function WorkStat({
+  label,
+  value,
+  detail,
+  tone = "neutral",
+}: {
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+  tone?: "neutral" | "ok" | "wait" | "bad";
+}) {
+  return (
+    <div className={`work-stat ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {detail && <small>{detail}</small>}
+    </div>
+  );
+}
+
 function DataTable({
   columns,
   rows,
@@ -372,10 +392,6 @@ function collectionDisplayName(id?: string | null): string {
   return id;
 }
 
-function chatPolicyIdForCollection(collectionId: string): string {
-  return `chat-internal:${collectionId}`;
-}
-
 function syncedReferenceScopes(
   sources: AdminDataSource[],
   documents: ManufacturingDocumentSummary[] = [],
@@ -482,7 +498,7 @@ function chatStateLabel(state: string, hasSession: boolean): string {
     case "idle":
       return "待機中";
     case "handoff_pending":
-      return "担当者引き継ぎ中";
+      return "担当者に引き継ぎ済み";
     case "completed":
       return "完了";
     case "waiting_for_user":
@@ -493,6 +509,23 @@ function chatStateLabel(state: string, hasSession: boolean): string {
     default:
       return "会話中";
   }
+}
+
+function chatUsageLabel(
+  referenceScopeReady: boolean,
+  policyAccess: "loading" | "ready" | "forbidden",
+  progress: "thinking" | "checking_rag" | "delayed" | null,
+): string {
+  if (progress) return chatProgressLabel(progress);
+  if (referenceScopeReady) return "質問できます";
+  if (policyAccess === "loading") return "参照範囲を確認中";
+  if (policyAccess === "forbidden") return "設定確認が必要です";
+  return "現在利用できません";
+}
+
+function canViewChatbotOps(roles: readonly string[]): boolean {
+  const allowed = new Set(["admin", "tenant_admin", "platform_admin", "ops_owner"]);
+  return roles.some((role) => allowed.has(role));
 }
 
 function ragStatusLabel(status: string): string {
@@ -994,7 +1027,6 @@ function ChatBotBody() {
   const [sourcePolicies, setSourcePolicies] = useState<ChatbotSourceExposurePolicy[]>([]);
   const [policyAccess, setPolicyAccess] = useState<"loading" | "ready" | "forbidden">("loading");
   const [setupError, setSetupError] = useState<string | null>(null);
-  const [enablingCollectionId, setEnablingCollectionId] = useState<string | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [stateSummary, setStateSummary] = useState("idle");
   const [progress, setProgress] = useState<"thinking" | "checking_rag" | "delayed" | null>(null);
@@ -1003,11 +1035,28 @@ function ChatBotBody() {
   const [metrics, setMetrics] = useState<{ conversation_count: number; handoff_rate: number } | null>(null);
   const thinkingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const delayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionRoles = useMemo(() => loadSessionRoles(), []);
+  const showOpsInfo = canViewChatbotOps(sessionRoles);
   const selectedScope = referenceScopes.find((scope) => scope.collection_id === collectionId) ?? null;
   const selectedPolicy = sourcePolicies.find((policy) =>
     isInternalChatPolicyForCollection(policy, collectionId),
   ) ?? null;
   const referenceScopeReady = policyAccess === "ready" && Boolean(selectedScope && selectedPolicy);
+  const usageLabel = chatUsageLabel(referenceScopeReady, policyAccess, progress);
+  const handoffLabel =
+    stateSummary === "handoff_pending" ? "担当者に引き継ぎ済み" : "必要時に相談できます";
+  const syncedDataLabel = selectedScope
+    ? `同期済みデータ ${selectedScope.source_count}件`
+    : "利用できるナレッジを確認できません";
+  const referenceFallbackLabel =
+    policyAccess === "loading" ? "参照範囲を確認中" : "現在利用できません";
+  const referenceStatusText =
+    setupError ??
+    (referenceScopeReady
+      ? `${collectionDisplayName(collectionId)} を参照して回答します。`
+      : policyAccess === "loading"
+        ? "参照範囲を確認しています。"
+        : "現在このチャットは利用できません。管理者に確認してください。");
 
   useEffect(() => {
     setCollectionId(loadAnswerCollection());
@@ -1017,7 +1066,7 @@ function ChatBotBody() {
           adminDataSources(token).catch(() => [] as AdminDataSource[]),
           manufacturingDocuments(token).catch(() => [] as ManufacturingDocumentSummary[]),
           chatSourceExposurePolicies(token).catch(() => null),
-          chatMetrics(token).catch(() => null),
+          showOpsInfo ? chatMetrics(token).catch(() => null) : Promise.resolve(null),
         ]);
         const syncStatuses = await Promise.all(
           sources.map((source) =>
@@ -1059,7 +1108,7 @@ function ChatBotBody() {
       if (thinkingTimer.current) clearTimeout(thinkingTimer.current);
       if (delayTimer.current) clearTimeout(delayTimer.current);
     };
-  }, []);
+  }, [showOpsInfo]);
 
   function onCollectionChange(value: string) {
     setCollectionId(value);
@@ -1120,7 +1169,7 @@ function ChatBotBody() {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
     if (!referenceScopeReady && !options.allowWithoutReferenceScope) {
-      setSetupError("参照範囲をチャットボットで利用中にしてから送信してください。");
+      setSetupError("現在このチャットは利用できません。管理者に確認してください。");
       return;
     }
     const turnId = `${Date.now().toString(36)}-${turns.length}`;
@@ -1177,43 +1226,6 @@ function ChatBotBody() {
   async function onSend(event: FormEvent) {
     event.preventDefault();
     await submitText(input);
-  }
-
-  async function onEnableReferenceScope() {
-    if (!collectionId || loading || enablingCollectionId) return;
-    setSetupError(null);
-    setEnablingCollectionId(collectionId);
-    const policyId = chatPolicyIdForCollection(collectionId);
-    try {
-      const token = await getSessionToken();
-      const policy = await upsertChatSourceExposurePolicy(
-        policyId,
-        {
-          policy_id: policyId,
-          source_id: "",
-          collection_id: collectionId,
-          exposure_mode: "internal_authenticated",
-          allowed_channels: ["web_chat"],
-          allowed_intents: ["rag_question"],
-          require_approved_effective: true,
-          allow_obsolete_primary_evidence: false,
-        },
-        token,
-      );
-      setSourcePolicies((prev) => [
-        policy,
-        ...prev.filter((item) => item.policy_id !== policy.policy_id),
-      ]);
-      setPolicyAccess("ready");
-    } catch (err) {
-      if (isAuthError(err)) {
-        clearSessionToken();
-        redirectToLoginAfterAuthError();
-      }
-      setSetupError(formatLoadError(err));
-    } finally {
-      setEnablingCollectionId(null);
-    }
   }
 
   async function onHandoff() {
@@ -1283,9 +1295,9 @@ function ChatBotBody() {
                   </div>
                 </div>
                 <div className="answer-empty-meta" aria-label="チャットボットの参照範囲">
-                  <span>参照範囲</span>
+                  <span>利用状態</span>
                   <strong>{collectionDisplayName(collectionId)}</strong>
-                  <small>{referenceScopeReady ? "チャットボットで利用中" : "まだ利用中ではありません"}</small>
+                  <small>{referenceScopeReady ? "質問できます" : "現在利用できません"}</small>
                 </div>
               </div>
             )}
@@ -1339,7 +1351,7 @@ function ChatBotBody() {
                   onChange={(event) => onCollectionChange(event.target.value)}
                   disabled={referenceScopes.length === 0 || loading}
                 >
-                  {referenceScopes.length === 0 && <option value={collectionId}>同期済みデータなし</option>}
+                  {referenceScopes.length === 0 && <option value={collectionId}>{referenceFallbackLabel}</option>}
                   {referenceScopes.map((scope) => (
                     <option key={scope.collection_id} value={scope.collection_id}>
                       {scope.collection_id}
@@ -1365,10 +1377,7 @@ function ChatBotBody() {
               role={setupError ? "alert" : "status"}
               aria-live="polite"
             >
-              {setupError ??
-                (referenceScopeReady
-                  ? `${collectionDisplayName(collectionId)} はチャットボットで利用中です。`
-                  : "参照範囲をチャットボットで利用中にすると質問できます。")}
+              {referenceStatusText}
             </p>
             <div className="answers-composer-inner">
               <textarea
@@ -1382,7 +1391,7 @@ function ChatBotBody() {
                     void submitText(input);
                   }
                 }}
-                placeholder={referenceScopeReady ? "相談内容を入力する…" : "参照範囲を利用中にしてください"}
+                placeholder={referenceScopeReady ? "相談内容を入力する…" : "現在このチャットは利用できません"}
                 rows={1}
                 disabled={!referenceScopeReady || loading}
               />
@@ -1393,96 +1402,72 @@ function ChatBotBody() {
           </form>
         </section>
 
-        <aside className="chatbot-side" aria-label="会話状態">
-          <section className="chatbot-reference-settings" aria-labelledby="chatbot-reference-title">
+        <aside className="chatbot-side" aria-label="チャットボットの状態">
+          <section
+            className="chatbot-conversation-status chatbot-side-section"
+            aria-labelledby="chatbot-current-state-title"
+          >
             <div className="chatbot-side-head">
-              <strong id="chatbot-reference-title">参照範囲設定</strong>
-              <span>同期済みデータ</span>
+              <strong id="chatbot-current-state-title">この会話</strong>
+              <span>利用状態と回答の前提</span>
             </div>
-            {referenceScopes.length > 0 ? (
-              <div className="chatbot-scope-list" role="list">
-                {referenceScopes.map((scope) => {
-                  const enabled = sourcePolicies.some((policy) =>
-                    isInternalChatPolicyForCollection(policy, scope.collection_id),
-                  );
-                  const selected = scope.collection_id === collectionId;
-                  return (
-                    <button
-                      key={scope.collection_id}
-                      type="button"
-                      className={selected ? "chatbot-scope-option selected" : "chatbot-scope-option"}
-                      aria-pressed={selected}
-                      onClick={() => onCollectionChange(scope.collection_id)}
-                      disabled={loading}
-                    >
-                      <span>{collectionDisplayName(scope.collection_id)}</span>
-                      <small>{scope.source_count} 件</small>
-                      <strong>{enabled ? "チャットボットで利用中" : "未設定"}</strong>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="chatbot-reference-empty">
-                <span>同期済みデータなし</span>
-                <Link href="/sources/list">外部接続へ</Link>
-              </div>
-            )}
-            {selectedScope && !selectedPolicy && (
-              <button
-                type="button"
-                className="button-link btn-approve chatbot-enable-reference"
-                onClick={() => void onEnableReferenceScope()}
-                disabled={
-                  policyAccess === "loading" ||
-                  Boolean(enablingCollectionId) ||
-                  loading
-                }
+            <div className="chatbot-state-row chatbot-state-row-primary">
+              <span>利用状態</span>
+              <strong
+                className={referenceScopeReady ? "chatbot-status-ready" : "chatbot-status-waiting"}
               >
-                {enablingCollectionId === collectionId
-                  ? "設定中"
-                  : "この参照範囲をチャットボットで利用"}
-              </button>
-            )}
-            {policyAccess === "forbidden" && (
-              <p className="chatbot-reference-status" role="status">
-                参照範囲の利用状態を確認できません。
-              </p>
-            )}
+                {usageLabel}
+              </strong>
+            </div>
+            <div className="chatbot-state-row">
+              <span>参照範囲</span>
+              <strong>{collectionDisplayName(collectionId)}</strong>
+            </div>
+            <div className="chatbot-state-row">
+              <span>ナレッジ</span>
+              <strong>{syncedDataLabel}</strong>
+            </div>
+            <div className="chatbot-state-row">
+              <span>根拠</span>
+              <strong>承認済みデータのみ使用</strong>
+            </div>
+            <div className="chatbot-state-row">
+              <span>人間への相談</span>
+              <strong>{handoffLabel}</strong>
+            </div>
           </section>
-          <div className="chatbot-side-head">
-            <strong>会話の状態</strong>
-            <span>回答範囲と引き継ぎ状況</span>
-          </div>
-          <div className="chatbot-state-row">
-            <span>進行状況</span>
-            <strong>{progress ? chatProgressLabel(progress) : chatStateLabel(stateSummary, Boolean(sessionId))}</strong>
-          </div>
-          <div className="chatbot-state-row">
-            <span>参照範囲</span>
-            <strong>{collectionDisplayName(collectionId)}</strong>
-          </div>
-          <div className="chatbot-state-row">
-            <span>セッション</span>
-            <strong>{sessionId ? "開始済み" : "未開始"}</strong>
-          </div>
-          {metrics && (
-            <>
-              <div className="chatbot-state-row">
-                <span>会話数</span>
-                <strong>{metrics.conversation_count}</strong>
+
+          {showOpsInfo && (metrics || sessionId || stateSummary !== "idle") && (
+            <details className="chatbot-ops-details">
+              <summary>運用情報</summary>
+              <div className="chatbot-ops-grid">
+                {metrics && (
+                  <>
+                    <div className="chatbot-state-row">
+                      <span>会話数</span>
+                      <strong>{metrics.conversation_count}</strong>
+                    </div>
+                    <div className="chatbot-state-row">
+                      <span>引き継ぎ率</span>
+                      <strong>{Math.round(metrics.handoff_rate * 100)}%</strong>
+                    </div>
+                  </>
+                )}
+                <div className="chatbot-state-row">
+                  <span>セッション</span>
+                  <strong>{sessionId ? "開始済み" : "未開始"}</strong>
+                </div>
+                <div className="chatbot-state-row">
+                  <span>内部状態</span>
+                  <strong>{chatStateLabel(stateSummary, Boolean(sessionId))}</strong>
+                </div>
+                {(sessionId || stateSummary !== "idle") && (
+                  <div className="chatbot-diagnostics">
+                    <span>session: {sessionId ?? "none"}</span>
+                    <span>state: {stateSummary}</span>
+                  </div>
+                )}
               </div>
-              <div className="chatbot-state-row">
-                <span>引き継ぎ率</span>
-                <strong>{Math.round(metrics.handoff_rate * 100)}%</strong>
-              </div>
-            </>
-          )}
-          {(sessionId || stateSummary !== "idle") && (
-            <details className="chatbot-diagnostics">
-              <summary>診断情報</summary>
-              <span>session: {sessionId ?? "none"}</span>
-              <span>state: {stateSummary}</span>
             </details>
           )}
         </aside>
@@ -1849,6 +1834,23 @@ function sourceOperationalStatus(row: SourceListRow): { label: string; key: stri
   return { label: "利用可", key: "ok", reason: "回答の根拠として利用できます。" };
 }
 
+function sourceSyncStatusView(sync: ManufacturingSourceSyncStatus | null): { label: string; key: "ok" | "wait" | "bad"; reason: string } {
+  const status = sync?.status ?? "";
+  if (!sync) return { label: "確認中", key: "wait", reason: "同期状態を取得しています。" };
+  if (isSyncActive(status)) return { label: "同期中", key: "wait", reason: "最新のナレッジへ更新しています。" };
+  if (status === "failed") return { label: "同期失敗", key: "bad", reason: "接続設定を確認して再同期してください。" };
+  if (status === "partially_succeeded") return { label: "一部要確認", key: "wait", reason: "一部の文書を取り込めませんでした。" };
+  if (status === "not_found") return { label: "未同期", key: "wait", reason: "初回同期を実行してください。" };
+  return { label: "利用可", key: "ok", reason: "回答の根拠として利用できます。" };
+}
+
+function sourceSyncDisplayDate(sync: ManufacturingSourceSyncStatus | null): string {
+  const at = sync ? syncFreshness(sync) || sourceSyncLastIndexedAt(sync) : "";
+  if (!at) return "まだありません";
+  const parsed = new Date(at);
+  return Number.isNaN(parsed.getTime()) ? at : parsed.toLocaleString("ja-JP");
+}
+
 function sourceApprovalSummary(row: SourceListRow): string {
   const total = sourceDocumentCount(row);
   if (total === null) return APPROVAL_WORKFLOW_ENABLED ? "承認状況未取得" : "文書数未取得";
@@ -2027,6 +2029,8 @@ function SourceListBody() {
   const pageRows = filteredRows.slice((page - 1) * SOURCE_LIST_PAGE_SIZE, page * SOURCE_LIST_PAGE_SIZE);
   const needsActionCount = rows.filter(sourceNeedsAction).length;
   const pendingReviewCount = rows.reduce((sum, row) => sum + (row.pendingCount ?? 0), 0);
+  const usableCount = rows.filter((row) => sourceOperationalStatus(row).label === "利用可").length;
+  const syncingCount = rows.filter((row) => isSyncActive(row.sync?.status)).length;
 
   useEffect(() => {
     setPage(1);
@@ -2072,7 +2076,7 @@ function SourceListBody() {
       <header className="standalone-list-head">
         <div className="standalone-list-head-title">
           <h3>外部接続</h3>
-          <p>接続設定を保存した外部ソースの同期状態を確認できます。</p>
+          <p>回答に使う外部ナレッジの状態、承認待ち、再同期の必要性を確認できます。</p>
           {polling && <span className="sync-poll-badge">同期中 — 自動更新</span>}
         </div>
         <div className="standalone-list-tools">
@@ -2083,35 +2087,44 @@ function SourceListBody() {
         </div>
       </header>
       {state.state === "ready" && state.data.length > 0 && (
-        <section className="source-list-controls" aria-label="ソースの検索と絞り込み">
-          <label className="standalone-search source-list-search">
-            <span aria-hidden="true">⌕</span>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="外部接続名・種類で検索"
-              aria-label="外部接続名・種類で検索"
-            />
-          </label>
-          <div className="source-list-filter" role="group" aria-label="ソース状態で絞り込み">
-            {SOURCE_LIST_FILTERS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={filter === option.value ? "source-filter-button active" : "source-filter-button"}
-                aria-pressed={filter === option.value}
-                onClick={() => setFilter(option.value)}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <div className="source-list-summary" aria-live="polite">
-            <span>{filteredRows.length} 件表示</span>
-            <span>要対応 {needsActionCount} 件</span>
-            {APPROVAL_WORKFLOW_ENABLED && <span>承認待ち {pendingReviewCount} 件</span>}
-          </div>
-        </section>
+        <>
+          <section className="work-stat-strip source-list-overview" aria-label="外部接続の概況">
+            <WorkStat label="利用できる接続" value={`${usableCount} / ${rows.length}`} detail="回答の根拠に利用可" tone="ok" />
+            <WorkStat label="要対応" value={`${needsActionCount} 件`} detail="同期失敗・未同期・承認待ち" tone={needsActionCount > 0 ? "wait" : "neutral"} />
+            <WorkStat label="同期中" value={`${syncingCount} 件`} detail="一覧は自動更新されます" tone={syncingCount > 0 ? "wait" : "neutral"} />
+            {APPROVAL_WORKFLOW_ENABLED && (
+              <WorkStat label="承認待ち文書" value={`${pendingReviewCount} 件`} detail="正式根拠にする前に確認" tone={pendingReviewCount > 0 ? "wait" : "neutral"} />
+            )}
+          </section>
+          <section className="source-list-controls" aria-label="ソースの検索と絞り込み">
+            <label className="standalone-search source-list-search">
+              <span aria-hidden="true">⌕</span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="接続名・種類・状態で検索"
+                aria-label="接続名・種類・状態で検索"
+              />
+            </label>
+            <div className="source-list-filter" role="group" aria-label="ソース状態で絞り込み">
+              {SOURCE_LIST_FILTERS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={filter === option.value ? "source-filter-button active" : "source-filter-button"}
+                  aria-pressed={filter === option.value}
+                  onClick={() => setFilter(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="source-list-summary" aria-live="polite">
+              <span>{filteredRows.length} 件表示</span>
+              <span>全体 {rows.length} 件</span>
+            </div>
+          </section>
+        </>
       )}
       {state.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">ソースを読み込み中…</p>}
       {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
@@ -2189,7 +2202,7 @@ function SourceListBody() {
                         </Link>
                       )}
                       <Link href={href} className="button-link secondary">
-                        編集
+                        詳細
                       </Link>
                       {row.origin === "registered" && (
                         <button
@@ -3035,21 +3048,42 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
   }
 
   const polling = syncState.state === "ready" && isSyncActive(syncState.data.status);
+  const syncView = syncState.state === "ready" ? sourceSyncStatusView(syncState.data) : null;
+  const syncSummary = syncState.state === "ready" ? syncState.data : null;
+  const latestRun = runState.state === "ready" ? runState.data : null;
 
   return (
     <>
-      <SourceConnectionEditPanel sourceId={sourceId} onSaved={reload} />
-
-      <Section title="ソース操作" note="同期操作は明示的で監査可能です。">
-        <form className="src-inline-form" onSubmit={onSyncRequest}>
-          <input value={sourceId} readOnly aria-label="ソース ID" />
-          <button type="submit">同期を依頼</button>
-          <button type="button" onClick={reload}>
-            状態を更新
-          </button>
-        </form>
-        {polling && <p className="ops-note">同期中です — {SYNC_POLL_MS / 1000} 秒ごとに自動更新します。</p>}
+      <Section title="同期と利用状態" note="この接続が回答の根拠として使える状態かを確認できます。">
+        <div className="source-detail-summary">
+          <div className="source-detail-status">
+            <span className={`standalone-status ${syncView?.key ?? "wait"}`}>
+              {syncView?.label ?? "確認中"}
+            </span>
+            <strong>{syncView?.reason ?? "同期状態を読み込んでいます。"}</strong>
+            <span>最終同期: {syncSummary ? sourceSyncDisplayDate(syncSummary) : "確認中"}</span>
+          </div>
+          <form className="source-detail-actions" onSubmit={onSyncRequest}>
+            <button type="submit" disabled={polling}>
+              {polling ? "同期中" : "同期を開始"}
+            </button>
+            <button type="button" className="button-link secondary" onClick={reload}>
+              状態を更新
+            </button>
+          </form>
+        </div>
+        {syncSummary && (
+          <section className="work-stat-strip source-detail-stats" aria-label="同期結果の概要">
+            <WorkStat label="同期対象" value={`${syncSummary.summary.observed_count ?? 0} 件`} detail="見つかった文書" />
+            <WorkStat label="変更" value={`${syncSummary.summary.changed_count ?? 0} 件`} detail="更新された文書" tone={(syncSummary.summary.changed_count ?? 0) > 0 ? "ok" : "neutral"} />
+            <WorkStat label="削除" value={`${syncSummary.summary.deleted_count ?? 0} 件`} detail="同期で除外" tone={(syncSummary.summary.deleted_count ?? 0) > 0 ? "wait" : "neutral"} />
+            <WorkStat label="回答範囲" value={syncSummary.collection_id ?? "未設定"} detail="この範囲で検索" />
+          </section>
+        )}
+        {polling && <p className="ops-note">同期中です。完了までこの画面は自動更新されます。</p>}
       </Section>
+
+      <SourceConnectionEditPanel sourceId={sourceId} onSaved={reload} />
 
       <SourcePreviewPanel
         sourceId={sourceId}
@@ -3063,14 +3097,19 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
           <Section title="同期状態">
             <FieldGrid
               rows={[
-                ["状態", syncState.data.status],
-                ["コレクション", syncState.data.collection_id ?? "—"],
-                ["相関 ID", syncState.data.correlation_id ?? "—"],
+                ["状態", sourceSyncStatusView(syncState.data).label],
+                ["回答範囲", syncState.data.collection_id ?? "—"],
                 ["観測数", syncState.data.summary.observed_count ?? "—"],
                 ["変更数", syncState.data.summary.changed_count ?? "—"],
                 ["削除数", syncState.data.summary.deleted_count ?? "—"],
               ]}
             />
+            {syncState.data.correlation_id && (
+              <details className="ops-details">
+                <summary>運用ID</summary>
+                <FieldGrid rows={[["相関 ID", syncState.data.correlation_id]]} />
+              </details>
+            )}
           </Section>
           <Section title="最新ドキュメント" note="ドキュメント状態は同期ビューから取得しています。">
             <DataTable
@@ -3087,18 +3126,25 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
         </>
       )}
 
-      {runState.state === "ready" && runState.data && (
+      {latestRun && (
         <Section title="最新取り込み実行">
           <FieldGrid
             rows={[
-              ["実行 ID", runState.data.ingestion_run_id],
-              ["状態", runState.data.status],
-              ["ソース", runState.data.source_id ?? "—"],
-              ["コレクション", runState.data.collection_id ?? "—"],
-              ["開始", runState.data.started_at ?? "—"],
-              ["終了", runState.data.finished_at ?? "—"],
+              ["状態", latestRun.status],
+              ["回答範囲", latestRun.collection_id ?? "—"],
+              ["開始", latestRun.started_at ?? "—"],
+              ["終了", latestRun.finished_at ?? "—"],
             ]}
           />
+          <details className="ops-details">
+            <summary>運用ID</summary>
+            <FieldGrid
+              rows={[
+                ["実行 ID", latestRun.ingestion_run_id],
+                ["ソース ID", latestRun.source_id ?? "—"],
+              ]}
+            />
+          </details>
         </Section>
       )}
     </>
@@ -5446,6 +5492,10 @@ function FileBrowserBody() {
     row.approval_status === "pending_review" || row.approval_status === "draft"
   ).length;
   const approvedCount = folderRows.filter((row) => row.approval_status === "approved").length;
+  const totalReviewCount = fileRows.filter((row) =>
+    row.approval_status === "pending_review" || row.approval_status === "draft"
+  ).length;
+  const totalApprovedCount = fileRows.filter((row) => row.approval_status === "approved").length;
 
   useEffect(() => {
     setPage(1);
@@ -5570,6 +5620,10 @@ function FileBrowserBody() {
   function renderUploadPanel(panelId: string) {
     return (
       <div id={panelId} className="fb-upload-panel">
+        <div className="fb-upload-head">
+          <strong>{uploadTarget.name} にアップロード</strong>
+          <span>PDF、Word、Excel、CSV、画像などを取り込んで、回答の根拠として管理します。</span>
+        </div>
         <label className="upload-drop">
           <input
             key={fileInputKey}
@@ -5642,7 +5696,7 @@ function FileBrowserBody() {
                 <span className="fb-file-icon" aria-hidden="true" />
                 <div className="fb-list-title">
                   <h4 title={file.filename}>{file.filename}</h4>
-                  <p>{file.document_id}</p>
+                  <p>{file.content_type || (file.source === "local" ? "アップロード済み文書" : "登録済み文書")}</p>
                 </div>
               </div>
               <div className="fb-list-cell">
@@ -5671,6 +5725,7 @@ function FileBrowserBody() {
         <div className="fb-toolbar">
           <div>
             <h2 className="fb-heading">ファイル</h2>
+            <p className="fb-subtitle">アップロードした文書を、回答に使える根拠として整理します。</p>
           </div>
           <div className="fb-toolbar-actions">
             {renderSyncButton()}
@@ -5704,6 +5759,12 @@ function FileBrowserBody() {
             </button>
           </div>
         </div>
+        <section className="work-stat-strip fb-overview" aria-label="ファイル管理の概況">
+          <WorkStat label="フォルダ" value={`${allFolders.length} 件`} detail="整理済みのまとまり" />
+          <WorkStat label="ファイル" value={`${fileRows.length} 件`} detail={`フォルダなし ${rootRows.length} 件`} />
+          <WorkStat label="レビュー待ち" value={`${totalReviewCount} 件`} detail="正式根拠にする前に確認" tone={totalReviewCount > 0 ? "wait" : "neutral"} />
+          <WorkStat label="正式根拠" value={`${totalApprovedCount} 件`} detail="回答で優先利用" tone="ok" />
+        </section>
         {showUploadForm && renderUploadPanel("root-file-upload-panel")}
         {showNewFolder && (
           <FileFolderDialog
@@ -5740,6 +5801,7 @@ function FileBrowserBody() {
             ) : allFolders.length === 0 && rootRows.length === 0 ? (
               <div className="standalone-empty-state">
                 <h4>ファイルはまだありません</h4>
+                <p>まずは業務手順書やFAQをアップロードすると、質問とチャットボットの根拠として使えます。</p>
                 <button type="button" className="standalone-empty-cta" onClick={() => setShowUploadForm(true)}>
                   アップロード
                 </button>
@@ -5771,8 +5833,8 @@ function FileBrowserBody() {
                       <span>{folder.created_at ? `作成 ${folder.created_at.slice(0, 10)}` : "作成日なし"}</span>
                     </div>
                     <div className="fb-list-cell">
-                      <span>このフォルダにアップロードできます</span>
-                      <span>サブフォルダなし</span>
+                      <span>フォルダ内で検索・アップロードできます</span>
+                      <span>根拠文書をまとめて管理</span>
                     </div>
                     <div className="fb-list-actions">
                       <button
@@ -5826,6 +5888,7 @@ function FileBrowserBody() {
       <div className="fb-toolbar">
         <div>
           <h2 className="fb-heading">{currentFolder.name}</h2>
+          <p className="fb-subtitle">このフォルダ内の文書と承認状態を確認します。</p>
         </div>
         <div className="fb-toolbar-actions">
           {renderSyncButton()}
@@ -5840,6 +5903,12 @@ function FileBrowserBody() {
           </button>
         </div>
       </div>
+      <section className="work-stat-strip fb-overview" aria-label={`${currentFolder.name} の概況`}>
+        <WorkStat label="ファイル" value={`${folderRows.length} 件`} detail="このフォルダ内" />
+        <WorkStat label="表示中" value={`${filteredRows.length} 件`} detail="検索・絞り込み後" />
+        <WorkStat label="レビュー待ち" value={`${reviewCount} 件`} detail="正式根拠にする前に確認" tone={reviewCount > 0 ? "wait" : "neutral"} />
+        <WorkStat label="正式根拠" value={`${approvedCount} 件`} detail="回答で優先利用" tone="ok" />
+      </section>
       {showUploadForm && (
         renderUploadPanel("file-upload-panel")
       )}
@@ -6275,6 +6344,9 @@ function AddSourceBody() {
                 <span className="source-type-body">
                   <strong>{source.name}</strong>
                   <span>{source.desc}</span>
+                </span>
+                <span className={`source-type-status ${source.readiness}`}>
+                  {sourceReadinessLabel(source.readiness)}
                 </span>
               </button>
             ))}
