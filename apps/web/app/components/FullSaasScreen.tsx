@@ -1619,6 +1619,15 @@ function sourceSearchText(row: SourceListRow): string {
     .toLowerCase();
 }
 
+function dataSourceKind(source: AdminDataSource): string {
+  const config = (source.config ?? {}) as Record<string, unknown>;
+  return String(config.source_type || source.type || "");
+}
+
+function isExternalConnectionSource(source: AdminDataSource): boolean {
+  return !isFileUploadSource(source.source_id, dataSourceKind(source));
+}
+
 function valueLabel(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   if (Array.isArray(value)) return value.map(valueLabel).join(", ");
@@ -1689,8 +1698,8 @@ async function loadSourceListRows(): Promise<SourceListRow[]> {
     if (doc.approval_status === "pending_review") current.pendingCount += 1;
     docStats.set(sourceId, current);
   }
-  const registered = await Promise.all(
-    sources.map(async (source) => {
+  return Promise.all(
+    sources.filter(isExternalConnectionSource).map(async (source) => {
       let sync: ManufacturingSourceSyncStatus | null = null;
       try {
         sync = await manufacturingSourceSyncStatus(source.source_id, token);
@@ -1709,28 +1718,6 @@ async function loadSourceListRows(): Promise<SourceListRow[]> {
       };
     }),
   );
-  const fromDocuments: SourceListRow[] = [...docStats.values()]
-    .sort((a, b) => a.sourceId.localeCompare(b.sourceId))
-    .map((stat) => ({
-      approvedCount: stat.approvedCount,
-      documentCount: stat.documentCount,
-      origin: "documents",
-      pendingCount: stat.pendingCount,
-      source: {
-        audit_events: [],
-        collection_id: stat.collectionId,
-        config: {
-          display_name: stat.displayName || (stat.sourceId === "upload" ? "ファイル" : stat.sourceId),
-          source_type: stat.sourceType || "file",
-        },
-        source_id: stat.sourceId,
-        status: "active",
-        tenant_id: "",
-        type: "upload",
-      },
-      sync: null,
-    }));
-  return [...registered, ...fromDocuments];
 }
 
 function SourceListBody() {
@@ -1800,8 +1787,8 @@ function SourceListBody() {
     <div className="standalone-list-shell">
       <header className="standalone-list-head">
         <div className="standalone-list-head-title">
-          <h3>同期・承認状況</h3>
-          <p>RAG が参照するソースの同期・承認状態を確認できます。</p>
+          <h3>外部接続</h3>
+          <p>接続設定を保存した外部ソースの同期・承認状態を確認できます。</p>
           {polling && <span className="sync-poll-badge">同期中 — 自動更新</span>}
         </div>
         <div className="standalone-list-tools">
@@ -1818,8 +1805,8 @@ function SourceListBody() {
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="ソース名・種類で検索"
-              aria-label="ソース名・種類で検索"
+              placeholder="外部接続名・種類で検索"
+              aria-label="外部接続名・種類で検索"
             />
           </label>
           <div className="source-list-filter" role="group" aria-label="ソース状態で絞り込み">
@@ -1853,9 +1840,9 @@ function SourceListBody() {
                 <path d="M12 11v5M9.5 13.5h5" />
               </svg>
             </div>
-            <h4>まだソースが登録されていません</h4>
+            <h4>まだ外部接続が登録されていません</h4>
             <p>
-              社内ドキュメントやソースを接続すると、根拠付きで横断検索・回答できるようになります。
+              Box、Confluence、Notion、S3 などを接続すると、同期状態をここで確認できます。ファイルはファイルメニューで管理します。
             </p>
             <AddSourceCta className="standalone-empty-cta" />
           </div>
@@ -4674,19 +4661,22 @@ function FileBrowserBody() {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [folderError, setFolderError] = useState("");
+  const [syncingFiles, setSyncingFiles] = useState(false);
   const toast = useToast();
 
-  async function reloadFiles() {
-    setLoading(true);
+  async function reloadFiles({ showLoading = true }: { showLoading?: boolean } = {}): Promise<boolean> {
+    if (showLoading) setLoading(true);
     setLoadError(null);
     setLocalDocs(loadIngestedDocs());
     try {
       const token = await getSessionToken();
       setApiDocs(await manufacturingDocuments(token));
+      return true;
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "ファイル一覧を読み込めませんでした");
+      return false;
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }
 
@@ -4788,8 +4778,20 @@ function FileBrowserBody() {
     setFolderError("");
     setNewFolderName("");
     setShowNewFolder(false);
-    setCurrentFolderId(nextFolder.id);
-    setShowUploadForm(true);
+    setCurrentFolderId(null);
+    setShowUploadForm(false);
+    setRootQuery("");
+    toast(`${name} を作成しました。`, "success");
+  }
+
+  async function syncFiles() {
+    if (syncingFiles || loading || uploading) return;
+    setSyncingFiles(true);
+    const ok = await reloadFiles({ showLoading: false });
+    setSyncingFiles(false);
+    if (ok) {
+      toast("ファイル一覧を同期しました。", "success");
+    }
   }
 
   async function onUpload() {
@@ -4908,6 +4910,20 @@ function FileBrowserBody() {
     );
   }
 
+  function renderSyncButton() {
+    return (
+      <button
+        type="button"
+        className="button-link secondary"
+        onClick={() => void syncFiles()}
+        disabled={syncingFiles || loading || uploading}
+        aria-label="ファイル一覧を同期"
+      >
+        {syncingFiles ? "同期中..." : "同期"}
+      </button>
+    );
+  }
+
   function renderFileList(rows: FileBrowserFileRow[]) {
     return (
       <div className="fb-list" role="list">
@@ -4950,6 +4966,7 @@ function FileBrowserBody() {
             <h2 className="fb-heading">ファイル</h2>
           </div>
           <div className="fb-toolbar-actions">
+            {renderSyncButton()}
             <button
               type="button"
               className="button-link btn-approve"
@@ -5103,15 +5120,18 @@ function FileBrowserBody() {
         <div>
           <h2 className="fb-heading">{currentFolder.name}</h2>
         </div>
-        <button
-          type="button"
-          className="button-link btn-approve"
-          aria-controls="file-upload-panel"
-          aria-expanded={showUploadForm}
-          onClick={() => setShowUploadForm((shown) => !shown)}
-        >
-          アップロード
-        </button>
+        <div className="fb-toolbar-actions">
+          {renderSyncButton()}
+          <button
+            type="button"
+            className="button-link btn-approve"
+            aria-controls="file-upload-panel"
+            aria-expanded={showUploadForm}
+            onClick={() => setShowUploadForm((shown) => !shown)}
+          >
+            アップロード
+          </button>
+        </div>
       </div>
       {showUploadForm && (
         renderUploadPanel("file-upload-panel")
@@ -5561,7 +5581,7 @@ function AddSourceBody() {
             ))}
           </div>
           <p className="source-config-note">{selectedConfig.note}</p>
-          <div className="screen-actions">
+          <div className="screen-actions add-source-actions">
             <button type="button" onClick={() => setStep("configure")}>
               次へ →
             </button>
@@ -5606,7 +5626,7 @@ function AddSourceBody() {
               required
             />
 
-            <div className="screen-actions">
+            <div className="screen-actions add-source-actions">
               <button type="submit" disabled={submitting}>
                 {submitting ? "取込中…" : "テキストを取込"}
               </button>
@@ -5691,7 +5711,7 @@ function AddSourceBody() {
               ))}
             </div>
 
-            <div className="screen-actions">
+            <div className="screen-actions add-source-actions">
               <button type="submit" disabled={configSaving}>
                 {configSaving ? "保存中…" : "接続設定を保存"}
               </button>
