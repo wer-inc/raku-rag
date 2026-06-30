@@ -16,6 +16,8 @@ import type {
   ChatMessageResponse,
   ChatMetricsResponse,
   ChatSessionDetailResponse,
+  ChatbotSourceExposureListResponse,
+  ChatbotSourceExposurePolicy,
   CreateDraftRequest,
   DocumentFileResponse,
   ImprovementQueueResponse,
@@ -206,6 +208,27 @@ export async function chatSessionDetail(
 
 export async function chatMetrics(userToken: string): Promise<ChatMetricsResponse> {
   return apiGetJson<ChatMetricsResponse>("/chat/metrics", userToken);
+}
+
+export async function chatSourceExposurePolicies(
+  userToken: string,
+): Promise<ChatbotSourceExposureListResponse> {
+  return apiGetJson<ChatbotSourceExposureListResponse>(
+    "/chat/source-exposure-policies",
+    userToken,
+  );
+}
+
+export async function upsertChatSourceExposurePolicy(
+  policyId: string,
+  policy: ChatbotSourceExposurePolicy,
+  userToken: string,
+): Promise<ChatbotSourceExposurePolicy> {
+  return apiPutJson<ChatbotSourceExposurePolicy>(
+    `/chat/source-exposure-policies/${encodeURIComponent(policyId)}`,
+    policy,
+    userToken,
+  );
 }
 
 /** Record answer/citation feedback (👍/👎, "この引用は正しい/間違い"). */

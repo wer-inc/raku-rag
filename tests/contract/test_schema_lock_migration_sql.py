@@ -149,6 +149,34 @@ class SchemaLockMigrationSqlTest(unittest.TestCase):
                 self.assertIn(token, visual_policy)
                 self.assertIn(f"DROP COLUMN IF EXISTS {token}", visual_policy_down)
 
+    def test_chatbot_source_exposure_policies_are_tenant_scoped(self) -> None:
+        policy_sql = (MIGRATIONS / "0016_chatbot_source_exposure_policies.sql").read_text(
+            encoding="utf-8"
+        )
+        policy_down = (
+            MIGRATIONS / "0016_chatbot_source_exposure_policies.down.sql"
+        ).read_text(encoding="utf-8")
+
+        for token in (
+            "CREATE TABLE IF NOT EXISTS chatbot_source_exposure_policies",
+            "tenant_id text NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE",
+            "PRIMARY KEY (tenant_id, policy_id)",
+            "collection_id text NOT NULL DEFAULT ''",
+            "source_id text NOT NULL DEFAULT ''",
+            "allowed_channels text[] NOT NULL DEFAULT ARRAY[]::text[]",
+            "require_approved_effective boolean NOT NULL DEFAULT true",
+            "allow_obsolete_primary_evidence boolean NOT NULL DEFAULT false",
+            "ALTER TABLE chatbot_source_exposure_policies ENABLE ROW LEVEL SECURITY",
+            "ALTER TABLE chatbot_source_exposure_policies FORCE ROW LEVEL SECURITY",
+            "tenant_id = raku.current_tenant_id()",
+            "GRANT SELECT, INSERT, UPDATE, DELETE",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, policy_sql)
+
+        self.assertIn("DROP TABLE IF EXISTS chatbot_source_exposure_policies", policy_down)
+        self.assertIn("DROP INDEX IF EXISTS idx_chatbot_source_exposure_collection", policy_down)
+
     def test_evaluation_run_version_registry_has_down_migration(self) -> None:
         down = (MIGRATIONS / "0011_eval_version_registry.down.sql").read_text(encoding="utf-8")
         self.assertIn("DROP COLUMN IF EXISTS version_registry", down)

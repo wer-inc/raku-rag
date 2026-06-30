@@ -998,6 +998,103 @@ textarea {
   font-size: 13px;
 }
 
+.chatbot-reference-settings {
+  display: grid;
+  gap: 10px;
+}
+
+.chatbot-scope-list {
+  display: grid;
+  gap: 8px;
+}
+
+.chatbot-scope-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chatbot-scope-option:hover,
+.chatbot-scope-option.selected {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  background: var(--accent-soft);
+}
+
+.chatbot-scope-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chatbot-scope-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.chatbot-scope-option span,
+.chatbot-scope-option strong {
+  overflow-wrap: anywhere;
+}
+
+.chatbot-scope-option span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.chatbot-scope-option small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chatbot-scope-option strong {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chatbot-scope-option.selected strong {
+  color: var(--accent-strong);
+}
+
+.chatbot-enable-reference {
+  width: 100%;
+}
+
+.chatbot-reference-status {
+  max-width: 800px;
+  margin: 0 auto 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chatbot-reference-status.ready {
+  color: var(--accent-strong);
+}
+
+.chatbot-reference-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chatbot-reference-empty a {
+  color: var(--accent);
+  font-weight: 650;
+  text-decoration: none;
+}
+
 .chatbot-diagnostics,
 .answer-diagnostics,
 .citation-diagnostics {
@@ -5841,5 +5938,366 @@ textarea:focus-visible,
 
   .fb-grid {
     grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
+  }
+}
+
+/* Unified product action system
+   Keep SaaS actions predictable: primary actions are accent-filled and right aligned,
+   secondary actions are neutral, destructive actions are red, and filters stay compact. */
+:root {
+  --control-height-sm: 32px;
+  --control-height-md: 36px;
+  --control-radius: 8px;
+  --control-font-size: 13px;
+  --control-font-size-sm: 12.5px;
+  --control-weight: 650;
+  --control-min-width: 84px;
+  --control-padding-x: 14px;
+  --control-primary-bg: var(--accent);
+  --control-primary-hover: var(--accent-strong);
+  --control-secondary-bg: #ffffff;
+  --control-secondary-hover: #f6f6f7;
+  --control-secondary-text: var(--text);
+  --control-danger-bg: var(--danger);
+  --control-danger-hover: #8f2d35;
+  --control-focus-ring: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.button-link,
+.quick-links a,
+.screen-actions > button,
+.screen-actions > a,
+.standalone-list-tools > button,
+.standalone-list-tools > a,
+.source-list-actions > button,
+.source-list-actions > a,
+.document-list-actions > button,
+.document-list-actions > a,
+.fb-toolbar-actions > button,
+.fb-toolbar-actions > a,
+.fb-list-actions > button,
+.fb-list-actions > a,
+.fb-folder-dialog-actions > button,
+.approval-row-actions > button,
+.improve-row-actions > button,
+.improve-row-actions > a,
+.review-decide > button,
+.connector-oauth > button,
+.draft-create-form button,
+.answer-next-actions a,
+.citation-open,
+.answer-fb-btn,
+.answer-fb-reason,
+.answer-fb-cancel,
+.cv-fb,
+.source-list-pagination button,
+.standalone-empty-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-inline-size: var(--control-min-width);
+  min-height: var(--control-height-md);
+  padding: 0 var(--control-padding-x);
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
+  background: var(--control-secondary-bg);
+  color: var(--control-secondary-text);
+  font: inherit;
+  font-size: var(--control-font-size);
+  font-weight: var(--control-weight);
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease-out,
+    border-color 160ms ease-out,
+    color 160ms ease-out,
+    box-shadow 160ms ease-out;
+}
+
+.button-link:hover,
+.button-link.secondary:hover,
+.quick-links a:hover,
+.screen-actions > button.is-secondary:hover,
+.screen-actions > button.button-link:hover,
+.standalone-list-tools > button.is-secondary:hover,
+.fb-toolbar-actions > .button-link:not(.btn-approve):hover,
+.fb-list-actions > .button-link:hover,
+.fb-folder-dialog-actions > .button-link:not(.btn-approve):hover,
+.approval-row-actions > button:not(.btn-approve):not(.btn-reject):hover,
+.improve-row-actions > .button-link:hover,
+.answer-next-actions a:hover,
+.citation-open:hover,
+.answer-fb-btn:hover,
+.answer-fb-reason:hover,
+.answer-fb-cancel:hover,
+.cv-fb:hover,
+.source-list-pagination button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: var(--control-secondary-hover);
+  color: var(--accent-strong);
+}
+
+.screen-actions > button:not(.button-link):not(.is-secondary):not(.btn-reject):not(.citation-open),
+.standalone-list-tools > button:not(.button-link):not(.is-secondary):not(.btn-reject),
+.standalone-list-tools > a.add-source-cta,
+.source-list-actions > button,
+.button-link.btn-approve,
+.btn-approve,
+.connector-oauth > button:not(:disabled),
+.draft-create-form button:not(:disabled),
+.standalone-empty-cta {
+  border-color: var(--control-primary-bg);
+  background: var(--control-primary-bg);
+  color: #ffffff;
+}
+
+.screen-actions > button:not(.button-link):not(.is-secondary):not(.btn-reject):not(.citation-open):hover:not(:disabled),
+.standalone-list-tools > button:not(.button-link):not(.is-secondary):not(.btn-reject):hover:not(:disabled),
+.standalone-list-tools > a.add-source-cta:hover,
+.source-list-actions > button:hover:not(:disabled),
+.button-link.btn-approve:hover:not(:disabled),
+.btn-approve:hover:not(:disabled),
+.connector-oauth > button:hover:not(:disabled),
+.draft-create-form button:hover:not(:disabled),
+.standalone-empty-cta:hover:not(:disabled) {
+  border-color: var(--control-primary-hover);
+  background: var(--control-primary-hover);
+  color: #ffffff;
+}
+
+.btn-reject,
+.screen-actions > button.btn-reject,
+.review-decide > button.btn-reject,
+.improve-row-actions > button.btn-reject {
+  border-color: var(--control-danger-bg);
+  background: var(--control-danger-bg);
+  color: #ffffff;
+}
+
+.btn-reject:hover:not(:disabled),
+.screen-actions > button.btn-reject:hover:not(:disabled),
+.review-decide > button.btn-reject:hover:not(:disabled),
+.improve-row-actions > button.btn-reject:hover:not(:disabled) {
+  border-color: var(--control-danger-hover);
+  background: var(--control-danger-hover);
+  color: #ffffff;
+}
+
+.button-link:disabled,
+.screen-actions > button:disabled,
+.standalone-list-tools > button:disabled,
+.source-list-actions > button:disabled,
+.document-list-actions > button:disabled,
+.fb-toolbar-actions > button:disabled,
+.fb-list-actions > button:disabled,
+.fb-folder-dialog-actions > button:disabled,
+.approval-row-actions > button:disabled,
+.improve-row-actions > button:disabled,
+.review-decide > button:disabled,
+.connector-oauth > button:disabled,
+.draft-create-form button:disabled,
+.answer-fb-btn:disabled,
+.answer-fb-reason:disabled,
+.answer-fb-cancel:disabled,
+.cv-fb:disabled,
+.source-filter-button:disabled,
+.source-list-pagination button:disabled {
+  border-color: #d9dbe7;
+  background: #eef0f6;
+  color: #8b90a0;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+:is(
+  .button-link,
+  .quick-links a,
+  .screen-actions > button,
+  .screen-actions > a,
+  .standalone-list-tools > button,
+  .standalone-list-tools > a,
+  .source-list-actions > button,
+  .source-list-actions > a,
+  .document-list-actions > button,
+  .document-list-actions > a,
+  .fb-toolbar-actions > button,
+  .fb-toolbar-actions > a,
+  .fb-list-actions > button,
+  .fb-list-actions > a,
+  .fb-folder-dialog-actions > button,
+  .approval-row-actions > button,
+  .improve-row-actions > button,
+  .improve-row-actions > a,
+  .review-decide > button,
+  .connector-oauth > button,
+  .draft-create-form button,
+  .answer-next-actions a,
+  .citation-open,
+  .answer-fb-btn,
+  .answer-fb-reason,
+  .answer-fb-cancel,
+  .cv-fb,
+  .source-filter-button,
+  .source-list-pagination button,
+  .standalone-empty-cta
+):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--control-focus-ring);
+}
+
+.screen-actions,
+.add-source-actions,
+.standalone-list-tools,
+.source-list-actions,
+.document-list-actions,
+.fb-toolbar-actions,
+.fb-list-actions,
+.fb-folder-dialog-actions,
+.approval-row-actions,
+.improve-row-actions,
+.review-decide,
+.answer-next-actions div,
+.cv-foot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.screen-actions {
+  margin-top: 2px;
+}
+
+.history-actions {
+  justify-content: flex-end;
+}
+
+.history-clear-confirm {
+  flex: 1 1 100%;
+}
+
+.source-list-actions,
+.document-list-actions,
+.fb-list-actions {
+  max-width: none;
+}
+
+.source-list-actions > button,
+.source-list-actions > a,
+.document-list-actions > button,
+.document-list-actions > a,
+.fb-list-actions > button,
+.fb-list-actions > a,
+.source-list-pagination button {
+  min-inline-size: 76px;
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: var(--control-font-size-sm);
+}
+
+.source-filter-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 0;
+  min-height: var(--control-height-sm);
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--control-radius);
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease-out,
+    border-color 160ms ease-out,
+    color 160ms ease-out,
+    box-shadow 160ms ease-out;
+}
+
+.source-filter-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--line));
+  background: #f8f8fb;
+  color: var(--text);
+}
+
+.source-filter-button.active {
+  border-color: color-mix(in srgb, var(--accent) 42%, #ffffff);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.add-source-actions > button {
+  min-inline-size: var(--control-min-width);
+  min-height: var(--control-height-md);
+  padding: 0 var(--control-padding-x);
+  font-size: var(--control-font-size);
+}
+
+.add-source-cta {
+  gap: 8px;
+}
+
+.add-source-plus {
+  width: 15px;
+  height: 15px;
+  border-color: currentColor;
+}
+
+.answer-fb-row,
+.answer-fb-reason-list {
+  justify-content: flex-start;
+}
+
+@media (max-width: 900px) {
+  .screen-actions,
+  .add-source-actions,
+  .standalone-list-tools,
+  .source-list-actions,
+  .document-list-actions,
+  .fb-toolbar-actions,
+  .fb-list-actions,
+  .fb-folder-dialog-actions,
+  .approval-row-actions,
+  .improve-row-actions,
+  .review-decide,
+  .answer-next-actions div,
+  .cv-foot-actions {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .screen-actions > button,
+  .screen-actions > a,
+  .add-source-actions > button,
+  .standalone-list-tools > button,
+  .standalone-list-tools > a,
+  .source-list-actions > button,
+  .source-list-actions > a,
+  .document-list-actions > button,
+  .document-list-actions > a,
+  .fb-toolbar-actions > button,
+  .fb-toolbar-actions > a,
+  .fb-list-actions > button,
+  .fb-list-actions > a,
+  .fb-folder-dialog-actions > button,
+  .approval-row-actions > button,
+  .improve-row-actions > button,
+  .improve-row-actions > a,
+  .review-decide > button,
+  .answer-next-actions a,
+  .cv-foot-actions > button,
+  .cv-foot-actions > a,
+  .standalone-empty-cta {
+    width: 100%;
   }
 }

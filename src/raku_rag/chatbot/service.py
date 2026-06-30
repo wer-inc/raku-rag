@@ -17,6 +17,10 @@ from typing import Callable
 from urllib.parse import urlparse
 
 from raku_rag.domain.models import IdentityClaims
+from raku_rag.persistence.chatbot import (
+    ChatbotSourcePolicyRepository,
+    InMemoryChatbotSourcePolicyRepository,
+)
 
 RagAnswerer = Callable[[IdentityClaims, str, str | None], dict]
 
@@ -210,12 +214,19 @@ class ChatScenario:
 
 
 class ChatbotService:
-    def __init__(self, rag_answerer: RagAnswerer) -> None:
+    def __init__(
+        self,
+        rag_answerer: RagAnswerer,
+        source_policy_repository: ChatbotSourcePolicyRepository | None = None,
+    ) -> None:
         self._rag_answerer = rag_answerer
         self._sessions: dict[tuple[str, str], ChatSession] = {}
         self._handoffs: dict[tuple[str, str], dict] = {}
         self._feedback: dict[tuple[str, str], dict] = {}
         self._source_policies: dict[tuple[str, str], dict] = {}
+        self._source_policy_repo = source_policy_repository or InMemoryChatbotSourcePolicyRepository(
+            self._source_policies
+        )
         self._scenarios: dict[tuple[str, str], ChatScenario] = {}
         self._seed_scenarios()
 
@@ -475,11 +486,7 @@ class ChatbotService:
     def list_source_policies(self, principal: IdentityClaims) -> tuple[int, dict]:
         if not self._has_any_role(principal, SOURCE_POLICY_ROLES):
             return 403, {"error": "chat_role_required"}
-        policies = [
-            p
-            for (tenant_id, _), p in self._source_policies.items()
-            if tenant_id == principal.tenant_id
-        ]
+        policies = self._source_policy_repo.list(principal.tenant_id)
         return 200, {**_tenant_body(principal, _id("corr")), "items": policies}
 
     def upsert_source_policy(
@@ -519,8 +526,8 @@ class ChatbotService:
         }
         if source_id:
             policy["unsupported_reason"] = "source_level_filter_requires_rag_adapter_support"
-        self._source_policies[(principal.tenant_id, policy_id)] = policy
-        return 200, {**_tenant_body(principal, _id("corr")), **policy}
+        saved = self._source_policy_repo.upsert(principal.tenant_id, policy_id, policy)
+        return 200, {**_tenant_body(principal, _id("corr")), **saved}
 
     def validate_source_policy(self, principal: IdentityClaims, body: dict) -> tuple[int, dict]:
         if not self._has_any_role(principal, SOURCE_POLICY_ROLES):
@@ -1051,8 +1058,8 @@ class ChatbotService:
         sources and merely hiding blocked citations afterwards.
         """
         policy_ids: list[str] = []
-        for (tenant_id, _), policy in self._source_policies.items():
-            if tenant_id != session.tenant_id or policy.get("status") != "active":
+        for policy in self._source_policy_repo.list(session.tenant_id):
+            if policy.get("status") != "active":
                 continue
             if str(policy.get("source_id") or ""):
                 continue
@@ -1069,8 +1076,8 @@ class ChatbotService:
         source_id = str(citation.get("source_id") or "")
         candidates = [
             policy
-            for (tenant_id, _), policy in self._source_policies.items()
-            if tenant_id == session.tenant_id and policy.get("status") == "active"
+            for policy in self._source_policy_repo.list(session.tenant_id)
+            if policy.get("status") == "active"
         ]
         for policy in candidates:
             policy_source = str(policy.get("source_id") or "")
@@ -1113,12 +1120,20 @@ class ChatbotService:
         if channels and session.channel not in channels:
             return False
         intents = set(str(x) for x in (policy.get("allowed_intents") or []))
-        if intents and session.current_intent and session.current_intent not in intents:
+        if intents and session.current_intent and not self._policy_intent_allows_rag_turn(
+            intents, session.current_intent
+        ):
             return False
         scenarios = set(str(x) for x in (policy.get("allowed_scenario_ids") or []))
         if scenarios and session.scenario_id and session.scenario_id not in scenarios:
             return False
         return True
+
+    def _policy_intent_allows_rag_turn(self, allowed_intents: set[str], current_intent: str) -> bool:
+        if current_intent in allowed_intents:
+            return True
+        non_rag_intents = {"cancel_subscription", "confirm", "human_handoff", "high_risk"}
+        return "rag_question" in allowed_intents and current_intent not in non_rag_intents
 
     def _classify_intent(self, text: str, current: str | None) -> str:
         normalized = text.lower()

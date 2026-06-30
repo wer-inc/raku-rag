@@ -73,6 +73,7 @@ _APP_ROLE = "raku_app"
 _CORE_TABLES = (
     "audit_logs",
     "acl_grants",
+    "chatbot_source_exposure_policies",
     "document_processing_states",
     "ingestion_runs",
     "source_sync_states",

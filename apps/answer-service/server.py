@@ -58,6 +58,10 @@ from raku_rag.industry import (  # noqa: E402
     RealEstateApiService,
 )
 from raku_rag.persistence.provider_config_audit import ProviderConfigAuditRepository  # noqa: E402
+from raku_rag.persistence.chatbot import (  # noqa: E402
+    InMemoryChatbotSourcePolicyRepository,
+    PostgresChatbotSourcePolicyRepository,
+)
 from raku_rag.production import (  # noqa: E402
     DEFAULT_DSN,
     ProductionSystem,
@@ -1383,6 +1387,13 @@ def _datasource_repository_for(system: ProductionSystem, secret_store):
     return InMemoryDataSourceRepository(secret_store)
 
 
+def _chatbot_source_policy_repository_for(system: ProductionSystem):
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return PostgresChatbotSourcePolicyRepository(conn)
+    return InMemoryChatbotSourcePolicyRepository()
+
+
 def _source_sync_queue_from_env():
     queue_url = os.environ.get("INGESTION_QUEUE_URL") or os.environ.get("SQS_QUEUE_URL")
     if not queue_url:
@@ -1468,7 +1479,8 @@ def make_handler(system: ProductionSystem):
     chatbot = ChatbotService(
         lambda principal, query, collection_id: _manufacturing_answer_json(
             manufacturing_system.answer(principal, query, collection_id)
-        )
+        ),
+        source_policy_repository=_chatbot_source_policy_repository_for(system),
     )
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()

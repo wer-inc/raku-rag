@@ -113,6 +113,30 @@ describe("chat facade (e2e)", () => {
           return;
         }
 
+        if (req.method === "GET" && url.pathname === "/internal/chat/source-exposure-policies") {
+          res.end(
+            JSON.stringify({
+              api_version: "v1",
+              tenant_id: req.headers["x-raku-tenant-id"],
+              items: [
+                {
+                  policy_id: "chat-internal:manuals",
+                  source_id: "",
+                  collection_id: "manuals",
+                  exposure_mode: "internal_authenticated",
+                  allowed_channels: ["web_chat"],
+                  allowed_intents: ["rag_question"],
+                  require_approved_effective: true,
+                  allow_obsolete_primary_evidence: false,
+                  status: "active",
+                },
+              ],
+              correlation_id: "corr_policy_list",
+            }),
+          );
+          return;
+        }
+
         if (req.method === "PUT" && url.pathname === "/internal/chat/scenarios/cancel-basic/versions/csv_1") {
           res.end(
             JSON.stringify({
@@ -327,6 +351,27 @@ describe("chat facade (e2e)", () => {
     expect(received[0].path).toBe("/internal/chat/source-exposure-policies/pol_1");
     expect(received[0].headers["x-internal-auth"]).toBe("chat-secret");
     expect(received[0].body.tenant_id).toBeUndefined();
+  });
+
+  it("lists ChatBot source exposure policies with role gate and signed principal headers", async () => {
+    const token = makeUserToken({
+      tenant_id: "tenant_a",
+      user_id: "data-admin",
+      groups: [],
+      roles: ["data_admin"],
+    });
+    const res = await request(app.getHttpServer())
+      .get("/v1/chat/source-exposure-policies")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", token);
+
+    expect(res.status).toBe(200);
+    expect(res.body.items[0].policy_id).toBe("chat-internal:manuals");
+    expect(received[0].method).toBe("GET");
+    expect(received[0].path).toBe("/internal/chat/source-exposure-policies");
+    expect(received[0].headers["x-raku-tenant-id"]).toBe("tenant_a");
+    expect(received[0].headers["x-raku-user-id"]).toBe("data-admin");
+    expect(received[0].headers["x-internal-auth"]).toBe("chat-secret");
   });
 
   it("forwards scenario version PUT to the answer-service", async () => {

@@ -2,6 +2,7 @@ import unittest
 
 from raku_rag.chatbot import ChatbotService
 from raku_rag.domain.models import IdentityClaims
+from raku_rag.persistence.chatbot import InMemoryChatbotSourcePolicyRepository
 
 
 def _principal(tenant="tenant_a", user="alice", roles=()):
@@ -115,6 +116,48 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertFalse(turn["rag"]["answerable"])
         self.assertEqual(turn["rag"]["no_answer_reason"], "source_not_enabled_for_chatbot")
         self.assertIsNone(turn["rag"]["trace_id"])
+
+    def test_repository_backed_policy_survives_service_recreation(self):
+        repo = InMemoryChatbotSourcePolicyRepository()
+        service = ChatbotService(_rag_ok, source_policy_repository=repo)
+        _enable_internal_chat_collection(service)
+
+        restarted = ChatbotService(_rag_ok, source_policy_repository=repo)
+        _, created = restarted.create_session(_principal(), {"channel": "web_chat"})
+
+        status, turn = restarted.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "ナレッジの使い方を教えてください", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
+        self.assertEqual(turn["rag"]["source_policy_id"], "pol_collection")
+
+    def test_rag_question_policy_allows_specific_rag_question_intents(self):
+        service = ChatbotService(_rag_ok)
+        service.upsert_source_policy(
+            _principal(roles=("tenant_admin",)),
+            "pol_rag_questions",
+            {
+                "source_id": "",
+                "collection_id": "manuals",
+                "exposure_mode": "internal_authenticated",
+                "allowed_channels": ["web_chat"],
+                "allowed_intents": ["rag_question"],
+            },
+        )
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+
+        status, turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "料金を教えてください", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
 
     def test_insufficient_evidence_creates_handoff_without_asserting_answer(self):
         service = ChatbotService(_rag_insufficient)

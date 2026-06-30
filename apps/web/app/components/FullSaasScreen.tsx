@@ -7,6 +7,7 @@ import type { FormEvent, ReactNode } from "react";
 import type {
   AdminDataSource,
   ChatAssistantMessage,
+  ChatbotSourceExposurePolicy,
   Citation,
   DataSourceMappingProfile,
   DataSourceProfileType,
@@ -34,6 +35,7 @@ import {
   apiPutJson,
   authHeaders,
   chatMetrics,
+  chatSourceExposurePolicies,
   createChatSession,
   ingestDocument,
   manufacturingAnswer,
@@ -64,6 +66,7 @@ import {
   manufacturingTroubleCaseSearch,
   manufacturingUpdateDocumentMetadata,
   submitFeedback,
+  upsertChatSourceExposurePolicy,
 } from "../../lib/api-client";
 import {
   loadConnectorRuns,
@@ -355,12 +358,59 @@ const CHAT_STARTERS = [
   "承認済みの規格だけで回答して",
 ];
 
+type ChatReferenceScope = {
+  collection_id: string;
+  source_count: number;
+  last_synced_at?: string;
+};
+
 type HistoryStatusFilter = "all" | ManufacturingAnswerResponse["status"];
 type HistorySafetyFilter = "all" | "normal" | "blocked" | "high_risk" | "obsolete";
 
 function collectionDisplayName(id?: string | null): string {
   if (!id || id === DEMO_COLLECTION) return "デモナレッジ";
   return id;
+}
+
+function chatPolicyIdForCollection(collectionId: string): string {
+  return `chat-internal:${collectionId}`;
+}
+
+function syncedReferenceScopes(sources: AdminDataSource[]): ChatReferenceScope[] {
+  const scopes = new Map<string, ChatReferenceScope>();
+  for (const source of sources) {
+    if (!source.collection_id || !source.last_synced_at) continue;
+    const current = scopes.get(source.collection_id) ?? {
+      collection_id: source.collection_id,
+      source_count: 0,
+      last_synced_at: source.last_synced_at,
+    };
+    current.source_count += 1;
+    if (
+      source.last_synced_at &&
+      (!current.last_synced_at || source.last_synced_at > current.last_synced_at)
+    ) {
+      current.last_synced_at = source.last_synced_at;
+    }
+    scopes.set(source.collection_id, current);
+  }
+  return [...scopes.values()].sort((a, b) => a.collection_id.localeCompare(b.collection_id));
+}
+
+function isInternalChatPolicyForCollection(
+  policy: ChatbotSourceExposurePolicy,
+  collectionId: string,
+): boolean {
+  const channels = new Set(policy.allowed_channels ?? []);
+  const intents = new Set(policy.allowed_intents ?? []);
+  return (
+    policy.collection_id === collectionId &&
+    !policy.source_id &&
+    policy.status === "active" &&
+    policy.exposure_mode === "internal_authenticated" &&
+    (channels.size === 0 || channels.has("web_chat")) &&
+    (intents.size === 0 || intents.has("rag_question"))
+  );
 }
 
 function confidenceLabel(confidence: number | null | undefined): string {
@@ -883,7 +933,11 @@ function ChatBotBody() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [collectionId, setCollectionId] = useState(DEMO_COLLECTION);
-  const [collections, setCollections] = useState<string[]>([DEMO_COLLECTION]);
+  const [referenceScopes, setReferenceScopes] = useState<ChatReferenceScope[]>([]);
+  const [sourcePolicies, setSourcePolicies] = useState<ChatbotSourceExposurePolicy[]>([]);
+  const [policyAccess, setPolicyAccess] = useState<"loading" | "ready" | "forbidden">("loading");
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const [enablingCollectionId, setEnablingCollectionId] = useState<string | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [stateSummary, setStateSummary] = useState("idle");
   const [progress, setProgress] = useState<"thinking" | "checking_rag" | "delayed" | null>(null);
@@ -892,17 +946,36 @@ function ChatBotBody() {
   const [metrics, setMetrics] = useState<{ conversation_count: number; handoff_rate: number } | null>(null);
   const thinkingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const delayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectedScope = referenceScopes.find((scope) => scope.collection_id === collectionId) ?? null;
+  const selectedPolicy = sourcePolicies.find((policy) =>
+    isInternalChatPolicyForCollection(policy, collectionId),
+  ) ?? null;
+  const referenceScopeReady = policyAccess === "ready" && Boolean(selectedScope && selectedPolicy);
 
   useEffect(() => {
     setCollectionId(loadAnswerCollection());
     void getSessionToken()
       .then(async (token) => {
-        const [sources, metricResponse] = await Promise.all([
+        const [sources, policyResponse, metricResponse] = await Promise.all([
           adminDataSources(token).catch(() => [] as AdminDataSource[]),
+          chatSourceExposurePolicies(token).catch(() => null),
           chatMetrics(token).catch(() => null),
         ]);
-        const ids = [...new Set(sources.map((source) => source.collection_id).filter(Boolean))].sort();
-        if (ids.length > 0) setCollections(ids);
+        const scopes = syncedReferenceScopes(sources);
+        setReferenceScopes(scopes);
+        setCollectionId((current) => {
+          const saved = current || DEMO_COLLECTION;
+          if (scopes.some((scope) => scope.collection_id === saved)) return saved;
+          if (!scopes[0]) return saved;
+          saveAnswerCollection(scopes[0].collection_id);
+          return scopes[0].collection_id;
+        });
+        if (policyResponse) {
+          setSourcePolicies(policyResponse.items ?? []);
+          setPolicyAccess("ready");
+        } else {
+          setPolicyAccess("forbidden");
+        }
         if (metricResponse) {
           setMetrics({
             conversation_count: metricResponse.summary.conversation_count,
@@ -921,6 +994,7 @@ function ChatBotBody() {
 
   function onCollectionChange(value: string) {
     setCollectionId(value);
+    setSetupError(null);
     saveAnswerCollection(value);
   }
 
@@ -969,9 +1043,17 @@ function ChatBotBody() {
     ]);
   }
 
-  async function submitText(text: string, displayText = text) {
+  async function submitText(
+    text: string,
+    displayText = text,
+    options: { allowWithoutReferenceScope?: boolean } = {},
+  ) {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
+    if (!referenceScopeReady && !options.allowWithoutReferenceScope) {
+      setSetupError("参照範囲をチャットボットで利用中にしてから送信してください。");
+      return;
+    }
     const turnId = `${Date.now().toString(36)}-${turns.length}`;
     setTurns((prev) => [...prev, { kind: "user", id: `${turnId}-u`, text: displayText }]);
     setInput("");
@@ -1028,10 +1110,49 @@ function ChatBotBody() {
     await submitText(input);
   }
 
+  async function onEnableReferenceScope() {
+    if (!collectionId || loading || enablingCollectionId) return;
+    setSetupError(null);
+    setEnablingCollectionId(collectionId);
+    const policyId = chatPolicyIdForCollection(collectionId);
+    try {
+      const token = await getSessionToken();
+      const policy = await upsertChatSourceExposurePolicy(
+        policyId,
+        {
+          policy_id: policyId,
+          source_id: "",
+          collection_id: collectionId,
+          exposure_mode: "internal_authenticated",
+          allowed_channels: ["web_chat"],
+          allowed_intents: ["rag_question"],
+          require_approved_effective: true,
+          allow_obsolete_primary_evidence: false,
+        },
+        token,
+      );
+      setSourcePolicies((prev) => [
+        policy,
+        ...prev.filter((item) => item.policy_id !== policy.policy_id),
+      ]);
+      setPolicyAccess("ready");
+    } catch (err) {
+      if (isAuthError(err)) {
+        clearSessionToken();
+        redirectToLoginAfterAuthError();
+      }
+      setSetupError(formatLoadError(err));
+    } finally {
+      setEnablingCollectionId(null);
+    }
+  }
+
   async function onHandoff() {
     if (loading) return;
     if (!sessionId) {
-      await submitText("担当者に相談したい");
+      await submitText("担当者に相談したい", "担当者に相談したい", {
+        allowWithoutReferenceScope: true,
+      });
       return;
     }
     beginRequest();
@@ -1081,7 +1202,12 @@ function ChatBotBody() {
                   </span>
                   <div className="answer-starter-list" aria-label="会話の開始例">
                     {CHAT_STARTERS.map((starter) => (
-                      <button key={starter} type="button" onClick={() => void submitText(starter)}>
+                      <button
+                        key={starter}
+                        type="button"
+                        onClick={() => void submitText(starter)}
+                        disabled={!referenceScopeReady || loading}
+                      >
                         {starter}
                       </button>
                     ))}
@@ -1090,7 +1216,7 @@ function ChatBotBody() {
                 <div className="answer-empty-meta" aria-label="チャットボットの参照範囲">
                   <span>参照範囲</span>
                   <strong>{collectionDisplayName(collectionId)}</strong>
-                  <small>外部公開設定ではなく、認証済みワークスペース内のプレビューです。</small>
+                  <small>{referenceScopeReady ? "チャットボットで利用中" : "まだ利用中ではありません"}</small>
                 </div>
               </div>
             )}
@@ -1142,10 +1268,12 @@ function ChatBotBody() {
                   aria-label="チャットボットの参照範囲"
                   value={collectionId}
                   onChange={(event) => onCollectionChange(event.target.value)}
+                  disabled={referenceScopes.length === 0 || loading}
                 >
-                  {collections.map((id) => (
-                    <option key={id} value={id}>
-                      {id}
+                  {referenceScopes.length === 0 && <option value={collectionId}>同期済みデータなし</option>}
+                  {referenceScopes.map((scope) => (
+                    <option key={scope.collection_id} value={scope.collection_id}>
+                      {scope.collection_id}
                     </option>
                   ))}
                 </select>
@@ -1162,9 +1290,21 @@ function ChatBotBody() {
                 人間に相談する
               </button>
             </div>
+            <p
+              id="chatbot-reference-help"
+              className={referenceScopeReady ? "chatbot-reference-status ready" : "chatbot-reference-status"}
+              role={setupError ? "alert" : "status"}
+              aria-live="polite"
+            >
+              {setupError ??
+                (referenceScopeReady
+                  ? `${collectionDisplayName(collectionId)} はチャットボットで利用中です。`
+                  : "参照範囲をチャットボットで利用中にすると質問できます。")}
+            </p>
             <div className="answers-composer-inner">
               <textarea
                 aria-label="チャットメッセージ"
+                aria-describedby="chatbot-reference-help"
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
@@ -1173,10 +1313,11 @@ function ChatBotBody() {
                     void submitText(input);
                   }
                 }}
-                placeholder="相談内容を入力する…"
+                placeholder={referenceScopeReady ? "相談内容を入力する…" : "参照範囲を利用中にしてください"}
                 rows={1}
+                disabled={!referenceScopeReady || loading}
               />
-              <button type="submit" disabled={loading || input.trim().length === 0}>
+              <button type="submit" disabled={loading || !referenceScopeReady || input.trim().length === 0}>
                 {loading ? "送信中" : "送信"}
               </button>
             </div>
@@ -1184,6 +1325,62 @@ function ChatBotBody() {
         </section>
 
         <aside className="chatbot-side" aria-label="会話状態">
+          <section className="chatbot-reference-settings" aria-labelledby="chatbot-reference-title">
+            <div className="chatbot-side-head">
+              <strong id="chatbot-reference-title">参照範囲設定</strong>
+              <span>同期済みデータ</span>
+            </div>
+            {referenceScopes.length > 0 ? (
+              <div className="chatbot-scope-list" role="list">
+                {referenceScopes.map((scope) => {
+                  const enabled = sourcePolicies.some((policy) =>
+                    isInternalChatPolicyForCollection(policy, scope.collection_id),
+                  );
+                  const selected = scope.collection_id === collectionId;
+                  return (
+                    <button
+                      key={scope.collection_id}
+                      type="button"
+                      className={selected ? "chatbot-scope-option selected" : "chatbot-scope-option"}
+                      aria-pressed={selected}
+                      onClick={() => onCollectionChange(scope.collection_id)}
+                      disabled={loading}
+                    >
+                      <span>{collectionDisplayName(scope.collection_id)}</span>
+                      <small>{scope.source_count} 件</small>
+                      <strong>{enabled ? "チャットボットで利用中" : "未設定"}</strong>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="chatbot-reference-empty">
+                <span>同期済みデータなし</span>
+                <Link href="/sources/list">外部接続へ</Link>
+              </div>
+            )}
+            {selectedScope && !selectedPolicy && (
+              <button
+                type="button"
+                className="button-link btn-approve chatbot-enable-reference"
+                onClick={() => void onEnableReferenceScope()}
+                disabled={
+                  policyAccess === "loading" ||
+                  Boolean(enablingCollectionId) ||
+                  loading
+                }
+              >
+                {enablingCollectionId === collectionId
+                  ? "設定中"
+                  : "この参照範囲をチャットボットで利用"}
+              </button>
+            )}
+            {policyAccess === "forbidden" && (
+              <p className="chatbot-reference-status" role="status">
+                参照範囲の利用状態を確認できません。
+              </p>
+            )}
+          </section>
           <div className="chatbot-side-head">
             <strong>会話の状態</strong>
             <span>回答範囲と引き継ぎ状況</span>
@@ -1424,8 +1621,9 @@ function screenTitle(screen: ManifestScreen): string {
 }
 
 function AddSourceCta({ className }: { className?: string }) {
+  const classes = ["button-link", "btn-approve", "add-source-cta", className].filter(Boolean).join(" ");
   return (
-    <Link className={className ? `${className} add-source-cta` : "add-source-cta"} href="/sources/new">
+    <Link className={classes} href="/sources/new">
       <span className="add-source-plus" aria-hidden="true">
         +
       </span>
@@ -5065,7 +5263,7 @@ function FileFolderDialog({
             </p>
           )}
           <div className="fb-folder-dialog-actions">
-            <button type="button" className="button-link" onClick={onCancel}>
+            <button type="button" className="button-link secondary" onClick={onCancel}>
               キャンセル
             </button>
             <button type="submit" className="button-link btn-approve" disabled={!name.trim()}>
@@ -5335,7 +5533,7 @@ function FileBrowserBody() {
           </button>
           <button
             type="button"
-            className="button-link"
+            className="button-link secondary"
             onClick={() => {
               setShowUploadForm(false);
               setFiles([]);
@@ -5424,7 +5622,7 @@ function FileBrowserBody() {
             </button>
             <button
               type="button"
-              className="button-link"
+              className="button-link secondary"
               aria-haspopup="dialog"
               onClick={() => {
                 setShowNewFolder(true);
