@@ -376,23 +376,46 @@ function chatPolicyIdForCollection(collectionId: string): string {
   return `chat-internal:${collectionId}`;
 }
 
-function syncedReferenceScopes(sources: AdminDataSource[]): ChatReferenceScope[] {
+function syncedReferenceScopes(
+  sources: AdminDataSource[],
+  documents: ManufacturingDocumentSummary[] = [],
+): ChatReferenceScope[] {
   const scopes = new Map<string, ChatReferenceScope>();
-  for (const source of sources) {
-    if (!source.collection_id || !source.last_synced_at) continue;
-    const current = scopes.get(source.collection_id) ?? {
-      collection_id: source.collection_id,
+  const sourceKeysByCollection = new Map<string, Set<string>>();
+
+  function upsertScope(collectionId: string, sourceKey: string, lastSyncedAt?: string | null) {
+    if (!collectionId) return;
+    const current = scopes.get(collectionId) ?? {
+      collection_id: collectionId,
       source_count: 0,
-      last_synced_at: source.last_synced_at,
+      last_synced_at: lastSyncedAt || undefined,
     };
-    current.source_count += 1;
-    if (
-      source.last_synced_at &&
-      (!current.last_synced_at || source.last_synced_at > current.last_synced_at)
-    ) {
-      current.last_synced_at = source.last_synced_at;
+    const sourceKeys = sourceKeysByCollection.get(collectionId) ?? new Set<string>();
+    if (!sourceKeys.has(sourceKey)) {
+      sourceKeys.add(sourceKey);
+      current.source_count = sourceKeys.size;
     }
-    scopes.set(source.collection_id, current);
+    if (lastSyncedAt && (!current.last_synced_at || lastSyncedAt > current.last_synced_at)) {
+      current.last_synced_at = lastSyncedAt;
+    }
+    sourceKeysByCollection.set(collectionId, sourceKeys);
+    scopes.set(collectionId, current);
+  }
+
+  const documentSources = new Set<string>();
+  for (const doc of documents) {
+    if (!doc.collection_id) continue;
+    const sourceKey = doc.source_id || doc.document_id;
+    documentSources.add(`${doc.collection_id}\u0000${doc.source_id}`);
+    upsertScope(doc.collection_id, sourceKey);
+  }
+
+  for (const source of sources) {
+    if (!source.collection_id || source.status !== "active") continue;
+    if (!source.last_synced_at && !documentSources.has(`${source.collection_id}\u0000${source.source_id}`)) {
+      continue;
+    }
+    upsertScope(source.collection_id, source.source_id, source.last_synced_at);
   }
   return [...scopes.values()].sort((a, b) => a.collection_id.localeCompare(b.collection_id));
 }
@@ -956,12 +979,13 @@ function ChatBotBody() {
     setCollectionId(loadAnswerCollection());
     void getSessionToken()
       .then(async (token) => {
-        const [sources, policyResponse, metricResponse] = await Promise.all([
+        const [sources, documents, policyResponse, metricResponse] = await Promise.all([
           adminDataSources(token).catch(() => [] as AdminDataSource[]),
+          manufacturingDocuments(token).catch(() => [] as ManufacturingDocumentSummary[]),
           chatSourceExposurePolicies(token).catch(() => null),
           chatMetrics(token).catch(() => null),
         ]);
-        const scopes = syncedReferenceScopes(sources);
+        const scopes = syncedReferenceScopes(sources, documents);
         setReferenceScopes(scopes);
         setCollectionId((current) => {
           const saved = current || DEMO_COLLECTION;
