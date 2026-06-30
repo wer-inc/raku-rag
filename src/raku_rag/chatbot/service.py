@@ -396,6 +396,7 @@ class ChatbotService:
         if not text:
             return 400, {"error": "message_required"}
 
+        quick_reply_action = self._quick_reply_action(text)
         display_text = self._display_text_for_quick_reply(text)
         rag_text = self._expand_quick_reply_for_rag(session, text)
 
@@ -437,6 +438,16 @@ class ChatbotService:
             return 200, self._turn_response(
                 principal, session, user_message, assistant, ticket=ticket
             )
+
+        if quick_reply_action == "evidence":
+            evidence_turn = self._previous_evidence_turn(
+                session, body.get("collection_id") or session.metadata.get("collection_id")
+            )
+            if evidence_turn:
+                assistant, rag = evidence_turn
+                return 200, self._turn_response(
+                    principal, session, user_message, assistant, rag=rag
+                )
 
         assistant, rag, handoff = self._run_rag_turn(
             principal,
@@ -1179,26 +1190,27 @@ class ChatbotService:
         if not action:
             return text
 
+        instruction = self._followup_instruction(action)
         context = self._last_answer_context(session)
         if not context:
-            instruction = self._followup_instruction(action)
-            return f"前回の回答について、同じ根拠に基づいて{instruction}"
+            return self._followup_rag_query("前回の質問", instruction, [])
 
         previous_question = context.get("question") or "前回の質問"
-        previous_answer = context.get("answer") or ""
         document_ids = context.get("document_ids") or []
-        document_hint = ""
+        return self._followup_rag_query(previous_question, instruction, document_ids)
+
+    def _followup_rag_query(
+        self, previous_question: str, instruction: str, document_ids: list[str]
+    ) -> str:
+        lines = [
+            self._compact_line(previous_question, limit=160),
+            f"追加依頼: {instruction}",
+            "同じ承認済み根拠だけで回答してください。",
+        ]
         if document_ids:
-            document_hint = " 参照文書ID: " + ", ".join(document_ids) + "。"
-        answer_hint = ""
-        if previous_answer:
-            answer_hint = " 前回回答: " + previous_answer[:240] + "。"
-        return (
-            f"前回の質問「{previous_question}」について、同じ承認済み根拠に基づき、"
-            f"{self._followup_instruction(action)}"
-            "文書にない内容は推測しないでください。"
-            f"{document_hint}{answer_hint}"
-        )
+            lines.append("引用文書ID: " + ", ".join(document_ids[:5]))
+        lines.append("文書にない内容は推測しないでください。")
+        return "\n".join(lines)
 
     def _is_details_quick_reply(self, text: str) -> bool:
         return self._quick_reply_action(text) == "details"
@@ -1289,7 +1301,7 @@ class ChatbotService:
 
         previous_question = ""
         for message in reversed(session.messages[:answer_index]):
-            if message.role == "user":
+            if message.role == "user" and not self._quick_reply_action(message.content_redacted):
                 previous_question = message.content_redacted
                 break
 
@@ -1301,8 +1313,55 @@ class ChatbotService:
         return {
             "question": previous_question,
             "answer": answer_message.content_redacted,
+            "citations": [dict(citation) for citation in answer_message.citations],
             "document_ids": list(dict.fromkeys(document_ids)),
         }
+
+    def _previous_evidence_turn(
+        self, session: ChatSession, collection_id: str | None
+    ) -> tuple[StoredMessage, dict] | None:
+        context = self._last_answer_context(session)
+        if not context:
+            return None
+        citations = [dict(citation) for citation in (context.get("citations") or [])]
+        if not citations:
+            return None
+
+        question = str(context.get("question") or "前回の質問")
+        evidence_lines = self._evidence_lines(citations)
+        answer = "\n\n".join(
+            [
+                "根拠:\n" + self._bullet_lines(evidence_lines),
+                "確認範囲:\n"
+                + self._bullet_lines(
+                    [
+                        f"質問: {self._compact_line(question, limit=96)}",
+                        f"参照範囲: {collection_id or '選択中の参照範囲'}",
+                        "上記の引用情報が確認できる範囲だけを根拠として扱います。",
+                    ]
+                ),
+            ]
+        )
+        rag = {
+            "rag_interaction_id": _id("rag_chat"),
+            "status": "ok",
+            "answerable": True,
+            "confidence": None,
+            "no_answer_reason": None,
+            "trace_id": None,
+            "latency_ms": 0,
+            "citations": citations,
+            "source_policy_id": (session.last_rag or {}).get("source_policy_id"),
+        }
+        session.last_rag = rag
+        assistant = self._assistant(
+            session,
+            answer,
+            "answer_with_citations",
+            citations=citations,
+            quick_replies=[{"label": DETAILS_QUICK_REPLY_LABEL, "value": "details"}],
+        )
+        return assistant, rag
 
     def _create_handoff(
         self, session: ChatSession, *, reason: str, comment: str, priority: str = "normal"

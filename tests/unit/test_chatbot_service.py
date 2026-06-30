@@ -161,6 +161,10 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertIn("AL-21 の点検手順", queries[-1])
         self.assertIn("手順だけを番号付き", queries[-1])
         self.assertIn("eq-alarm-e152-al21", queries[-1])
+        self.assertNotIn("前回回答:", queries[-1])
+        self.assertNotIn("参照範囲:", queries[-1])
+        self.assertNotIn("不明点:", queries[-1])
+        self.assertNotIn("担当者", queries[-1])
 
     def test_details_quick_reply_uses_previous_answer_context_for_rag(self):
         queries = []
@@ -214,12 +218,105 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertNotEqual(queries[-1], "details")
         self.assertIn("モータ M8 の締付トルク", queries[-1])
         self.assertIn("eq-motor-m8-torque", queries[-1])
+        self.assertNotIn("前回回答:", queries[-1])
+        self.assertNotIn("参照範囲:", queries[-1])
+        self.assertNotIn("担当者", queries[-1])
         self.assertEqual(
             service.get_session(_principal(), created["session_id"])[1]["messages"][-2][
                 "content_redacted"
             ],
             "この根拠でもう少し詳しく",
         )
+
+    def test_followup_quick_replies_do_not_depend_on_formatted_answer_boilerplate(self):
+        actions = ("details", "steps", "cautions", "criteria_table")
+
+        for action in actions:
+            with self.subTest(action=action):
+                queries = []
+
+                def rag_answerer(_principal, query, _collection_id):
+                    queries.append(query)
+                    if len(queries) == 1:
+                        return _rag_answer(
+                            text=(
+                                "AL-21 は過負荷を示します。手順は非常停止、張力確認、"
+                                "電流確認の順です。電流が12Aを超える場合は保全へ連絡し、"
+                                "安全確認が終わるまで再起動は禁止です。"
+                            ),
+                            document_id="eq-alarm-e152-al21",
+                        )
+                    if any(
+                        noise in query
+                        for noise in ("前回回答:", "参照範囲:", "不明点:", "担当者")
+                    ):
+                        return _rag_insufficient(_principal, query, _collection_id)
+                    if "AL-21 の点検手順" in query and "eq-alarm-e152-al21" in query:
+                        return _rag_answer(
+                            text="直前と同じ根拠で、追加依頼に合わせて整理しました。",
+                            document_id="eq-alarm-e152-al21",
+                        )
+                    return _rag_insufficient(_principal, query, _collection_id)
+
+                service = ChatbotService(rag_answerer)
+                _enable_internal_chat_collection(service)
+                _, created = service.create_session(_principal(), {"channel": "web_chat"})
+                service.submit_message(
+                    _principal(),
+                    created["session_id"],
+                    {
+                        "message": "AL-21 の点検手順と注意点を教えて",
+                        "collection_id": "manuals",
+                    },
+                )
+
+                status, turn = service.submit_message(
+                    _principal(),
+                    created["session_id"],
+                    {"message": action, "collection_id": "manuals"},
+                )
+
+                self.assertEqual(status, 200)
+                self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
+                self.assertTrue(turn["rag"]["answerable"])
+                self.assertEqual(
+                    turn["assistant_message"]["citations"][0]["document_id"],
+                    "eq-alarm-e152-al21",
+                )
+
+    def test_evidence_quick_reply_uses_previous_filtered_citations_without_rerunning_rag(self):
+        queries = []
+
+        def rag_answerer(_principal, query, _collection_id):
+            queries.append(query)
+            if len(queries) > 1:
+                raise AssertionError("evidence quick reply should reuse previous citations")
+            return _rag_answer(
+                text="モータ M8 は端子台 25 N・m、基礎ボルト M16 は 95 N・m です。",
+                document_id="eq-motor-m8-torque",
+            )
+
+        service = ChatbotService(rag_answerer)
+        _enable_internal_chat_collection(service)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+        service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "モータ M8 の締付トルクを教えて", "collection_id": "manuals"},
+        )
+
+        status, turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "evidence", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
+        self.assertTrue(turn["rag"]["answerable"])
+        self.assertEqual(len(queries), 1)
+        self.assertIn("eq-motor-m8-torque", turn["assistant_message"]["message"])
+        self.assertNotIn("承認済みの根拠だけでは回答を確定できません", turn["assistant_message"]["message"])
 
     def test_rag_citation_without_chatbot_source_policy_fails_closed(self):
         service = ChatbotService(_rag_ok)
