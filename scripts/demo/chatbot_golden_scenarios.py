@@ -21,6 +21,10 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 DEFAULT_DATASET = Path(__file__).with_name("chatbot_golden_scenarios.json")
+SUPPORTED_SCHEMA_VERSIONS = {
+    "chatbot-golden-scenarios/v1",
+    "chatbot-golden-scenarios/v2",
+}
 
 
 @dataclass(frozen=True)
@@ -30,10 +34,14 @@ class ScenarioResult:
     expected_behavior: str
     passed: bool
     failures: tuple[str, ...]
+    failure_kinds: tuple[str, ...]
     ai_action: str
     answerable: bool
     no_answer_reason: str
     cited_document_ids: tuple[str, ...]
+    expected_citation_hit: bool
+    required_terms_hit: bool
+    required_sections_hit: bool
     answer_chars: int
     latency_ms: int
     correlation_id: str
@@ -71,7 +79,7 @@ def load_dataset(path: Path) -> dict[str, Any]:
 
 
 def validate_dataset(data: dict[str, Any]) -> None:
-    if data.get("schema_version") != "chatbot-golden-scenarios/v1":
+    if data.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
         raise ScenarioConfigError("unsupported schema_version")
     scenarios = data.get("scenarios")
     if not isinstance(scenarios, list) or not scenarios:
@@ -89,10 +97,16 @@ def validate_dataset(data: dict[str, Any]) -> None:
         if not str(scenario.get("question") or "").strip():
             raise ScenarioConfigError(f"{scenario_id}: question is required")
         behavior = str(scenario.get("expected_behavior") or "")
-        if behavior not in {"answer", "handoff"}:
-            raise ScenarioConfigError(f"{scenario_id}: expected_behavior must be answer or handoff")
-        if behavior == "answer" and not scenario.get("required_citations"):
-            raise ScenarioConfigError(f"{scenario_id}: answer scenarios require citations")
+        if behavior not in {"answer", "handoff", "clarification"}:
+            raise ScenarioConfigError(
+                f"{scenario_id}: expected_behavior must be answer, handoff, or clarification"
+            )
+        citation_expected, citation_acceptable = _citation_expectations(scenario)
+        if behavior == "answer" and not (citation_expected or citation_acceptable):
+            raise ScenarioConfigError(f"{scenario_id}: answer scenarios require expected citations")
+        sections = scenario.get("required_sections")
+        if sections is not None and not isinstance(sections, list):
+            raise ScenarioConfigError(f"{scenario_id}: required_sections must be a list")
 
 
 def policy_payload(collection_id: str, dataset: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -124,12 +138,15 @@ def policy_payload(collection_id: str, dataset: dict[str, Any]) -> tuple[str, di
 def scenarios_with_defaults(dataset: dict[str, Any]) -> list[dict[str, Any]]:
     min_answer_chars = int(dataset.get("default_min_answer_chars") or 0)
     min_citations = int(dataset.get("default_min_citations") or 1)
+    default_sections = list(dataset.get("default_required_sections") or [])
     scenarios: list[dict[str, Any]] = []
     for raw in dataset["scenarios"]:
         scenario = dict(raw)
         if scenario.get("expected_behavior") == "answer":
             scenario.setdefault("min_answer_chars", min_answer_chars)
             scenario.setdefault("min_citations", min_citations)
+            if default_sections and "required_sections" not in scenario:
+                scenario["required_sections"] = list(default_sections)
         scenarios.append(scenario)
     return scenarios
 
@@ -269,46 +286,136 @@ def evaluate_response(
         dict.fromkeys(str(c.get("document_id") or "") for c in citations if c.get("document_id"))
     )
     failures: list[str] = []
+    failure_kinds: list[str] = []
     expected_behavior = str(scenario.get("expected_behavior") or "")
+    expected_citations, acceptable_citations = _citation_expectations(scenario)
+    citation_hit = True
+    terms_hit = True
+    sections_hit = True
 
     if expected_behavior == "answer":
         if not answerable:
-            failures.append(f"expected answerable RAG turn, got no_answer_reason={no_answer_reason or '-'}")
+            _add_failure(
+                failures,
+                failure_kinds,
+                "retrieval",
+                f"expected answerable RAG turn, got no_answer_reason={no_answer_reason or '-'}",
+            )
         if ai_action != "answer_with_citations":
-            failures.append(f"expected ai_action=answer_with_citations, got {ai_action or '-'}")
+            _add_failure(
+                failures,
+                failure_kinds,
+                "contract",
+                f"expected ai_action=answer_with_citations, got {ai_action or '-'}",
+            )
         min_citations = int(scenario.get("min_citations") or 1)
         if len(cited_document_ids) < min_citations:
-            failures.append(f"expected at least {min_citations} citation(s), got {len(cited_document_ids)}")
-        required_citations = [str(x) for x in (scenario.get("required_citations") or [])]
-        if required_citations and not set(required_citations).intersection(cited_document_ids):
-            failures.append(
-                "missing required citation: "
-                + ", ".join(required_citations)
-                + f" (got {', '.join(cited_document_ids) or '-'})"
+            _add_failure(
+                failures,
+                failure_kinds,
+                "citation",
+                f"expected at least {min_citations} citation(s), got {len(cited_document_ids)}",
+            )
+        allowed_citations = set(expected_citations) | set(acceptable_citations)
+        if allowed_citations:
+            citation_hit = bool(allowed_citations.intersection(cited_document_ids))
+        if not citation_hit:
+            expected = ", ".join(expected_citations) or "-"
+            acceptable = ", ".join(acceptable_citations) or "-"
+            _add_failure(
+                failures,
+                failure_kinds,
+                "retrieval",
+                "missing expected citation: "
+                + expected
+                + f"; acceptable alternates: {acceptable}"
+                + f" (got {', '.join(cited_document_ids) or '-'})",
             )
         min_chars = int(scenario.get("min_answer_chars") or 0)
         if len(message) < min_chars:
-            failures.append(f"answer too thin: {len(message)} chars < {min_chars}")
+            _add_failure(
+                failures,
+                failure_kinds,
+                "answer_composition",
+                f"answer too thin: {len(message)} chars < {min_chars}",
+            )
         missing_terms = _missing_required_terms(message, scenario.get("required_terms") or [])
+        terms_hit = not missing_terms
         if missing_terms:
-            failures.append("missing expected facts/terms: " + ", ".join(missing_terms))
+            _add_failure(
+                failures,
+                failure_kinds,
+                "answer_composition",
+                "missing expected facts/terms: " + ", ".join(missing_terms),
+            )
+        missing_sections = _missing_required_sections(message, scenario.get("required_sections") or [])
+        sections_hit = not missing_sections
+        if missing_sections:
+            _add_failure(
+                failures,
+                failure_kinds,
+                "answer_composition",
+                "missing expected answer sections: " + ", ".join(missing_sections),
+            )
     elif expected_behavior == "handoff":
         if answerable or ai_action != "handoff":
-            failures.append(
+            _add_failure(
+                failures,
+                failure_kinds,
+                "safety_refusal",
                 f"expected handoff/refusal, got answerable={answerable} ai_action={ai_action or '-'}"
             )
         allowed_reasons = {str(x) for x in (scenario.get("expected_no_answer_reasons") or [])}
-        if allowed_reasons and no_answer_reason and no_answer_reason not in allowed_reasons:
-            failures.append(
-                f"unexpected no_answer_reason={no_answer_reason}; expected one of "
-                + ", ".join(sorted(allowed_reasons))
+        if allowed_reasons:
+            if not no_answer_reason:
+                _add_failure(
+                    failures,
+                    failure_kinds,
+                    "safety_refusal",
+                    "missing no_answer_reason; expected one of "
+                    + ", ".join(sorted(allowed_reasons)),
+                )
+            elif no_answer_reason not in allowed_reasons:
+                _add_failure(
+                    failures,
+                    failure_kinds,
+                    "safety_refusal",
+                    f"unexpected no_answer_reason={no_answer_reason}; expected one of "
+                    + ", ".join(sorted(allowed_reasons)),
+                )
+    elif expected_behavior == "clarification":
+        if answerable or ai_action != "ask_clarification":
+            _add_failure(
+                failures,
+                failure_kinds,
+                "clarification",
+                f"expected clarification, got answerable={answerable} ai_action={ai_action or '-'}",
             )
     else:
-        failures.append(f"unsupported expected_behavior={expected_behavior}")
+        _add_failure(
+            failures,
+            failure_kinds,
+            "contract",
+            f"unsupported expected_behavior={expected_behavior}",
+        )
 
     forbidden_hits = _present_terms(message, scenario.get("forbidden_terms") or [])
     if forbidden_hits:
-        failures.append("forbidden terms present: " + ", ".join(forbidden_hits))
+        _add_failure(
+            failures,
+            failure_kinds,
+            "security",
+            "forbidden terms present: " + ", ".join(forbidden_hits),
+        )
+
+    max_latency_ms = int(scenario.get("max_latency_ms") or 0)
+    if max_latency_ms and latency_ms > max_latency_ms:
+        _add_failure(
+            failures,
+            failure_kinds,
+            "latency",
+            f"latency too high: {latency_ms}ms > {max_latency_ms}ms",
+        )
 
     return ScenarioResult(
         scenario_id=str(scenario.get("id") or ""),
@@ -316,10 +423,14 @@ def evaluate_response(
         expected_behavior=expected_behavior,
         passed=not failures,
         failures=tuple(failures),
+        failure_kinds=tuple(dict.fromkeys(failure_kinds)),
         ai_action=ai_action,
         answerable=answerable,
         no_answer_reason=no_answer_reason,
         cited_document_ids=cited_document_ids,
+        expected_citation_hit=citation_hit,
+        required_terms_hit=terms_hit,
+        required_sections_hit=sections_hit,
         answer_chars=len(message),
         latency_ms=latency_ms,
         correlation_id=str(response.get("correlation_id") or ""),
@@ -332,6 +443,10 @@ def summarize_results(results: list[ScenarioResult]) -> dict[str, Any]:
     answer_results = [r for r in results if r.expected_behavior == "answer"]
     answerable = sum(1 for r in results if r.answerable)
     citation_hits = sum(1 for r in answer_results if r.cited_document_ids)
+    expected_citation_hits = sum(1 for r in answer_results if r.expected_citation_hit)
+    completeness_hits = sum(
+        1 for r in answer_results if r.required_terms_hit and r.required_sections_hit
+    )
     thin_answers = sum(
         1 for r in answer_results if r.answerable and r.answer_chars > 0 and r.answer_chars < 80
     )
@@ -341,23 +456,51 @@ def summarize_results(results: list[ScenarioResult]) -> dict[str, Any]:
         "failed": total - passed,
         "answerable_rate": (answerable / total) if total else 0.0,
         "citation_hit_rate": (citation_hits / len(answer_results)) if answer_results else 0.0,
+        "expected_citation_hit_rate": (
+            expected_citation_hits / len(answer_results) if answer_results else 0.0
+        ),
+        "completeness_hit_rate": (
+            completeness_hits / len(answer_results) if answer_results else 0.0
+        ),
         "thin_answer_count": thin_answers,
         "handoff_count": sum(1 for r in results if r.ai_action == "handoff"),
         "p95_latency_ms": _p95([r.latency_ms for r in results]),
         "categories": _category_summary(results),
+        "failure_kinds": _failure_kind_summary(results),
     }
 
 
-def print_report(results: list[ScenarioResult], *, show_failures: bool = True) -> None:
+def print_report(
+    results: list[ScenarioResult],
+    *,
+    dataset: dict[str, Any] | None = None,
+    profile: dict[str, str] | None = None,
+    show_failures: bool = True,
+) -> None:
     summary = summarize_results(results)
     print("=== ChatBot Golden Scenario Scorecard ===")
+    if dataset is not None:
+        identity = dataset_identity(dataset)
+        print(f"  dataset           : {identity['dataset_id']}@{identity['dataset_version']}")
+        print(f"  schema            : {identity['schema_version']}")
+    if profile is not None:
+        print(
+            "  profile           : "
+            f"{profile['profile_name']} "
+            f"(embedding={profile['embedding_provider']}, "
+            f"answer={profile['answer_profile']}, reranker={profile['reranker']})"
+        )
     print(f"  total             : {summary['total']}")
     print(f"  passed            : {summary['passed']}")
     print(f"  failed            : {summary['failed']}")
     print(f"  answerable_rate   : {summary['answerable_rate']:.3f}")
     print(f"  citation_hit_rate : {summary['citation_hit_rate']:.3f}")
+    print(f"  expected_citation : {summary['expected_citation_hit_rate']:.3f}")
+    print(f"  completeness_rate : {summary['completeness_hit_rate']:.3f}")
     print(f"  thin_answer_count : {summary['thin_answer_count']}")
     print(f"  p95_latency_ms    : {summary['p95_latency_ms']:.0f}")
+    if summary["failure_kinds"]:
+        print("  failure_kinds     : " + _format_count_map(summary["failure_kinds"]))
     print("")
     print("status  scenario                         expected  action                 ans  cites  chars")
     print("------  -------------------------------  --------  ---------------------  ---  -----  -----")
@@ -378,6 +521,105 @@ def print_report(results: list[ScenarioResult], *, show_failures: bool = True) -
             print(f"- {result.scenario_id}:")
             for failure in result.failures:
                 print(f"  - {failure}")
+
+
+def dataset_identity(dataset: dict[str, Any]) -> dict[str, str]:
+    return {
+        "schema_version": str(dataset.get("schema_version") or ""),
+        "dataset_id": str(dataset.get("dataset_id") or dataset.get("name") or "chatbot_golden"),
+        "dataset_version": str(dataset.get("dataset_version") or "unversioned"),
+        "evaluation_stage": str(dataset.get("evaluation_stage") or "smoke"),
+    }
+
+
+def profile_metadata(args: argparse.Namespace, dataset: dict[str, Any]) -> dict[str, str]:
+    defaults = dict(dataset.get("default_profile") or {})
+    return {
+        "profile_name": str(
+            args.profile_name
+            or os.environ.get("RAKU_CHATBOT_EVAL_PROFILE")
+            or defaults.get("profile_name")
+            or "stg-smoke"
+        ),
+        "embedding_provider": str(
+            args.embedding_provider
+            or os.environ.get("RAKU_EMBEDDING_PROVIDER")
+            or defaults.get("embedding_provider")
+            or "unknown"
+        ),
+        "answer_profile": str(
+            args.answer_profile
+            or os.environ.get("RAKU_ANSWER_PROFILE")
+            or os.environ.get("RAKU_ANSWER_LLM")
+            or defaults.get("answer_profile")
+            or "unknown"
+        ),
+        "reranker": str(
+            args.reranker
+            or os.environ.get("RAKU_RERANKER")
+            or defaults.get("reranker")
+            or "none"
+        ),
+    }
+
+
+def build_run_payload(
+    *,
+    dataset: dict[str, Any],
+    profile: dict[str, str],
+    collection_id: str,
+    results: list[ScenarioResult],
+) -> dict[str, Any]:
+    summary = summarize_results(results)
+    return {
+        "dataset": dataset_identity(dataset),
+        "profile": profile,
+        "collection_id": collection_id,
+        "summary": summary,
+        "readiness": readiness_summary(results, dataset),
+        "results": [result.__dict__ for result in results],
+    }
+
+
+def readiness_summary(results: list[ScenarioResult], dataset: dict[str, Any]) -> dict[str, Any]:
+    thresholds = dict(dataset.get("readiness_thresholds") or {})
+    summary = summarize_results(results)
+    refusal_results = [
+        r
+        for r in results
+        if r.expected_behavior == "handoff" or r.category in {"safety_refusal", "security_refusal"}
+    ]
+    clarification_results = [
+        r
+        for r in results
+        if r.expected_behavior == "clarification" or r.category == "ambiguous_clarification"
+    ]
+    refusal_pass_rate = _pass_rate(refusal_results)
+    clarification_pass_rate = _pass_rate(clarification_results)
+    measured = {
+        "refusal_pass_rate": refusal_pass_rate,
+        "safety_refusal_pass_rate": refusal_pass_rate,
+        "clarification_pass_rate": clarification_pass_rate,
+        "expected_citation_hit_rate": summary["expected_citation_hit_rate"],
+        "completeness_hit_rate": summary["completeness_hit_rate"],
+        "p95_latency_ms": summary["p95_latency_ms"],
+    }
+    threshold_results: dict[str, bool] = {}
+    for key, expected in thresholds.items():
+        if key not in measured:
+            continue
+        value = measured[key]
+        if key.endswith("_ms"):
+            threshold_results[key] = float(value) <= float(expected)
+        else:
+            threshold_results[key] = float(value) >= float(expected)
+    return {
+        "label": str(dataset.get("readiness_label") or "customer-demo-readiness"),
+        "measured": measured,
+        "thresholds": thresholds,
+        "threshold_results": threshold_results,
+        "ready": bool(threshold_results) and all(threshold_results.values()) and summary["failed"] == 0,
+    }
 
 
 def _extract_citations(assistant: dict[str, Any], rag: dict[str, Any]) -> list[dict[str, Any]]:
@@ -402,6 +644,21 @@ def _missing_required_terms(answer: str, terms: list[Any]) -> list[str]:
     return missing
 
 
+def _missing_required_sections(answer: str, sections: list[Any]) -> list[str]:
+    answer_text = _normalize_text(answer)
+    missing: list[str] = []
+    for raw in sections:
+        if isinstance(raw, dict):
+            label = str(raw.get("label") or raw.get("name") or "section")
+            terms = [str(x) for x in (raw.get("terms") or [label])]
+        else:
+            label = str(raw)
+            terms = [label]
+        if not any(_normalize_text(term) in answer_text for term in terms):
+            missing.append(label)
+    return missing
+
+
 def _present_terms(answer: str, terms: list[Any]) -> list[str]:
     answer_text = _normalize_text(answer)
     hits: list[str] = []
@@ -412,6 +669,21 @@ def _present_terms(answer: str, terms: list[Any]) -> list[str]:
     return hits
 
 
+def _citation_expectations(scenario: dict[str, Any]) -> tuple[list[str], list[str]]:
+    expected: list[str] = []
+    acceptable: list[str] = []
+    for key in ("required_citations", "expected_document_ids"):
+        expected.extend(str(x) for x in (scenario.get(key) or []))
+    for key in ("acceptable_citations", "acceptable_document_ids"):
+        acceptable.extend(str(x) for x in (scenario.get(key) or []))
+    return list(dict.fromkeys(expected)), list(dict.fromkeys(acceptable))
+
+
+def _add_failure(failures: list[str], failure_kinds: list[str], kind: str, message: str) -> None:
+    failures.append(message)
+    failure_kinds.append(kind)
+
+
 def _category_summary(results: list[ScenarioResult]) -> dict[str, dict[str, int]]:
     summary: dict[str, dict[str, int]] = {}
     for result in results:
@@ -420,6 +692,24 @@ def _category_summary(results: list[ScenarioResult]) -> dict[str, dict[str, int]
         if result.passed:
             bucket["passed"] += 1
     return summary
+
+
+def _failure_kind_summary(results: list[ScenarioResult]) -> dict[str, int]:
+    summary: dict[str, int] = {}
+    for result in results:
+        for kind in result.failure_kinds:
+            summary[kind] = summary.get(kind, 0) + 1
+    return dict(sorted(summary.items()))
+
+
+def _format_count_map(values: dict[str, int]) -> str:
+    return ", ".join(f"{key}={values[key]}" for key in sorted(values))
+
+
+def _pass_rate(results: list[ScenarioResult]) -> float:
+    if not results:
+        return 1.0
+    return sum(1 for result in results if result.passed) / len(results)
 
 
 def _p95(values: list[int]) -> float:
@@ -471,6 +761,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--validate-only", action="store_true", help="validate the dataset without calling any HTTP API")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--json", action="store_true", help="print machine-readable result JSON")
+    parser.add_argument("--output", default="", help="write machine-readable result JSON to this path")
+    parser.add_argument("--profile-name", default="", help="label for this scorecard profile")
+    parser.add_argument("--embedding-provider", default="", help="embedding provider label")
+    parser.add_argument("--answer-profile", default="", help="answer/composer profile label")
+    parser.add_argument("--reranker", default="", help="reranker profile label")
     parser.add_argument("--hide-failures", action="store_true", help="hide per-scenario failure details")
     return parser.parse_args(argv)
 
@@ -484,10 +779,13 @@ def main(argv: list[str] | None = None) -> int:
         if not collection_id:
             raise ScenarioConfigError("collection_id is required")
         scenarios = scenarios_with_defaults(dataset)
+        profile = profile_metadata(args, dataset)
         if args.validate_only:
             payload = {
                 "status": "ok",
                 "dataset": str(Path(args.dataset)),
+                **dataset_identity(dataset),
+                "profile": profile,
                 "collection_id": collection_id,
                 "scenario_count": len(scenarios),
                 "categories": sorted({str(item.get("category") or "") for item in scenarios}),
@@ -528,19 +826,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
+    payload = build_run_payload(
+        dataset=dataset,
+        profile=profile,
+        collection_id=collection_id,
+        results=results,
+    )
+    if args.output:
+        Path(args.output).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "summary": summarize_results(results),
-                    "results": [result.__dict__ for result in results],
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        print_report(results, show_failures=not args.hide_failures)
+        print_report(
+            results,
+            dataset=dataset,
+            profile=profile,
+            show_failures=not args.hide_failures,
+        )
     return 0 if all(result.passed for result in results) else 1
 
 

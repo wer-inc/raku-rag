@@ -11,7 +11,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+DATASET="${CHATBOT_GOLDEN_DATASET:-$ROOT/scripts/demo/chatbot_golden_scenarios.json}"
 
 python3 "$ROOT/scripts/demo/chatbot_golden_scenarios.py" \
-  --dataset "$ROOT/scripts/demo/chatbot_golden_scenarios.json" \
+  --dataset "$DATASET" \
   "$@"

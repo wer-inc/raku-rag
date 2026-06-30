@@ -8,6 +8,9 @@ Start here when preparing a customer pilot or production promotion.
 - `customer-trust-pack.md` is the customer-facing security and operations summary.
 - `pilot-demo-script.md` is the fixed sales-engineering demo flow.
 - `evidence/` contains evidence templates and operator-created proof.
+- `chatbot-sellable-quality-plan.md` defines the roadmap from passing chatbot smoke to a sellable
+  customer-grade answer experience.
+- `chatbot-golden-scenarios.md` defines the current ChatBot quality scorecard and staging baseline.
 
 Check current status:
 
@@ -21,4 +24,3 @@ python3 scripts/pilot_readiness_status.py
 - `release-execution-checklist.md` is the operator runbook.
 - `release-and-rollback.md` and `vector-dr-runbook.md` cover rollback and recovery.
 - `risk-register.md` tracks production-boundary risks.
-

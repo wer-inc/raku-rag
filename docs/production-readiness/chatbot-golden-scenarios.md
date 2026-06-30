@@ -13,6 +13,8 @@ the unsafe things, and avoids thin answers.
 - Troubleshooting answers include enough concrete cause/action facts to be useful.
 - Draft, pending-review, obsolete, out-of-scope, and prompt-injection requests refuse or hand off.
 - Thin answers are detected with `min_answer_chars` and `required_terms`.
+- The v2 readiness dataset also checks expected/acceptable citation IDs, required answer sections,
+  ambiguity/clarification behavior, profile labels, and failure attribution.
 
 ## Run Locally
 
@@ -23,6 +25,27 @@ bash scripts/demo/chatbot_golden_scorecard.sh --ensure-policy
 ```
 
 The runner mints a local dev token through `WEB_BASE/api/dev-token` when no token is supplied.
+
+## Run The Expanded Readiness Dataset
+
+The default scorecard remains the 17-scenario staging smoke floor. The first customer-demo readiness
+dataset is separate and intentionally stricter:
+
+```bash
+bash scripts/demo/chatbot_golden_scorecard.sh \
+  --dataset scripts/demo/chatbot_quality_v2_scenarios.json \
+  --profile-name demo-quality-target \
+  --embedding-provider hashing \
+  --answer-profile extractive-mvp \
+  --reranker none \
+  --output /tmp/chatbot-quality-v2-result.json \
+  --ensure-policy
+```
+
+As of phase 1, `chatbot_quality_v2` has 37 scenarios across grounded lookup, high-risk procedures,
+troubleshooting, safety refusal, ambiguity/clarification, and prompt-injection controls. It is not a
+Tier A hard gate yet; it is the measurement surface for making thin answers visible before tightening
+release thresholds.
 
 ## Run Against Staging
 
@@ -58,6 +81,22 @@ with a temporary `tenant_admin + sales_demo` user produced:
 This is the current minimum staging quality bar for the deterministic `hashing` + `extractive`
 profile. Regressions should be treated as either retrieval/indexing/source-policy failures or
 extractive completeness failures before changing safety rules.
+
+## Phase 1 Readiness Harness
+
+The runner now supports `chatbot-golden-scenarios/v2` datasets. New fields are additive so the smoke
+dataset remains valid:
+
+- `dataset_id`, `dataset_version`, `evaluation_stage`, and `default_profile` label a run.
+- `expected_document_ids` and `acceptable_document_ids` distinguish canonical from acceptable
+  citations.
+- `required_sections` checks answer composition, for example `結論`, `手順`, `注意`, `根拠`,
+  `原因`, or `対策`.
+- `expected_behavior=clarification` catches ambiguous questions that should ask a follow-up instead
+  of guessing.
+- JSON output includes readiness thresholds, profile metadata, failure kinds, refusal pass rate,
+  clarification pass rate, expected citation hit rate, and completeness rate without storing raw
+  retrieved context.
 
 ## 2026-06-30 Fix Notes
 
