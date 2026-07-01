@@ -145,20 +145,22 @@ class ChatbotAuthorityResolutionTest(unittest.TestCase):
     def test_resolve_answer_engine_defaults_to_l0_for_unconfigured_tenant(self):
         service = ChatbotService(lambda principal, query, collection_id: _rag_answer())
 
-        # L1/L2/L3 are registered by default (P1/P3/P4) but must never apply to a tenant nobody
+        # L1/L2/L3/L4 are registered by default (P1/P3/P4/P5) but must never apply to a tenant nobody
         # dialed to.
         self.assertIn("L1", service._answer_engines)
         self.assertIn("L2", service._answer_engines)
         self.assertIn("L3", service._answer_engines)
+        self.assertIn("L4", service._answer_engines)
         engine = service._resolve_answer_engine("tenant_a")
 
         self.assertIsInstance(engine, L0DeterministicAnswerEngine)
 
     def test_resolve_answer_engine_falls_back_to_l0_for_unregistered_level(self):
-        # "L4" (P5 — agentic control, not yet built) stands in for "a level nothing registers"; this
-        # was "L3" before P4 registered it for real, so must move forward with each new rung landed.
+        # "L5" (nothing beyond P5's "L4" is built) stands in for "a level nothing registers"; this
+        # was "L4" before P5 registered it for real (and "L3" before P4), so must move forward with
+        # each new rung landed.
         repo = InMemoryChatbotAuthorityRepository()
-        repo.set("tenant_a", "L4")
+        repo.set("tenant_a", "L5")
         service = ChatbotService(
             lambda principal, query, collection_id: _rag_answer(),
             authority_repository=repo,

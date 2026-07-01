@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
+from raku_rag.chatbot.agent import AgentDecisionMaker, L4AgenticAnswerEngine
 from raku_rag.chatbot.answer_engine import AnswerEngine, L0DeterministicAnswerEngine, RagAnswerer
 from raku_rag.chatbot.authority import (
     DEFAULT_CHATBOT_AUTHORITY_LEVEL,
@@ -404,6 +405,7 @@ class ChatbotService:
         enable_demo_tenant_l3: bool = False,
         demo_tenant_id: str = DEFAULT_DEMO_TENANT_ID,
         high_risk_query_signal: HighRiskQuerySignal | None = None,
+        agent_decision_maker: AgentDecisionMaker | None = None,
     ) -> None:
         self._sessions: dict[tuple[str, str], ChatSession] = {}
         self._handoffs: dict[tuple[str, str], dict] = {}
@@ -443,6 +445,23 @@ class ChatbotService:
         l2_over_l3_engine = L2QueryUnderstandingAnswerEngine(
             l3_composition_engine, high_risk_query_signal=high_risk_query_signal
         )
+        # L4 (P5, agentic control) wraps L0 DIRECTLY, not L2/L3: the whole point of this rung is that
+        # the decision-maker decides what to search for -- including resolving its own references --
+        # so layering it on top of L2's own (differently-triggered) coreference rewrite would mean two
+        # independent query-rewriting mechanisms in the same call chain, each needing its own
+        # high_risk_query_signal reasoning, for no offsetting benefit. `high_risk_query_signal` is
+        # threaded in for the SAME reason it is threaded into both L2 instances above: see
+        # chatbot/agent.py's module docstring for the full mechanism (every hop's proposed query is
+        # re-classified before it is allowed to run; a trip aborts the whole turn, never just the hop).
+        # `agent_decision_maker` defaults to `None`, so with no decision-maker injected (true of every
+        # deployment today -- no real one exists yet, see chatbot/agent.py), "L4" is a byte-identical,
+        # zero-call passthrough to L0, exactly as offline-safe as "L1"/"L2"/"L3" are with no LLM
+        # configured.
+        l4_agentic_engine = L4AgenticAnswerEngine(
+            l0_engine,
+            decision_maker=agent_decision_maker,
+            high_risk_query_signal=high_risk_query_signal,
+        )
         self._answer_engines: dict[str, AnswerEngine] = {
             DEFAULT_CHATBOT_AUTHORITY_LEVEL: l0_engine,
             "L1": L1EnvelopeAnswerEngine(l0_engine, self._llm_provider),
@@ -459,6 +478,14 @@ class ChatbotService:
             # L3's own verification never suppresses an inner "ok" answer (see composition.py), so "L3"
             # is exactly as offline-safe as "L1"/"L2".
             "L3": L1EnvelopeAnswerEngine(l2_over_l3_engine, self._llm_provider),
+            # L4 (P5): registered so the seam/interface exists and is independently testable, but with
+            # NO way to actually dial a real tenant to a functioning agentic loop today -- there is no
+            # `enable_demo_tenant_l4` flag (see below) and no production wiring of a real
+            # `agent_decision_maker` in apps/answer-service/server.py. Even a tenant explicitly set to
+            # "L4" via the authority repository gets the inert L0-passthrough behavior described above,
+            # because `agent_decision_maker` is `None` unless a caller (in practice, only a test)
+            # injects one.
+            "L4": L1EnvelopeAnswerEngine(l4_agentic_engine, self._llm_provider),
         }
         if enable_demo_tenant_l1:
             self._authority_repo.set(demo_tenant_id, "L1")
@@ -1904,6 +1931,29 @@ class ChatbotService:
         if "非公開データ" in text and any(word in text for word in ("検索", "回答", "出して")):
             return True
         if "policy" in normalized and "無視" in text:
+            return True
+        # P5 (chatbot-conversational-agent-roadmap, agentic control): the structural loop cap/
+        # per-hop safety recheck in chatbot/agent.py cannot itself be talked out of existing, but an
+        # incoming message that tries to instruct a FUTURE real decision-maker to ignore its own
+        # bounds is worth refusing at this earliest, pre-retrieval layer too -- same additive,
+        # deterministic-denylist style as every clause above, not a new mechanism.
+        if any(
+            term in normalized
+            for term in (
+                "ignore the retrieval limit",
+                "ignore your retrieval limit",
+                "ignore the hop limit",
+                "retrieve without limit",
+                "retrieve without restriction",
+                "skip the safety classification",
+                "skip the safety check",
+            )
+        ):
+            return True
+        if any(
+            term in text
+            for term in ("検索回数の制限を無視", "ホップ数の制限を無視", "安全分類を無視して検索")
+        ):
             return True
         return False
 

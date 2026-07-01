@@ -1504,7 +1504,15 @@ def make_handler(system: ProductionSystem):
         # that is independently, concretely high-risk. Reuse the SAME classifier instance the real
         # answer path's safety gate consults (never a second, drifting instance) as a retrieval-
         # independent pre-check on whether it is safe to enrich a follow-up's outgoing query text.
+        # Also gates every hop of "L4" (P5, agentic control) below -- see chatbot/agent.py.
         high_risk_query_signal=manufacturing_system.is_high_risk_query_signal,
+        # P5: "L4" is registered in ChatbotService._answer_engines (chatbot/agent.py) so the seam is
+        # real and testable, but deliberately NOT dialable here yet -- no `agent_decision_maker` is
+        # passed (stays None), and there is no `RAKU_CHATBOT_DEMO_TENANT_L4` flag, unlike L1/L2/L3
+        # above. No real (Bedrock-backed) AgentDecisionMaker implementation exists; building one needs
+        # credentials this environment does not have. Even a tenant explicitly dialed to "L4" via the
+        # authority repository gets the inert L0-passthrough behavior (see agent.py) until a real
+        # decision-maker is both built and consciously wired here.
     )
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()

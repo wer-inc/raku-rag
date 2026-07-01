@@ -563,3 +563,158 @@ promotion.
      test weakened; the pre-fix behavior stays reachable (and is itself pinned, unmitigated, by the
      "permanent regression pin" test above) for any caller that does not opt into
      `high_risk_query_signal`.
+7. [x] P5 (Full-A destination — agentic control / tool use, L4), scoped down from full unbounded
+   multi-hop to a bounded, structurally-enforced tool-use loop: `L4AgenticAnswerEngine` landed in new
+   `src/raku_rag/chatbot/agent.py` on `worktree-chatbot-conversational-agent` (isolated worktree, NOT
+   committed — see below). Given this rung's own framing as the highest-authority/highest-risk phase
+   yet, code is left staged in the working tree rather than auto-committed, pending human review; the
+   reasoning is in the "Repository state" note at the end of this item.
+
+   **The interface**: `AgentDecisionMaker` (`decide(query, context, observations) -> AgentAction`,
+   `AgentAction = RetrieveAction(query) | FinishAction()`) is a Protocol a real LLM-backed controller
+   could someday implement with zero change to the enforcement below it; every test and the default
+   construction use a hand-written mock, exactly like `BedrockClaudeLLMProvider` is tested throughout
+   P0-P4 with a mocked invoker (no real Bedrock access in this sandbox, `RAKU_LLM_PROVIDER` stays
+   unset). `L4AgenticAnswerEngine` wraps `inner` (in practice `L0DeterministicAnswerEngine`, NOT
+   `L2`/`L3` — see the module docstring for why layering on L2's own, differently-triggered rewrite
+   would mean two independent query-rewriting mechanisms in one call chain for no benefit) with a
+   bounded loop: each hop is a full, independent call to `inner.answer(...)` — the exact call every
+   other rung makes — so ACL/retrieval/the safety classifier/audit logging are never reimplemented or
+   bypassed, only re-run, fresh, per hop.
+
+   **Structural enforcement (the hard requirement of this rung)**:
+   - *High-risk re-check, every hop*: `high_risk_query_signal` (reused from P3's exact fix, threaded
+     the same way it already is into both `L2` instances in `service.py`) re-classifies EVERY hop's
+     proposed query text before it is allowed to reach retrieval — not just the first hop. A trip
+     aborts the WHOLE agentic attempt for the turn (not just that hop, and discarding any earlier hop's
+     result from the same turn), falling back to `inner.answer(principal, ORIGINAL_query, ...)` — the
+     same floor every other rung falls back to. This is deliberately MORE conservative than P3's own
+     "skip just the rewrite branch": once a hazard-signalling query has been proposed even once this
+     turn, nothing else this rung explored is trusted either.
+   - *Scope/ACL re-assertion, every hop*: `collection_id`/`principal` are fixed, per-turn inputs the
+     engine receives once and forwards UNCHANGED to every hop — it never constructs its own, so scope
+     cannot widen hop-to-hop by construction. Combined with every hop being a full, independent
+     `inner.answer()` call, ACL is re-evaluated fresh each time, not cached/carried from an earlier hop.
+   - *No cross-hop citation smuggling*: the loop never merges citations across hops. It returns exactly
+     ONE hop's own complete, self-consistent result — "last hop wins" (whichever hop the decision-maker
+     most recently, deliberately chose to run is authoritative, whether it succeeded or correctly
+     failed), never "first/best `ok` hop wins". This specific choice was made because the alternative
+     (preferring an earlier `ok` hop) would let an unrelated early success paper over a later hop that
+     correctly, safely blocked on the user's real, hazardous question — full reasoning in the module
+     docstring, point 3.
+   - *Hard hop cap*: `max_hops` (default `DEFAULT_MAX_HOPS=3`) is a bounded `for` loop, not `while
+     True`; an adversarial decision-maker that never finishes is still stopped after exactly that many
+     calls.
+   - *Decision-maker output guard*: the controller's own output is untrusted — an exception from
+     `decide(...)` or an unrecognized return value stops the loop safely (falling through to the last
+     real hop's result, or the floor) rather than propagating or guessing. This is a genuinely NEW
+     failure surface no earlier rung had (L0-L3 never call an external "decide what to do" component in
+     a loop); a failure from `inner.answer()` itself still propagates like every other rung (not
+     failed-open on) — only the decision-maker's OWN output is treated this way.
+
+   **Prompt-injection hardening**: (1) `AgentObservation` (what a completed hop tells the
+   decision-maker before its next call) is reference-ID-only — `query` (the decision-maker's own prior
+   proposal, echoed back), `status`, `answerable`, `citation_ids` (reused from `envelope.
+   citation_id_values`) — with NO evidence/answer TEXT field at all, pinned by a dedicated structural
+   test (`test_agent_observation_never_carries_a_free_text_field_beyond_the_query_it_produced`). This
+   goes one step further than `providers/llms.py::build_grounded_prompt`'s "evidence wrapped as data,
+   never as instructions": there is no free text for a future real decision-maker to misinterpret as an
+   instruction, because retrieved content never reaches this loop as text in the first place. (2) Every
+   hop's query text is ALSO already covered by the EXISTING `PromptInjectionGuard`
+   (`services/injection.py`), since it reaches retrieval only via `inner.answer()` → ... →
+   `AnswerService.answer()`, the same call every rung's query passes through — wiring, not building, in
+   the same sense the roadmap's own Correction section found for P1/P2/P4. (3) `_is_security_refusal_
+   request` (`chatbot/service.py`) gained a small, purely additive clause (EN + JP) refusing incoming
+   messages that try to instruct a FUTURE real decision-maker to ignore its own hop cap/safety recheck
+   (e.g. "ignore the retrieval limit", "検索回数の制限を無視") at the earliest, pre-retrieval layer —
+   same deterministic-denylist style as every existing clause, not a new mechanism; a negative-control
+   test confirms ordinary operational text mentioning "limit"/検索 is untouched.
+
+   **Registered WITHOUT a way to dial a real tenant to it**: `ChatbotService` registers `"L4"` as
+   `L1EnvelopeAnswerEngine(L4AgenticAnswerEngine(l0_engine, decision_maker=agent_decision_maker,
+   high_risk_query_signal=high_risk_query_signal), llm_provider)` and accepts a new, optional
+   `agent_decision_maker: AgentDecisionMaker | None = None` constructor parameter (default `None`).
+   With no decision-maker injected — true of every deployment today — "L4" is a byte-identical,
+   zero-call passthrough to L0 (mirrors L1's/L3's own "no provider configured" no-op stance), so even a
+   tenant explicitly dialed to `"L4"` gets inert L0 behavior. Deliberately, per this task's own explicit
+   allowance for a rung this novel: there is no `enable_demo_tenant_l4`/`RAKU_CHATBOT_DEMO_TENANT_L4`
+   flag, and `apps/answer-service/server.py` passes no `agent_decision_maker` at all (only a
+   documentary comment explaining why) — no real (Bedrock-backed) `AgentDecisionMaker` implementation
+   exists, and building one needs credentials this sandbox does not have plus its own separate
+   prompt/verification work. `tests/unit/test_chatbot_answer_engine.py`'s stale "L4 = an unregistered
+   level" example (used since P4 registered "L3") was moved forward to "L5", matching the same pattern
+   P4 used when it registered "L3" for real.
+
+   **Deliberately scoped down from "full" agentic control** (see the module docstring's own section):
+   no distinct "ask a clarifying question" UI surface — `_run_rag_turn` has no channel today for a
+   custom clarifying message distinct from its one fixed handoff string, and extending that shared,
+   safety-relevant turn contract is a bigger, separately-reviewable change outside this phase's scope
+   (mirrors why P4 deferred thread-state query enrichment rather than half-building it); `FinishAction`
+   therefore covers both "answer with what's already known" and "nothing usable, stop", both of which
+   already cash out in outcomes every rung produces today. No real LLM-backed decision-maker exists —
+   only the Protocol plus test mocks.
+
+   **What is NOT fully closed, stated as plainly as P3/P4's own findings**: `high_risk_query_signal` is
+   a LEXICAL (keyword/metadata) check. A sufficiently novel rephrasing that avoids every recognized
+   hazard keyword while still functionally targeting a hazardous topic is NOT caught by this pre-check
+   — closing that would need a SEMANTIC query classifier, explicitly out of scope for this pass (no new
+   ML-based classifier, per this task's own instruction). This is an accepted residual gap, not an
+   oversight: what bounds it is that whatever query text a hop actually runs receives EXACTLY the
+   treatment `inner.answer()` already gives any human-typed query with that same text — the real
+   classifier and safety gate still run for real, unaffected. The risk this rung cannot structurally
+   close is specifically that an agentic decision-maker might choose DIFFERENT words than a human would
+   have, not that it can make the safety gate itself weaker for the words it does choose. A related,
+   narrower quality-level (not safety-level) limitation of "last hop wins": if the decision-maker
+   abandons a correctly-blocked hazardous sub-query and settles on an unrelated, benign LATER hop
+   instead, the final answer is confusing/off-topic but never ungrounded — no unapproved claim about
+   the hazardous topic is ever surfaced, since that hop's own block simply isn't what's returned.
+
+   **Verification (the required adversarial test)**: `ChatbotL4AgenticHighRiskSafetyTest`
+   (`tests/unit/test_chatbot_service.py`, 4 tests) reproduces the P3/P4 vulnerability at agentic scope
+   directly — a MOCKED decision-maker proposes, on its own initiative, a SINGLE hop blending the real
+   hazardous query ("How do I release the pressure in the hydraulic accumulator?") with an unrelated,
+   approved document's own terms ("... routine inspection"), mirroring composition.py's/coreference.
+   py's exact reproduction recipe. Same 4-part discipline as `ChatbotL2CoreferenceHighRiskSafetyTest`:
+   raw-classification premise, unmitigated regression pin (proves the corrupted hop DOES incorrectly
+   answer `status="ok"` citing the wrong, unrelated document when `high_risk_query_signal` is not
+   wired), mitigated negative control (the SAME blended query, now correctly blocked,
+   `insufficient_evidence`/no citations), positive control (same fix, but the real topic now has an
+   approved citation — answers correctly, citing the RIGHT document, proving the fix doesn't just
+   "block everything"). `ChatbotL4AgenticSecondHopAclReassertionTest` (2 tests) proves ACL is
+   independently re-asserted on a second hop using REAL per-document grants (`ScopeType.DOCUMENT`)
+   against a real `ManufacturingSystem` — both orderings (granted-doc-then-denied-doc and the reverse)
+   — using an English/Japanese document-language split to eliminate retrieval's own known lexical
+   leniency as a confound (discovered empirically while writing this test: two same-language documents
+   let the one ACL-visible document surface as a weak fallback "match" even for the OTHER document's
+   query, which would have made the test ambiguous about what it was actually proving).
+   `ChatbotL4AgenticHopCapEndToEndTest` (1 test) proves an adversarial always-retrieve decision-maker is
+   stopped at exactly `DEFAULT_MAX_HOPS` calls end-to-end through `ChatbotService`/a real
+   `ManufacturingSystem`, not just at the isolated engine level. The full engine-level test suite (29
+   tests, `tests/unit/test_chatbot_agent.py`, offline-only fakes/mocks mirroring
+   `test_chatbot_composition.py`'s/`test_chatbot_coreference.py`'s own discipline) additionally pins:
+   the no-decision-maker passthrough; single- and multi-hop query ordering; that later `decide()` calls
+   receive prior hops as reference-ID-only observations; "last hop wins" in both directions (a later
+   failure does not discard an earlier success, and vice versa); that citations are never merged across
+   hops; that every hop reuses the identical `principal`/`collection_id`; the hop cap at both the
+   default and a custom lower value, including what happens when it is exceeded (the last hop's own
+   result, not an extra floor call); the high-risk signal firing on a first AND a later hop (discarding
+   an earlier good hop in the latter case); and the decision-maker output guard (exception or malformed
+   return, on both a first and a later call).
+
+   Verified independently: `scripts/gate.sh all` 1285 tests GREEN (was 1246 + 39 new: 29 in
+   `test_chatbot_agent.py` + 10 in `test_chatbot_service.py` — 4 + 2 + 1 for the three test classes
+   above, + 3 for the `_is_security_refusal_request` extension); targeted verification command (item
+   6's list plus `tests/unit/test_chatbot_agent.py`) 221 passed/3 subtests (was 182 + 39). No existing
+   test weakened.
+
+   **Repository state**: all changes (`src/raku_rag/chatbot/agent.py` new;
+   `src/raku_rag/chatbot/service.py`, `apps/answer-service/server.py`,
+   `src/raku_rag/chatbot/authority.py` (docstring only — a pre-existing staleness the P5 reconnaissance
+   pass surfaced, "only L0 implemented" was already wrong before this phase),
+   `tests/unit/test_chatbot_answer_engine.py`, `tests/unit/test_chatbot_service.py` modified;
+   `tests/unit/test_chatbot_agent.py` new; this roadmap entry) are complete, gate-green, and staged in
+   the working tree on `worktree-chatbot-conversational-agent`, but deliberately left UNCOMMITTED. Every
+   prior phase in this roadmap committed as part of landing; this one does not, specifically because of
+   its own framing as the highest-authority/highest-risk phase yet, explicitly reviewed line-by-line
+   before being treated as final — committing is a trivial next step once that review happens, either on
+   request or directly.

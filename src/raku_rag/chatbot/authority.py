@@ -2,17 +2,20 @@
 
 `chatbot_authority_level` selects which registered `AnswerEngine` rung answers a tenant's free-text
 turns (see the authority ladder in
-docs/production-readiness/chatbot-conversational-agent-roadmap.md). Only "L0" has an implementation
-today; `ChatbotService` falls back to L0 for any level it doesn't recognize, so this repository is
-safe to wire in before any other rung exists — flipping a tenant's level only takes effect once a
-later phase registers the corresponding engine.
+docs/production-readiness/chatbot-conversational-agent-roadmap.md). "L0" through "L4" all have
+implementations today (P1-P5); `ChatbotService` falls back to L0 for any level it doesn't recognize
+(e.g. "L5"), so this repository stays safe to wire a tenant to a level before that level's engine
+exists — flipping a tenant's level only takes effect once the corresponding engine is registered, and
+some registered engines (notably "L4" as of P5) are themselves inert no-ops until a further,
+deliberately-unwired dependency (see chatbot/agent.py) is also supplied.
 
 P0 keeps this in-memory (constructor-injectable, mirroring `ChatbotSourcePolicyRepository`) rather
-than adding a Postgres table + migration: no engine besides L0 exists yet, so there is nothing for a
-persisted value to change, and every tenant must default to L0 regardless of storage. A
+than adding a Postgres table + migration: every tenant must default to L0 regardless of storage, and
+no phase through P5 has yet needed the dial to survive process restarts (only the in-memory demo-
+tenant flags in `ChatbotService.__init__`/`apps/answer-service/server.py` are used today). A
 `PostgresChatbotAuthorityRepository` (mirroring `PostgresChatbotSourcePolicyRepository` /
-`infra/db/migrations/postgres/0016_chatbot_source_exposure_policies.sql`) is the natural addition
-once P1 ships a real second rung and needs the dial to survive process restarts.
+`infra/db/migrations/postgres/0016_chatbot_source_exposure_policies.sql`) is the natural addition once
+a real pilot tenant needs the dial to survive process restarts.
 """
 
 from __future__ import annotations
