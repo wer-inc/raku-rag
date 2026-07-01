@@ -85,6 +85,47 @@ describe("admin settings facade (e2e)", () => {
           });
           return;
         }
+        if (req.method === "GET" && req.url === "/internal/admin/datasources/overview?collection_id=manuals") {
+          send(res, 200, {
+            sources: [
+              {
+                source_id: "upload-main",
+                tenant_id: "tenant_admin",
+                collection_id: "manuals",
+                type: "object_storage",
+                status: "active",
+                display_name: "Manuals",
+                source_type: "s3",
+                credential_status: "configured",
+                approval_policy: "review_required",
+                approval_effective_date: null,
+                sync_schedule: null,
+                last_synced_at: null,
+                sync: {
+                  status: "succeeded",
+                  summary: {
+                    observed_count: 2,
+                    changed_count: 1,
+                    deleted_count: 0,
+                    skipped_count: 1,
+                    failed_count: 0,
+                  },
+                  freshness: { last_successful_sync_at: "2026-06-20T00:00:00Z" },
+                  last_ingestion_run_id: "ing_1",
+                },
+                document_counts: {
+                  total: 2,
+                  approved: 1,
+                  pending_review: 1,
+                  draft: 0,
+                  obsolete: 0,
+                  unknown: 0,
+                },
+              },
+            ],
+          });
+          return;
+        }
         if (req.method === "PUT" && req.url === "/internal/admin/query-profiles/default") {
           send(res, 200, {
             profile_id: "default",
@@ -346,6 +387,20 @@ describe("admin settings facade (e2e)", () => {
     expect(queryProfile.status).toBe(200);
     expect(queryProfile.body.captioning_enabled).toBe(true);
     expect(seen[seen.length - 1].body.tenant_id).toBeUndefined();
+  });
+
+  it("returns datasource overview with tenant context and collection filter", async () => {
+    const res = await request(app.getHttpServer())
+      .get("/v1/admin/datasources/overview?collection_id=manuals")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", token);
+
+    expect(res.status).toBe(200);
+    expect(res.body.sources[0].source_id).toBe("upload-main");
+    expect(res.body.sources[0].document_counts.pending_review).toBe(1);
+    expect(res.body.sources[0].sync.summary.changed_count).toBe(1);
+    expect(seen[seen.length - 1].url).toBe("/internal/admin/datasources/overview?collection_id=manuals");
+    expect(seen[seen.length - 1].tenant).toBe("tenant_admin");
   });
 
   it("updates provider, retrieval, and logging policies", async () => {

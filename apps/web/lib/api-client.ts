@@ -1,5 +1,6 @@
 import type {
   AdminDataSource,
+  AdminDataSourceOverviewResponse,
   DataSourcePreviewRequest,
   DataSourcePreviewResponse,
   AdminDocumentDetail,
@@ -421,6 +422,17 @@ export async function adminDataSources(
     ? `/admin/datasources?collection_id=${encodeURIComponent(collectionId)}`
     : "/admin/datasources";
   return apiGetJson<AdminDataSource[]>(path, userToken);
+}
+
+/** Lightweight list model for the external source operations screen. */
+export async function adminDataSourceOverview(
+  userToken: string,
+  collectionId?: string,
+): Promise<AdminDataSourceOverviewResponse> {
+  const path = collectionId
+    ? `/admin/datasources/overview?collection_id=${encodeURIComponent(collectionId)}`
+    : "/admin/datasources/overview";
+  return apiGetJson<AdminDataSourceOverviewResponse>(path, userToken);
 }
 
 export async function adminSourceTestConnection(

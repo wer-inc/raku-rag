@@ -166,6 +166,74 @@ const OPENAPI_DOC = {
           audit_events: { type: "array", items: { $ref: "#/components/schemas/ProviderConfigAuditEvent" } },
         },
       },
+      AdminDataSourceDocumentCounts: {
+        type: "object",
+        required: ["total", "approved", "pending_review", "draft", "obsolete", "unknown"],
+        properties: {
+          total: { type: "number" },
+          approved: { type: "number" },
+          pending_review: { type: "number" },
+          draft: { type: "number" },
+          obsolete: { type: "number" },
+          unknown: { type: "number" },
+        },
+      },
+      AdminDataSourceSyncOverview: {
+        type: "object",
+        required: ["status", "summary"],
+        properties: {
+          status: { type: "string" },
+          summary: {
+            type: "object",
+            properties: {
+              observed_count: { type: "number" },
+              changed_count: { type: "number" },
+              deleted_count: { type: "number" },
+              skipped_count: { type: "number" },
+              failed_count: { type: "number" },
+            },
+          },
+          freshness: { $ref: "#/components/schemas/Freshness" },
+          last_ingestion_run_id: { type: "string" },
+        },
+      },
+      AdminDataSourceOverview: {
+        type: "object",
+        required: [
+          "source_id",
+          "tenant_id",
+          "collection_id",
+          "type",
+          "status",
+          "display_name",
+          "source_type",
+          "sync",
+          "document_counts",
+        ],
+        properties: {
+          source_id: { type: "string" },
+          tenant_id: { type: "string" },
+          collection_id: { type: "string" },
+          type: { type: "string", enum: ["upload", "object_storage", "confluence", "database", "notion", "box", "google_drive"] },
+          status: { type: "string", enum: ["active", "draft", "archived"] },
+          display_name: { type: "string" },
+          source_type: { type: "string" },
+          credential_status: { type: "string" },
+          approval_policy: { type: "string" },
+          approval_effective_date: { type: "string", nullable: true },
+          sync_schedule: { type: "string", nullable: true },
+          last_synced_at: { type: "string", nullable: true },
+          sync: { $ref: "#/components/schemas/AdminDataSourceSyncOverview", nullable: true },
+          document_counts: { $ref: "#/components/schemas/AdminDataSourceDocumentCounts" },
+        },
+      },
+      AdminDataSourceOverviewResponse: {
+        type: "object",
+        required: ["sources"],
+        properties: {
+          sources: { type: "array", items: { $ref: "#/components/schemas/AdminDataSourceOverview" } },
+        },
+      },
       DataSourceUpsertRequest: {
         type: "object",
         required: ["collection_id", "type"],
@@ -3214,6 +3282,32 @@ const OPENAPI_DOC = {
             content: {
               "application/json": {
                 schema: { type: "array", items: { $ref: "#/components/schemas/AdminDataSource" } },
+              },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "502": { description: "Settings service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/admin/datasources/overview": {
+      get: {
+        operationId: "listAdminDataSourceOverview",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "collection_id", in: "query", required: false, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "Datasource operations overview",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AdminDataSourceOverviewResponse" },
               },
             },
           },

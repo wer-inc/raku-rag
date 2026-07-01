@@ -27,6 +27,51 @@ export interface AdminDataSource {
   audit_events?: ProviderConfigAuditEvent[];
 }
 
+export interface AdminDataSourceDocumentCounts {
+  total: number;
+  approved: number;
+  pending_review: number;
+  draft: number;
+  obsolete: number;
+  unknown: number;
+}
+
+export interface AdminDataSourceSyncOverview {
+  status: string;
+  summary: {
+    observed_count?: number;
+    changed_count?: number;
+    deleted_count?: number;
+    skipped_count?: number;
+    failed_count?: number;
+  };
+  freshness?: {
+    last_successful_sync_at?: string;
+  };
+  last_ingestion_run_id?: string;
+}
+
+export interface AdminDataSourceOverview {
+  source_id: string;
+  tenant_id: string;
+  collection_id: string;
+  type: DataSourceType;
+  status: AdminStatus;
+  display_name: string;
+  source_type: string;
+  credential_status?: "configured" | "missing" | string;
+  approval_policy?: "trusted" | "review_required" | string;
+  approval_effective_date?: string | null;
+  sync_schedule?: string | null;
+  last_synced_at?: string | null;
+  sync: AdminDataSourceSyncOverview | null;
+  document_counts: AdminDataSourceDocumentCounts;
+}
+
+export interface AdminDataSourceOverviewResponse {
+  sources: AdminDataSourceOverview[];
+}
+
 export interface DataSourceUpsertRequest {
   collection_id: string;
   type: DataSourceType;

@@ -140,6 +140,7 @@ class OpenApiContractTest(unittest.TestCase):
     def test_admin_settings_surface_is_published(self) -> None:
         expected_paths = {
             "/admin/datasources",
+            "/admin/datasources/overview",
             "/admin/datasources/{source_id}",
             "/admin/query-profiles",
             "/admin/query-profiles/{profile_id}",
@@ -157,6 +158,11 @@ class OpenApiContractTest(unittest.TestCase):
         self.assertTrue(expected_paths.issubset(set(self.doc["paths"])))
 
         schemas = self.doc["components"]["schemas"]
+        self.assertIn("AdminDataSourceOverviewResponse", schemas)
+        self.assertEqual(
+            schemas["AdminDataSourceOverviewResponse"]["properties"]["sources"]["items"]["$ref"],
+            "#/components/schemas/AdminDataSourceOverview",
+        )
         datasource_type_enum = schemas["AdminDataSource"]["properties"]["type"]["enum"]
         upsert_type_enum = schemas["DataSourceUpsertRequest"]["properties"]["type"]["enum"]
         for datasource_type in (

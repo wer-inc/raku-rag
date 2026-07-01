@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type {
   AdminDataSource,
+  AdminDataSourceOverview,
   ChatAssistantMessage,
   ChatbotSourceExposurePolicy,
   Citation,
@@ -27,7 +28,9 @@ import type {
 } from "@raku-rag/shared";
 import {
   adminDataSources,
+  adminDataSourceOverview,
   adminCitationView,
+  adminSourceTestConnection,
   adminSourcePreview,
   adminSourceSync,
   type AdminSourceSyncResponse,
@@ -1985,15 +1988,15 @@ const SOURCE_LIST_FILTERS: Array<{ value: SourceListFilter; label: string }> = [
 ];
 
 type SourceListRow = {
-  source: AdminDataSource;
-  sync: ManufacturingSourceSyncStatus | null;
-  origin: "registered" | "documents";
+  source: AdminDataSourceOverview;
+  sync: AdminDataSourceOverview["sync"];
+  origin: "registered";
   documentCount: number | null;
   approvedCount: number | null;
   pendingCount: number | null;
 };
 
-function syncFreshness(sync: ManufacturingSourceSyncStatus | null): string {
+function syncFreshness(sync: ManufacturingSourceSyncStatus | AdminDataSourceOverview["sync"] | null): string {
   const freshness = sync?.freshness;
   if (freshness && typeof freshness === "object") {
     const value = (freshness as { last_successful_sync_at?: unknown }).last_successful_sync_at;
@@ -2008,24 +2011,17 @@ function sourceLastSyncedAt(row: SourceListRow): string {
 
 function sourceFreshness(row: SourceListRow): string {
   const at = sourceLastSyncedAt(row);
-  if (row.origin === "documents" && !at) return "取込済み";
   if (!at) return "未同期";
   const parsed = new Date(at);
   return Number.isNaN(parsed.getTime()) ? at : parsed.toLocaleString("ja-JP");
 }
 
-function sourceConfig(row: SourceListRow): Record<string, unknown> {
-  return (row.source.config ?? {}) as Record<string, unknown>;
-}
-
 function sourceName(row: SourceListRow): string {
-  const config = sourceConfig(row);
-  return String(config.display_name || row.source.source_id);
+  return String(row.source.display_name || row.source.source_id);
 }
 
 function sourceKind(row: SourceListRow): string {
-  const config = sourceConfig(row);
-  return String(config.source_type || row.source.type || "source");
+  return String(row.source.source_type || row.source.type || "source");
 }
 
 function sourceKindLabel(kind: string): string {
@@ -2060,6 +2056,9 @@ function sourceOperationalStatus(row: SourceListRow): { label: string; key: stri
   const syncStatus = row.sync?.status ?? "";
   if (row.source.status !== "active") {
     return { label: "停止中", key: "bad", reason: "このソースは現在利用対象外です。" };
+  }
+  if (row.source.credential_status === "missing") {
+    return { label: "認証未設定", key: "bad", reason: "認証情報を設定してから同期してください。" };
   }
   if (isSyncActive(syncStatus)) {
     return { label: "同期中", key: "wait", reason: "更新内容を確認しています。" };
@@ -2108,14 +2107,35 @@ function sourceApprovalSummary(row: SourceListRow): string {
   return `承認済み ${row.approvedCount ?? 0} / ${total}`;
 }
 
+function sourceCredentialSummary(row: SourceListRow): string {
+  const status = String(row.source.credential_status || "");
+  if (status === "configured") return "認証: 設定済み";
+  if (status === "missing") return "認証: 未設定";
+  return status ? `認証: ${status}` : "認証: 種別設定";
+}
+
+function sourceTrustSummary(row: SourceListRow): string {
+  const policy = String(row.source.approval_policy || "");
+  if (policy === "trusted") return "承認: 取込時に正式根拠";
+  if (policy === "review_required") return "承認: レビュー後に正式根拠";
+  return APPROVAL_WORKFLOW_ENABLED ? "承認: レビュー設定未確認" : "承認: 自動利用";
+}
+
 function sourceNeedsAction(row: SourceListRow): boolean {
   const status = sourceOperationalStatus(row);
   return (
     status.label === "確認が必要" ||
     status.label === "同期失敗" ||
     status.label === "未同期" ||
-    status.label === "停止中"
+    status.label === "停止中" ||
+    row.source.credential_status === "missing"
   );
+}
+
+function sourceRecoveryActionLabel(row: SourceListRow): string {
+  if (row.sync?.status === "failed") return "設定を修正";
+  if (row.source.credential_status === "missing") return "認証を設定";
+  return "詳細";
 }
 
 function sourceMatchesFilter(row: SourceListRow, filter: SourceListFilter): boolean {
@@ -2150,12 +2170,15 @@ function sourceSearchText(row: SourceListRow): string {
     .toLowerCase();
 }
 
-function dataSourceKind(source: AdminDataSource): string {
+function dataSourceKind(source: AdminDataSource | AdminDataSourceOverview): string {
+  if ("source_type" in source) {
+    return String(source.source_type || source.type || "");
+  }
   const config = (source.config ?? {}) as Record<string, unknown>;
   return String(config.source_type || source.type || "");
 }
 
-function isExternalConnectionSource(source: AdminDataSource): boolean {
+function isExternalConnectionSource(source: AdminDataSource | AdminDataSourceOverview): boolean {
   const kind = dataSourceKind(source).toLowerCase().replace(/-/g, "_");
   if (kind === "text") return false;
   return !isFileUploadSource(source.source_id, kind);
@@ -2170,87 +2193,15 @@ function valueLabel(value: unknown): string {
 
 async function loadSourceListRows(): Promise<SourceListRow[]> {
   const token = await getSessionToken();
-  const [sources, documents] = await Promise.all([
-    adminDataSources(token),
-    manufacturingDocuments(token).catch(() => [] as ManufacturingDocumentSummary[]),
-  ]);
-  const localUploads = loadIngestedDocs();
-  const localByDocumentId = new Map(localUploads.map((doc) => [doc.document_id, doc]));
-  const docStats = new Map<
-    string,
-    {
-      sourceId: string;
-      collectionId: string;
-      documentCount: number;
-      approvedCount: number;
-      pendingCount: number;
-      displayName?: string;
-      sourceType?: string;
-    }
-  >();
-  for (const doc of documents) {
-    const sourceId = doc.source_id || "upload";
-    const local = localByDocumentId.get(doc.document_id);
-    const current =
-      docStats.get(sourceId) ??
-      {
-        approvedCount: 0,
-        collectionId: doc.collection_id || DEMO_COLLECTION,
-        documentCount: 0,
-        displayName: local?.source_name,
-        pendingCount: 0,
-        sourceId,
-        sourceType: local?.source_type,
-      };
-    current.displayName = current.displayName || local?.source_name;
-    current.sourceType = current.sourceType || local?.source_type;
-    current.documentCount += 1;
-    if (doc.approval_status === "approved") current.approvedCount += 1;
-    if (doc.approval_status === "pending_review") current.pendingCount += 1;
-    docStats.set(sourceId, current);
-  }
-  const serverDocIds = new Set(documents.map((doc) => doc.document_id));
-  for (const doc of localUploads) {
-    if (serverDocIds.has(doc.document_id)) continue;
-    const sourceId = doc.source_id || "upload";
-    const current =
-      docStats.get(sourceId) ??
-      {
-        approvedCount: 0,
-        collectionId: doc.collection_id || DEMO_COLLECTION,
-        documentCount: 0,
-        displayName: doc.source_name,
-        pendingCount: 0,
-        sourceId,
-        sourceType: doc.source_type,
-      };
-    current.displayName = current.displayName || doc.source_name;
-    current.sourceType = current.sourceType || doc.source_type;
-    current.documentCount += 1;
-    if (doc.approval_status === "approved") current.approvedCount += 1;
-    if (doc.approval_status === "pending_review") current.pendingCount += 1;
-    docStats.set(sourceId, current);
-  }
-  return Promise.all(
-    sources.filter(isExternalConnectionSource).map(async (source) => {
-      let sync: ManufacturingSourceSyncStatus | null = null;
-      try {
-        sync = await manufacturingSourceSyncStatus(source.source_id, token);
-      } catch {
-        sync = null;
-      }
-      const stat = docStats.get(source.source_id);
-      docStats.delete(source.source_id);
-      return {
-        approvedCount: stat?.approvedCount ?? null,
-        documentCount: stat?.documentCount ?? null,
-        origin: "registered" as const,
-        pendingCount: stat?.pendingCount ?? null,
-        source,
-        sync,
-      };
-    }),
-  );
+  const overview = await adminDataSourceOverview(token);
+  return overview.sources.filter(isExternalConnectionSource).map((source) => ({
+    approvedCount: source.document_counts.approved,
+    documentCount: source.document_counts.total,
+    origin: "registered" as const,
+    pendingCount: source.document_counts.pending_review,
+    source,
+    sync: source.sync,
+  }));
 }
 
 function SourceListBody() {
@@ -2293,10 +2244,10 @@ function SourceListBody() {
     setSyncingSourceId(row.source.source_id);
     try {
       const token = await getSessionToken();
-      const syncSource = (await ensureTrustedDatasourceForE2E(row.source.source_id, token, row.source)) ?? row.source;
+      const syncSource = await ensureTrustedDatasourceForE2E(row.source.source_id, token);
       const sync = await adminSourceSync(
         row.source.source_id,
-        { collection_id: syncSource.collection_id || DEMO_COLLECTION, reason: "manual_refresh" },
+        { collection_id: syncSource?.collection_id || row.source.collection_id || DEMO_COLLECTION, reason: "manual_refresh" },
         token,
       );
       recordConnectorRun({
@@ -2414,7 +2365,7 @@ function SourceListBody() {
                 const name = sourceName(row);
                 const status = sourceOperationalStatus(row);
                 const documents = sourceDocumentCount(row);
-                const href = row.origin === "documents" ? "/documents" : `/sources/${row.source.source_id}`;
+                const href = `/sources/${row.source.source_id}`;
                 const isSyncing = syncingSourceId === row.source.source_id;
                 const rowSyncActive = isSyncActive(row.sync?.status);
                 return (
@@ -2441,6 +2392,8 @@ function SourceListBody() {
                         <strong>{documents ?? "—"}</strong> 文書
                       </span>
                       <span>{sourceApprovalSummary(row)}</span>
+                      <span>{sourceCredentialSummary(row)}</span>
+                      <span>{sourceTrustSummary(row)}</span>
                       <span>最終同期: {sourceFreshness(row)}</span>
                     </div>
                     <div className="source-list-actions">
@@ -2450,7 +2403,7 @@ function SourceListBody() {
                         </Link>
                       )}
                       <Link href={href} className="button-link secondary">
-                        詳細
+                        {sourceRecoveryActionLabel(row)}
                       </Link>
                       {row.origin === "registered" && (
                         <button
@@ -2596,9 +2549,11 @@ function previewDisplayFields(preview: DataSourcePreviewResponse): string[] {
 function SourcePreviewPanel({
   sourceId,
   collectionId,
+  onPreviewReadyChange,
 }: {
   sourceId: string;
   collectionId?: string | null;
+  onPreviewReadyChange?: (ready: boolean) => void;
 }) {
   const [profileType, setProfileType] = useState<DataSourceProfileType>("auto");
   const [sampleDocuments, setSampleDocuments] = useState(2);
@@ -2619,6 +2574,7 @@ function SourcePreviewPanel({
   useEffect(() => {
     let active = true;
     setPreview(null);
+    onPreviewReadyChange?.(false);
     setMappingEdits({});
     setMessage(null);
     setDatasource(null);
@@ -2674,6 +2630,7 @@ function SourcePreviewPanel({
     setProfileType(value);
     setRequiredFields(PREVIEW_REQUIRED_FIELDS_BY_PROFILE[value].join(", "));
     setPreview(null);
+    onPreviewReadyChange?.(false);
     setMessage(null);
   }
 
@@ -2681,6 +2638,7 @@ function SourcePreviewPanel({
     if (busy) return;
     setBusy(true);
     setMessage(null);
+    onPreviewReadyChange?.(false);
     try {
       const defaults: Record<string, unknown> = {};
       if (documentKind) defaults.document_kind = documentKind;
@@ -2713,6 +2671,7 @@ function SourcePreviewPanel({
         token,
       );
       setPreview(data);
+      onPreviewReadyChange?.(true);
       setMappingEdits((current) => {
         const next: Record<string, string> = { ...data.suggested_mapping };
         for (const column of data.detected_columns) {
@@ -2729,6 +2688,7 @@ function SourcePreviewPanel({
 
   function updateMapping(column: string, target: string) {
     setMappingEdits((current) => ({ ...current, [column]: target }));
+    onPreviewReadyChange?.(false);
   }
 
   async function saveMappingProfile() {
@@ -2808,7 +2768,10 @@ function SourcePreviewPanel({
             min={1}
             max={10}
             value={sampleDocuments}
-            onChange={(e) => setSampleDocuments(Math.max(1, Number(e.target.value) || 1))}
+            onChange={(e) => {
+              setSampleDocuments(Math.max(1, Number(e.target.value) || 1));
+              onPreviewReadyChange?.(false);
+            }}
           />
         </label>
         <label>
@@ -2818,12 +2781,21 @@ function SourcePreviewPanel({
             min={1}
             max={50}
             value={sampleRows}
-            onChange={(e) => setSampleRows(Math.max(1, Number(e.target.value) || 1))}
+            onChange={(e) => {
+              setSampleRows(Math.max(1, Number(e.target.value) || 1));
+              onPreviewReadyChange?.(false);
+            }}
           />
         </label>
         <label>
           <span>文書種別</span>
-          <select value={documentKind} onChange={(e) => setDocumentKind(e.target.value)}>
+          <select
+            value={documentKind}
+            onChange={(e) => {
+              setDocumentKind(e.target.value);
+              onPreviewReadyChange?.(false);
+            }}
+          >
             {PREVIEW_DEFAULT_KIND_OPTIONS.map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
@@ -2834,8 +2806,14 @@ function SourcePreviewPanel({
         {APPROVAL_WORKFLOW_ENABLED && (
           <>
             <label>
-              <span>承認状態</span>
-              <select value={approvalStatus} onChange={(e) => setApprovalStatus(e.target.value)}>
+                <span>承認状態</span>
+                <select
+                  value={approvalStatus}
+                  onChange={(e) => {
+                    setApprovalStatus(e.target.value);
+                    onPreviewReadyChange?.(false);
+                  }}
+                >
                 {PREVIEW_APPROVAL_OPTIONS.map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
@@ -2845,13 +2823,26 @@ function SourcePreviewPanel({
             </label>
             <label>
               <span>発効日</span>
-              <input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
+              <input
+                type="date"
+                value={effectiveDate}
+                onChange={(e) => {
+                  setEffectiveDate(e.target.value);
+                  onPreviewReadyChange?.(false);
+                }}
+              />
             </label>
           </>
         )}
         <label>
           <span>必須項目</span>
-          <input value={requiredFields} onChange={(e) => setRequiredFields(e.target.value)} />
+          <input
+            value={requiredFields}
+            onChange={(e) => {
+              setRequiredFields(e.target.value);
+              onPreviewReadyChange?.(false);
+            }}
+          />
         </label>
       </div>
 
@@ -6265,6 +6256,13 @@ function AddSourceBody() {
   const [syncing, setSyncing] = useState(false);
   const toast = useToast();
   const [syncResult, setSyncResult] = useState<AdminSourceSyncResponse | null>(null);
+  const [connectionTest, setConnectionTest] = useState<{
+    status: "idle" | "testing" | "ok" | "error";
+    message: string;
+    sampleCount?: number;
+    sourceId?: string;
+  }>({ status: "idle", message: "" });
+  const [previewReady, setPreviewReady] = useState(false);
   // Google Drive OAuth connection (021-gdrive). connectionId is the only credential the form keeps;
   // the refresh token lives server-side. saveDatasource gates on it for google_drive.
   const [oauthStatus, setOauthStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
@@ -6274,6 +6272,11 @@ function AddSourceBody() {
   const selectedSourceDef = ADD_SOURCE_TYPES.find((source) => source.id === selectedSource) ?? ADD_SOURCE_TYPES[0];
   const selectedConfig = ADD_SOURCE_CONFIGS[selectedSource];
   const needsOAuthConnection = selectedConfig.dataSourceType === "google_drive";
+
+  function resetConnectionValidation() {
+    setConnectionTest({ status: "idle", message: "" });
+    setPreviewReady(false);
+  }
 
   // Receive the connection result from the OAuth popup (apps/web/app/oauth/google/callback).
   useEffect(() => {
@@ -6285,9 +6288,11 @@ function AddSourceBody() {
         setOauthConnectionId(data.connection_id);
         setOauthStatus("connected");
         setOauthError(null);
+        resetConnectionValidation();
       } else {
         setOauthStatus("error");
         setOauthError(typeof data.error === "string" ? data.error : "接続に失敗しました");
+        resetConnectionValidation();
       }
     }
     window.addEventListener("message", onMessage);
@@ -6297,6 +6302,7 @@ function AddSourceBody() {
   async function onConnectGoogle() {
     setOauthError(null);
     setOauthStatus("connecting");
+    resetConnectionValidation();
     try {
       const nonce = makeOAuthNonce();
       window.sessionStorage.setItem(GDRIVE_OAUTH_STATE_KEY, nonce);
@@ -6328,6 +6334,7 @@ function AddSourceBody() {
     setUploadProgress("");
     setUploadFailures([]);
     setSyncResult(null);
+    resetConnectionValidation();
     setOauthStatus("idle");
     setOauthConnectionId("");
     setOauthError(null);
@@ -6337,6 +6344,7 @@ function AddSourceBody() {
 
   function onConfigChange(fieldId: string, value: string) {
     setConfigValues((current) => ({ ...current, [fieldId]: value }));
+    resetConnectionValidation();
   }
 
   async function saveDatasource(): Promise<string | null> {
@@ -6410,6 +6418,40 @@ function AddSourceBody() {
     }
   }
 
+  async function onTestConnection() {
+    if (selectedSource === "text" || configSaving || syncing || connectionTest.status === "testing") return;
+    setPreviewReady(false);
+    setConnectionTest({ status: "testing", message: "接続設定を保存して疎通確認しています。" });
+    const datasourceId = await saveDatasource();
+    if (!datasourceId) {
+      setConnectionTest({ status: "error", message: "接続テストの前に保存が完了しませんでした。" });
+      return;
+    }
+    try {
+      const token = await getSessionToken();
+      const result = await adminSourceTestConnection(
+        datasourceId,
+        { collection_id: collectionId.trim() || "manuals", limit: 1 },
+        token,
+      );
+      const sampleCount = typeof result.sample_count === "number" ? result.sample_count : undefined;
+      setConnectionTest({
+        status: "ok",
+        message:
+          sampleCount !== undefined
+            ? `接続できました。同期候補を ${sampleCount} 件確認しました。`
+            : "接続できました。同期を開始できます。",
+        sampleCount,
+        sourceId: datasourceId,
+      });
+      toast("接続テストに成功しました。", "success");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "接続テストに失敗しました";
+      setConnectionTest({ status: "error", message });
+      toast(message, "error");
+    }
+  }
+
   async function onSaveDatasource(event: FormEvent) {
     event.preventDefault();
     await saveDatasource();
@@ -6417,6 +6459,14 @@ function AddSourceBody() {
 
   async function onSaveAndSync() {
     if (syncing || configSaving) return;
+    if (connectionTest.status !== "ok") {
+      toast("同期開始の前に接続テストを実行してください。", "warning");
+      return;
+    }
+    if (!previewReady) {
+      toast("同期開始の前に取込プレビューを実行してください。", "warning");
+      return;
+    }
     const datasourceId = await saveDatasource();
     if (!datasourceId) return;
     setSyncing(true);
@@ -6673,7 +6723,10 @@ function AddSourceBody() {
               <span>ソース名</span>
               <input
                 value={sourceName}
-                onChange={(e) => setSourceName(e.target.value)}
+                onChange={(e) => {
+                  setSourceName(e.target.value);
+                  resetConnectionValidation();
+                }}
                 placeholder={`例: ${selectedSourceDef.name} ナレッジ`}
                 required
                 aria-describedby="connector-source-name-help"
@@ -6737,17 +6790,65 @@ function AddSourceBody() {
               ))}
             </div>
 
+            {connectionTest.status !== "idle" && (
+              <p
+                className={`source-list-message ${
+                  connectionTest.status === "ok" ? "success" : connectionTest.status === "error" ? "error" : ""
+                } connection-edit-message`}
+                role={connectionTest.status === "error" ? "alert" : "status"}
+                aria-live="polite"
+              >
+                {connectionTest.message}
+              </p>
+            )}
+            {connectionTest.status === "ok" && !previewReady && (
+              <p
+                id="add-source-preview-required"
+                className="source-config-note"
+                role="status"
+                aria-live="polite"
+              >
+                同期開始の前に、下の取込プレビューを実行してください。
+              </p>
+            )}
+
             <div className="screen-actions add-source-actions">
               <button type="submit" disabled={configSaving}>
                 {configSaving ? "保存中…" : "接続設定を保存"}
               </button>
-              <button type="button" onClick={onSaveAndSync} disabled={configSaving || syncing}>
+              <button
+                type="button"
+                onClick={onTestConnection}
+                disabled={configSaving || syncing || connectionTest.status === "testing"}
+              >
+                {connectionTest.status === "testing" ? "接続確認中…" : "接続テスト"}
+              </button>
+              <button
+                type="button"
+                onClick={onSaveAndSync}
+                disabled={configSaving || syncing || connectionTest.status !== "ok" || !previewReady}
+                aria-describedby={
+                  connectionTest.status === "ok" && !previewReady ? "add-source-preview-required" : undefined
+                }
+              >
                 {syncing ? "同期中…" : "保存して同期開始"}
               </button>
             </div>
           </Section>
         </form>
       )}
+
+      {step === "configure" &&
+        selectedSource !== "text" &&
+        connectionTest.status === "ok" &&
+        connectionTest.sourceId && (
+          <SourcePreviewPanel
+            key={connectionTest.sourceId}
+            sourceId={connectionTest.sourceId}
+            collectionId={collectionId.trim() || "manuals"}
+            onPreviewReadyChange={setPreviewReady}
+          />
+        )}
 
       {syncResult && (
         <section className="result-panel" aria-live="polite">

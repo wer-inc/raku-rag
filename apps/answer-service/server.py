@@ -983,6 +983,103 @@ def _source_sync_state_json(state) -> dict:
     }
 
 
+def _empty_datasource_document_counts() -> dict:
+    return {
+        "total": 0,
+        "approved": 0,
+        "pending_review": 0,
+        "draft": 0,
+        "obsolete": 0,
+        "unknown": 0,
+    }
+
+
+def _safe_datasource_display_name(source: dict) -> str:
+    config = source.get("config") if isinstance(source.get("config"), dict) else {}
+    display_name = config.get("display_name") or source.get("display_name") or source.get("source_id")
+    return str(display_name or "")
+
+
+def _safe_datasource_source_type(source: dict) -> str:
+    config = source.get("config") if isinstance(source.get("config"), dict) else {}
+    source_type = config.get("source_type") or source.get("type") or "source"
+    return str(source_type or "source")
+
+
+def _safe_datasource_credential_status(source: dict) -> str:
+    config = source.get("config") if isinstance(source.get("config"), dict) else {}
+    status = source.get("credential_status") or config.get("credential_status")
+    if status:
+        return str(status)
+    if config.get("credential_ref"):
+        return "configured"
+    return "missing"
+
+
+def _datasource_sync_overview(runs: IngestionRunStore, tenant_id: str, source_id: str) -> dict | None:
+    state = runs.source_sync_state(tenant_id, source_id)
+    if state is None:
+        return None
+    return {
+        "status": state.status,
+        "summary": {
+            "observed_count": state.observed_count,
+            "changed_count": state.changed_count,
+            "deleted_count": state.deleted_count,
+            "skipped_count": state.skipped_count,
+            "failed_count": state.failed_count,
+        },
+        "freshness": {"last_successful_sync_at": state.last_synced_at},
+        "last_ingestion_run_id": state.last_ingestion_run_id,
+    }
+
+
+def _datasource_overview_rows(
+    sources: list[dict],
+    documents: list[dict],
+    runs: IngestionRunStore,
+    tenant_id: str,
+) -> list[dict]:
+    counts_by_source: dict[str, dict] = {}
+    for doc in documents:
+        source_id = str(doc.get("source_id") or "")
+        if not source_id:
+            continue
+        counts = counts_by_source.setdefault(source_id, _empty_datasource_document_counts())
+        counts["total"] += 1
+        approval_status = str(doc.get("approval_status") or "unknown")
+        if approval_status in {"approved", "pending_review", "draft", "obsolete"}:
+            counts[approval_status] += 1
+        else:
+            counts["unknown"] += 1
+
+    rows: list[dict] = []
+    for source in sources:
+        source_id = str(source.get("source_id") or "")
+        config = source.get("config") if isinstance(source.get("config"), dict) else {}
+        rows.append(
+            {
+                "source_id": source_id,
+                "tenant_id": str(source.get("tenant_id") or tenant_id),
+                "collection_id": str(source.get("collection_id") or ""),
+                "type": source.get("type"),
+                "status": source.get("status") or "draft",
+                "display_name": _safe_datasource_display_name(source),
+                "source_type": _safe_datasource_source_type(source),
+                "credential_status": _safe_datasource_credential_status(source),
+                "approval_policy": config.get("approval_policy"),
+                "approval_effective_date": config.get("approval_effective_date"),
+                "sync_schedule": source.get("sync_schedule"),
+                "last_synced_at": source.get("last_synced_at"),
+                "sync": _datasource_sync_overview(runs, tenant_id, source_id),
+                "document_counts": dict(
+                    counts_by_source.get(source_id, _empty_datasource_document_counts())
+                ),
+            }
+        )
+    return rows
+
+
 def _manufacturing_source_sync_status_json(
     runs: IngestionRunStore, tenant_id: str, source_id: str
 ) -> dict:
@@ -1898,6 +1995,28 @@ def make_handler(system: ProductionSystem):
                                 correlation_id=(qs.get("correlation_id") or [""])[0],
                                 collection_id=(qs.get("collection_id") or [""])[0],
                             ),
+                        )
+                    elif resource == "datasources" and len(parts) == 4 and parts[3] == "overview":
+                        collection_id = (qs.get("collection_id") or [""])[0]
+                        sources = admin_settings.list_resource(
+                            self._tenant_header(),
+                            "datasources",
+                            collection_id=collection_id,
+                        )
+                        documents = manufacturing_system.list_documents(
+                            _claims_from_headers(self.headers),
+                            collection_id=collection_id or None,
+                        )
+                        self._send(
+                            200,
+                            {
+                                "sources": _datasource_overview_rows(
+                                    sources,
+                                    documents,
+                                    system.ingestion_runs,
+                                    self._tenant_header(),
+                                )
+                            },
                         )
                     elif resource in admin_settings._id_fields and len(parts) == 3:
                         self._send(

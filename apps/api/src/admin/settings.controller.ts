@@ -18,6 +18,7 @@ import type {
   ACLSettingsResponse,
   AdminBudget,
   AdminDataSource,
+  AdminDataSourceOverviewResponse,
   AdminSettingsMutationResponse,
   BudgetSettingsRequest,
   BudgetSettingsResponse,
@@ -90,6 +91,19 @@ export class AdminSettingsController {
     }
     const query = params.toString();
     return this.requestCore(req, "GET", `/internal/admin/datasources${query ? `?${query}` : ""}`);
+  }
+
+  @Get("datasources/overview")
+  async dataSourceOverview(
+    @Req() req: Request,
+    @Query("collection_id") collectionId?: string,
+  ): Promise<AdminDataSourceOverviewResponse> {
+    const params = new URLSearchParams();
+    if (collectionId) {
+      params.set("collection_id", collectionId);
+    }
+    const query = params.toString();
+    return this.requestCore(req, "GET", `/internal/admin/datasources/overview${query ? `?${query}` : ""}`);
   }
 
   @Get("datasources/:source_id")
