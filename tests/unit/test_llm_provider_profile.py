@@ -192,6 +192,22 @@ class LlmProviderProfileTest(unittest.TestCase):
         for expected in ("初回運転", "100時間", "25", "95"):
             self.assertIn(expected, out)
 
+    def test_temperature_unit_is_normalized_for_japanese_quality_terms(self) -> None:
+        out = ExtractiveLLMProvider().generate(
+            "PWHT では保持温度、昇降温速度、何℃未満で取り出すかを教えて",
+            [
+                _chunk(
+                    "保持温度595±15°C、保持時間1.5時間。\n"
+                    "昇温・降温速度は300°C以上で55°C/h以下。\n"
+                    "300°C 未満まで炉冷後に取出す。",
+                    document_id="wi-0457-pwht",
+                )
+            ],
+        )
+
+        for expected in ("595±15℃", "55℃/h", "300℃未満"):
+            self.assertIn(expected, out)
+
 
 if __name__ == "__main__":
     unittest.main()

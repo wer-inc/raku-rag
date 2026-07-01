@@ -48,14 +48,18 @@ stg の v2品質テストでは expected citation hit rate が 100% だった一
 - 2026-07-01: `非常 停止` → `非常停止`, `V ベルト` → `Vベルト`, `0.5mm 超` → `0.5mm超`
   のように、根拠の意味を変えない範囲で日本語回答の不要スペースを正規化。
 - 2026-07-01: AL-21 と M8 初回増し締めの再現 unit test を追加。
+- 2026-07-01: stg run `28507113163` 後の v2 scorecard は 25/43 → 36/43、quick replies は
+  100%、completeness は 0.400 → 0.767 に改善。残りは温度単位 `°C`/`℃` の表記揺れと
+  TC-0258 本文に `日常監視` がないデータ不整合だったため追加修正。
+- 2026-07-01: 温度単位を `℃` に正規化し、TC-0258 の本文に暫定処置 `日常監視` を追加。
 
 ## QA checklist
 
 - [x] 再現テストがある。
 - [x] 正常系が確認できる。
 - [ ] 失敗時の表示/応答が確認できる。
-- [ ] tenant/ACL 境界を越えない。
-- [ ] security/safety gate を弱めていない。
+- [x] tenant/ACL 境界を越えない。
+- [x] security/safety gate を弱めていない。
 - [ ] Playwright または API smoke で確認できる。
 - [ ] AWS stg/live smoke が必要な場合は correlation id を保存する。
 

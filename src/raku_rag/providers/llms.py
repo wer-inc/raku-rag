@@ -140,7 +140,8 @@ def _complete_answer_query(query: str) -> bool:
 def _normalize_answer_spacing(text: str) -> str:
     """Keep Japanese extractive answers readable without changing the evidence meaning."""
 
-    normalized = re.sub(rf"(?<=[{_CJK}])\s+(?=[{_CJK}])", "", text)
+    normalized = text.replace("°C", "℃")
+    normalized = re.sub(rf"(?<=[{_CJK}])\s+(?=[{_CJK}])", "", normalized)
     normalized = re.sub(rf"(?<=[A-Z])\s+(?=[{_CJK}])", "", normalized)
     normalized = re.sub(
         rf"(?<=[A-Za-z0-9%μΩ℃・.])\s+"
