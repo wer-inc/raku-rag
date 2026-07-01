@@ -346,3 +346,60 @@ promotion.
    verification command (`test_groundedness.py test_eval_baseline_gate.py test_ci_eval_gate.py
    tests/manufacturing/test_manufacturing_eval_gate.py test_chatbot_service.py
    test_chatbot_golden_scenarios.py`) 68 passed/3 subtests.
+4. [x] P3: `L2QueryUnderstandingAnswerEngine` (coreference / query understanding) landed `a585148`
+   on `worktree-chatbot-conversational-agent` (isolated worktree). New
+   `src/raku_rag/chatbot/coreference.py` wraps an inner `AnswerEngine` (in practice
+   `L0DeterministicAnswerEngine`) and fixes the literal original complaint — "その締付トルクは?"
+   after a question naming "P-101" losing the identifier entirely — with a fully deterministic,
+   offline mechanism (no LLM dependency at all, per the roadmap's own framing that this problem has a
+   good deterministic solution, unlike P1's envelope). Detector (`is_referential_followup`): fires
+   only when there is a prior turn (`context.previous_question`), the new message is short
+   (≤40 chars), contains a demonstrative/anaphoric marker, and has no identifier of its own (reuses
+   `query_planner.plan_query`'s identifier extraction, not a second implementation). The marker list
+   (`REFERENTIAL_MARKERS`) is built ON TOP of `query_planner.AMBIGUOUS_REFERENTS` (only pronominal
+   forms — それ/これ/あれ) by adding the adnominal/anaphoric forms the roadmap's own example needs —
+   その/この/あの/上記/同じ/etc. — a real gap in the shared list surfaced while implementing this
+   (confirmed empirically: "その締付トルクは?" was NOT flagged ambiguous by `AMBIGUOUS_REFERENTS`
+   alone). When the detector fires, `has_own_topic`/`residual_topic` decide reformat-vs-rewrite: what
+   remains of the message after stripping the marker and generic elaboration glue ("もう少し詳しく
+   教えて" etc.) — empty means a bare "tell me more" (reuse `context.previous_citations`/
+   `previous_source_answer_text` via `answer_from_previous_turn`, generalizing
+   `_previous_reformat_turn`'s mechanism to free text, no new retrieval), non-empty means the
+   follow-up names a fact the prior answer is not known to cover (deterministically rewrite into a
+   standalone query via `standalone_query` — merges `context.previous_question`'s identifiers, else
+   its cited document ids, else its lexical terms — then calls the inner engine with THAT query).
+   Deliberately NOT a text-overlap match against the previous answer: the CJK-bigram retrieval
+   tokenizer makes that unreliable for short queries. `DialogueContext` gained one new field,
+   `previous_source_answer_text` (the raw pre-`_format_chatbot_answer` text), needed so the reuse
+   path doesn't double-wrap section headers; `DialogueManager.build_context` populates it from the
+   same `source_answer_text` metadata `_previous_reformat_turn` already reads. `ChatbotService`
+   registers `"L2"` as `L1EnvelopeAnswerEngine(L2QueryUnderstandingAnswerEngine(l0_engine),
+   llm_provider)` — cumulative per the ladder's "+" framing (coreference first, then L1's envelope on
+   top; with no LLM configured this is a provable no-op reduction to pure L2 behavior, so "L2" stays
+   exactly as offline-safe as "L1") — and a new, independent `enable_demo_tenant_l2`/
+   `RAKU_CHATBOT_DEMO_TENANT_L2` flag (default off) dials the demo tenant to "L2" without touching the
+   existing `enable_demo_tenant_l1` flag, so an existing L1 pilot is never silently upgraded.
+   Source-scope-carry: verified, not assumed — added tests proving a referential follow-up cannot
+   answer using a DIFFERENT collection with no active policy (blocked before the engine is even
+   resolved) and cannot survive a policy revoked between turns, using the EXISTING
+   `_pre_rag_source_policy_ids`/`_filter_chatbot_citations` gate exactly as-is (no new, parallel scope
+   check was added inside L2). Golden scenarios: added a coreference regression scenario to both
+   `scripts/demo/chatbot_golden_scenarios.json` and `chatbot_quality_v2_scenarios.json` (turn 1 names
+   "モータ M8"; turn 2 is a bare "その基礎ボルトの締付トルクは?" asserting the SAME
+   `eq-motor-m8-torque` document) plus a scope-carry adversarial scenario in the v2 set, using a small
+   additive extension to `scripts/demo/chatbot_golden_scenarios.py`'s `run_quick_reply_check` (an
+   optional per-check `collection_id` override, defaulting to the run's own — backward compatible,
+   proven by a new runner unit test) so a follow-up can target a deliberately unconfigured collection
+   within one scenario run. These JSON scenarios are structurally validated here (schema + the
+   runner's pure-function tests, all green) but — like every other scenario in both files — their
+   actual live pass/fail requires a deployed stack, which this sandbox does not have; that is
+   unchanged by this phase. Verified independently: `scripts/gate.sh all` 1211 tests GREEN (was 1172 +
+   39 new), targeted verification command (`test_chatbot_service.py test_chatbot_golden_scenarios.py
+   test_chatbot_answer_engine.py test_chatbot_envelope.py test_chatbot_coreference.py`) 122
+   passed/3 subtests (the same 4 files pre-P3 were 83 passed/3 subtests — new
+   `test_chatbot_coreference.py` added 30, the other 4 files gained 9 between them: +6
+   `test_chatbot_service.py`, +2 `test_chatbot_answer_engine.py`, +1 `test_chatbot_golden_scenarios.py`
+   contract test for the new per-check `collection_id` override). Deferred to a later phase: an optional
+   `LLMProvider`-refined rewrite (P1 already demonstrates the safe-fallback pattern once; re-proving
+   it for L2 wasn't needed to close this phase's gate, and the deterministic mechanism is what
+   actually ships).
