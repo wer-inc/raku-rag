@@ -137,15 +137,21 @@ CRITERIA_TERMS = (
     "N・m",
     "N·m",
     "mm",
+    "MPa",
     "℃",
     "ヶ月",
     "時間",
+    "保持",
+    "圧力",
+    "校正済",
+    "/min",
     "%",
 )
 CAUTION_TERMS = (
     "注意",
     "安全",
     "危険",
+    "警告",
     "禁止",
     "停止",
     "異常",
@@ -157,6 +163,12 @@ CAUTION_TERMS = (
     "超える",
     "保全",
     "高リスク",
+    "立入",
+    "立入り",
+    "バリケード",
+    "急減圧",
+    "加圧中",
+    "保護具",
 )
 TROUBLESHOOTING_TERMS = (
     "原因",
@@ -1232,11 +1244,16 @@ class ChatbotService:
             return answer
 
         conclusion = self._strip_leading_section_label(answer)
-        procedure_lines = self._extract_relevant_lines(answer, PROCEDURE_TERMS, limit=3)
-        criteria_lines = self._extract_relevant_lines(answer, CRITERIA_TERMS, limit=4)
-        caution_lines = self._extract_relevant_lines(answer, CAUTION_TERMS, limit=3)
-        cause_lines = self._extract_relevant_lines(answer, TROUBLE_CAUSE_TERMS, limit=3)
-        action_lines = self._extract_relevant_lines(answer, TROUBLE_ACTION_TERMS, limit=3)
+        raw_procedure_lines = self._extract_relevant_lines(answer, PROCEDURE_TERMS, limit=3)
+        raw_criteria_lines = self._extract_relevant_lines(answer, CRITERIA_TERMS, limit=4)
+        raw_caution_lines = self._extract_relevant_lines(answer, CAUTION_TERMS, limit=3)
+        raw_cause_lines = self._extract_relevant_lines(answer, TROUBLE_CAUSE_TERMS, limit=3)
+        raw_action_lines = self._extract_relevant_lines(answer, TROUBLE_ACTION_TERMS, limit=3)
+        procedure_lines = list(raw_procedure_lines)
+        criteria_lines = list(raw_criteria_lines)
+        caution_lines = list(raw_caution_lines)
+        cause_lines = list(raw_cause_lines)
+        action_lines = list(raw_action_lines)
         evidence_lines = self._evidence_lines(citations)
         condition_lines = [
             f"参照範囲: {collection_id or '選択中の参照範囲'}",
@@ -1259,7 +1276,11 @@ class ChatbotService:
             if self._answer_template_intent(question, answer) == "troubleshooting":
                 lines = action_lines
             else:
-                lines = procedure_lines
+                lines = []
+                if raw_criteria_lines and self._contains_any(question, CRITERIA_TERMS):
+                    lines.extend(raw_criteria_lines[:2])
+                lines.extend(raw_procedure_lines or procedure_lines)
+                lines = list(dict.fromkeys(lines))[:5] or procedure_lines
             sections = [
                 ("手順", self._numbered_lines(lines)),
                 (
@@ -1367,16 +1388,16 @@ class ChatbotService:
         focused_actions: list[str] = []
         if self._contains_any(question, PROCEDURE_TERMS):
             focused_actions.append("steps")
-        if self._contains_any(question, CRITERIA_TERMS):
-            focused_actions.append("criteria_table")
         if self._contains_any(question, CAUTION_TERMS):
             focused_actions.append("cautions")
+        if self._contains_any(question, CRITERIA_TERMS):
+            focused_actions.append("criteria_table")
 
         actions: list[str] = []
         for action in [*focused_actions, "steps", "criteria_table", "cautions"]:
             if action in candidates and action not in actions and action not in exclude:
                 actions.append(action)
-        actions = actions[:2]
+        actions = actions[:3]
         if "evidence" not in exclude:
             actions.append("evidence")
 
@@ -1387,7 +1408,7 @@ class ChatbotService:
                 continue
             seen.add(action)
             replies.append({"label": FOLLOWUP_QUICK_REPLY_LABELS[action], "value": action})
-            if len(replies) >= 3:
+            if len(replies) >= 4:
                 break
         return replies
 

@@ -219,7 +219,67 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertIn("注意点を確認", labels)
         self.assertIn("根拠を確認する", labels)
         self.assertNotIn("この根拠でもう少し詳しく", labels)
-        self.assertLessEqual(len(labels), 3)
+        self.assertLessEqual(len(labels), 4)
+
+    def test_hydrotest_quick_replies_keep_numeric_steps_and_cautions(self):
+        queries = []
+
+        def rag_answerer(_principal, query, _collection_id):
+            queries.append(query)
+            return _rag_answer(
+                text=(
+                    "貯槽V-205(設計圧1.0MPa)の耐圧試験は水圧試験で実施。"
+                    "試験圧力は設計圧の1.5倍=1.5MPaとし、保持時間は30分。"
+                    "昇圧は0.3MPa刻みで段階加圧し各段で漏れ・変形を目視確認。"
+                    "試験水温は5℃以上、周囲立入りは加圧中禁止しバリケード設置。"
+                    "規定圧到達後の急減圧は禁止、0.3MPa/minで降圧する。"
+                    "圧力計は校正済2個を使用。"
+                ),
+                document_id="std-2210-hydrotest",
+            )
+
+        service = ChatbotService(rag_answerer)
+        _enable_internal_chat_collection(service)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+
+        _, first_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {
+                "message": (
+                    "圧力容器 V-205 の水圧試験で、試験圧力、保持時間、"
+                    "昇圧と降圧の注意点を順番に教えて"
+                ),
+                "collection_id": "manuals",
+            },
+        )
+        offered = {reply["value"] for reply in first_turn["assistant_message"]["quick_replies"]}
+        self.assertIn("steps", offered)
+        self.assertIn("cautions", offered)
+        self.assertIn("evidence", offered)
+        self.assertNotIn("details", offered)
+
+        _, steps_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "steps", "collection_id": "manuals"},
+        )
+        _, cautions_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "cautions", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(len(queries), 1)
+        steps_message = steps_turn["assistant_message"]["message"]
+        self.assertIn("手順:\n1.", steps_message)
+        self.assertIn("1.5MPa", steps_message)
+        self.assertIn("30分", steps_message)
+        self.assertIn("0.3MPa", steps_message)
+        cautions_message = cautions_turn["assistant_message"]["message"]
+        self.assertIn("注意点:", cautions_message)
+        self.assertIn("バリケード", cautions_message)
+        self.assertIn("急減圧", cautions_message)
 
     def test_contextual_quick_reply_reformats_previous_answer_without_new_rag_search(self):
         queries = []
