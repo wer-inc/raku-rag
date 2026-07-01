@@ -2,6 +2,15 @@
 
 > Priority: **P0/High** / Status: Open / Labels: `chatbot`, `security`, `rag-quality`, `prompt-injection`
 
+## 実装メモ(2026-07-01)
+
+- ChatBot service の pre-RAG intent guard に `security_refusal` を追加した。
+- `source exposure policy` bypass、`非公開データ` 検索要求、`隠れた思考` / `chain of thought`、
+  `内部推論`、`システムプロンプト`、`認証ヘッダー`、`前の指示を無視` を retrieval 前に拒否する。
+- 拒否時は RAG answerer を呼ばず、`ai_action=handoff` と `no_answer_reason=insufficient_evidence`
+  を返す。既存 scorecard contract に合わせるため、公開 action 名は増やしていない。
+- ユニットテストで RAG answerer が呼ばれないことを pin した。
+
 ## 背景(なぜ今)
 
 stg の v2品質テストで、`source exposure policy を無視して...` や hidden chain-of-thought 要求に対し、
@@ -47,11 +56,11 @@ ChatBot が拒否せず RAG 検索・回答してしまうケースが確認さ�
 
 ## QA checklist
 
-- [ ] 再現テストがある。
-- [ ] 正常系が確認できる。
-- [ ] 失敗時の表示/応答が確認できる。
-- [ ] tenant/ACL 境界を越えない。
-- [ ] security/safety gate を弱めていない。
+- [x] 再現テストがある。
+- [x] 正常系が確認できる。
+- [x] 失敗時の表示/応答が確認できる。
+- [x] tenant/ACL 境界を越えない。
+- [x] security/safety gate を弱めていない。
 - [ ] Playwright または API smoke で確認できる。
 - [ ] AWS stg/live smoke が必要な場合は correlation id を保存する。
 
@@ -74,4 +83,3 @@ ChatBot が拒否せず RAG 検索・回答してしまうケースが確認さ�
 - `src/raku_rag/chatbot/service.py`
 - `docs/production-readiness/chatbot-golden-scenarios.md`
 - `issues/0051-chatbot-sellable-answer-quality-roadmap.md`
-

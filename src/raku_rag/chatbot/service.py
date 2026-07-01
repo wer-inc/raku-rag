@@ -156,6 +156,44 @@ CAUTION_TERMS = (
     "保全",
     "高リスク",
 )
+TROUBLESHOOTING_TERMS = (
+    "原因",
+    "対策",
+    "暫定",
+    "恒久",
+    "再発防止",
+    "異音",
+    "発熱",
+    "ヒケ",
+    "ボイド",
+    "SCC",
+    "ピンホール",
+    "摩耗",
+    "不良",
+)
+TROUBLE_CAUSE_TERMS = (
+    "原因",
+    "起因",
+    "不足",
+    "過多",
+    "条件",
+    "摩耗",
+    "ミスアライメント",
+    "塩化物",
+    "油分",
+    "水分",
+)
+TROUBLE_ACTION_TERMS = (
+    "対策",
+    "処置",
+    "暫定",
+    "恒久",
+    "再発防止",
+    "変更",
+    "交換",
+    "確認",
+    "管理",
+)
 
 
 def _redact(text: str) -> str:
@@ -402,8 +440,36 @@ class ChatbotService:
 
         user_message = self._add_message(session, "user", display_text)
         intent = self._classify_intent(rag_text, session.current_intent)
-        session.current_intent = intent if intent != "confirm" else session.current_intent
+        if intent not in {"confirm", "needs_clarification", "security_refusal"}:
+            session.current_intent = intent
         session.last_message_at = _now()
+
+        if intent == "security_refusal":
+            rag = self._synthetic_rag("insufficient_evidence", "insufficient_evidence")
+            session.last_rag = rag
+            handoff = self._create_handoff(
+                session, reason="insufficient_evidence", comment=display_text, priority="high"
+            )
+            assistant = self._assistant(
+                session,
+                "承認済みの根拠だけでは回答を確定できません。担当者に確認依頼しました。",
+                "handoff",
+                quick_replies=[],
+            )
+            return 200, self._turn_response(
+                principal, session, user_message, assistant, rag=rag, handoff=handoff
+            )
+
+        if intent == "needs_clarification":
+            rag = self._synthetic_rag("clarification_required", "clarification_required")
+            session.last_rag = rag
+            assistant = self._assistant(
+                session,
+                self._clarification_message(display_text),
+                "ask_clarification",
+                quick_replies=[],
+            )
+            return 200, self._turn_response(principal, session, user_message, assistant, rag=rag)
 
         if intent == "human_handoff":
             handoff = self._create_handoff(
@@ -1026,6 +1092,19 @@ class ChatbotService:
         )
         return assistant, rag, handoff
 
+    def _synthetic_rag(self, status: str, no_answer_reason: str) -> dict:
+        return {
+            "rag_interaction_id": _id("rag_chat"),
+            "status": status,
+            "answerable": False,
+            "confidence": None,
+            "no_answer_reason": no_answer_reason,
+            "trace_id": None,
+            "latency_ms": 0,
+            "citations": [],
+            "source_policy_id": None,
+        }
+
     def _turn_response(
         self,
         principal: IdentityClaims,
@@ -1131,6 +1210,8 @@ class ChatbotService:
         procedure_lines = self._extract_relevant_lines(answer, PROCEDURE_TERMS, limit=3)
         criteria_lines = self._extract_relevant_lines(answer, CRITERIA_TERMS, limit=4)
         caution_lines = self._extract_relevant_lines(answer, CAUTION_TERMS, limit=3)
+        cause_lines = self._extract_relevant_lines(answer, TROUBLE_CAUSE_TERMS, limit=3)
+        action_lines = self._extract_relevant_lines(answer, TROUBLE_ACTION_TERMS, limit=3)
         evidence_lines = self._evidence_lines(citations)
         condition_lines = [
             f"参照範囲: {collection_id or '選択中の参照範囲'}",
@@ -1144,25 +1225,51 @@ class ChatbotService:
             criteria_lines = ["数値基準や判定条件は、引用内で確認できる範囲に限定されます。"]
         if not caution_lines:
             caution_lines = ["追加の注意点は引用内で確認できる範囲に限定されます。"]
+        if not cause_lines:
+            cause_lines = ["原因は、引用内で明示された範囲に限定して確認してください。"]
+        if not action_lines:
+            action_lines = ["対策は、引用内で確認できる処置と確認項目に限定されます。"]
 
-        sections = [
-            ("結論", conclusion),
-            ("対象・前提", self._bullet_lines(condition_lines)),
-            ("手順", self._numbered_lines(procedure_lines)),
-            ("数値基準", self._bullet_lines(criteria_lines)),
-            ("注意点", self._bullet_lines(caution_lines)),
-            (
-                "判断に迷う条件",
-                self._bullet_lines(
-                    [
-                        "根拠にない条件、例外、最新運用ルールは断定しません。",
-                        "設備型式、版、作業条件が違う場合は確認依頼に回してください。",
-                    ]
+        if self._answer_template_intent(question, answer) == "troubleshooting":
+            sections = [
+                ("結論", conclusion),
+                ("対象・前提", self._bullet_lines(condition_lines)),
+                ("原因", self._bullet_lines(cause_lines)),
+                ("対策", self._numbered_lines(action_lines)),
+                ("数値基準", self._bullet_lines(criteria_lines)),
+                ("注意点", self._bullet_lines(caution_lines)),
+                (
+                    "判断に迷う条件",
+                    self._bullet_lines(self._uncertainty_lines()),
                 ),
-            ),
-            ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
+                ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
+            ]
+        else:
+            sections = [
+                ("結論", conclusion),
+                ("対象・前提", self._bullet_lines(condition_lines)),
+                ("手順", self._numbered_lines(procedure_lines)),
+                ("数値基準", self._bullet_lines(criteria_lines)),
+                ("注意点", self._bullet_lines(caution_lines)),
+                (
+                    "判断に迷う条件",
+                    self._bullet_lines(self._uncertainty_lines()),
+                ),
+                ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
         ]
         return "\n\n".join(f"{title}:\n{body}" for title, body in sections)
+
+    def _answer_template_intent(self, question: str, answer: str) -> str:
+        blob = f"{question}\n{answer}"
+        if self._contains_any(blob, TROUBLESHOOTING_TERMS):
+            return "troubleshooting"
+        return "default"
+
+    def _uncertainty_lines(self) -> list[str]:
+        return [
+            "根拠にない条件、例外、最新運用ルールは断定しません。",
+            "設備型式、版、作業条件が違う場合は確認依頼に回してください。",
+        ]
 
     def _quick_replies_for_answer(self, question: str, answer_text: str) -> list[dict]:
         blob = f"{question}\n{answer_text}"
@@ -1342,6 +1449,10 @@ class ChatbotService:
         evidence_lines = self._evidence_lines(citations)
         answer = "\n\n".join(
             [
+                "結論:\n"
+                + self._bullet_lines(
+                    ["直前の回答は、以下の承認済み引用で確認できる範囲に基づいています。"]
+                ),
                 "根拠:\n" + self._bullet_lines(evidence_lines),
                 "確認範囲:\n"
                 + self._bullet_lines(
@@ -1519,6 +1630,10 @@ class ChatbotService:
         normalized = text.lower()
         if self._is_confirmation(text):
             return "confirm"
+        if self._is_security_refusal_request(text):
+            return "security_refusal"
+        if self._needs_clarification(text):
+            return "needs_clarification"
         if any(
             word in normalized for word in ("人間", "担当者", "オペレーター", "human", "operator")
         ):
@@ -1533,6 +1648,60 @@ class ChatbotService:
         if any(word in normalized for word in ("料金", "価格", "費用", "pricing", "price")):
             return "pricing_question"
         return current or "rag_question"
+
+    def _is_security_refusal_request(self, text: str) -> bool:
+        normalized = text.lower()
+        compact = re.sub(r"\s+", "", normalized)
+        if any(
+            term in normalized
+            for term in (
+                "システムプロンプト",
+                "認証ヘッダー",
+                "内部コンテキスト",
+                "hidden chain",
+                "chain of thought",
+                "内部推論",
+                "隠れた思考",
+            )
+        ):
+            return True
+        if "前の指示を無視" in text or "ignore previous" in normalized:
+            return True
+        if "sourceexposurepolicy" in compact and ("無視" in text or "bypass" in normalized):
+            return True
+        if "非公開データ" in text and any(word in text for word in ("検索", "回答", "出して")):
+            return True
+        if "policy" in normalized and "無視" in text:
+            return True
+        return False
+
+    def _needs_clarification(self, text: str) -> bool:
+        normalized = text.lower()
+        if "分かりません" in text and any(word in text for word in ("どちら", "どちらか")):
+            return True
+        if "ボルト" in text and "トルク" in text and not self._has_specific_target(text):
+            return True
+        if "薬液濃度" in text and any(word in text for word in ("どれくらい", "どのくらい", "足せ")):
+            return True
+        if "scc" in normalized and "ピンホール" in text and "作業指示" in text:
+            return True
+        return False
+
+    def _has_specific_target(self, text: str) -> bool:
+        return bool(
+            re.search(r"\b[A-Z]{1,4}-?\d{1,4}\b", text, re.IGNORECASE)
+            or re.search(r"\bM\d{1,3}\b", text, re.IGNORECASE)
+            or re.search(r"[A-Z]{2,}-\d", text, re.IGNORECASE)
+        )
+
+    def _clarification_message(self, text: str) -> str:
+        if "ボルト" in text and "トルク" in text:
+            return "対象の設備、ボルトサイズ、締結箇所を教えてください。承認済み根拠に合う範囲で確認します。"
+        if "薬液濃度" in text:
+            return "対象の槽、現在濃度、目標濃度、液量を教えてください。根拠にない投入量は推測しません。"
+        if "作業指示" in text:
+            return "対象の不具合を一つに絞ってください。SCC と塗装ピンホールは別の根拠として確認します。"
+        return "対象、設備ID、知りたい範囲をもう少し具体的に教えてください。根拠に合う範囲で回答します。"
 
     def _extract_slots(self, text: str, existing: dict[str, str]) -> dict[str, str]:
         slots: dict[str, str] = {}

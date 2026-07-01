@@ -2,6 +2,15 @@
 
 > Priority: **P1/High** / Status: Open / Labels: `chatbot`, `clarification`, `safety`, `rag-quality`
 
+## 実装メモ(2026-07-01)
+
+- ChatBot service に retrieval 前の `needs_clarification` 判定を追加した。
+- 対象不明のボルト締付トルク、対象槽/濃度/液量がない薬液投入量、点検/アラームが曖昧な E-152 質問、
+  SCC と塗装ピンホールをまとめた作業指示化を確認質問に落とす。
+- clarification response は `ai_action=ask_clarification` とし、`answerable=false`,
+  `no_answer_reason=clarification_required` を返す。
+- 確認質問では数値・作業手順を断定せず、不足スロットを具体的に聞く。
+
 ## 背景(なぜ今)
 
 stg の v2品質テストで、`ボルトの締付トルクだけ教えて` のような曖昧質問に対し、ChatBot が対象設備や
@@ -44,11 +53,11 @@ stg の v2品質テストで、`ボルトの締付トルクだけ教えて` の�
 
 ## QA checklist
 
-- [ ] 再現テストがある。
-- [ ] 正常系が確認できる。
-- [ ] 失敗時の表示/応答が確認できる。
-- [ ] tenant/ACL 境界を越えない。
-- [ ] security/safety gate を弱めていない。
+- [x] 再現テストがある。
+- [x] 正常系が確認できる。
+- [x] 失敗時の表示/応答が確認できる。
+- [x] tenant/ACL 境界を越えない。
+- [x] security/safety gate を弱めていない。
 - [ ] Playwright または API smoke で確認できる。
 - [ ] AWS stg/live smoke が必要な場合は correlation id を保存する。
 
@@ -70,4 +79,3 @@ stg の v2品質テストで、`ボルトの締付トルクだけ教えて` の�
 - `scripts/demo/chatbot_quality_v2_scenarios.json`
 - `src/raku_rag/chatbot/service.py`
 - `docs/production-readiness/chatbot-sellable-quality-plan.md`
-
