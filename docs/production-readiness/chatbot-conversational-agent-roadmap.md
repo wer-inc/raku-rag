@@ -197,8 +197,15 @@ promotion.
 
 ## Immediate next tasks
 
-1. [ ] P0: land the `DialogueManager` / `AnswerEngine` seam + per-tenant `chatbot_authority_level`
-   (no behavior change; gate stays green).
+1. [x] P0: land the `DialogueManager` / `AnswerEngine` seam + per-tenant `chatbot_authority_level`
+   (no behavior change; gate stays green). Landed `51f5a96` on `worktree-chatbot-conversational-agent`
+   (isolated worktree). `AnswerEngine`/`DialogueContext`/`L0DeterministicAnswerEngine` in
+   `src/raku_rag/chatbot/answer_engine.py`, `DialogueManager` in `dialogue_manager.py`,
+   `ChatbotAuthorityRepository`/`InMemoryChatbotAuthorityRepository` (default `"L0"`) in
+   `authority.py`. Verified independently: gate.sh all 1135 tests GREEN (was 1128 + 7 new), targeted
+   chatbot suite 56 passed/3 subtests. Per-tenant authority is in-memory only for now (documented in
+   `authority.py`: a Postgres-backed repository mirroring migration 0016 is deferred until a second
+   rung exists to make persistence meaningful).
 2. [ ] P1: wire the chat-completion provider abstraction + deterministic mock; envelope prompt +
    numeric/citation preservation guard; ship L1 to the demo tenant behind a flag.
 3. [ ] P2: stand up the faithfulness/attribution eval harness + cite-or-abstain verifier.
