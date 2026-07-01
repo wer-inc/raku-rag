@@ -304,5 +304,45 @@ promotion.
    `tests/unit/test_bedrock_claude_llm.py`. Verified independently: `gate.sh all` 1160 tests GREEN
    (was 1135 + 25 new), targeted chatbot suite (service + golden scenarios + answer_engine +
    envelope) 81 passed/3 subtests (was 56 + 25).
-3. [ ] P2 (revised): strengthen `GroundednessGate.post_check` to a per-claim check; extend the
-   existing `eval/baseline.py` release-gated eval rather than building a parallel harness.
+3. [x] P2 (revised): strengthen `GroundednessGate.post_check` to a per-claim check; extend the
+   existing `eval/baseline.py` release-gated eval rather than building a parallel harness. Landed
+   `ff94d73` on `worktree-chatbot-conversational-agent` (isolated worktree).
+   `GroundednessGate.claim_check` (`src/raku_rag/services/groundedness.py`) is a new unconditional
+   second stage inside `post_check`, run after the existing whole-answer bag-of-words overlap
+   check, not behind any rung/profile flag: every numeric(+unit) and identifier-shaped span in the
+   answer text (regexes mirroring — not importing, to avoid a base-platform-depends-on-chatbot-layer
+   inversion — `chatbot/envelope.py`'s `numeric_tokens`/`identifier_like_tokens`) must be present in
+   the union of the evidence chunks' text; a span with no numeric/identifier content passes
+   vacuously (this is not "cite every sentence"). Fixed two real normalization-mismatch bugs the
+   first cut of this check surfaced (found by running the full suite, not by inspection): (1)
+   `°C`→`℃` — the extractive provider's `_normalize_answer_spacing` rewrites the former to the
+   latter in generated text but never touches evidence chunk text, so both are now canonicalized
+   before comparison; (2) a digit glued to a Japanese particle by that same normalizer removing a
+   space (e.g. `"17 が"` → `"17が"`) was being misread as the number's "unit", inventing a claim
+   span absent from the (still-spaced) evidence — fixed by refusing to start a unit run with that
+   exact particle set. Both are now regression-pinned in the new `tests/unit/test_groundedness.py`
+   (8 tests; no dedicated unit test file existed for this shared, safety-critical gate before).
+   `eval/runner.py` now scores a new `claim_groundedness` metric per item via the same
+   `claim_check`, wired into `eval/baseline.py`'s `DEFAULT_MIN_METRICS` at `1.0` (a real,
+   generically-enforced floor, not just available to opt into) and into the committed golden-corpus
+   baseline (`tests/fixtures/eval/golden_baseline.json`) + its seeded-regression subTest loop
+   (`tests/integration/test_golden_corpus.py`) — measured at `1.0` on that corpus, not assumed. New
+   seeded-regression tests in `tests/unit/test_eval_baseline_gate.py` prove `evaluate_baseline_gate`
+   blocks on a `claim_groundedness` regression that a `groundedness`-only gate would have missed.
+   Point 3 (verify, don't assume, the chatbot's high-risk path reaches the manufacturing safety
+   gate): traced `ChatbotService.submit_message` → `_run_rag_turn` → `AnswerEngine.answer` → the
+   injected `rag_answerer` → `manufacturing_system.answer(...)`
+   (`apps/answer-service/server.py:1479-1482`, unchanged) → `ManufacturingSystem.answer`
+   (`manufacturing/app.py:821`) → `ManufacturingAnswerService.answer` → `RuleHighRiskClassifier` →
+   `ManufacturingSafetyGate.evaluate` (`manufacturing/safety/gate.py`) end to end. The wiring was
+   already correct — a high-risk query with no approved+effective citation correctly comes back
+   `insufficient_evidence`/handoff through the chatbot, confirmed by a positive control (same query,
+   approved+effective citation present, chatbot answers normally) — but NO test anywhere exercised
+   this specific path before (every existing chatbot test wires a hand-written `rag_answerer` stub,
+   bypassing `ManufacturingSystem` entirely); added
+   `ChatbotManufacturingHighRiskCitationBlockTest` (2 tests) in `tests/unit/test_chatbot_service.py`
+   to pin it directly. No gap found; this was a test-coverage gap, not a safety gap. Verified
+   independently: `scripts/gate.sh all` 1172 tests GREEN (was 1160 + 12 new: 8 + 2 + 2), targeted
+   verification command (`test_groundedness.py test_eval_baseline_gate.py test_ci_eval_gate.py
+   tests/manufacturing/test_manufacturing_eval_gate.py test_chatbot_service.py
+   test_chatbot_golden_scenarios.py`) 68 passed/3 subtests.
