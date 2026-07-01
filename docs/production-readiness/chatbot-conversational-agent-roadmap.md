@@ -503,3 +503,63 @@ promotion.
    scoped follow-on to THIS phase specifically: a properly separated retrieval-bound/generation-bound
    query channel through the manufacturing answer chain, IF thread-state prompt enrichment for
    composed prose is wanted badly enough to justify that bigger, separately-reviewed change.
+6. [x] Safety audit (2026-07-01): does P3's `coreference.standalone_query` rewrite have the SAME
+   query-enrichment bug P4 found and reverted for L3 (item 5's "Finding")? **Yes — reproduced
+   empirically, then fixed (not reverted), since P3's rewrite is real and shipped, unlike L3's
+   never-shipped attempt.** Full reasoning lives in `chatbot/coreference.py`'s module docstring
+   "Finding" (mirroring `composition.py`'s own docstring rigor); this entry is the short version.
+   - **Reproduction**: turn 1 = an ordinary English query answered citing an APPROVED, unrelated
+     document (same fixture shape as item 5's `ChatbotManufacturingHighRiskCitationBlockAtL3Test`).
+     Turn 2 = a short, Japanese, referential-marker-bearing follow-up with no identifier of its own
+     ("その圧力の抜き方を教えて") whose RAW text independently classifies `high_risk` via
+     `RuleHighRiskClassifier`'s KEYWORD stage ("圧力"/pressure) — confirmed directly, not assumed. The
+     real, on-topic document was ingested `PENDING_REVIEW` (unapproved). Because
+     `L2QueryUnderstandingAnswerEngine` takes the REWRITE branch here (`has_own_topic` is true — this
+     is not the bare "tell me more" reuse branch), `standalone_query` appended turn 1's carried
+     signal to the outgoing query text; the corrupted retrieval candidate pool then handed the
+     manufacturing safety gate turn 1's unrelated APPROVED document, flipping the answer from the
+     correct `insufficient_evidence`/`approved_citation_missing` to `status="ok"`, citing the wrong
+     content — reproduced identically at BOTH `"L2"` and `"L3"` authority (L2 wraps L3 in
+     `service.py`'s own engine map, so L3-dialed tenants were exposed to the identical risk; a stale
+     inline comment there claiming otherwise — "L3 does NOT enrich the query... so this ordering is
+     not load-bearing for safety" — was corrected in the same edit).
+   - **Fix**: a new, optional `high_risk_query_signal: Callable[[str], bool] | None` seam on
+     `L2QueryUnderstandingAnswerEngine`/`ChatbotService` (default `None` = byte-identical to
+     pre-fix behavior — no regression for any deployment that doesn't wire it). When wired and it
+     fires on the RAW follow-up text, the rewrite branch is skipped and the RAW query passes straight
+     through to `inner.answer(...)` instead — the same passthrough a self-contained query already
+     gets, never the reuse-previous-citations branch (which would serve turn 1's unrelated content
+     unconditionally, with no classifier/gate re-evaluation at all — less safe, not more). The
+     production wiring (`apps/answer-service/server.py`) injects
+     `ManufacturingSystem.is_high_risk_query_signal` → `ManufacturingAnswerService.
+     classify_query_signal`, which reuses the SAME classifier instance the real safety gate consults
+     (never a second, drifting one), called with empty candidate metadata (retrieval hasn't run yet)
+     so only the query-text-driven METADATA/KEYWORD stages can ever fire.
+   - **The one non-obvious design point, verified empirically before shipping**: a naive
+     "skip whenever the classifier says `is_high_risk`" would ALSO fire for nearly every short
+     Japanese follow-up, INCLUDING P3's own benign flagship case ("その締付トルクは?") — confirmed
+     directly: Japanese text has no spaces, so `core.text.content_tokens` cannot word-segment it,
+     collapsing a whole short sentence into one "token" and tripping the classifier's stage-3
+     "ambiguous, too terse to rule danger out" fail-safe regardless of actual content. That fail-safe
+     is correct for the FINAL "may this answer assert" decision but is not itself a concrete danger
+     signal, so `classify_query_signal` deliberately excludes it (only a `METADATA`/`KEYWORD`
+     `classification_source` counts) — otherwise this fix would have silently gutted P3's actual
+     value for its primary (Japanese) audience with no safety benefit. Proven with a dedicated
+     regression test (`tests/manufacturing/test_safety_gate.py::TestHighRiskQuerySignal
+     ::test_short_ambiguous_japanese_query_is_not_flagged_despite_the_classifier_failing_safe`) and
+     an end-to-end one through the full chatbot+manufacturing stack
+     (`ChatbotL2CoreferenceHighRiskSafetyTest
+     ::test_benign_referential_followup_is_still_rewritten_and_answered_with_the_fix_wired`).
+   - New tests (15): `tests/manufacturing/test_safety_gate.py::TestHighRiskQuerySignal` (3, classifier
+     boundary), `tests/unit/test_chatbot_coreference.py::HighRiskQuerySignalGateTest` (6, engine
+     decision logic against a fake signal), `tests/unit/test_chatbot_service.py::
+     ChatbotL2CoreferenceHighRiskSafetyTest` (6: raw-classification premise, unmitigated repro
+     [permanent regression pin], mitigated negative control at L2 AND L3, positive control, P3-value-
+     preserved control) — same positive/negative-control discipline as item 5's own high-risk tests,
+     using a real `ManufacturingSystem` + `ChatbotService`, not a stub.
+   - Verified independently: `scripts/gate.sh all` 1246 tests GREEN (was 1231 + 15 new); targeted
+     verification command (item 5's list plus `tests/manufacturing/test_safety_gate.py`) 182
+     passed/3 subtests (was 159 + 15 + 8 pre-existing in that file newly included = 182). No existing
+     test weakened; the pre-fix behavior stays reachable (and is itself pinned, unmitigated, by the
+     "permanent regression pin" test above) for any caller that does not opt into
+     `high_risk_query_signal`.

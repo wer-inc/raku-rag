@@ -22,7 +22,7 @@ from raku_rag.chatbot.authority import (
     InMemoryChatbotAuthorityRepository,
 )
 from raku_rag.chatbot.composition import L3CompositionAnswerEngine
-from raku_rag.chatbot.coreference import L2QueryUnderstandingAnswerEngine
+from raku_rag.chatbot.coreference import HighRiskQuerySignal, L2QueryUnderstandingAnswerEngine
 from raku_rag.chatbot.dialogue_manager import DialogueManager
 from raku_rag.chatbot.envelope import L1EnvelopeAnswerEngine
 from raku_rag.core.config import Settings
@@ -403,6 +403,7 @@ class ChatbotService:
         enable_demo_tenant_l2: bool = False,
         enable_demo_tenant_l3: bool = False,
         demo_tenant_id: str = DEFAULT_DEMO_TENANT_ID,
+        high_risk_query_signal: HighRiskQuerySignal | None = None,
     ) -> None:
         self._sessions: dict[tuple[str, str], ChatSession] = {}
         self._handoffs: dict[tuple[str, str], dict] = {}
@@ -420,16 +421,28 @@ class ChatbotService:
         # dialed to "L1" (see `enable_demo_tenant_l1` below) is ever routed to it.
         self._llm_provider = llm_provider or llm_provider_from_settings(settings or Settings())
         l0_engine = L0DeterministicAnswerEngine(rag_answerer)
-        l2_coreference_engine = L2QueryUnderstandingAnswerEngine(l0_engine)
+        # `high_risk_query_signal` (in practice `ManufacturingSystem.is_high_risk_query_signal`,
+        # wired by the composition root — see coreference.py's module docstring "Finding") gates L2's
+        # OWN query-enrichment branch. It must be threaded into BOTH L2 instances below: L2 sits
+        # ABOVE L3 at the "L3" rung too (coreference resolution runs first, feeding L3, per the
+        # comment below), so a tenant dialed to "L3" is exposed to the exact same rewrite-corruption
+        # risk as one dialed to "L2" — L3 not enriching the query itself does not make this ordering
+        # safety-inert, since L2's enrichment still happens before L3 ever sees the query.
+        l2_coreference_engine = L2QueryUnderstandingAnswerEngine(
+            l0_engine, high_risk_query_signal=high_risk_query_signal
+        )
         # L3 sits BELOW L2 in the wrapping (coreference resolution runs first, feeding the same
         # deterministic L0 retrieval/answer L2 always has, then L3's defense-in-depth verification runs
         # over whatever came back), and L1's envelope wraps the outermost result — same cumulative "+"
-        # shape as "L2" below, one rung further. L3 does NOT enrich the query (see composition.py's
-        # module docstring "Finding": that was tried and reverted as unsafe — it corrupted retrieval/
-        # the manufacturing safety gate's candidate pool), so this ordering is not load-bearing for
-        # safety the way it would have been; it is kept for consistency with the ladder's shape.
+        # shape as "L2" below, one rung further. L3 itself does NOT enrich the query (see
+        # composition.py's module docstring "Finding": that was tried and reverted as unsafe — it
+        # corrupted retrieval/the manufacturing safety gate's candidate pool) — but L2, which wraps it
+        # here, does, so `high_risk_query_signal` above is what actually keeps this ordering safe, not
+        # an absence of enrichment at this rung.
         l3_composition_engine = L3CompositionAnswerEngine(l0_engine)
-        l2_over_l3_engine = L2QueryUnderstandingAnswerEngine(l3_composition_engine)
+        l2_over_l3_engine = L2QueryUnderstandingAnswerEngine(
+            l3_composition_engine, high_risk_query_signal=high_risk_query_signal
+        )
         self._answer_engines: dict[str, AnswerEngine] = {
             DEFAULT_CHATBOT_AUTHORITY_LEVEL: l0_engine,
             "L1": L1EnvelopeAnswerEngine(l0_engine, self._llm_provider),

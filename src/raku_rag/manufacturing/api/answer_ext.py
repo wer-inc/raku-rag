@@ -39,6 +39,7 @@ from raku_rag.domain.models import (
 )
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus, ManufacturingDocumentMetadata
 from raku_rag.manufacturing.domain.safety import (
+    ClassificationSource,
     HighRiskClassification,
     SafetyBlockReason,
     SafetyDecision,
@@ -474,6 +475,38 @@ class ManufacturingAnswerService:
             visual_evidence_promotion=visual_evidence_promotion,
         )
         self._today = today
+
+    def classify_query_signal(self, query: str) -> bool:
+        """Retrieval-independent, CONCRETE high-risk signal for raw query text alone.
+
+        Used by ``chatbot/coreference.py``'s pre-rewrite safety check (see that module's docstring
+        and ``ManufacturingSystem.is_high_risk_query_signal``): a chatbot-layer rung decides whether
+        it is safe to fold prior-turn context into a follow-up's outgoing query string BEFORE any
+        retrieval has run this turn, so this must be answerable from query text alone, with no
+        candidate evidence yet -- exactly what ``self._classifier.classify(query, ())`` (empty
+        candidate metadata) gives: only the METADATA stage (vacuous here, no candidates) and the
+        KEYWORD stage (a query text match against ``_INTENT_KEYWORDS``) can ever fire.
+
+        Deliberately NARROWER than plain ``classification.is_high_risk``: this excludes the
+        classifier's stage-3 "ambiguous" fail-safe (``classification_source`` RULE/LLM), which fires
+        on ANY short/terse query -- and empirically, on nearly every short Japanese sentence, since
+        ``core.text.content_tokens`` cannot word-segment CJK text (no spaces) below the classifier's
+        3-token floor, regardless of actual content (confirmed: "その締付トルクは?", P3's own benign
+        flagship follow-up, hits this fail-safe too). Treating that catch-all as a danger SIGNAL here
+        would make this check fire for nearly every short referential follow-up in the language this
+        product primarily serves, silently starving the coreference rewrite of its value with no
+        safety upside (the real classifier + safety gate still run for real, once, inside
+        ``inner.answer()`` regardless of this decision). "Ambiguous => assert nothing without
+        approved evidence" is the right fail-safe for the FINAL answer; it is not evidence that THIS
+        query text is the kind of concrete hazard statement that must not be diluted by appending
+        unrelated prior-turn terms to it. Only a METADATA/KEYWORD hit -- an explicit, concrete
+        signal -- counts here.
+        """
+        classification = self._classifier.classify(query, ())
+        return classification.is_high_risk and classification.classification_source in (
+            ClassificationSource.METADATA,
+            ClassificationSource.KEYWORD,
+        )
 
     def answer(
         self,

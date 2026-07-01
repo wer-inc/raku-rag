@@ -28,6 +28,8 @@ import unittest
 from raku_rag.domain.models import ScopeType, SubjectType
 from raku_rag.manufacturing.api.answer_ext import ONSITE_CONFIRMATION_NOTICE
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus, DocumentKind
+from raku_rag.manufacturing.domain.safety import ClassificationSource
+from raku_rag.manufacturing.safety.classifier import RuleHighRiskClassifier
 from tests.manufacturing.helpers import T, claims, fresh, mfg_meta
 
 # --- (1) LABELED high-risk set -------------------------------------------------------------------
@@ -323,6 +325,61 @@ class TestNonHighRiskEvidenceScope(unittest.TestCase):
             "answer; approved+effective is required only for high-risk (FR-MFG-005)",
         )
         self.assertIsNone(ans.safety_block_reason)
+
+
+class TestHighRiskQuerySignal(unittest.TestCase):
+    """`ManufacturingSystem.is_high_risk_query_signal` / `ManufacturingAnswerService.
+    classify_query_signal` (chatbot-conversational-agent-roadmap P3 safety fix; see
+    `chatbot/coreference.py`'s module docstring "Finding"). A retrieval-independent, CONCRETE
+    pre-check the chatbot coreference rewrite consults, before any retrieval runs this turn, to
+    decide whether it is safe to enrich a follow-up's outgoing query text. Deliberately NARROWER
+    than plain `classifier.classify(...).is_high_risk` — see the ambiguous-exclusion test below,
+    which is the property this method exists to encode.
+    """
+
+    def test_concrete_intent_keyword_query_is_flagged(self) -> None:
+        sys = fresh()
+        self.assertTrue(
+            sys.is_high_risk_query_signal(
+                "How do I release the pressure in the hydraulic accumulator?"
+            )
+        )
+        self.assertTrue(sys.is_high_risk_query_signal("その圧力の抜き方を教えて"))
+
+    def test_benign_well_specified_query_is_not_flagged(self) -> None:
+        sys = fresh()
+        self.assertFalse(
+            sys.is_high_risk_query_signal(
+                "where is the employee cafeteria located inside building seven"
+            )
+        )
+
+    def test_short_ambiguous_japanese_query_is_not_flagged_despite_the_classifier_failing_safe(
+        self,
+    ) -> None:
+        # The critical distinction this method exists for: RuleHighRiskClassifier.classify(...) on a
+        # bare, terse Japanese sentence fails safe to is_high_risk=True via the stage-3 "ambiguous"
+        # catch-all (core.text.content_tokens cannot word-segment CJK text, so a whole short sentence
+        # collapses to one "token", under the classifier's 3-token floor) -- correct for the FINAL
+        # "may this answer assert" decision, but NOT itself evidence that THIS query text names a
+        # concrete hazard. This exact follow-up is P3's own flagship coreference scenario
+        # (test_chatbot_coreference.py / test_chatbot_service.py's ChatbotL2CoreferenceTest);
+        # treating the ambiguous fail-safe as a "this query is dangerous" signal here would block the
+        # coreference rewrite for nearly every short Japanese follow-up, with no safety benefit (the
+        # real classifier + safety gate still run for real, unaffected, on whatever text reaches
+        # `inner.answer(...)`).
+        classifier = RuleHighRiskClassifier()
+        premise = classifier.classify("その締付トルクは?", ())
+        self.assertTrue(
+            premise.is_high_risk, "premise: the raw classifier DOES fail safe to high_risk here"
+        )
+        self.assertEqual(premise.classification_source, ClassificationSource.RULE)
+
+        sys = fresh()
+        self.assertFalse(
+            sys.is_high_risk_query_signal("その締付トルクは?"),
+            "the concrete-signal pre-check must not treat the ambiguous fail-safe as a danger signal",
+        )
 
 
 if __name__ == "__main__":

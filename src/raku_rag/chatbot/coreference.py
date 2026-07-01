@@ -25,15 +25,82 @@ citations it returns (reused from `context.previous_citations`, or freshly retri
 engine) flow back through `ChatbotService._run_rag_turn`'s existing `_filter_chatbot_citations`/
 `_pre_rag_source_policy_ids` gate exactly like any other engine's output — see the scope-carry tests
 in tests/unit/test_chatbot_service.py, which prove this rather than assume it.
+
+## Finding: the standalone-query rewrite can corrupt the manufacturing high-risk safety gate
+
+`standalone_query` appends the prior turn's identifiers/document-ids/lexical terms to the raw
+follow-up text, then the REWRITTEN string — not the original — is what reaches `inner.answer(...)`
+and, for a manufacturing-backed deployment, `manufacturing_system.answer(principal, query,
+collection_id)`. That call uses the SAME `query` string for retrieval AND for the high-risk
+classifier's candidate pool (see `chatbot/composition.py`'s module docstring "Finding", which found
+and reverted the structurally identical bug for L3's — since-abandoned — query-enrichment attempt):
+`InMemoryVectorStore.lexical_matches` gives ANY document sharing even one query term a flat
+`LEXICAL_MATCH_BASE_SCORE` (0.70) baseline. Empirically reproduced here too: a short, referential,
+high-risk follow-up ("その圧力の抜き方を教えて" — no identifier of its own, so it takes this
+module's REWRITE branch) after an unrelated ordinary turn that cited an APPROVED document —
+appending that prior turn's carried terms/document-id let the corrupted retrieval hand the
+manufacturing safety gate a candidate pool built from the unrelated APPROVED document, flipping a
+query that must block (the real, on-topic content was draft/pending) into `status="ok"`, citing the
+wrong content. `RuleHighRiskClassifier` still correctly labels the RAW follow-up text `high_risk`
+(it scans query text directly, independent of retrieval) — the corruption is specifically in what
+retrieval hands the safety gate, exactly composition.py's finding. Unlike L3, this engine's rewrite
+is real and shipped (P3), so this could not be resolved by "pass the query through unchanged" (that
+would silently drop this phase's actual fix); see `tests/unit/test_chatbot_service.py`'s
+`ChatbotL2CoreferenceHighRiskSafetyTest` for the reproduction and the fix proven below.
+
+**The fix**: an optional `high_risk_query_signal` callback, checked immediately before the rewrite
+branch (not the reuse-previous-citations branch — see below for why that one is untouched). When
+supplied and it returns `True` for the RAW, un-rewritten follow-up text, this engine skips the
+append/rewrite and passes the RAW query straight to `inner.answer(...)` instead — the same
+byte-identical passthrough a self-contained query already gets today. Worst case this is an honest
+`insufficient_evidence`/handoff (the retrieval-recall problem P3 exists to fix, reintroduced only for
+this one turn); it can never be a corrupted `status="ok"`, because retrieval never sees the
+poisoning terms in the first place. This engine takes NO position on what "high risk" means — the
+callback is a plain `Callable[[str], bool] | None`, injected by the composition root (in practice
+`ManufacturingSystem.is_high_risk_query_signal`, wired in `apps/answer-service/server.py`) exactly
+like `llm_provider` already is; a deployment with no such concept (or that simply doesn't wire one)
+gets `None`, and this engine's behavior is then BYTE-IDENTICAL to before this fix — no regression,
+no new manufacturing-specific import in this module.
+
+Why not gate the reuse-previous-citations branch (`answer_from_previous_turn`) the same way: that
+branch only ever fires when `has_own_topic(query)` is False — a bare "tell me more" naming nothing
+beyond the reference itself — so a high-risk-classified RAW follow-up (which by construction names a
+concrete hazard topic, e.g. "圧力"/pressure) can never reach it; the two conditions are mutually
+exclusive on the same message in practice, and if they somehow coincided, reusing turn 1's answer
+verbatim would be even less safe (it returns `status="ok"` unconditionally, with NO retrieval,
+classification, or safety-gate re-evaluation at all) than the rewrite branch this fix actually
+targets.
+
+Why the callback is intentionally NARROWER than "the classifier says high_risk": a naive
+`RuleHighRiskClassifier.classify(query, ()).is_high_risk` would ALSO fire for nearly every short
+Japanese follow-up, including P3's own benign flagship case ("その締付トルクは?") — confirmed
+empirically, not assumed: Japanese text has no spaces, so `core.text.content_tokens` cannot
+word-segment it, collapsing a whole short sentence into one "token" and tripping the classifier's
+stage-3 "ambiguous, too terse to rule danger out" fail-safe regardless of actual content. That
+fail-safe is exactly correct for the FINAL "may this answer assert" decision (never assert on an
+ambiguous safety-relevant query without approved evidence) but is NOT itself a signal that THIS
+query's text is a concrete hazard statement — treating it as one here would starve the coreference
+rewrite of nearly every short Japanese follow-up with no safety benefit (the real classifier and gate
+still run for real, unaffected, on whatever text this decision lets through to `inner.answer(...)`).
+`ManufacturingAnswerService.classify_query_signal` — what
+`ManufacturingSystem.is_high_risk_query_signal` delegates to — encodes this distinction so this
+module does not have to know about `ClassificationSource`, or anything else manufacturing-specific,
+at all.
 """
 
 from __future__ import annotations
 
 import re
+from typing import Callable
 
 from raku_rag.chatbot.answer_engine import AnswerEngine, DialogueContext
 from raku_rag.core.query_planner import AMBIGUOUS_REFERENTS, plan_query
 from raku_rag.domain.models import IdentityClaims
+
+# A domain-agnostic seam (this module has zero manufacturing-specific knowledge, by design — see the
+# module docstring's Finding): `True` means "do not enrich this query's outgoing text", `False`/`None`
+# preserves this engine's original, pre-fix behavior exactly.
+HighRiskQuerySignal = Callable[[str], bool]
 
 # `query_planner.AMBIGUOUS_REFERENTS` only covers pronominal forms ("それ"/"これ"/"あれ"). Japanese
 # follow-ups just as often use adnominal/anaphoric forms that name a noun directly — "その締付トルク
@@ -192,14 +259,20 @@ def answer_from_previous_turn(context: DialogueContext) -> dict | None:
 class L2QueryUnderstandingAnswerEngine:
     """Wraps `inner` with deterministic coreference resolution for organic follow-ups.
 
-    See the module docstring for the full decision flow. `context` (source_policy_ids, previous
+    See the module docstring for the full decision flow, including the "Finding" section on why the
+    rewrite branch is gated by `high_risk_query_signal`. `context` (source_policy_ids, previous
     citations) is read but never used to widen scope — that stays entirely the job of the existing
     `ChatbotService._filter_chatbot_citations`/`_pre_rag_source_policy_ids` gate, which runs on
     whatever this engine returns exactly like it runs on any other engine's output.
     """
 
-    def __init__(self, inner: AnswerEngine) -> None:
+    def __init__(
+        self,
+        inner: AnswerEngine,
+        high_risk_query_signal: HighRiskQuerySignal | None = None,
+    ) -> None:
         self._inner = inner
+        self._high_risk_query_signal = high_risk_query_signal
 
     def answer(
         self,
@@ -215,6 +288,15 @@ class L2QueryUnderstandingAnswerEngine:
             reused = answer_from_previous_turn(context)
             if reused is not None:
                 return reused
+
+        # Module docstring's Finding: appending prior-turn context can corrupt retrieval's candidate
+        # pool for a query that is independently, concretely high-risk. When the caller has wired a
+        # signal (in practice `ManufacturingSystem.is_high_risk_query_signal`) and it fires on the
+        # RAW, un-rewritten text, skip the enrichment entirely and fall through to the same
+        # byte-identical passthrough a self-contained query already gets — never a rewritten query,
+        # even if that means an honest insufficient_evidence/handoff instead of a resolved answer.
+        if self._high_risk_query_signal is not None and self._high_risk_query_signal(query):
+            return self._inner.answer(principal, query, collection_id, context)
 
         rewritten_query = standalone_query(query, context)
         return self._inner.answer(principal, rewritten_query, collection_id, context)

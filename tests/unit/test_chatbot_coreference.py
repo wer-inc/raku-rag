@@ -282,5 +282,107 @@ class L2QueryUnderstandingAnswerEngineTest(unittest.TestCase):
         self.assertEqual(inner.calls[0][3], context)
 
 
+class HighRiskQuerySignalGateTest(unittest.TestCase):
+    """`high_risk_query_signal` (chatbot-conversational-agent-roadmap safety fix; see the module
+    docstring's "Finding"): gates the rewrite branch specifically, using a fake callback here (the
+    real one, in production, is `ManufacturingSystem.is_high_risk_query_signal` — proven end-to-end
+    against a real `ManufacturingSystem` in `tests/unit/test_chatbot_service.py`'s
+    `ChatbotL2CoreferenceHighRiskSafetyTest`). This file only pins the engine's OWN decision logic in
+    isolation, independent of any manufacturing-specific classifier.
+    """
+
+    def setUp(self):
+        self.principal = _principal()
+
+    def _spy_signal(self, verdict: bool):
+        calls: list[str] = []
+
+        def signal(query: str) -> bool:
+            calls.append(query)
+            return verdict
+
+        return signal, calls
+
+    def test_default_with_no_signal_wired_is_unchanged_from_before_this_fix(self):
+        inner = SpyInnerEngine()
+        engine = L2QueryUnderstandingAnswerEngine(inner)  # no high_risk_query_signal at all
+        context = _context()
+
+        result = engine.answer(self.principal, "その締付トルクは?", "manuals", context)
+
+        called_query = inner.calls[0][1]
+        self.assertIn("その締付トルクは?", called_query)
+        self.assertIn("p-101", called_query)
+        self.assertEqual(result, inner._response)
+
+    def test_signal_returning_true_skips_the_rewrite_and_passes_the_raw_query_through(self):
+        inner = SpyInnerEngine()
+        signal, calls = self._spy_signal(True)
+        engine = L2QueryUnderstandingAnswerEngine(inner, high_risk_query_signal=signal)
+        context = _context()
+
+        result = engine.answer(self.principal, "その締付トルクは?", "manuals", context)
+
+        self.assertEqual(len(inner.calls), 1)
+        self.assertEqual(
+            inner.calls[0][1],
+            "その締付トルクは?",
+            "must pass the RAW follow-up through byte-identical, never a rewritten/enriched query",
+        )
+        self.assertEqual(result, inner._response)
+
+    def test_signal_returning_false_still_rewrites_exactly_as_before(self):
+        inner = SpyInnerEngine()
+        signal, calls = self._spy_signal(False)
+        engine = L2QueryUnderstandingAnswerEngine(inner, high_risk_query_signal=signal)
+        context = _context()
+
+        engine.answer(self.principal, "その締付トルクは?", "manuals", context)
+
+        called_query = inner.calls[0][1]
+        self.assertIn("その締付トルクは?", called_query)
+        self.assertIn("p-101", called_query)
+
+    def test_signal_is_invoked_with_the_raw_unrewritten_query_text(self):
+        inner = SpyInnerEngine()
+        signal, calls = self._spy_signal(False)
+        engine = L2QueryUnderstandingAnswerEngine(inner, high_risk_query_signal=signal)
+        context = _context()
+
+        engine.answer(self.principal, "その締付トルクは?", "manuals", context)
+
+        self.assertEqual(calls, ["その締付トルクは?"])
+
+    def test_signal_is_not_consulted_for_the_reuse_previous_turn_branch(self):
+        # A bare "tell me more" (has_own_topic False) answers from previous citations without ever
+        # reaching the rewrite branch this signal gates -- confirms the two branches are mutually
+        # exclusive in practice (see the module docstring's "why not gate the reuse branch" note).
+        inner = SpyInnerEngine()
+        signal, calls = self._spy_signal(True)
+        engine = L2QueryUnderstandingAnswerEngine(inner, high_risk_query_signal=signal)
+        context = _context()
+
+        result = engine.answer(
+            self.principal, "それについてもう少し詳しく教えてください", "manuals", context
+        )
+
+        self.assertEqual(calls, [], "the signal must not be consulted on the reuse-only branch")
+        self.assertEqual(inner.calls, [])
+        self.assertEqual(result["citations"], list(context.previous_citations))
+
+    def test_signal_is_not_consulted_for_a_self_contained_passthrough_query(self):
+        # The overwhelming majority of turns (no marker, or an identifier of its own) never reach
+        # is_referential_followup's True branch at all, so the signal is never even called.
+        inner = SpyInnerEngine()
+        signal, calls = self._spy_signal(True)
+        engine = L2QueryUnderstandingAnswerEngine(inner, high_risk_query_signal=signal)
+        context = _context()
+
+        engine.answer(self.principal, "締付トルクの基準は?", "manuals", context)
+
+        self.assertEqual(calls, [])
+        self.assertEqual(inner.calls[0][1], "締付トルクの基準は?")
+
+
 if __name__ == "__main__":
     unittest.main()

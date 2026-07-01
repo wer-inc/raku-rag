@@ -1499,6 +1499,12 @@ def make_handler(system: ProductionSystem):
         # default here, same as every other rung) — see chatbot/composition.py's module docstring.
         enable_demo_tenant_l3=os.environ.get("RAKU_CHATBOT_DEMO_TENANT_L3") == "1",
         demo_tenant_id=os.environ.get("DEMO_TENANT", "demo"),
+        # Safety fix (see chatbot/coreference.py's module docstring "Finding"): L2's coreference
+        # rewrite can corrupt the manufacturing safety gate's retrieval candidate pool for a query
+        # that is independently, concretely high-risk. Reuse the SAME classifier instance the real
+        # answer path's safety gate consults (never a second, drifting instance) as a retrieval-
+        # independent pre-check on whether it is safe to enrich a follow-up's outgoing query text.
+        high_risk_query_signal=manufacturing_system.is_high_risk_query_signal,
     )
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()

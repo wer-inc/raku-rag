@@ -881,6 +881,20 @@ class ManufacturingSystem:
             )
         return ans
 
+    def is_high_risk_query_signal(self, query: str) -> bool:
+        """Retrieval-independent, concrete high-risk SIGNAL for raw query text alone (no audit, no
+        ACL check, no retrieval -- a pure classification read, unlike ``answer``).
+
+        This exists for a chatbot-layer conversational rung (``chatbot/coreference.py``'s standalone-
+        query rewrite; see that module's docstring) that must decide, BEFORE running retrieval this
+        turn, whether it is safe to fold prior-turn context into a follow-up's outgoing query string.
+        Delegates to ``ManufacturingAnswerService.classify_query_signal`` so the chatbot layer always
+        consults the SAME classifier instance (with whatever optional semantic/LLM tie-break this
+        deployment has configured) the real answer path's safety gate uses -- never a second, drifting
+        instance -- while never reaching into that service's private state directly.
+        """
+        return self._answer.classify_query_signal(query)
+
     def _audit_citation_access(
         self,
         *,

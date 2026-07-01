@@ -1388,5 +1388,244 @@ class ChatbotManufacturingHighRiskCitationBlockAtL3Test(unittest.TestCase):
         self.assertEqual(second_turn["assistant_message"]["ai_action"], "answer_with_citations")
 
 
+class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
+    """Safety investigation (2026-07-01): does P3's `coreference.standalone_query` rewrite (already
+    shipped, `a585148`) have the SAME structural bug P4's own investigation found and reverted for
+    L3 (see `chatbot/composition.py`'s module docstring "Finding")? Answer: YES, reproduced below,
+    and fixed via `high_risk_query_signal` (see `chatbot/coreference.py`'s module docstring
+    "Finding" for the mechanism and why the fix is scoped the way it is).
+
+    Turn 1 is an ordinary English query answered citing an APPROVED, unrelated document (mirrors
+    `ChatbotManufacturingHighRiskCitationBlockAtL3Test.CONTEXT_QUERY`/`_ingest_context_turn_doc`
+    exactly, including the deliberate English-language choice for the same tokenization reasons
+    documented there). Turn 2 is a SHORT, Japanese, referential-marker-bearing follow-up ("その" +
+    residual topic "圧力の抜き方") with NO identifier of its own -- so it takes L2's REWRITE branch,
+    not the reuse-previous-citations branch -- whose RAW text independently classifies `high_risk`
+    via `RuleHighRiskClassifier`'s KEYWORD stage ("pressure"/"圧力"), confirmed directly against the
+    classifier in `tests/manufacturing/test_safety_gate.py::TestHighRiskQuerySignal`. The REAL,
+    on-topic document is ingested `PENDING_REVIEW` (not approved), so the correct behavior is: block
+    / insufficient_evidence / approved_citation_missing -- same shape as
+    `ChatbotManufacturingHighRiskCitationBlockTest`/`...AtL3Test`'s own negative control, reached here
+    via the L2 coreference-rewrite path specifically.
+    """
+
+    TENANT = "tenant_mfg_chat_l2_coref_safety"
+    CONTEXT_QUERY = "How often is routine equipment inspection performed?"
+    CONTEXT_DOC_ID = "routine-inspection-schedule"
+    CONTEXT_DOC_TEXT = (
+        "Routine inspection of the equipment is performed every 30 days by the maintenance team."
+    )
+    # Short, Japanese, referential ("その"), no identifier of its own (query_identifiers requires a
+    # digit or explicit separator), residual topic "圧力の抜き方" after marker/glue stripping (so
+    # has_own_topic is True -> the REWRITE branch, not the bare "tell me more" reuse branch). RAW text
+    # independently classifies high_risk via the KEYWORD stage ("圧力" = pressure).
+    FOLLOWUP_QUERY = "その圧力の抜き方を教えて"
+    REAL_DOC_ID = "accumulator-pressure-release-pending"
+    REAL_DOC_TEXT = (
+        "蓄圧器の圧力を抜く際は、手動排出弁をゆっくり開いてから配管を開放してください。"
+    )
+
+    def _mfg_principal(self):
+        return IdentityClaims(tenant_id=self.TENANT, user_id="alice")
+
+    def _service_over(
+        self, mfg_sys: ManufacturingSystem, *, authority: str, wire_fix: bool
+    ) -> ChatbotService:
+        def rag_answerer(principal, query, collection_id):
+            ans = mfg_sys.answer(principal, query, collection_id)
+            return {
+                "status": ans.status,
+                "text": ans.text,
+                "confidence": ans.confidence,
+                "citations": [dataclasses.asdict(c) for c in ans.citations],
+                "used_chunks": list(ans.used_chunks),
+                "correlation_id": ans.correlation_id,
+            }
+
+        kwargs = {}
+        if wire_fix:
+            # Mirrors apps/answer-service/server.py's real wiring: reuse the SAME classifier
+            # instance the safety gate itself consults, not a second, drifting one.
+            kwargs["high_risk_query_signal"] = mfg_sys.is_high_risk_query_signal
+        service = ChatbotService(
+            rag_answerer,
+            authority_repository=InMemoryChatbotAuthorityRepository({self.TENANT: authority}),
+            **kwargs,
+        )
+        _enable_internal_chat_collection(
+            service, _principal(tenant=self.TENANT, roles=("tenant_admin",))
+        )
+        return service
+
+    def _ingest_context_doc(self, mfg_sys: ManufacturingSystem) -> None:
+        mfg_sys.ingest_manufacturing(
+            tenant_id=self.TENANT,
+            collection_id="manuals",
+            document_id=self.CONTEXT_DOC_ID,
+            text=self.CONTEXT_DOC_TEXT,
+            metadata=mfg_meta(
+                tenant_id=self.TENANT,
+                document_id=self.CONTEXT_DOC_ID,
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-01-01",
+            ),
+        )
+        mfg_sys.grant(self.TENANT, ScopeType.COLLECTION, "manuals", SubjectType.USER, "alice")
+
+    def _ingest_real_doc(self, mfg_sys: ManufacturingSystem, *, approval_status, **meta) -> None:
+        mfg_sys.ingest_manufacturing(
+            tenant_id=self.TENANT,
+            collection_id="manuals",
+            document_id=self.REAL_DOC_ID,
+            text=self.REAL_DOC_TEXT,
+            metadata=mfg_meta(
+                tenant_id=self.TENANT,
+                document_id=self.REAL_DOC_ID,
+                approval_status=approval_status,
+                safety_category="pressure",
+                **meta,
+            ),
+        )
+        mfg_sys.grant(self.TENANT, ScopeType.COLLECTION, "manuals", SubjectType.USER, "alice")
+
+    def _two_turns(self, service: ChatbotService):
+        _, created = service.create_session(self._mfg_principal(), {"channel": "web_chat"})
+        _, first_turn = service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": self.CONTEXT_QUERY, "collection_id": "manuals"},
+        )
+        self.assertTrue(first_turn["rag"]["answerable"], "context turn must itself be answerable")
+        self.assertEqual(
+            first_turn["assistant_message"]["citations"][0]["document_id"], self.CONTEXT_DOC_ID
+        )
+        return service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": self.FOLLOWUP_QUERY, "collection_id": "manuals"},
+        )
+
+    def test_raw_followup_independently_classifies_high_risk_via_the_keyword_stage(self):
+        # Confirms the premise directly (mirrors ChatbotManufacturingHighRiskCitationBlockTest's own
+        # "confirm the premise directly against ManufacturingSystem first" style): the classifier
+        # scans the RAW query text directly, independent of retrieval (composition.py's Finding).
+        mfg_sys = ManufacturingSystem()
+        self.assertTrue(mfg_sys.is_high_risk_query_signal(self.FOLLOWUP_QUERY))
+
+    def test_unmitigated_l2_rewrite_lets_a_high_risk_followup_incorrectly_answer_ok(self):
+        # Permanent regression pin for the vulnerability mechanism itself (proves the fix below is
+        # load-bearing, not dead code): with NO high_risk_query_signal wired -- i.e. ChatbotService's
+        # pre-fix default -- the coreference rewrite corrupts retrieval's candidate pool for turn 2
+        # exactly like composition.py's Finding describes for L3, flipping a query that must block
+        # into status="ok", citing turn 1's unrelated APPROVED document instead of the real (pending)
+        # one.
+        mfg_sys = ManufacturingSystem()
+        self._ingest_context_doc(mfg_sys)
+        self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
+        service = self._service_over(mfg_sys, authority="L2", wire_fix=False)
+
+        status, second_turn = self._two_turns(service)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(
+            second_turn["rag"]["answerable"],
+            "documents the bug: the corrupted rewrite incorrectly answers instead of blocking",
+        )
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "answer_with_citations")
+        cited = [c["document_id"] for c in second_turn["assistant_message"]["citations"]]
+        self.assertEqual(cited, [self.CONTEXT_DOC_ID], "cites the WRONG, unrelated document")
+
+    def test_high_risk_query_signal_blocks_the_corrupted_rewrite_at_l2(self):
+        mfg_sys = ManufacturingSystem()
+        self._ingest_context_doc(mfg_sys)
+        self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
+        service = self._service_over(mfg_sys, authority="L2", wire_fix=True)
+
+        status, second_turn = self._two_turns(service)
+
+        self.assertEqual(status, 200)
+        self.assertFalse(second_turn["rag"]["answerable"])
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "handoff")
+        self.assertIsNotNone(second_turn["handoff"])
+        self.assertEqual(second_turn["assistant_message"]["citations"], [])
+        self.assertNotIn("排出弁", second_turn["assistant_message"]["message"])
+        self.assertEqual(second_turn["rag"]["status"], "insufficient_evidence")
+
+    def test_high_risk_query_signal_blocks_the_corrupted_rewrite_at_l3(self):
+        # L2 sits ABOVE L3 in ChatbotService's own wiring (coreference resolution runs first, feeding
+        # L3), so a tenant dialed all the way to "L3" is exposed to the identical rewrite-corruption
+        # risk -- confirms the fix must be (and is) threaded into BOTH L2 engine instances in
+        # service.py, not just the "L2"-authority one.
+        mfg_sys = ManufacturingSystem()
+        self._ingest_context_doc(mfg_sys)
+        self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
+        service = self._service_over(mfg_sys, authority="L3", wire_fix=True)
+
+        status, second_turn = self._two_turns(service)
+
+        self.assertEqual(status, 200)
+        self.assertFalse(second_turn["rag"]["answerable"])
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "handoff")
+        self.assertEqual(second_turn["rag"]["status"], "insufficient_evidence")
+
+    def test_positive_control_still_answers_when_the_real_topic_has_an_approved_citation(self):
+        # Guards against a degenerate "block everything" fix -- same positive-control philosophy as
+        # tests/manufacturing/test_safety_gate.py and this file's P2/P4 equivalents.
+        mfg_sys = ManufacturingSystem()
+        self._ingest_context_doc(mfg_sys)
+        self._ingest_real_doc(
+            mfg_sys, approval_status=ApprovalStatus.APPROVED, effective_date="2026-01-01"
+        )
+        service = self._service_over(mfg_sys, authority="L2", wire_fix=True)
+
+        status, second_turn = self._two_turns(service)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(second_turn["rag"]["answerable"])
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "answer_with_citations")
+        cited = [c["document_id"] for c in second_turn["assistant_message"]["citations"]]
+        self.assertEqual(cited, [self.REAL_DOC_ID], "must cite the real, on-topic, approved doc")
+
+    def test_benign_referential_followup_is_still_rewritten_and_answered_with_the_fix_wired(self):
+        # P3's own flagship scenario (P-101 torque follow-up), through a REAL ManufacturingSystem
+        # with the fix wired: proves the fix does not regress P3's actual value for the ordinary,
+        # non-dangerous case it exists to serve (complements the classifier-level proof in
+        # tests/manufacturing/test_safety_gate.py::TestHighRiskQuerySignal).
+        mfg_sys = ManufacturingSystem()
+        mfg_sys.ingest_manufacturing(
+            tenant_id=self.TENANT,
+            collection_id="manuals",
+            document_id="eq-p101",
+            text="P-101の点検手順は電源停止、外観確認、記録の順です。締付トルクは25N・mです。",
+            metadata=mfg_meta(
+                tenant_id=self.TENANT,
+                document_id="eq-p101",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-01-01",
+            ),
+        )
+        mfg_sys.grant(self.TENANT, ScopeType.COLLECTION, "manuals", SubjectType.USER, "alice")
+        service = self._service_over(mfg_sys, authority="L2", wire_fix=True)
+
+        _, created = service.create_session(self._mfg_principal(), {"channel": "web_chat"})
+        service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": "P-101 の点検手順を教えて", "collection_id": "manuals"},
+        )
+        status, second_turn = service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": "その締付トルクは?", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(second_turn["rag"]["answerable"])
+        self.assertEqual(
+            second_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101"
+        )
+        self.assertIn("25N・m", second_turn["assistant_message"]["message"])
+
+
 if __name__ == "__main__":
     unittest.main()
