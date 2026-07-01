@@ -118,6 +118,9 @@ class TestHybridRetrieval(unittest.TestCase):
         )
         span = tracer.spans(correlation_id="hybrid-cid")[0]
         self.assertEqual(span.attributes.get("metadata_exact_match_count"), 1)
+        self.assertEqual(span.attributes.get("query_intent"), "procedure")
+        self.assertGreaterEqual(span.attributes.get("query_identifier_count"), 2)
+        self.assertIn("business_identifiers", span.attributes.get("query_filter_hints"))
 
     def test_identifier_exact_match_still_respects_acl_prefilter(self) -> None:
         hidden_exact = _chunk(
@@ -197,6 +200,7 @@ class TestHybridRetrieval(unittest.TestCase):
         )
         span = tracer.spans(correlation_id="lexical-cid")[0]
         self.assertEqual(span.attributes.get("lexical_match_count"), 1)
+        self.assertEqual(span.attributes.get("query_intent"), "procedure")
 
     def test_lexical_match_uses_recency_as_tie_breaker(self) -> None:
         current = _chunk(
@@ -230,6 +234,43 @@ class TestHybridRetrieval(unittest.TestCase):
         )
 
         self.assertEqual([s.chunk.document_id for s in result], ["current"])
+
+    def test_query_plan_document_kind_hint_boosts_visible_candidate_order(self) -> None:
+        procedure_doc = _chunk(
+            chunk_id="procedure:0",
+            document_id="procedure",
+            collection_id="c",
+            text="Pump maintenance details.",
+            metadata={"document_kind": "work_instruction"},
+        )
+        vector_favorite = _chunk(
+            chunk_id="generic:0",
+            document_id="generic",
+            collection_id="c",
+            text="Generic maintenance details.",
+            metadata={"document_kind": "quality_report"},
+        )
+        self.store.upsert(
+            [
+                (procedure_doc, [0.98, 0.20]),
+                (vector_favorite, [1.0, 0.0]),
+            ]
+        )
+        acl = AclPolicy([ACLGrant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "alice")])
+        metrics = MetricsRecorder()
+        tracer = InMemoryTracer()
+        profile = QueryProfile(top_k=1, rerank_enabled=False)
+
+        result = self._service(acl, metrics, tracer).retrieve(
+            self.alice,
+            "procedure steps for pump maintenance",
+            profile,
+            correlation_id="planner-boost-cid",
+        )
+
+        self.assertEqual([s.chunk.document_id for s in result], ["procedure"])
+        span = tracer.spans(correlation_id="planner-boost-cid")[0]
+        self.assertEqual(span.attributes.get("query_intent"), "procedure")
 
 
 if __name__ == "__main__":

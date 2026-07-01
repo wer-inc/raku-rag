@@ -39,9 +39,13 @@ LEXICAL_MATCH_MAX_SCORE = 1.20
 LEXICAL_RECENCY_BOOST_MAX = 0.09
 
 _IDENTIFIER_RE = re.compile(
-    r"\b[A-Za-z]{1,16}(?:[-_][A-Za-z0-9]{1,24})+\b"
-    r"|\b[A-Z]{2}[A-Z0-9]{9}\d\b"
-    r"|\b[A-Za-z0-9]{2,24}\d[A-Za-z0-9]{1,24}\b"
+    r"(?<![A-Za-z0-9])"
+    r"(?:"
+    r"[A-Za-z]{1,16}(?:[-_][A-Za-z0-9]{1,24})+"
+    r"|[A-Z]{2}[A-Z0-9]{9}\d"
+    r"|[A-Za-z0-9]{2,24}\d[A-Za-z0-9]{1,24}"
+    r")"
+    r"(?![A-Za-z0-9])"
 )
 _NON_IDENTIFIER_CHARS = re.compile(r"[^a-z0-9]+")
 

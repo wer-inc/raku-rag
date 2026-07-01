@@ -38,6 +38,32 @@ PII_REDACTION_MODES = {
     PII_REDACTION_BLOCK,
 }
 PII_REDACTION_POLICY_REF = "default-regex-v1"
+CONTEXTUAL_CHUNK_METADATA_KEYS = (
+    "document_title",
+    "document_kind",
+    "document_type",
+    "approval_status",
+    "effective_date",
+    "valid_until",
+    "superseded_by",
+    "source_sync_freshness",
+    "source_system",
+    "factory_id",
+    "line_id",
+    "process",
+    "process_id",
+    "equipment",
+    "equipment_id",
+    "model_no",
+    "alarm_code",
+    "defect_type",
+    "part_no",
+    "safety_category",
+    "quality_category",
+    "equipment_operation_category",
+    "hazard_tags",
+    "regulation_refs",
+)
 
 
 @dataclass
@@ -204,6 +230,11 @@ class IngestionService:
                                 "embedding_model_version": self._embedder.model_version,
                                 "embedding_dimension": embedding_dimension(self._embedder),
                                 **chunking_config,
+                                **_contextual_chunk_metadata(
+                                    effective_chunking_metadata,
+                                    heading_path=heading,
+                                    position=position,
+                                ),
                                 **cell_metadata_for_text(text_piece, indexed_table_manifests),
                             },
                         )
@@ -314,6 +345,49 @@ def _chunking_config(chunker: Chunker, metadata: Mapping[str, object]) -> dict:
         "max_chunk_chars": 0,
         "chunk_overlap_chars": 0,
     }
+
+
+def _contextual_chunk_metadata(
+    metadata: Mapping[str, object],
+    *,
+    heading_path: tuple[str, ...],
+    position: int,
+) -> dict:
+    contextual: dict[str, object] = {
+        "section_path": list(heading_path),
+        "chunk_position": position,
+    }
+    for key in CONTEXTUAL_CHUNK_METADATA_KEYS:
+        safe = _safe_contextual_value(_metadata_value(metadata, key))
+        if safe not in (None, "", (), []):
+            contextual[key] = safe
+    return contextual
+
+
+def _metadata_value(metadata: Mapping[str, object], key: str) -> object:
+    value = metadata.get(key)
+    if value not in (None, ""):
+        return value
+    extra = metadata.get("extra")
+    if isinstance(extra, Mapping):
+        return extra.get(key)
+    return None
+
+
+def _safe_contextual_value(value: object) -> object:
+    raw = getattr(value, "value", value)
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, (int, float, bool)):
+        return raw
+    if isinstance(raw, (list, tuple)):
+        cleaned = []
+        for item in raw:
+            safe = _safe_contextual_value(item)
+            if isinstance(safe, (str, int, float, bool)) and safe not in ("", None):
+                cleaned.append(safe)
+        return cleaned[:16]
+    return None
 
 
 def _chunk_text(

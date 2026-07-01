@@ -49,6 +49,35 @@ troubleshooting, safety refusal, ambiguity/clarification, and prompt-injection c
 Tier A hard gate yet; it is the measurement surface for making thin answers visible before tightening
 release thresholds.
 
+## Run The SME-Pending Expanded Dataset
+
+The expanded dataset is generated from the reviewed v2 seed set and intentionally marked as
+`sme_review_status=pending`. It broadens regression coverage, but generated variants are not a
+paid-pilot acceptance gate until a domain reviewer approves or rewrites them.
+
+Regenerate it after changing the v2 seed set:
+
+```bash
+python3 scripts/demo/build_chatbot_quality_expanded_dataset.py
+```
+
+Then run it locally:
+
+```bash
+bash scripts/demo/chatbot_golden_scorecard.sh \
+  --dataset scripts/demo/chatbot_quality_v2_expanded_scenarios.json \
+  --profile-name demo-quality-expanded \
+  --embedding-provider hashing \
+  --answer-profile extractive-mvp \
+  --reranker none \
+  --output /tmp/chatbot-quality-v2-expanded-result.json \
+  --ensure-policy
+```
+
+Treat failures in this dataset as prioritization signals for retrieval, composition, and scenario
+review work. Do not use its generated `pending_sme_review` cases as customer-facing release
+acceptance until the review status is promoted.
+
 ## Run Against Staging
 
 Issue a Cognito token with the existing smoke helper, then point the runner at the deployed API:
@@ -72,8 +101,8 @@ For the expanded readiness dataset:
 
 ```bash
 RAKU_CHATBOT_SMOKE_APPROVED=yes \
-CHATBOT_GOLDEN_DATASET=scripts/demo/chatbot_quality_v2_scenarios.json \
-CHATBOT_GOLDEN_OUTPUT=/tmp/chatbot-quality-v2-stg.json \
+CHATBOT_GOLDEN_DATASET=scripts/demo/chatbot_quality_v2_expanded_scenarios.json \
+CHATBOT_GOLDEN_OUTPUT=/tmp/chatbot-quality-v2-expanded-stg.json \
 RAKU_SMOKE_USERNAME='...' RAKU_SMOKE_PASSWORD='...' \
 STACK=RakuRag-stg AWS_REGION=ap-northeast-1 \
 bash scripts/aws/run-chatbot-golden-from-stack.sh
@@ -119,9 +148,22 @@ dataset remains valid:
   retrieved context.
 - `expected_behavior=clarification` catches ambiguous questions that should ask a follow-up instead
   of guessing.
+- `--retrieval-diagnostics` runs `POST /v1/search` before answer scenarios and records
+  `recall@k`, MRR, top document IDs, and miss reasons without storing raw retrieved text.
 - JSON output includes readiness thresholds, profile metadata, failure kinds, refusal pass rate,
-  clarification pass rate, quick reply pass rate, expected citation hit rate, and completeness rate
-  without storing raw retrieved context.
+  clarification pass rate, quick reply pass rate, expected citation hit rate, completeness rate, and
+  optional retrieval diagnostics without storing raw retrieved context.
+
+Example with retrieval diagnostics enabled:
+
+```bash
+bash scripts/demo/chatbot_golden_scorecard.sh \
+  --dataset scripts/demo/chatbot_quality_v2_scenarios.json \
+  --retrieval-diagnostics \
+  --retrieval-top-k 10 \
+  --output /tmp/chatbot-quality-v2-with-retrieval.json \
+  --ensure-policy
+```
 
 ## 2026-06-30 Fix Notes
 

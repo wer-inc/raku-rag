@@ -46,8 +46,16 @@ class TestProfiledChunking(unittest.TestCase):
             tenant_id="tenant_a",
             collection_id="manuals",
             document_id="doc_1",
-            text="Approved instruction says isolate energy before maintenance.",
-            chunking_metadata={"document_kind": "work_instruction"},
+            text="# 点検手順\n\nApproved instruction says isolate energy before maintenance.",
+            chunking_metadata={
+                "document_kind": "work_instruction",
+                "equipment_id": "EQ-1",
+                "extra": {
+                    "document_title": "Energy Isolation Work Instruction",
+                    "source_sync_freshness": "curated_demo_seed",
+                    "customer": "do-not-copy-sensitive-customer",
+                },
+            },
         )
 
         doc = sys.registry.get("tenant_a", "doc_1")
@@ -60,6 +68,14 @@ class TestProfiledChunking(unittest.TestCase):
         self.assertTrue(stored_chunks)
         self.assertEqual(stored_chunks[0].metadata["chunking_profile"], "work_instruction_v1")
         self.assertEqual(stored_chunks[0].metadata["chunk_overlap_chars"], 80)
+        self.assertEqual(
+            stored_chunks[0].metadata["document_title"],
+            "Energy Isolation Work Instruction",
+        )
+        self.assertEqual(stored_chunks[0].metadata["equipment_id"], "EQ-1")
+        self.assertEqual(stored_chunks[0].metadata["section_path"], ["点検手順"])
+        self.assertEqual(stored_chunks[0].metadata["source_sync_freshness"], "curated_demo_seed")
+        self.assertNotIn("customer", stored_chunks[0].metadata)
 
     def test_manufacturing_metadata_drives_chunking_profile(self) -> None:
         sys = ManufacturingSystem()

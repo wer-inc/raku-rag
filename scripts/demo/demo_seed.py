@@ -9,6 +9,7 @@ Idempotent: re-ingesting the same document_id overwrites.
 import base64
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -113,12 +114,52 @@ def list_existing_collection_docs() -> tuple[str, object]:
         return "ERROR", str(exc)[:160]
 
 
+def _context_extra(doc: dict) -> dict:
+    text = f"{doc.get('title') or ''}\n{doc.get('content') or ''}"
+    extra = {
+        "document_title": doc.get("title") or doc["document_id"],
+        "source_system": "demo_seed",
+        "source_sync_freshness": "curated_demo_seed",
+        "factory_id": doc.get("factory_id") or "toyoseiki-factory-1",
+    }
+    for key in ("line_id", "process_id", "equipment_id"):
+        if doc.get(key):
+            extra[key] = doc[key]
+    if "equipment_id" not in extra:
+        equipment_id = _infer_equipment_id(text)
+        if equipment_id:
+            extra["equipment_id"] = equipment_id
+    if "line_id" not in extra:
+        line_id = _infer_line_id(text)
+        if line_id:
+            extra["line_id"] = line_id
+    return {key: value for key, value in extra.items() if value}
+
+
+def _infer_equipment_id(text: str) -> str:
+    for pattern in (
+        r"\b(?:MCC|CV|PR|ESD)-[A-Za-z0-9-]+\b",
+        r"\b(?:E|P|V|T)-\d+[A-Za-z]?\b",
+        r"\bM\d+\b",
+    ):
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(0)
+    return ""
+
+
+def _infer_line_id(text: str) -> str:
+    match = re.search(r"\b[A-Z]-Line\b", text, re.IGNORECASE)
+    return match.group(0) if match else ""
+
+
 def _mfg_block(doc: dict) -> dict:
     return {
         "approval_status": doc["approval_status"],
         "effective_date": doc.get("effective_date") or None,
         "approval_source": "workflow",
         "document_kind": doc.get("document_kind"),
+        "extra": _context_extra(doc),
         **(
             {"safety_category": doc["safety_category"]}
             if doc.get("safety_category") and doc["safety_category"] != "none"
@@ -172,20 +213,10 @@ def ingest(doc: dict) -> tuple[str, object]:
         "document_id": doc["document_id"],
         "document_ref": f"data:text/plain;base64,{content_b64}",
         "content_type": "text/plain",
-        "manufacturing": {
-            "approval_status": doc["approval_status"],
-            "effective_date": doc.get("effective_date") or None,
-            "approval_source": "workflow",
-            "document_kind": doc.get("document_kind"),
-            # Only set safety_category for genuinely high-risk docs. The classifier's METADATA stage
-            # treats ANY non-empty safety_category as high-risk, so a literal "none" string would make
-            # every benign maintenance/quality doc flag high-risk — destroying the safety distinction.
-            **(
-                {"safety_category": doc["safety_category"]}
-                if doc.get("safety_category") and doc["safety_category"] != "none"
-                else {}
-            ),
-        },
+        # Only set safety_category for genuinely high-risk docs. The classifier's METADATA stage
+        # treats ANY non-empty safety_category as high-risk, so a literal "none" string would make
+        # every benign maintenance/quality doc flag high-risk — destroying the safety distinction.
+        "manufacturing": _mfg_block(doc),
     }
     headers = {"content-type": "application/json"}
     if INTERNAL_AUTH:

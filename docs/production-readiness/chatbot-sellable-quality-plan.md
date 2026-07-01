@@ -15,6 +15,30 @@ Displayed actions are limited to business transformations (`手順だけ見る`,
 `注意点を確認`) plus evidence confirmation, and follow-up turns reformat the previous grounded answer
 instead of launching another RAG search.
 
+Implementation note (2026-07-01): The v2 quality set now has a generated
+`chatbot_quality_v2_expanded` companion dataset with 135 scenarios. Generated cases are marked
+`pending_sme_review` and are useful for regression discovery, but they are not a paid-pilot
+acceptance gate until domain review promotes them.
+
+Implementation note (2026-07-01): The scorecard now has optional retrieval diagnostics. With
+`--retrieval-diagnostics`, answer scenarios run a separate `/v1/search` probe and report `recall@k`,
+MRR, top document IDs, and miss reasons without storing raw retrieved context.
+
+Implementation note (2026-07-01): Text ingestion now records safe contextual chunk metadata such as
+document title, document kind, approval/effective fields, section path, equipment/process IDs, safety
+tags, and source freshness when supplied. The curated demo seed passes title, source, factory, line,
+and inferred equipment context through manufacturing metadata `extra`.
+
+Implementation note (2026-07-01): A deterministic query planner now classifies manufacturing-style
+queries into lookup, procedure, troubleshooting, comparison, safety procedure, or clarification, and
+extracts business identifiers plus filter/rewrite hints. Retrieval traces record only summary planner
+metadata, not the raw query text.
+
+Implementation note (2026-07-01): Retrieval now applies a conservative query-plan metadata boost
+inside the already-visible candidate set. It can lift candidates whose `document_kind`,
+`safety_category`, or identifiers match planner hints, but it does not broaden ACL visibility or bypass
+groundedness/safety gates.
+
 ## Purpose
 
 The current staging ChatBot scorecard proves the product no longer fails basic grounded-answer and
@@ -194,8 +218,10 @@ Runner improvements:
 - [x] Add a "customer-demo readiness" summary separate from CI hard gates.
 - [x] Score contextual quick replies as separate follow-up turns.
 - [x] Add a staging stack wrapper for one-command scorecard execution after deploy.
-- [ ] Expand from the 37-scenario seed set to 120+ scenarios with SME review.
-- [ ] Add retrieval-only diagnostics (`recall@10`, MRR, candidate rejection reasons).
+- [x] Generate a 120+ scenario expanded dataset from the 37-scenario seed set.
+- [ ] Complete SME review and promote approved expanded scenarios to paid-pilot acceptance.
+- [x] Add scorecard retrieval-only diagnostics (`recall@k`, MRR, top-document miss reasons).
+- [ ] Surface deeper candidate rejection reasons from retrieval traces without raw context leakage.
 
 Acceptance:
 
@@ -380,11 +406,13 @@ These are starting thresholds. They should be tightened after the expanded datas
 
 ## Immediate Next Tasks
 
-1. Create `chatbot_quality_v2` expanded scenario dataset and runner schema.
-2. Expand `chatbot_quality_v2` from 37 seeded scenarios to 120+ SME-reviewed scenarios.
-3. Add retrieval diagnostics to the scorecard output.
-4. Add contextual chunk metadata for the curated demo corpus.
-5. Implement query planner for manufacturing entities and intents.
-6. Add reranker interface behind provider policy.
-7. Add `manufacturing-synthesis-v1` structured answer composer profile.
-8. Run A/B scorecards: `stg-smoke` vs `demo-quality`.
+1. [x] Create a generated `chatbot_quality_v2_expanded` dataset from the v2 seed set.
+2. [ ] Complete SME review and promotion for the expanded dataset.
+3. [x] Add retrieval diagnostics to the scorecard output.
+4. [x] Add contextual chunk metadata for the curated demo corpus.
+5. [x] Add deterministic query planner for manufacturing entities and intents.
+6. [x] Wire planner filter/rewrite hints into retrieval ranking policy.
+7. [x] Confirm reranker interface and runtime-profile seam exist.
+8. [ ] Tie live reranker activation to tenant provider policy and paid-provider approval.
+9. [ ] Add `manufacturing-synthesis-v1` structured answer composer profile.
+10. [ ] Run A/B scorecards: `stg-smoke` vs `demo-quality`.

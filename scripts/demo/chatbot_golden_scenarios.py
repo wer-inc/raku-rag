@@ -48,6 +48,7 @@ class ScenarioResult:
     answer_chars: int
     latency_ms: int
     correlation_id: str
+    retrieval_diagnostic: dict[str, Any] | None = None
 
 
 class ScenarioConfigError(ValueError):
@@ -290,6 +291,8 @@ def run_scenario(
     *,
     collection_id: str,
     timeout: float,
+    retrieval_diagnostics: bool = False,
+    retrieval_top_k: int = 10,
 ) -> ScenarioResult:
     return run_scenario_results(
         base_url,
@@ -298,6 +301,8 @@ def run_scenario(
         scenario,
         collection_id=collection_id,
         timeout=timeout,
+        retrieval_diagnostics=retrieval_diagnostics,
+        retrieval_top_k=retrieval_top_k,
     )[0]
 
 
@@ -309,7 +314,20 @@ def run_scenario_results(
     *,
     collection_id: str,
     timeout: float,
+    retrieval_diagnostics: bool = False,
+    retrieval_top_k: int = 10,
 ) -> list[ScenarioResult]:
+    retrieval_diagnostic = None
+    if retrieval_diagnostics:
+        retrieval_diagnostic = run_retrieval_diagnostic(
+            base_url,
+            token,
+            api_key,
+            scenario,
+            collection_id=collection_id,
+            top_k=retrieval_top_k,
+            timeout=timeout,
+        )
     start = time.perf_counter()
     response = http_json(
         "POST",
@@ -326,7 +344,12 @@ def run_scenario_results(
         timeout=timeout,
     )
     latency_ms = int((time.perf_counter() - start) * 1000)
-    initial = evaluate_response(scenario, response, latency_ms=latency_ms)
+    initial = evaluate_response(
+        scenario,
+        response,
+        latency_ms=latency_ms,
+        retrieval_diagnostic=retrieval_diagnostic,
+    )
     results = [initial]
     for check in _quick_reply_checks(scenario):
         results.append(
@@ -342,6 +365,93 @@ def run_scenario_results(
             )
         )
     return results
+
+
+def run_retrieval_diagnostic(
+    base_url: str,
+    token: str,
+    api_key: str,
+    scenario: dict[str, Any],
+    *,
+    collection_id: str,
+    top_k: int,
+    timeout: float,
+) -> dict[str, Any]:
+    top_k = max(1, int(top_k or 10))
+    if str(scenario.get("expected_behavior") or "") != "answer":
+        return {
+            "enabled": True,
+            "top_k": top_k,
+            "skipped": True,
+            "skip_reason": "expected_behavior_is_not_answer",
+        }
+    try:
+        response = http_json(
+            "POST",
+            base_url,
+            "/search",
+            token=token,
+            api_key=api_key,
+            body={
+                "query": str(scenario["question"]),
+                "collection_id": collection_id,
+                "top_k": top_k,
+            },
+            timeout=timeout,
+        )
+    except HttpJsonError as exc:
+        expected, acceptable = _citation_expectations(scenario)
+        return {
+            "enabled": True,
+            "top_k": top_k,
+            "expected_document_ids": expected,
+            "acceptable_document_ids": acceptable,
+            "hit": False,
+            "error": str(exc),
+            "miss_reason": "search_request_failed",
+        }
+    return evaluate_retrieval_diagnostic(scenario, response, top_k=top_k)
+
+
+def evaluate_retrieval_diagnostic(
+    scenario: dict[str, Any],
+    response: dict[str, Any],
+    *,
+    top_k: int,
+) -> dict[str, Any]:
+    expected, acceptable = _citation_expectations(scenario)
+    allowed = set(expected) | set(acceptable)
+    raw_results = response.get("results") if isinstance(response, dict) else []
+    results = [item for item in raw_results or [] if isinstance(item, dict)]
+    ranked_documents = list(
+        dict.fromkeys(str(item.get("document_id") or "") for item in results if item.get("document_id"))
+    )
+    first_hit_rank = next(
+        (index + 1 for index, document_id in enumerate(ranked_documents) if document_id in allowed),
+        None,
+    )
+    if first_hit_rank is not None:
+        miss_reason = ""
+    elif not allowed:
+        miss_reason = "no_expected_documents"
+    elif not ranked_documents:
+        miss_reason = "zero_candidates"
+    else:
+        miss_reason = "expected_document_not_in_top_k"
+    return {
+        "enabled": True,
+        "top_k": max(1, int(top_k or 10)),
+        "expected_document_ids": expected,
+        "acceptable_document_ids": acceptable,
+        "candidate_count": len(results),
+        "unique_document_count": len(ranked_documents),
+        "top_document_ids": ranked_documents[: max(1, int(top_k or 10))],
+        "hit": first_hit_rank is not None,
+        "first_hit_rank": first_hit_rank,
+        "reciprocal_rank": (1.0 / first_hit_rank) if first_hit_rank else 0.0,
+        "miss_reason": miss_reason,
+        "correlation_id": str(response.get("correlation_id") or "") if isinstance(response, dict) else "",
+    }
 
 
 def run_quick_reply_check(
@@ -408,6 +518,7 @@ def evaluate_response(
     turn_type: str = "initial",
     parent_scenario_id: str = "",
     quick_reply_value: str = "",
+    retrieval_diagnostic: dict[str, Any] | None = None,
 ) -> ScenarioResult:
     assistant = response.get("assistant_message") if isinstance(response, dict) else {}
     rag = response.get("rag") if isinstance(response, dict) else {}
@@ -574,6 +685,7 @@ def evaluate_response(
         answer_chars=len(message),
         latency_ms=latency_ms,
         correlation_id=str(response.get("correlation_id") or ""),
+        retrieval_diagnostic=retrieval_diagnostic,
     )
 
 
@@ -609,6 +721,7 @@ def summarize_results(results: list[ScenarioResult]) -> dict[str, Any]:
         "thin_answer_count": thin_answers,
         "handoff_count": sum(1 for r in results if r.ai_action == "handoff"),
         "p95_latency_ms": _p95([r.latency_ms for r in results]),
+        "retrieval_diagnostics": _retrieval_diagnostic_summary(results),
         "categories": _category_summary(results),
         "failure_kinds": _failure_kind_summary(results),
     }
@@ -648,6 +761,17 @@ def print_report(
     print(f"  completeness_rate : {summary['completeness_hit_rate']:.3f}")
     print(f"  thin_answer_count : {summary['thin_answer_count']}")
     print(f"  p95_latency_ms    : {summary['p95_latency_ms']:.0f}")
+    retrieval = summary["retrieval_diagnostics"]
+    if retrieval["enabled"]:
+        print(
+            "  retrieval         : "
+            f"checked={retrieval['checked_count']} "
+            f"recall@{retrieval['top_k']}={retrieval['recall_at_k']:.3f} "
+            f"mrr={retrieval['mrr']:.3f} "
+            f"errors={retrieval['error_count']}"
+        )
+        if retrieval["miss_reasons"]:
+            print("  retrieval_misses  : " + _format_count_map(retrieval["miss_reasons"]))
     if summary["failure_kinds"]:
         print("  failure_kinds     : " + _format_count_map(summary["failure_kinds"]))
     print("")
@@ -678,6 +802,14 @@ def print_report(
             print(f"- {result.scenario_id} [{result.turn_type}{parent}{quick}]:")
             for failure in result.failures:
                 print(f"  - {failure}")
+            diagnostic = result.retrieval_diagnostic or {}
+            if diagnostic and not diagnostic.get("skipped"):
+                print(
+                    "  - retrieval diagnostic: "
+                    f"hit={diagnostic.get('hit')} "
+                    f"rank={diagnostic.get('first_hit_rank') or '-'} "
+                    f"top_docs={', '.join(diagnostic.get('top_document_ids') or []) or '-'}"
+                )
 
 
 def dataset_identity(dataset: dict[str, Any]) -> dict[str, str]:
@@ -761,6 +893,9 @@ def readiness_summary(results: list[ScenarioResult], dataset: dict[str, Any]) ->
         "expected_citation_hit_rate": summary["expected_citation_hit_rate"],
         "completeness_hit_rate": summary["completeness_hit_rate"],
         "p95_latency_ms": summary["p95_latency_ms"],
+        "retrieval_recall_at_k": summary["retrieval_diagnostics"]["recall_at_k"],
+        "retrieval_mrr": summary["retrieval_diagnostics"]["mrr"],
+        "retrieval_diagnostic_error_count": summary["retrieval_diagnostics"]["error_count"],
     }
     threshold_results: dict[str, bool] = {}
     for key, expected in thresholds.items():
@@ -926,6 +1061,39 @@ def _failure_kind_summary(results: list[ScenarioResult]) -> dict[str, int]:
     return dict(sorted(summary.items()))
 
 
+def _retrieval_diagnostic_summary(results: list[ScenarioResult]) -> dict[str, Any]:
+    diagnostics = [r.retrieval_diagnostic for r in results if r.retrieval_diagnostic]
+    checked = [
+        item
+        for item in diagnostics
+        if not item.get("skipped")
+        and bool(item.get("expected_document_ids") or item.get("acceptable_document_ids"))
+    ]
+    hits = sum(1 for item in checked if item.get("hit"))
+    miss_reasons: dict[str, int] = {}
+    for item in checked:
+        if item.get("hit"):
+            continue
+        reason = str(item.get("miss_reason") or "unknown")
+        miss_reasons[reason] = miss_reasons.get(reason, 0) + 1
+    top_k_values = [int(item.get("top_k") or 0) for item in diagnostics if item.get("top_k")]
+    return {
+        "enabled": bool(diagnostics),
+        "top_k": max(top_k_values) if top_k_values else 0,
+        "checked_count": len(checked),
+        "hit_count": hits,
+        "miss_count": len(checked) - hits,
+        "recall_at_k": (hits / len(checked)) if checked else 1.0,
+        "mrr": (
+            sum(float(item.get("reciprocal_rank") or 0.0) for item in checked) / len(checked)
+            if checked
+            else 1.0
+        ),
+        "error_count": sum(1 for item in diagnostics if item.get("error")),
+        "miss_reasons": dict(sorted(miss_reasons.items())),
+    }
+
+
 def _format_count_map(values: dict[str, int]) -> str:
     return ", ".join(f"{key}={values[key]}" for key in sorted(values))
 
@@ -990,6 +1158,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--embedding-provider", default="", help="embedding provider label")
     parser.add_argument("--answer-profile", default="", help="answer/composer profile label")
     parser.add_argument("--reranker", default="", help="reranker profile label")
+    parser.add_argument(
+        "--retrieval-diagnostics",
+        action="store_true",
+        help="run POST /v1/search before answer scenarios and report recall/MRR diagnostics",
+    )
+    parser.add_argument(
+        "--retrieval-top-k",
+        type=int,
+        default=10,
+        help="top_k to request when --retrieval-diagnostics is enabled",
+    )
     parser.add_argument("--hide-failures", action="store_true", help="hide per-scenario failure details")
     return parser.parse_args(argv)
 
@@ -1048,6 +1227,8 @@ def main(argv: list[str] | None = None) -> int:
                     scenario,
                     collection_id=collection_id,
                     timeout=args.timeout,
+                    retrieval_diagnostics=args.retrieval_diagnostics,
+                    retrieval_top_k=args.retrieval_top_k,
                 )
             )
     except (ScenarioConfigError, HttpJsonError, RuntimeError) as exc:

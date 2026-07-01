@@ -7,7 +7,9 @@ additionally re-asserts visibility on every returned chunk (fail-closed) and app
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 
+from raku_rag.core.query_planner import plan_query
 from raku_rag.core.security.acl import AclPolicy
 from raku_rag.domain.models import Chunk, IdentityClaims, QueryProfile, ScoredChunk
 from raku_rag.interfaces.base import EmbeddingProvider, Reranker, VectorStore
@@ -17,6 +19,9 @@ from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.services.cost import CostService
 
 MAX_RERANK_CANDIDATES = 80
+QUERY_PLAN_DOCUMENT_KIND_BOOST = 0.06
+QUERY_PLAN_SAFETY_SCOPE_BOOST = 0.06
+QUERY_PLAN_IDENTIFIER_BOOST = 0.02
 
 
 def _token_count(text: str) -> int:
@@ -82,6 +87,7 @@ class RetrievalService:
             else _null_span()
         )
         with span_cm as span:
+            query_plan = plan_query(query)
             rerank_candidate_limit = _rerank_candidate_limit(profile)
             search_top_k = max(1, profile.top_k, rerank_candidate_limit)
             query_vec = self._embedder.embed([query])[0]
@@ -122,6 +128,7 @@ class RetrievalService:
                 )
             if metadata_exact_matches or lexical_matches:
                 scored = _merge_hybrid_results(metadata_exact_matches, lexical_matches, scored)
+            scored = _apply_query_plan_boosts(scored, query_plan)
             # Double defense: re-assert ACL on every result (fail-closed if anything slipped through).
             for s in scored:
                 self._acl.assert_visible(principal, s.chunk)
@@ -216,6 +223,11 @@ class RetrievalService:
                     lexical_match_count=len(lexical_matches),
                     retrieval_outcome=outcome,
                     prefiltered_count=(prefiltered_count if prefiltered_count is not None else -1),
+                    query_intent=query_plan.intent,
+                    query_identifier_count=len(query_plan.identifiers),
+                    query_lexical_term_count=len(query_plan.lexical_terms),
+                    query_rewrite_hint_count=len(query_plan.rewrite_hints),
+                    query_filter_hints=sorted(query_plan.filter_hints),
                 )
             if self._metrics:
                 self._metrics.record_stage(
@@ -242,6 +254,80 @@ class RetrievalService:
         except Exception:
             return False
         return True
+
+
+def _apply_query_plan_boosts(scored: list[ScoredChunk], query_plan) -> list[ScoredChunk]:
+    if not scored or query_plan.intent == "clarification":
+        return scored
+    boosted: list[ScoredChunk] = []
+    for item in scored:
+        boost = _query_plan_boost(item.chunk, query_plan)
+        boosted.append(ScoredChunk(item.chunk, item.retrieval_score + boost))
+    return sorted(boosted, key=lambda item: item.retrieval_score, reverse=True)
+
+
+def _query_plan_boost(chunk: Chunk, query_plan) -> float:
+    boost = 0.0
+    kinds = query_plan.filter_hints.get("document_kind") or ()
+    if kinds and _metadata_has_any(chunk.metadata, "document_kind", kinds):
+        boost += QUERY_PLAN_DOCUMENT_KIND_BOOST
+    if query_plan.filter_hints.get("safety_scope") and _metadata_has_any(
+        chunk.metadata, "safety_category", ("high_risk",)
+    ):
+        boost += QUERY_PLAN_SAFETY_SCOPE_BOOST
+    if query_plan.identifiers and _metadata_has_identifier(chunk.metadata, query_plan.identifiers):
+        boost += QUERY_PLAN_IDENTIFIER_BOOST
+    return boost
+
+
+def _metadata_has_any(metadata: Mapping[str, object], key: str, accepted: tuple[str, ...]) -> bool:
+    accepted_values = {str(value).strip().casefold() for value in accepted if str(value).strip()}
+    if not accepted_values:
+        return False
+    for value in _metadata_values(metadata, key):
+        if str(value).strip().casefold() in accepted_values:
+            return True
+    return False
+
+
+def _metadata_has_identifier(metadata: Mapping[str, object], identifiers: tuple[str, ...]) -> bool:
+    identifier_values = {str(value).replace("-", "").casefold() for value in identifiers}
+    for key in ("equipment_id", "alarm_code"):
+        for value in _metadata_values(metadata, key):
+            normalized = str(value).replace("-", "").casefold()
+            if normalized and normalized in identifier_values:
+                return True
+    return False
+
+
+def _metadata_values(metadata: object, key: str) -> tuple[object, ...]:
+    mapping = _as_mapping(metadata)
+    if mapping is None:
+        return ()
+    values: list[object] = []
+    value = mapping.get(key)
+    if isinstance(value, (list, tuple)):
+        values.extend(value)
+    elif value not in (None, ""):
+        values.append(value)
+    extra = mapping.get("extra")
+    if isinstance(extra, Mapping):
+        values.extend(_metadata_values(extra, key))
+    for nested_key in ("_mfg_meta", "manufacturing", "manufacturing_metadata", "industry_metadata"):
+        child = mapping.get(nested_key)
+        if child is not metadata:
+            values.extend(_metadata_values(child, key))
+    return tuple(values)
+
+
+def _as_mapping(value: object) -> Mapping[str, object] | None:
+    if isinstance(value, Mapping):
+        return value
+    to_mapping = getattr(value, "to_mapping", None)
+    if callable(to_mapping):
+        mapped = to_mapping()
+        return mapped if isinstance(mapped, Mapping) else None
+    return None
 
 
 class _NullSpan:

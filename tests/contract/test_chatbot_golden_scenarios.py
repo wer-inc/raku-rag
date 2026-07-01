@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts" / "demo" / "chatbot_golden_scenarios.py"
 DATASET = ROOT / "scripts" / "demo" / "chatbot_golden_scenarios.json"
 V2_DATASET = ROOT / "scripts" / "demo" / "chatbot_quality_v2_scenarios.json"
+EXPANDED_V2_DATASET = ROOT / "scripts" / "demo" / "chatbot_quality_v2_expanded_scenarios.json"
 
 
 def _load_runner():
@@ -53,6 +54,42 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
         self.assertIn("troubleshooting", categories)
         self.assertIn("safety_refusal", categories)
         self.assertIn("security_refusal", categories)
+
+    def test_expanded_v2_dataset_is_valid_and_sme_review_pending(self) -> None:
+        dataset = json.loads(EXPANDED_V2_DATASET.read_text(encoding="utf-8"))
+
+        self.runner.validate_dataset(dataset)
+
+        self.assertEqual(dataset["schema_version"], "chatbot-golden-scenarios/v2")
+        self.assertEqual(dataset["dataset_id"], "chatbot_quality_v2_expanded")
+        self.assertGreaterEqual(len(dataset["scenarios"]), 120)
+        self.assertEqual(dataset["sme_review_status"], "pending")
+        self.assertIs(
+            dataset["generation_policy"]["generated_variants_are_acceptance_gate"],
+            False,
+        )
+        self.assertIs(
+            dataset["generation_policy"]["requires_sme_review_before_paid_pilot_gate"],
+            True,
+        )
+        categories = {scenario["category"] for scenario in dataset["scenarios"]}
+        self.assertIn("ambiguous_clarification", categories)
+        self.assertIn("grounded_lookup", categories)
+        self.assertIn("approved_high_risk_procedure", categories)
+        self.assertIn("troubleshooting", categories)
+        self.assertIn("safety_refusal", categories)
+        self.assertIn("security_refusal", categories)
+
+        generated = [
+            scenario
+            for scenario in dataset["scenarios"]
+            if scenario.get("review_status") == "pending_sme_review"
+        ]
+        self.assertGreaterEqual(len(generated), 80)
+        self.assertTrue(all(scenario.get("source_scenario_id") for scenario in generated))
+        self.assertTrue(
+            all("needs_sme_review" in (scenario.get("tags") or []) for scenario in generated)
+        )
 
     def test_policy_payload_matches_internal_collection_policy(self) -> None:
         policy_id, payload = self.runner.policy_payload("manuals", self.dataset)
@@ -200,6 +237,94 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
 
         self.assertTrue(result.passed, msg=result.failures)
         self.assertTrue(result.expected_citation_hit)
+
+    def test_retrieval_diagnostic_reports_recall_mrr_without_raw_text(self) -> None:
+        scenario = {
+            "id": "retrieval",
+            "category": "grounded_lookup",
+            "expected_behavior": "answer",
+            "expected_document_ids": ["doc-a"],
+            "acceptable_document_ids": ["doc-a-v2"],
+        }
+        response = {
+            "results": [
+                {"document_id": "doc-x", "text": "raw private context must not be copied"},
+                {"document_id": "doc-a-v2", "text": "another raw chunk"},
+                {"document_id": "doc-a-v2", "text": "duplicate chunk"},
+            ],
+            "correlation_id": "search-1",
+        }
+
+        diagnostic = self.runner.evaluate_retrieval_diagnostic(scenario, response, top_k=10)
+
+        self.assertTrue(diagnostic["hit"])
+        self.assertEqual(diagnostic["first_hit_rank"], 2)
+        self.assertEqual(diagnostic["reciprocal_rank"], 0.5)
+        self.assertEqual(diagnostic["top_document_ids"], ["doc-x", "doc-a-v2"])
+        self.assertNotIn("raw private context", json.dumps(diagnostic, ensure_ascii=False))
+
+    def test_retrieval_diagnostic_summary_reports_misses(self) -> None:
+        hit = self.runner.evaluate_response(
+            {
+                "id": "hit",
+                "category": "grounded_lookup",
+                "expected_behavior": "answer",
+                "expected_document_ids": ["doc-a"],
+                "min_answer_chars": 1,
+            },
+            {
+                "assistant_message": {
+                    "ai_action": "answer_with_citations",
+                    "message": "ok",
+                    "citations": [{"document_id": "doc-a"}],
+                },
+                "rag": {"answerable": True},
+            },
+            retrieval_diagnostic={
+                "enabled": True,
+                "top_k": 10,
+                "expected_document_ids": ["doc-a"],
+                "acceptable_document_ids": [],
+                "hit": True,
+                "reciprocal_rank": 1.0,
+            },
+        )
+        miss = self.runner.evaluate_response(
+            {
+                "id": "miss",
+                "category": "grounded_lookup",
+                "expected_behavior": "answer",
+                "expected_document_ids": ["doc-b"],
+                "min_answer_chars": 1,
+            },
+            {
+                "assistant_message": {
+                    "ai_action": "answer_with_citations",
+                    "message": "ok",
+                    "citations": [{"document_id": "doc-x"}],
+                },
+                "rag": {"answerable": True},
+            },
+            retrieval_diagnostic={
+                "enabled": True,
+                "top_k": 10,
+                "expected_document_ids": ["doc-b"],
+                "acceptable_document_ids": [],
+                "hit": False,
+                "reciprocal_rank": 0.0,
+                "miss_reason": "expected_document_not_in_top_k",
+            },
+        )
+
+        summary = self.runner.summarize_results([hit, miss])
+
+        self.assertEqual(summary["retrieval_diagnostics"]["checked_count"], 2)
+        self.assertEqual(summary["retrieval_diagnostics"]["recall_at_k"], 0.5)
+        self.assertEqual(summary["retrieval_diagnostics"]["mrr"], 0.5)
+        self.assertEqual(
+            summary["retrieval_diagnostics"]["miss_reasons"],
+            {"expected_document_not_in_top_k": 1},
+        )
 
     def test_answer_evaluator_catches_missing_structured_sections(self) -> None:
         scenario = {
@@ -448,6 +573,62 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
         self.assertEqual(results[1].parent_scenario_id, "complete")
         self.assertEqual(results[1].quick_reply_value, "criteria_table")
         self.assertEqual(calls[1][2]["message"], "criteria_table")
+
+    def test_run_scenario_results_can_attach_retrieval_diagnostics(self) -> None:
+        calls = []
+
+        def fake_http_json(method, _base_url, path, **kwargs):
+            calls.append((method, path, kwargs.get("body")))
+            if path == "/search":
+                return {
+                    "results": [
+                        {"document_id": "doc-x", "text": "do not persist this text"},
+                        {"document_id": "doc-a", "text": "do not persist this either"},
+                    ],
+                    "correlation_id": "search-1",
+                }
+            self.assertEqual(path, "/chat/sessions")
+            return {
+                "session_id": "sess_1",
+                "assistant_message": {
+                    "ai_action": "answer_with_citations",
+                    "message": "結論: M8 は 25 N.m です。\n\n根拠:\n- doc-a",
+                    "citations": [{"document_id": "doc-a"}],
+                },
+                "rag": {"answerable": True},
+            }
+
+        self.runner.http_json = fake_http_json
+        scenario = {
+            "id": "complete",
+            "category": "grounded_lookup",
+            "question": "M8 のトルクは？",
+            "expected_behavior": "answer",
+            "expected_document_ids": ["doc-a"],
+            "required_sections": [{"label": "根拠", "terms": ["根拠"]}],
+            "min_answer_chars": 10,
+        }
+
+        results = self.runner.run_scenario_results(
+            "http://api/v1",
+            "token",
+            "api-key",
+            scenario,
+            collection_id="manuals",
+            timeout=1,
+            retrieval_diagnostics=True,
+            retrieval_top_k=3,
+        )
+
+        self.assertEqual(calls[0][1], "/search")
+        self.assertEqual(calls[0][2]["top_k"], 3)
+        self.assertEqual(calls[1][1], "/chat/sessions")
+        self.assertTrue(results[0].passed, msg=results[0].failures)
+        self.assertEqual(results[0].retrieval_diagnostic["first_hit_rank"], 2)
+        self.assertNotIn(
+            "do not persist",
+            json.dumps(results[0].retrieval_diagnostic, ensure_ascii=False),
+        )
 
     def test_quick_reply_check_fails_when_value_was_not_offered(self) -> None:
         self.runner.http_json = lambda *_args, **_kwargs: {
