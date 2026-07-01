@@ -13,8 +13,8 @@ the unsafe things, and avoids thin answers.
 - Troubleshooting answers include enough concrete cause/action facts to be useful.
 - Draft, pending-review, obsolete, out-of-scope, and prompt-injection requests refuse or hand off.
 - Thin answers are detected with `min_answer_chars` and `required_terms`.
-- Datasets can include contextual quick reply checks so `details`, `steps`, `criteria_table`,
-  `cautions`, and `evidence` follow-ups are scored as separate turns.
+- Datasets can include contextual quick reply checks so `steps`, `criteria_table`, `cautions`,
+  and `evidence` follow-ups are scored as separate turns.
 - The v2 readiness dataset also checks expected/acceptable citation IDs, required answer sections,
   ambiguity/clarification behavior, quick reply pass rate, profile labels, and failure attribution.
 

@@ -149,6 +149,8 @@ CAUTION_TERMS = (
     "禁止",
     "停止",
     "異常",
+    "過負荷",
+    "発報",
     "損傷",
     "焼損",
     "漏れ",
@@ -230,6 +232,7 @@ class StoredMessage:
     ai_action: str | None = None
     citations: list[dict] = field(default_factory=list)
     quick_replies: list[dict] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
     created_at: str = field(default_factory=_now)
 
     def public(self) -> dict:
@@ -511,6 +514,18 @@ class ChatbotService:
             )
             if evidence_turn:
                 assistant, rag = evidence_turn
+                return 200, self._turn_response(
+                    principal, session, user_message, assistant, rag=rag
+                )
+
+        if quick_reply_action in {"details", "steps", "criteria_table", "cautions"}:
+            followup_turn = self._previous_reformat_turn(
+                session,
+                quick_reply_action,
+                body.get("collection_id") or session.metadata.get("collection_id"),
+            )
+            if followup_turn:
+                assistant, rag = followup_turn
                 return 200, self._turn_response(
                     principal, session, user_message, assistant, rag=rag
                 )
@@ -1075,6 +1090,11 @@ class ChatbotService:
                 "answer_with_citations",
                 citations=citations,
                 quick_replies=self._quick_replies_for_answer(text, answer_text),
+                metadata={
+                    "source_answer_text": answer_text,
+                    "source_question": text,
+                    "collection_id": collection_id,
+                },
             )
             return assistant, rag, None
 
@@ -1163,6 +1183,7 @@ class ChatbotService:
         ai_action: str | None = None,
         citations: list[dict] | None = None,
         quick_replies: list[dict] | None = None,
+        metadata: dict | None = None,
     ) -> StoredMessage:
         message = StoredMessage(
             message_id=_id("msg"),
@@ -1171,6 +1192,7 @@ class ChatbotService:
             ai_action=ai_action,
             citations=list(citations or []),
             quick_replies=list(quick_replies or []),
+            metadata=dict(metadata or {}),
         )
         session.messages.append(message)
         session.last_message_at = message.created_at
@@ -1185,6 +1207,7 @@ class ChatbotService:
         *,
         citations: list[dict] | None = None,
         quick_replies: list[dict] | None = None,
+        metadata: dict | None = None,
     ) -> StoredMessage:
         return self._add_message(
             session,
@@ -1193,6 +1216,7 @@ class ChatbotService:
             ai_action=ai_action,
             citations=citations,
             quick_replies=quick_replies,
+            metadata=metadata,
         )
 
     def _format_chatbot_answer(
@@ -1201,6 +1225,7 @@ class ChatbotService:
         question: str,
         collection_id: str | None,
         citations: list[dict],
+        followup_action: str | None = None,
     ) -> str:
         answer = answer_text.strip()
         if not answer:
@@ -1229,6 +1254,61 @@ class ChatbotService:
             cause_lines = ["原因は、引用内で明示された範囲に限定して確認してください。"]
         if not action_lines:
             action_lines = ["対策は、引用内で確認できる処置と確認項目に限定されます。"]
+
+        if followup_action == "steps":
+            if self._answer_template_intent(question, answer) == "troubleshooting":
+                lines = action_lines
+            else:
+                lines = procedure_lines
+            sections = [
+                ("手順", self._numbered_lines(lines)),
+                (
+                    "補足",
+                    self._bullet_lines(
+                        [
+                            "直前の回答と同じ承認済み根拠から、作業順に関係する記述だけを抜き出しています。",
+                            "文書にない作業条件や例外は追加していません。",
+                        ]
+                    ),
+                ),
+                ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
+            ]
+            return "\n\n".join(f"{title}:\n{body}" for title, body in sections)
+
+        if followup_action == "criteria_table":
+            rows = [self._compact_line(line) for line in criteria_lines if line]
+            subject = self._compact_line(conclusion, limit=120)
+            if subject:
+                rows = [subject, *rows]
+            unique_rows = list(dict.fromkeys(rows))[:5]
+            table_lines = ["| 項目 | 判断基準 |", "|---|---|"]
+            for index, line in enumerate(unique_rows, start=1):
+                table_lines.append(f"| {index} | {line} |")
+            sections = [
+                ("判断基準", "\n".join(table_lines)),
+                (
+                    "補足",
+                    self._bullet_lines(
+                        [
+                            "数値、閾値、OK/NG、条件として読める記述だけを表にしています。",
+                            "根拠にない基準は空欄補完せず、担当者確認の対象にしてください。",
+                        ]
+                    ),
+                ),
+                ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
+            ]
+            return "\n\n".join(f"{title}:\n{body}" for title, body in sections)
+
+        if followup_action == "cautions":
+            sections = [
+                ("注意点", self._bullet_lines(caution_lines)),
+                (
+                    "担当者確認が必要な条件",
+                    self._bullet_lines(self._uncertainty_lines()),
+                ),
+                ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
+            ]
+            return "\n\n".join(f"{title}:\n{body}" for title, body in sections)
 
         if self._answer_template_intent(question, answer) == "troubleshooting":
             sections = [
@@ -1271,16 +1351,34 @@ class ChatbotService:
             "設備型式、版、作業条件が違う場合は確認依頼に回してください。",
         ]
 
-    def _quick_replies_for_answer(self, question: str, answer_text: str) -> list[dict]:
+    def _quick_replies_for_answer(
+        self, question: str, answer_text: str, *, exclude: set[str] | None = None
+    ) -> list[dict]:
+        exclude = set(exclude or set())
         blob = f"{question}\n{answer_text}"
-        actions = ["details"]
+        candidates: set[str] = set()
         if self._contains_any(blob, PROCEDURE_TERMS):
-            actions.append("steps")
+            candidates.add("steps")
         if self._contains_any(blob, CRITERIA_TERMS):
-            actions.append("criteria_table")
+            candidates.add("criteria_table")
         if self._contains_any(blob, CAUTION_TERMS):
-            actions.append("cautions")
-        actions.append("evidence")
+            candidates.add("cautions")
+
+        focused_actions: list[str] = []
+        if self._contains_any(question, PROCEDURE_TERMS):
+            focused_actions.append("steps")
+        if self._contains_any(question, CRITERIA_TERMS):
+            focused_actions.append("criteria_table")
+        if self._contains_any(question, CAUTION_TERMS):
+            focused_actions.append("cautions")
+
+        actions: list[str] = []
+        for action in [*focused_actions, "steps", "criteria_table", "cautions"]:
+            if action in candidates and action not in actions and action not in exclude:
+                actions.append(action)
+        actions = actions[:2]
+        if "evidence" not in exclude:
+            actions.append("evidence")
 
         replies: list[dict] = []
         seen: set[str] = set()
@@ -1289,7 +1387,7 @@ class ChatbotService:
                 continue
             seen.add(action)
             replies.append({"label": FOLLOWUP_QUICK_REPLY_LABELS[action], "value": action})
-            if len(replies) >= 4:
+            if len(replies) >= 3:
                 break
         return replies
 
@@ -1417,11 +1515,14 @@ class ChatbotService:
         if answer_message is None:
             return None
 
+        metadata = dict(answer_message.metadata or {})
         previous_question = ""
         for message in reversed(session.messages[:answer_index]):
             if message.role == "user" and not self._quick_reply_action(message.content_redacted):
                 previous_question = message.content_redacted
                 break
+        if not previous_question:
+            previous_question = str(metadata.get("source_question") or "")
 
         document_ids = [
             str(citation.get("document_id") or "")
@@ -1431,13 +1532,69 @@ class ChatbotService:
         return {
             "question": previous_question,
             "answer": answer_message.content_redacted,
+            "source_answer_text": str(
+                metadata.get("source_answer_text") or answer_message.content_redacted
+            ),
+            "source_question": str(metadata.get("source_question") or previous_question),
             "citations": [dict(citation) for citation in answer_message.citations],
             "document_ids": list(dict.fromkeys(document_ids)),
         }
 
+    def _previous_reformat_turn(
+        self, session: ChatSession, action: str, collection_id: str | None
+    ) -> tuple[StoredMessage, dict] | None:
+        if not self._pre_rag_source_policy_ids(session, collection_id):
+            return None
+        context = self._last_answer_context(session)
+        if not context:
+            return None
+        citations = [dict(citation) for citation in (context.get("citations") or [])]
+        if not citations:
+            return None
+
+        question = str(context.get("source_question") or context.get("question") or "前回の質問")
+        source_answer = str(context.get("source_answer_text") or context.get("answer") or "")
+        if not source_answer.strip():
+            return None
+
+        answer = self._format_chatbot_answer(
+            source_answer,
+            question,
+            collection_id,
+            citations,
+            followup_action=action,
+        )
+        rag = {
+            "rag_interaction_id": _id("rag_chat"),
+            "status": "ok",
+            "answerable": True,
+            "confidence": None,
+            "no_answer_reason": None,
+            "trace_id": None,
+            "latency_ms": 0,
+            "citations": citations,
+            "source_policy_id": (session.last_rag or {}).get("source_policy_id"),
+        }
+        session.last_rag = rag
+        assistant = self._assistant(
+            session,
+            answer,
+            "answer_with_citations",
+            citations=citations,
+            quick_replies=self._quick_replies_for_answer(question, source_answer, exclude={action}),
+            metadata={
+                "source_answer_text": source_answer,
+                "source_question": question,
+                "collection_id": collection_id,
+            },
+        )
+        return assistant, rag
+
     def _previous_evidence_turn(
         self, session: ChatSession, collection_id: str | None
     ) -> tuple[StoredMessage, dict] | None:
+        if not self._pre_rag_source_policy_ids(session, collection_id):
+            return None
         context = self._last_answer_context(session)
         if not context:
             return None
@@ -1481,7 +1638,14 @@ class ChatbotService:
             answer,
             "answer_with_citations",
             citations=citations,
-            quick_replies=[{"label": DETAILS_QUICK_REPLY_LABEL, "value": "details"}],
+            quick_replies=[],
+            metadata={
+                "source_answer_text": str(
+                    context.get("source_answer_text") or context.get("answer") or ""
+                ),
+                "source_question": question,
+                "collection_id": collection_id,
+            },
         )
         return assistant, rag
 

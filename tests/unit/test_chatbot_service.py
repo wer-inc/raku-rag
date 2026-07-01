@@ -100,7 +100,6 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertEqual(
             turn["assistant_message"]["quick_replies"],
             [
-                {"label": "この根拠でもう少し詳しく", "value": "details"},
                 {"label": "根拠を確認する", "value": "evidence"},
             ],
         )
@@ -218,10 +217,11 @@ class ChatbotServiceTest(unittest.TestCase):
         labels = [reply["label"] for reply in turn["assistant_message"]["quick_replies"]]
         self.assertIn("手順だけ見る", labels)
         self.assertIn("注意点を確認", labels)
-        self.assertIn("判断基準を表にする", labels)
-        self.assertLessEqual(len(labels), 4)
+        self.assertIn("根拠を確認する", labels)
+        self.assertNotIn("この根拠でもう少し詳しく", labels)
+        self.assertLessEqual(len(labels), 3)
 
-    def test_contextual_quick_reply_expands_to_previous_answer_context(self):
+    def test_contextual_quick_reply_reformats_previous_answer_without_new_rag_search(self):
         queries = []
 
         def rag_answerer(_principal, query, _collection_id):
@@ -248,16 +248,14 @@ class ChatbotServiceTest(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
-        self.assertNotEqual(queries[-1], "steps")
-        self.assertIn("AL-21 の点検手順", queries[-1])
-        self.assertIn("手順だけを番号付き", queries[-1])
-        self.assertIn("eq-alarm-e152-al21", queries[-1])
-        self.assertNotIn("前回回答:", queries[-1])
-        self.assertNotIn("参照範囲:", queries[-1])
-        self.assertNotIn("不明点:", queries[-1])
-        self.assertNotIn("担当者", queries[-1])
+        self.assertEqual(len(queries), 1)
+        self.assertIn("手順:\n1.", turn["assistant_message"]["message"])
+        self.assertIn("非常停止", turn["assistant_message"]["message"])
+        self.assertIn("eq-alarm-e152-al21", turn["assistant_message"]["message"])
+        self.assertNotIn("前回回答:", turn["assistant_message"]["message"])
+        self.assertNotIn("不明点:", turn["assistant_message"]["message"])
 
-    def test_details_quick_reply_uses_previous_answer_context_for_rag(self):
+    def test_details_alias_reformats_previous_answer_but_is_not_displayed(self):
         queries = []
 
         def rag_answerer(_principal, query, _collection_id):
@@ -284,9 +282,9 @@ class ChatbotServiceTest(unittest.TestCase):
                 "collection_id": "manuals",
             },
         )
-        self.assertEqual(
-            first_turn["assistant_message"]["quick_replies"][0],
+        self.assertNotIn(
             {"label": "この根拠でもう少し詳しく", "value": "details"},
+            first_turn["assistant_message"]["quick_replies"],
         )
         self.assertNotIn(
             {"label": "担当者に確認依頼", "value": "handoff"},
@@ -304,14 +302,11 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertTrue(details_turn["rag"]["answerable"])
         self.assertEqual(
             details_turn["assistant_message"]["citations"][0]["document_id"],
-            "eq-motor-m8-torque",
+                "eq-motor-m8-torque",
         )
-        self.assertNotEqual(queries[-1], "details")
-        self.assertIn("モータ M8 の締付トルク", queries[-1])
-        self.assertIn("eq-motor-m8-torque", queries[-1])
-        self.assertNotIn("前回回答:", queries[-1])
-        self.assertNotIn("参照範囲:", queries[-1])
-        self.assertNotIn("担当者", queries[-1])
+        self.assertEqual(len(queries), 1)
+        self.assertIn("結論:", details_turn["assistant_message"]["message"])
+        self.assertIn("モータ M8", details_turn["assistant_message"]["message"])
         self.assertEqual(
             service.get_session(_principal(), created["session_id"])[1]["messages"][-2][
                 "content_redacted"
@@ -320,7 +315,7 @@ class ChatbotServiceTest(unittest.TestCase):
         )
 
     def test_followup_quick_replies_do_not_depend_on_formatted_answer_boilerplate(self):
-        actions = ("details", "steps", "cautions", "criteria_table")
+        actions = ("steps", "cautions", "criteria_table")
 
         for action in actions:
             with self.subTest(action=action):
@@ -374,6 +369,52 @@ class ChatbotServiceTest(unittest.TestCase):
                     turn["assistant_message"]["citations"][0]["document_id"],
                     "eq-alarm-e152-al21",
                 )
+                self.assertEqual(len(queries), 1)
+
+    def test_quick_reply_actions_reformat_same_evidence_with_distinct_outputs(self):
+        queries = []
+
+        def rag_answerer(_principal, query, _collection_id):
+            queries.append(query)
+            return _rag_answer(
+                text=(
+                    "設備 E-152 の AL-21 は過負荷を示します。手順は非常停止、"
+                    "Vベルト張力10mm確認、電流確認、試運転の順です。"
+                    "電流が12Aを超える場合は発報します。"
+                    "安全確認が終わるまで再起動は禁止です。"
+                ),
+                document_id="eq-alarm-e152-al21",
+            )
+
+        service = ChatbotService(rag_answerer)
+        _enable_internal_chat_collection(service)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+        service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "AL-21 の点検手順と判断基準と注意点を教えて", "collection_id": "manuals"},
+        )
+
+        messages = {}
+        for action in ("steps", "criteria_table", "cautions"):
+            status, turn = service.submit_message(
+                _principal(),
+                created["session_id"],
+                {"message": action, "collection_id": "manuals"},
+            )
+            self.assertEqual(status, 200)
+            messages[action] = turn["assistant_message"]["message"]
+            self.assertEqual(turn["assistant_message"]["citations"][0]["document_id"], "eq-alarm-e152-al21")
+
+        self.assertEqual(len(queries), 1)
+        self.assertIn("手順:\n1.", messages["steps"])
+        self.assertNotIn("判断基準:\n| 項目 | 判断基準 |", messages["steps"])
+        self.assertIn("判断基準:\n| 項目 | 判断基準 |", messages["criteria_table"])
+        self.assertIn("AL-21", messages["criteria_table"])
+        self.assertIn("12A", messages["criteria_table"])
+        self.assertIn("注意点:", messages["cautions"])
+        self.assertIn("過負荷", messages["cautions"])
+        self.assertEqual(len(set(messages.values())), 3)
 
     def test_evidence_quick_reply_uses_previous_filtered_citations_without_rerunning_rag(self):
         queries = []

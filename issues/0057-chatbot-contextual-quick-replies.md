@@ -22,6 +22,15 @@
 - `/chat/sessions/:sessionId/messages` の follow-up body には選択中 `collection_id` と action value を入れ、
   raw context や credentials は出力しない。
 
+## 実装メモ(2026-07-01 追記)
+
+- `この根拠でもう少し詳しく` / `details` は表示候補から外した。
+- 表示する quick reply は `手順だけ見る`, `判断基準を表にする`, `注意点を確認`,
+  `根拠を確認する` のうち回答内容に合うものだけに絞る。
+- `steps` / `criteria_table` / `cautions` は追加RAG検索ではなく、直前の承認済み根拠付き回答を
+  専用フォーマットへ再整形する。
+- 各ボタンが同じ文章にならないこと、追加RAG検索を呼ばないことを unit test で固定した。
+
 ## 背景(なぜ今)
 
 現在の ChatBot quick reply は主に「もう少し詳しく」「人間に相談する」だけで、内部値も抽象的だった。

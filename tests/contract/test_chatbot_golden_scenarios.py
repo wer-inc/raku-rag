@@ -112,7 +112,7 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
                     "question": "q",
                     "expected_behavior": "answer",
                     "expected_document_ids": ["doc-a"],
-                    "quick_reply_checks": [{"value": "details", "required_terms": ["25"]}],
+                    "quick_reply_checks": [{"value": "criteria_table", "required_terms": ["25"]}],
                 }
             ],
         }
@@ -399,7 +399,7 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
                         "ai_action": "answer_with_citations",
                         "message": "結論: M8 は 25 N.m です。\n\n根拠:\n- doc-a",
                         "citations": [{"document_id": "doc-a"}],
-                        "quick_replies": [{"label": "この根拠でもう少し詳しく", "value": "details"}],
+                        "quick_replies": [{"label": "判断基準を表にする", "value": "criteria_table"}],
                     },
                     "rag": {"answerable": True},
                 }
@@ -424,7 +424,7 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
             "min_answer_chars": 10,
             "quick_reply_checks": [
                 {
-                    "value": "details",
+                    "value": "criteria_table",
                     "expected_behavior": "answer",
                     "expected_document_ids": ["doc-a"],
                     "required_sections": [{"label": "根拠", "terms": ["根拠"]}],
@@ -446,8 +446,8 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
         self.assertTrue(all(result.passed for result in results), msg=results[1].failures)
         self.assertEqual(results[1].turn_type, "quick_reply")
         self.assertEqual(results[1].parent_scenario_id, "complete")
-        self.assertEqual(results[1].quick_reply_value, "details")
-        self.assertEqual(calls[1][2]["message"], "details")
+        self.assertEqual(results[1].quick_reply_value, "criteria_table")
+        self.assertEqual(calls[1][2]["message"], "criteria_table")
 
     def test_quick_reply_check_fails_when_value_was_not_offered(self) -> None:
         self.runner.http_json = lambda *_args, **_kwargs: {
@@ -469,7 +469,7 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
             "min_answer_chars": 10,
             "quick_reply_checks": [
                 {
-                    "value": "details",
+                    "value": "criteria_table",
                     "expected_behavior": "answer",
                     "expected_document_ids": ["doc-a"],
                     "min_answer_chars": 10,

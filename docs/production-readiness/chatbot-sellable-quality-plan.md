@@ -10,6 +10,11 @@ has also been strengthened as the grounded fallback before the later `manufactur
 profile: answerable turns render `結論`, `対象・前提`, `手順`, `数値基準`, `注意点`,
 `判断に迷う条件`, and `根拠` without weakening source policy, ACL, or approved-evidence gates.
 
+Implementation note (2026-07-01): Follow-up quick replies now avoid the ambiguous `details` button.
+Displayed actions are limited to business transformations (`手順だけ見る`, `判断基準を表にする`,
+`注意点を確認`) plus evidence confirmation, and follow-up turns reformat the previous grounded answer
+instead of launching another RAG search.
+
 ## Purpose
 
 The current staging ChatBot scorecard proves the product no longer fails basic grounded-answer and

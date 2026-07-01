@@ -50,11 +50,6 @@
       "min_answer_chars": 160,
       "quick_reply_checks": [
         {
-          "value": "details",
-          "required_terms": ["M8", "25", "M16", "95", "0.05", "1MΩ"],
-          "min_answer_chars": 130
-        },
-        {
           "value": "criteria_table",
           "required_terms": ["25", "95", "0.05", "1MΩ"],
           "min_answer_chars": 100
