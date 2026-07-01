@@ -24,7 +24,24 @@
       "expected_behavior": "answer",
       "required_citations": ["eq-motor-m8-torque"],
       "required_terms": ["M8", "25", "M16", "95"],
-      "min_answer_chars": 70
+      "min_answer_chars": 70,
+      "quick_reply_checks": [
+        {
+          "value": "details",
+          "required_terms": ["M8", "25", "M16", "95"],
+          "min_answer_chars": 100
+        },
+        {
+          "value": "criteria_table",
+          "required_terms": ["25", "95"],
+          "min_answer_chars": 80
+        },
+        {
+          "value": "evidence",
+          "required_terms": ["eq-motor-m8-torque"],
+          "min_answer_chars": 40
+        }
+      ]
     },
     {
       "id": "grounded-pump-lubrication",
@@ -42,7 +59,14 @@
       "expected_behavior": "answer",
       "required_citations": ["qis-0123"],
       "required_terms": ["1201", "3200", "125", "Ac", "3", "Re", "4"],
-      "min_answer_chars": 100
+      "min_answer_chars": 100,
+      "quick_reply_checks": [
+        {
+          "value": "criteria_table",
+          "required_terms": ["1201", "3200", "125", "Ac", "3", "Re", "4"],
+          "min_answer_chars": 90
+        }
+      ]
     },
     {
       "id": "grounded-appearance-thresholds",
@@ -60,7 +84,19 @@
       "expected_behavior": "answer",
       "required_citations": ["std-2210-hydrotest"],
       "required_terms": ["1.5", "30", "0.3", "バリケード", "急減圧"],
-      "min_answer_chars": 140
+      "min_answer_chars": 140,
+      "quick_reply_checks": [
+        {
+          "value": "steps",
+          "required_terms": ["1.5", "30", "0.3"],
+          "min_answer_chars": 90
+        },
+        {
+          "value": "cautions",
+          "required_terms": ["バリケード", "急減圧"],
+          "min_answer_chars": 80
+        }
+      ]
     },
     {
       "id": "procedural-loto",

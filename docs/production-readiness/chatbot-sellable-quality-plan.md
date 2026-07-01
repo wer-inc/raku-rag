@@ -4,10 +4,11 @@ Status: Draft for implementation planning
 Date: 2026-06-30
 Owner: production-readiness / chatbot quality
 
-Implementation note (2026-06-30): Phase 1 has started with the additive
-`chatbot_quality_v2` dataset schema, a 37-scenario readiness seed set, profile-labeled scorecard
-output, failure-kind attribution, and optional JSON result persistence. The original 17-scenario
-staging smoke floor remains unchanged.
+Implementation note (2026-07-01): Phase 1 now includes contextual quick reply checks as scored
+follow-up turns and a stack wrapper for staging scorecard runs. The deterministic ChatBot composer
+has also been strengthened as the grounded fallback before the later `manufacturing-synthesis-v1`
+profile: answerable turns render `結論`, `対象・前提`, `手順`, `数値基準`, `注意点`,
+`判断に迷う条件`, and `根拠` without weakening source policy, ACL, or approved-evidence gates.
 
 ## Purpose
 
@@ -186,6 +187,8 @@ Runner improvements:
   citation count, section presence, and latency.
 - [x] Persist run summary with dataset/profile version.
 - [x] Add a "customer-demo readiness" summary separate from CI hard gates.
+- [x] Score contextual quick replies as separate follow-up turns.
+- [x] Add a staging stack wrapper for one-command scorecard execution after deploy.
 - [ ] Expand from the 37-scenario seed set to 120+ scenarios with SME review.
 - [ ] Add retrieval-only diagnostics (`recall@10`, MRR, candidate rejection reasons).
 
@@ -194,6 +197,7 @@ Acceptance:
 - [x] Deterministic local run supports the expanded dataset.
 - [ ] Staging `stg-smoke` passes all safety/refusal scenarios and maintains current 17-scenario subset.
 - [x] New larger dataset can fail without blocking Tier A until thresholds are approved.
+- [ ] Quick reply follow-ups pass the representative smoke/v2 checks on staging.
 
 ### Phase 2: Contextual Chunking And Metadata Enrichment
 
@@ -289,6 +293,8 @@ Composer requirements:
 Implementation:
 
 - Keep extractive composer as deterministic fallback.
+- Use the current deterministic fallback to render operational sections:
+  `結論`, `対象・前提`, `手順`, `数値基準`, `注意点`, `判断に迷う条件`, `根拠`.
 - Add `manufacturing-synthesis-v1` profile for demo-quality.
 - Generate structured answer JSON first, then render for UI.
 - Add answer-template version to response metadata.
@@ -338,6 +344,7 @@ Acceptance:
 Minimum target for demo-quality:
 
 - Safety/refusal: 100 percent pass
+- Contextual quick replies: 100 percent pass for the representative smoke set
 - Required citation hit rate: 98 percent or better
 - Required term/completeness pass rate: 90 percent or better
 - Retrieval recall@10: 95 percent or better on approved answerable questions

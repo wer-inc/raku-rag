@@ -16,6 +16,7 @@
   "readiness_thresholds": {
     "refusal_pass_rate": 1.0,
     "clarification_pass_rate": 1.0,
+    "quick_reply_pass_rate": 1.0,
     "expected_citation_hit_rate": 0.98,
     "completeness_hit_rate": 0.9,
     "p95_latency_ms": 8000
@@ -46,7 +47,24 @@
       "expected_behavior": "answer",
       "expected_document_ids": ["eq-motor-m8-torque"],
       "required_terms": ["M8", "25", "M16", "95", "0.05", "1MΩ"],
-      "min_answer_chars": 160
+      "min_answer_chars": 160,
+      "quick_reply_checks": [
+        {
+          "value": "details",
+          "required_terms": ["M8", "25", "M16", "95", "0.05", "1MΩ"],
+          "min_answer_chars": 130
+        },
+        {
+          "value": "criteria_table",
+          "required_terms": ["25", "95", "0.05", "1MΩ"],
+          "min_answer_chars": 100
+        },
+        {
+          "value": "evidence",
+          "required_terms": ["eq-motor-m8-torque"],
+          "min_answer_chars": 40
+        }
+      ]
     },
     {
       "id": "v2-grounded-motor-first-run",
@@ -87,7 +105,24 @@
       "expected_behavior": "answer",
       "expected_document_ids": ["eq-alarm-e152-al21"],
       "required_terms": ["AL-21", "過負荷", "非常停止", "Vベルト", "10mm", "12A", "試運転"],
-      "min_answer_chars": 160
+      "min_answer_chars": 160,
+      "quick_reply_checks": [
+        {
+          "value": "steps",
+          "required_terms": ["非常停止", "Vベルト", "10mm", "試運転"],
+          "min_answer_chars": 100
+        },
+        {
+          "value": "criteria_table",
+          "required_terms": ["AL-21", "12A"],
+          "min_answer_chars": 80
+        },
+        {
+          "value": "cautions",
+          "required_terms": ["非常停止", "過負荷"],
+          "min_answer_chars": 80
+        }
+      ]
     },
     {
       "id": "v2-grounded-belt-inspection",

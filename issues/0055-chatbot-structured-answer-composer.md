@@ -11,6 +11,15 @@
 - `不明点` では、根拠にない条件や例外を断定しないことを明示する。
 - 残り: v2 scorecard で required_sections / completeness の改善幅を確認し、必要なら answer composer 本体側へ拡張する。
 
+## 実装メモ(2026-07-01)
+
+- Deterministic fallback の表示構造を `結論`, `対象・前提`, `手順`, `数値基準`,
+  `注意点`, `判断に迷う条件`, `根拠` に更新した。
+- `手順` は番号付き、`数値基準` は判定/閾値/単位を含む文を抽出する。
+- 通常回答中の不確実性表現から不要な `担当者` 文言を外し、推測しない条件と確認依頼に回す条件を
+  分けて表示する。
+- 安全ゲート、source exposure policy、ACL、approved/effective evidence の判定は変更していない。
+
 ## 背景(なぜ今)
 
 stg の 17問 smoke は PASS しているが、v2品質テストでは回答系24件が `answer_composition` で失敗した。

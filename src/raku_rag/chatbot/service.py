@@ -1129,6 +1129,7 @@ class ChatbotService:
 
         conclusion = self._strip_leading_section_label(answer)
         procedure_lines = self._extract_relevant_lines(answer, PROCEDURE_TERMS, limit=3)
+        criteria_lines = self._extract_relevant_lines(answer, CRITERIA_TERMS, limit=4)
         caution_lines = self._extract_relevant_lines(answer, CAUTION_TERMS, limit=3)
         evidence_lines = self._evidence_lines(citations)
         condition_lines = [
@@ -1139,21 +1140,27 @@ class ChatbotService:
 
         if not procedure_lines:
             procedure_lines = ["文書内で明示された手順は、上記の回答範囲に限定されます。"]
+        if not criteria_lines:
+            criteria_lines = ["数値基準や判定条件は、引用内で確認できる範囲に限定されます。"]
         if not caution_lines:
             caution_lines = ["追加の注意点は引用内で確認できる範囲に限定されます。"]
 
         sections = [
             ("結論", conclusion),
-            ("条件", self._bullet_lines(condition_lines)),
-            ("手順", self._bullet_lines(procedure_lines)),
+            ("対象・前提", self._bullet_lines(condition_lines)),
+            ("手順", self._numbered_lines(procedure_lines)),
+            ("数値基準", self._bullet_lines(criteria_lines)),
             ("注意点", self._bullet_lines(caution_lines)),
-            ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
             (
-                "不明点",
+                "判断に迷う条件",
                 self._bullet_lines(
-                    ["根拠にない条件、例外、最新運用ルールは断定しません。必要なら担当者に確認依頼してください。"]
+                    [
+                        "根拠にない条件、例外、最新運用ルールは断定しません。",
+                        "設備型式、版、作業条件が違う場合は確認依頼に回してください。",
+                    ]
                 ),
             ),
+            ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
         ]
         return "\n\n".join(f"{title}:\n{body}" for title, body in sections)
 
@@ -1272,6 +1279,10 @@ class ChatbotService:
 
     def _bullet_lines(self, lines: list[str]) -> str:
         return "\n".join(f"- {self._compact_line(line)}" for line in lines if line)
+
+    def _numbered_lines(self, lines: list[str]) -> str:
+        compacted = [self._compact_line(line) for line in lines if line]
+        return "\n".join(f"{index}. {line}" for index, line in enumerate(compacted, start=1))
 
     def _compact_line(self, text: str, *, limit: int = 220) -> str:
         compact = re.sub(r"\s+", " ", text.strip(" \t\r\n-・"))

@@ -100,6 +100,32 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
         self.assertEqual(scenarios[0]["min_citations"], 2)
         self.assertNotIn("min_answer_chars", scenarios[1])
 
+    def test_scenarios_with_defaults_applies_quick_reply_defaults(self) -> None:
+        dataset = {
+            "default_min_answer_chars": 123,
+            "default_min_citations": 2,
+            "default_required_sections": [{"label": "根拠", "terms": ["根拠"]}],
+            "scenarios": [
+                {
+                    "id": "a",
+                    "category": "grounded_lookup",
+                    "question": "q",
+                    "expected_behavior": "answer",
+                    "expected_document_ids": ["doc-a"],
+                    "quick_reply_checks": [{"value": "details", "required_terms": ["25"]}],
+                }
+            ],
+        }
+
+        scenarios = self.runner.scenarios_with_defaults(dataset)
+        check = scenarios[0]["quick_reply_checks"][0]
+
+        self.assertEqual(check["expected_behavior"], "answer")
+        self.assertEqual(check["min_answer_chars"], 123)
+        self.assertEqual(check["min_citations"], 2)
+        self.assertEqual(check["expected_document_ids"], ["doc-a"])
+        self.assertEqual(check["required_sections"], [{"label": "根拠", "terms": ["根拠"]}])
+
     def test_answer_evaluator_catches_thin_answers(self) -> None:
         scenario = {
             "id": "thin",
@@ -360,6 +386,110 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
         self.assertTrue(readiness["threshold_results"]["refusal_pass_rate"])
         self.assertFalse(readiness["threshold_results"]["clarification_pass_rate"])
         self.assertFalse(readiness["ready"])
+
+    def test_run_scenario_results_checks_quick_reply_followups(self) -> None:
+        calls = []
+
+        def fake_http_json(method, _base_url, path, **kwargs):
+            calls.append((method, path, kwargs.get("body")))
+            if path == "/chat/sessions":
+                return {
+                    "session_id": "sess_1",
+                    "assistant_message": {
+                        "ai_action": "answer_with_citations",
+                        "message": "結論: M8 は 25 N.m です。\n\n根拠:\n- doc-a",
+                        "citations": [{"document_id": "doc-a"}],
+                        "quick_replies": [{"label": "この根拠でもう少し詳しく", "value": "details"}],
+                    },
+                    "rag": {"answerable": True},
+                }
+            self.assertEqual(path, "/chat/sessions/sess_1/messages")
+            return {
+                "assistant_message": {
+                    "ai_action": "answer_with_citations",
+                    "message": "結論: 同じ根拠で詳しく整理します。\n\n根拠:\n- doc-a",
+                    "citations": [{"document_id": "doc-a"}],
+                },
+                "rag": {"answerable": True},
+            }
+
+        self.runner.http_json = fake_http_json
+        scenario = {
+            "id": "complete",
+            "category": "grounded_lookup",
+            "question": "M8 のトルクは？",
+            "expected_behavior": "answer",
+            "expected_document_ids": ["doc-a"],
+            "required_sections": [{"label": "根拠", "terms": ["根拠"]}],
+            "min_answer_chars": 10,
+            "quick_reply_checks": [
+                {
+                    "value": "details",
+                    "expected_behavior": "answer",
+                    "expected_document_ids": ["doc-a"],
+                    "required_sections": [{"label": "根拠", "terms": ["根拠"]}],
+                    "min_answer_chars": 10,
+                }
+            ],
+        }
+
+        results = self.runner.run_scenario_results(
+            "http://api/v1",
+            "token",
+            "api-key",
+            scenario,
+            collection_id="manuals",
+            timeout=1,
+        )
+
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result.passed for result in results), msg=results[1].failures)
+        self.assertEqual(results[1].turn_type, "quick_reply")
+        self.assertEqual(results[1].parent_scenario_id, "complete")
+        self.assertEqual(results[1].quick_reply_value, "details")
+        self.assertEqual(calls[1][2]["message"], "details")
+
+    def test_quick_reply_check_fails_when_value_was_not_offered(self) -> None:
+        self.runner.http_json = lambda *_args, **_kwargs: {
+            "session_id": "sess_1",
+            "assistant_message": {
+                "ai_action": "answer_with_citations",
+                "message": "結論: M8 は 25 N.m です。\n\n根拠:\n- doc-a",
+                "citations": [{"document_id": "doc-a"}],
+                "quick_replies": [{"label": "根拠を確認する", "value": "evidence"}],
+            },
+            "rag": {"answerable": True},
+        }
+        scenario = {
+            "id": "complete",
+            "category": "grounded_lookup",
+            "question": "M8 のトルクは？",
+            "expected_behavior": "answer",
+            "expected_document_ids": ["doc-a"],
+            "min_answer_chars": 10,
+            "quick_reply_checks": [
+                {
+                    "value": "details",
+                    "expected_behavior": "answer",
+                    "expected_document_ids": ["doc-a"],
+                    "min_answer_chars": 10,
+                }
+            ],
+        }
+
+        results = self.runner.run_scenario_results(
+            "http://api/v1",
+            "token",
+            "api-key",
+            scenario,
+            collection_id="manuals",
+            timeout=1,
+        )
+
+        self.assertEqual(len(results), 2)
+        self.assertFalse(results[1].passed)
+        self.assertEqual(results[1].failure_kinds, ("followup",))
+        self.assertIn("was not offered", results[1].failures[0])
 
 
 if __name__ == "__main__":

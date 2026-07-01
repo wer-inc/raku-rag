@@ -12,6 +12,16 @@
 - stg 再確認で follow-up 検索文に UI 用の整形済み回答本文が混ざると、全 quick reply が根拠不足に倒れることを確認した。
   検索文は元質問・追加依頼・引用 document_id に絞り、`根拠を確認する` は直前のフィルタ済み citation summary を返す。
 
+## 実装メモ(2026-07-01)
+
+- Golden scenario runner に `quick_reply_checks` を追加し、初回回答後の follow-up を同一 session 上の
+  別ターンとして採点できるようにした。
+- 17問 smoke と v2 readiness dataset に代表 quick reply (`details`, `steps`, `criteria_table`,
+  `cautions`, `evidence`) のチェックを追加した。
+- quick reply が初回回答で提示されていない場合は `followup` failure として落とす。
+- `/chat/sessions/:sessionId/messages` の follow-up body には選択中 `collection_id` と action value を入れ、
+  raw context や credentials は出力しない。
+
 ## 背景(なぜ今)
 
 現在の ChatBot quick reply は主に「もう少し詳しく」「人間に相談する」だけで、内部値も抽象的だった。
@@ -53,7 +63,7 @@
 
 - [x] 再現テストがある。
 - [x] 正常系が確認できる。
-- [ ] 失敗時の表示/応答が確認できる。
+- [x] 失敗時の表示/応答が確認できる。
 - [x] tenant/ACL 境界を越えない。
 - [x] security/safety gate を弱めていない。
 - [x] Playwright または API smoke で確認できる。

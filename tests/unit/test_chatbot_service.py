@@ -93,9 +93,10 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertTrue(turn["rag"]["answerable"])
         self.assertEqual(turn["assistant_message"]["citations"][0]["document_id"], "doc_1")
         self.assertIn("結論:", turn["assistant_message"]["message"])
-        self.assertIn("条件:", turn["assistant_message"]["message"])
+        self.assertIn("対象・前提:", turn["assistant_message"]["message"])
+        self.assertIn("数値基準:", turn["assistant_message"]["message"])
+        self.assertIn("判断に迷う条件:", turn["assistant_message"]["message"])
         self.assertIn("根拠:", turn["assistant_message"]["message"])
-        self.assertIn("不明点:", turn["assistant_message"]["message"])
         self.assertEqual(
             turn["assistant_message"]["quick_replies"],
             [
@@ -103,6 +104,36 @@ class ChatbotServiceTest(unittest.TestCase):
                 {"label": "根拠を確認する", "value": "evidence"},
             ],
         )
+
+    def test_manufacturing_answer_format_separates_steps_criteria_and_cautions(self):
+        def rag_answerer(_principal, _query, _collection_id):
+            return _rag_answer(
+                text=(
+                    "AL-21 は過負荷を示します。手順は非常停止、Vベルト張力10mm確認、"
+                    "電流確認、試運転の順です。電流が12Aを超える場合は発報します。"
+                    "安全確認が終わるまで再起動は禁止です。"
+                ),
+                document_id="eq-alarm-e152-al21",
+            )
+
+        service = ChatbotService(rag_answerer)
+        _enable_internal_chat_collection(service)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+
+        _, turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "AL-21 の点検手順と注意点を教えて", "collection_id": "manuals"},
+        )
+
+        message = turn["assistant_message"]["message"]
+        self.assertIn("手順:\n1.", message)
+        self.assertIn("数値基準:", message)
+        self.assertIn("12A", message)
+        self.assertIn("注意点:", message)
+        self.assertIn("再起動は禁止", message)
+        self.assertIn("判断に迷う条件:", message)
+        self.assertIn("根拠:", message)
 
     def test_contextual_quick_replies_follow_answer_type(self):
         def rag_answerer(_principal, _query, _collection_id):

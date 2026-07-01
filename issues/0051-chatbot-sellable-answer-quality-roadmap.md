@@ -13,6 +13,16 @@
   metric を refusal と clarification で分離した。
 - 既存の 17件 staging smoke dataset は維持しており、Tier A hard gate にはまだしていない。
 
+## 2026-07-01 進捗メモ
+
+- Golden scenario runner が quick reply follow-up を同一 session の別ターンとして採点できるようになった。
+- 17問 smoke と v2 readiness dataset に、代表的な `details`, `steps`, `criteria_table`,
+  `cautions`, `evidence` チェックを追加した。
+- stg deploy 後の scorecard 実行を `scripts/aws/run-chatbot-golden-from-stack.sh` にまとめた。
+- deterministic ChatBot composer を `結論`, `対象・前提`, `手順`, `数値基準`, `注意点`,
+  `判断に迷う条件`, `根拠` の型に強化した。これは将来の demo-quality synthesis profile の手前の
+  grounded fallback であり、安全ルールや source policy は変更していない。
+
 ## 背景(なぜ今)
 
 stg の Golden Scenario は 17/17 PASS まで改善したが、これは「壊れていない」「安全 refusal が効く」

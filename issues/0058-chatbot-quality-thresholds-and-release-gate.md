@@ -2,6 +2,16 @@
 
 > Priority: **P1/High** / Status: Open / Labels: `chatbot`, `quality`, `eval`, `release-readiness`
 
+## 実装メモ(2026-07-01)
+
+- Scorecard output に `quick_reply_count` と `quick_reply_pass_rate` を追加した。
+- v2 readiness thresholds に `quick_reply_pass_rate: 1.0` を追加し、代表 quick reply が根拠不足や
+  unsupported follow-up に落ちる劣化を release readiness で検知できるようにした。
+- `scripts/aws/run-chatbot-golden-from-stack.sh` を追加し、stg deploy 後に ALB URL 解決、Cognito token 発行、
+  scorecard 実行を 1 コマンド化した。
+- 実行には `RAKU_CHATBOT_SMOKE_APPROVED=yes` または `RAKU_PROD_SMOKE_APPROVED=yes` を要求し、
+  token/password はログに出さない。
+
 ## 背景(なぜ今)
 
 現状は 17問 smoke が 17/17 PASS している一方、v2品質テストは 7/37 PASS に留まる。
@@ -41,6 +51,7 @@
 3. failure kind 別に blocker を分ける:
    - security/refusal は 100% 必須
    - clarification は 100% 必須
+   - quick reply は代表 smoke set で 100% 必須
    - expected citation は 98%以上
    - completeness は 80%以上から開始
 4. deploy後の任意チェックとして stg v2 scorecard 実行手順を runbook 化する。
@@ -48,11 +59,11 @@
 
 ## QA checklist
 
-- [ ] 再現テストがある。
-- [ ] 正常系が確認できる。
-- [ ] 失敗時の表示/応答が確認できる。
-- [ ] tenant/ACL 境界を越えない。
-- [ ] security/safety gate を弱めていない。
+- [x] 再現テストがある。
+- [x] 正常系が確認できる。
+- [x] 失敗時の表示/応答が確認できる。
+- [x] tenant/ACL 境界を越えない。
+- [x] security/safety gate を弱めていない。
 - [ ] Playwright または API smoke で確認できる。
 - [ ] AWS stg/live smoke が必要な場合は correlation id を保存する。
 

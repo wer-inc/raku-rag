@@ -13,8 +13,10 @@ the unsafe things, and avoids thin answers.
 - Troubleshooting answers include enough concrete cause/action facts to be useful.
 - Draft, pending-review, obsolete, out-of-scope, and prompt-injection requests refuse or hand off.
 - Thin answers are detected with `min_answer_chars` and `required_terms`.
+- Datasets can include contextual quick reply checks so `details`, `steps`, `criteria_table`,
+  `cautions`, and `evidence` follow-ups are scored as separate turns.
 - The v2 readiness dataset also checks expected/acceptable citation IDs, required answer sections,
-  ambiguity/clarification behavior, profile labels, and failure attribution.
+  ambiguity/clarification behavior, quick reply pass rate, profile labels, and failure attribution.
 
 ## Run Locally
 
@@ -57,6 +59,26 @@ export RAKU_PROD_BEARER_TOKEN="$(STACK=RakuRag-stg RAKU_SMOKE_USERNAME='...' RAK
 bash scripts/demo/chatbot_golden_scorecard.sh --ensure-policy
 ```
 
+Or use the stack wrapper, which derives the ALB URL, issues the token, and runs the same scorecard:
+
+```bash
+RAKU_CHATBOT_SMOKE_APPROVED=yes \
+RAKU_SMOKE_USERNAME='...' RAKU_SMOKE_PASSWORD='...' \
+STACK=RakuRag-stg AWS_REGION=ap-northeast-1 \
+bash scripts/aws/run-chatbot-golden-from-stack.sh
+```
+
+For the expanded readiness dataset:
+
+```bash
+RAKU_CHATBOT_SMOKE_APPROVED=yes \
+CHATBOT_GOLDEN_DATASET=scripts/demo/chatbot_quality_v2_scenarios.json \
+CHATBOT_GOLDEN_OUTPUT=/tmp/chatbot-quality-v2-stg.json \
+RAKU_SMOKE_USERNAME='...' RAKU_SMOKE_PASSWORD='...' \
+STACK=RakuRag-stg AWS_REGION=ap-northeast-1 \
+bash scripts/aws/run-chatbot-golden-from-stack.sh
+```
+
 For the seeded demo KB, the smoke user must have `sales_demo` so ACL grants allow reads, and
 `tenant_admin` or another source-policy role when using `--ensure-policy`.
 
@@ -92,11 +114,14 @@ dataset remains valid:
   citations.
 - `required_sections` checks answer composition, for example `結論`, `手順`, `注意`, `根拠`,
   `原因`, or `対策`.
+- `quick_reply_checks` starts a follow-up turn from the initial session and validates the selected
+  quick reply value, citations, required terms, section presence, and latency without storing raw
+  retrieved context.
 - `expected_behavior=clarification` catches ambiguous questions that should ask a follow-up instead
   of guessing.
 - JSON output includes readiness thresholds, profile metadata, failure kinds, refusal pass rate,
-  clarification pass rate, expected citation hit rate, and completeness rate without storing raw
-  retrieved context.
+  clarification pass rate, quick reply pass rate, expected citation hit rate, and completeness rate
+  without storing raw retrieved context.
 
 ## 2026-06-30 Fix Notes
 

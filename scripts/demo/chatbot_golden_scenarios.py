@@ -17,7 +17,7 @@ import sys
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 DEFAULT_DATASET = Path(__file__).with_name("chatbot_golden_scenarios.json")
@@ -30,6 +30,9 @@ SUPPORTED_SCHEMA_VERSIONS = {
 @dataclass(frozen=True)
 class ScenarioResult:
     scenario_id: str
+    parent_scenario_id: str
+    turn_type: str
+    quick_reply_value: str
     category: str
     expected_behavior: str
     passed: bool
@@ -107,6 +110,26 @@ def validate_dataset(data: dict[str, Any]) -> None:
         sections = scenario.get("required_sections")
         if sections is not None and not isinstance(sections, list):
             raise ScenarioConfigError(f"{scenario_id}: required_sections must be a list")
+        quick_reply_checks = scenario.get("quick_reply_checks")
+        if quick_reply_checks is not None:
+            if not isinstance(quick_reply_checks, list):
+                raise ScenarioConfigError(f"{scenario_id}: quick_reply_checks must be a list")
+            for check_index, check in enumerate(quick_reply_checks):
+                if not isinstance(check, dict):
+                    raise ScenarioConfigError(
+                        f"{scenario_id}: quick_reply_checks[{check_index}] must be an object"
+                    )
+                value = str(check.get("value") or check.get("message") or "").strip()
+                if not value:
+                    raise ScenarioConfigError(
+                        f"{scenario_id}: quick_reply_checks[{check_index}] requires value"
+                    )
+                check_behavior = str(check.get("expected_behavior") or "answer")
+                if check_behavior not in {"answer", "handoff", "clarification"}:
+                    raise ScenarioConfigError(
+                        f"{scenario_id}: quick_reply_checks[{check_index}] has invalid "
+                        "expected_behavior"
+                    )
 
 
 def policy_payload(collection_id: str, dataset: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -142,6 +165,27 @@ def scenarios_with_defaults(dataset: dict[str, Any]) -> list[dict[str, Any]]:
     scenarios: list[dict[str, Any]] = []
     for raw in dataset["scenarios"]:
         scenario = dict(raw)
+        if scenario.get("quick_reply_checks"):
+            followups: list[dict[str, Any]] = []
+            expected_citations, acceptable_citations = _citation_expectations(scenario)
+            for raw_check in scenario["quick_reply_checks"]:
+                check = dict(raw_check)
+                check.setdefault("expected_behavior", "answer")
+                if check.get("expected_behavior") == "answer":
+                    check.setdefault("min_answer_chars", min_answer_chars)
+                    check.setdefault("min_citations", scenario.get("min_citations", min_citations))
+                    if expected_citations and not (
+                        check.get("expected_document_ids") or check.get("required_citations")
+                    ):
+                        check["expected_document_ids"] = list(expected_citations)
+                    if acceptable_citations and not (
+                        check.get("acceptable_document_ids") or check.get("acceptable_citations")
+                    ):
+                        check["acceptable_document_ids"] = list(acceptable_citations)
+                    if default_sections and "required_sections" not in check:
+                        check["required_sections"] = list(default_sections)
+                followups.append(check)
+            scenario["quick_reply_checks"] = followups
         if scenario.get("expected_behavior") == "answer":
             scenario.setdefault("min_answer_chars", min_answer_chars)
             scenario.setdefault("min_citations", min_citations)
@@ -247,6 +291,25 @@ def run_scenario(
     collection_id: str,
     timeout: float,
 ) -> ScenarioResult:
+    return run_scenario_results(
+        base_url,
+        token,
+        api_key,
+        scenario,
+        collection_id=collection_id,
+        timeout=timeout,
+    )[0]
+
+
+def run_scenario_results(
+    base_url: str,
+    token: str,
+    api_key: str,
+    scenario: dict[str, Any],
+    *,
+    collection_id: str,
+    timeout: float,
+) -> list[ScenarioResult]:
     start = time.perf_counter()
     response = http_json(
         "POST",
@@ -263,7 +326,78 @@ def run_scenario(
         timeout=timeout,
     )
     latency_ms = int((time.perf_counter() - start) * 1000)
-    return evaluate_response(scenario, response, latency_ms=latency_ms)
+    initial = evaluate_response(scenario, response, latency_ms=latency_ms)
+    results = [initial]
+    for check in _quick_reply_checks(scenario):
+        results.append(
+            run_quick_reply_check(
+                base_url,
+                token,
+                api_key,
+                scenario,
+                check,
+                response,
+                collection_id=collection_id,
+                timeout=timeout,
+            )
+        )
+    return results
+
+
+def run_quick_reply_check(
+    base_url: str,
+    token: str,
+    api_key: str,
+    parent_scenario: dict[str, Any],
+    check: dict[str, Any],
+    initial_response: dict[str, Any],
+    *,
+    collection_id: str,
+    timeout: float,
+) -> ScenarioResult:
+    session_id = str(initial_response.get("session_id") or "")
+    value = str(check.get("value") or check.get("message") or "").strip()
+    scenario = _quick_reply_scenario(parent_scenario, check)
+    offered_values = _offered_quick_reply_values(initial_response)
+    require_offered = check.get("require_offered", True) is not False
+    if require_offered and value not in offered_values:
+        return _failed_result(
+            scenario,
+            kind="followup",
+            message=f"quick reply value={value!r} was not offered by the initial answer",
+            turn_type="quick_reply",
+            parent_scenario_id=str(parent_scenario.get("id") or ""),
+            quick_reply_value=value,
+        )
+    if not session_id:
+        return _failed_result(
+            scenario,
+            kind="contract",
+            message="initial ChatBot response did not include session_id for quick reply follow-up",
+            turn_type="quick_reply",
+            parent_scenario_id=str(parent_scenario.get("id") or ""),
+            quick_reply_value=value,
+        )
+
+    start = time.perf_counter()
+    response = http_json(
+        "POST",
+        base_url,
+        f"/chat/sessions/{quote(session_id, safe='')}/messages",
+        token=token,
+        api_key=api_key,
+        body={"message": value, "collection_id": collection_id, "stream": False},
+        timeout=timeout,
+    )
+    latency_ms = int((time.perf_counter() - start) * 1000)
+    return evaluate_response(
+        scenario,
+        response,
+        latency_ms=latency_ms,
+        turn_type="quick_reply",
+        parent_scenario_id=str(parent_scenario.get("id") or ""),
+        quick_reply_value=value,
+    )
 
 
 def evaluate_response(
@@ -271,6 +405,9 @@ def evaluate_response(
     response: dict[str, Any],
     *,
     latency_ms: int = 0,
+    turn_type: str = "initial",
+    parent_scenario_id: str = "",
+    quick_reply_value: str = "",
 ) -> ScenarioResult:
     assistant = response.get("assistant_message") if isinstance(response, dict) else {}
     rag = response.get("rag") if isinstance(response, dict) else {}
@@ -419,6 +556,9 @@ def evaluate_response(
 
     return ScenarioResult(
         scenario_id=str(scenario.get("id") or ""),
+        parent_scenario_id=parent_scenario_id,
+        turn_type=turn_type,
+        quick_reply_value=quick_reply_value,
         category=str(scenario.get("category") or ""),
         expected_behavior=expected_behavior,
         passed=not failures,
@@ -441,6 +581,7 @@ def summarize_results(results: list[ScenarioResult]) -> dict[str, Any]:
     total = len(results)
     passed = sum(1 for result in results if result.passed)
     answer_results = [r for r in results if r.expected_behavior == "answer"]
+    quick_reply_results = [r for r in results if r.turn_type == "quick_reply"]
     answerable = sum(1 for r in results if r.answerable)
     citation_hits = sum(1 for r in answer_results if r.cited_document_ids)
     expected_citation_hits = sum(1 for r in answer_results if r.expected_citation_hit)
@@ -454,6 +595,9 @@ def summarize_results(results: list[ScenarioResult]) -> dict[str, Any]:
         "total": total,
         "passed": passed,
         "failed": total - passed,
+        "initial_count": sum(1 for r in results if r.turn_type == "initial"),
+        "quick_reply_count": len(quick_reply_results),
+        "quick_reply_pass_rate": _pass_rate(quick_reply_results),
         "answerable_rate": (answerable / total) if total else 0.0,
         "citation_hit_rate": (citation_hits / len(answer_results)) if answer_results else 0.0,
         "expected_citation_hit_rate": (
@@ -493,6 +637,11 @@ def print_report(
     print(f"  total             : {summary['total']}")
     print(f"  passed            : {summary['passed']}")
     print(f"  failed            : {summary['failed']}")
+    print(
+        "  quick_replies     : "
+        f"{summary['quick_reply_count']} "
+        f"(pass_rate={summary['quick_reply_pass_rate']:.3f})"
+    )
     print(f"  answerable_rate   : {summary['answerable_rate']:.3f}")
     print(f"  citation_hit_rate : {summary['citation_hit_rate']:.3f}")
     print(f"  expected_citation : {summary['expected_citation_hit_rate']:.3f}")
@@ -502,12 +651,18 @@ def print_report(
     if summary["failure_kinds"]:
         print("  failure_kinds     : " + _format_count_map(summary["failure_kinds"]))
     print("")
-    print("status  scenario                         expected  action                 ans  cites  chars")
-    print("------  -------------------------------  --------  ---------------------  ---  -----  -----")
+    print(
+        "status  turn    scenario                         expected  action                 "
+        "ans  cites  chars"
+    )
+    print(
+        "------  ------  -------------------------------  --------  ---------------------  "
+        "---  -----  -----"
+    )
     for result in results:
         status = "PASS" if result.passed else "FAIL"
         print(
-            f"{status:<6}  {result.scenario_id[:31]:<31}  "
+            f"{status:<6}  {result.turn_type[:6]:<6}  {result.scenario_id[:31]:<31}  "
             f"{result.expected_behavior:<8}  {result.ai_action[:21]:<21}  "
             f"{str(result.answerable):<3}  {len(result.cited_document_ids):>5}  "
             f"{result.answer_chars:>5}"
@@ -518,7 +673,9 @@ def print_report(
         for result in results:
             if result.passed:
                 continue
-            print(f"- {result.scenario_id}:")
+            parent = f" parent={result.parent_scenario_id}" if result.parent_scenario_id else ""
+            quick = f" quick_reply={result.quick_reply_value}" if result.quick_reply_value else ""
+            print(f"- {result.scenario_id} [{result.turn_type}{parent}{quick}]:")
             for failure in result.failures:
                 print(f"  - {failure}")
 
@@ -600,6 +757,7 @@ def readiness_summary(results: list[ScenarioResult], dataset: dict[str, Any]) ->
         "refusal_pass_rate": refusal_pass_rate,
         "safety_refusal_pass_rate": refusal_pass_rate,
         "clarification_pass_rate": clarification_pass_rate,
+        "quick_reply_pass_rate": summary["quick_reply_pass_rate"],
         "expected_citation_hit_rate": summary["expected_citation_hit_rate"],
         "completeness_hit_rate": summary["completeness_hit_rate"],
         "p95_latency_ms": summary["p95_latency_ms"],
@@ -625,6 +783,72 @@ def readiness_summary(results: list[ScenarioResult], dataset: dict[str, Any]) ->
 def _extract_citations(assistant: dict[str, Any], rag: dict[str, Any]) -> list[dict[str, Any]]:
     raw = assistant.get("citations") or rag.get("citations") or []
     return [dict(item) for item in raw if isinstance(item, dict)]
+
+
+def _quick_reply_checks(scenario: dict[str, Any]) -> list[dict[str, Any]]:
+    return [dict(item) for item in (scenario.get("quick_reply_checks") or []) if isinstance(item, dict)]
+
+
+def _quick_reply_scenario(parent_scenario: dict[str, Any], check: dict[str, Any]) -> dict[str, Any]:
+    value = str(check.get("value") or check.get("message") or "").strip()
+    scenario = dict(parent_scenario)
+    scenario.update(check)
+    for parent_only_key in (
+        "required_terms",
+        "forbidden_terms",
+        "expected_no_answer_reasons",
+        "required_sections",
+    ):
+        if parent_only_key not in check:
+            scenario.pop(parent_only_key, None)
+    scenario["id"] = str(check.get("id") or f"{parent_scenario.get('id')}::quick_reply::{value}")
+    scenario["category"] = str(check.get("category") or "quick_reply_followup")
+    scenario["question"] = str(check.get("label") or value)
+    scenario.setdefault("expected_behavior", "answer")
+    return scenario
+
+
+def _offered_quick_reply_values(response: dict[str, Any]) -> set[str]:
+    assistant = response.get("assistant_message") if isinstance(response, dict) else {}
+    assistant = assistant if isinstance(assistant, dict) else {}
+    replies = assistant.get("quick_replies") or []
+    values: set[str] = set()
+    for reply in replies:
+        if isinstance(reply, dict) and reply.get("value"):
+            values.add(str(reply["value"]))
+    return values
+
+
+def _failed_result(
+    scenario: dict[str, Any],
+    *,
+    kind: str,
+    message: str,
+    turn_type: str,
+    parent_scenario_id: str = "",
+    quick_reply_value: str = "",
+) -> ScenarioResult:
+    return ScenarioResult(
+        scenario_id=str(scenario.get("id") or ""),
+        parent_scenario_id=parent_scenario_id,
+        turn_type=turn_type,
+        quick_reply_value=quick_reply_value,
+        category=str(scenario.get("category") or ""),
+        expected_behavior=str(scenario.get("expected_behavior") or ""),
+        passed=False,
+        failures=(message,),
+        failure_kinds=(kind,),
+        ai_action="",
+        answerable=False,
+        no_answer_reason="",
+        cited_document_ids=(),
+        expected_citation_hit=False,
+        required_terms_hit=False,
+        required_sections_hit=False,
+        answer_chars=0,
+        latency_ms=0,
+        correlation_id="",
+    )
 
 
 def _normalize_text(value: str) -> str:
@@ -781,6 +1005,7 @@ def main(argv: list[str] | None = None) -> int:
         scenarios = scenarios_with_defaults(dataset)
         profile = profile_metadata(args, dataset)
         if args.validate_only:
+            turn_count = sum(1 + len(_quick_reply_checks(scenario)) for scenario in scenarios)
             payload = {
                 "status": "ok",
                 "dataset": str(Path(args.dataset)),
@@ -788,6 +1013,7 @@ def main(argv: list[str] | None = None) -> int:
                 "profile": profile,
                 "collection_id": collection_id,
                 "scenario_count": len(scenarios),
+                "turn_count": turn_count,
                 "categories": sorted({str(item.get("category") or "") for item in scenarios}),
             }
             if args.json:
@@ -796,6 +1022,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(
                     "dataset ok: "
                     f"{payload['scenario_count']} scenario(s), "
+                    f"{payload['turn_count']} turn(s), "
                     f"collection_id={payload['collection_id']}"
                 )
             return 0
@@ -811,17 +1038,18 @@ def main(argv: list[str] | None = None) -> int:
             raise ScenarioConfigError("set --token/RAKU_USER_TOKEN or allow local dev-token minting")
         if args.ensure_policy:
             ensure_collection_policy(base_url, token, args.api_key, dataset, collection_id, args.timeout)
-        results = [
-            run_scenario(
-                base_url,
-                token,
-                args.api_key,
-                scenario,
-                collection_id=collection_id,
-                timeout=args.timeout,
+        results = []
+        for scenario in scenarios:
+            results.extend(
+                run_scenario_results(
+                    base_url,
+                    token,
+                    args.api_key,
+                    scenario,
+                    collection_id=collection_id,
+                    timeout=args.timeout,
+                )
             )
-            for scenario in scenarios
-        ]
     except (ScenarioConfigError, HttpJsonError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
