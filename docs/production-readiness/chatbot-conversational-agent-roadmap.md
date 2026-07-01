@@ -403,3 +403,103 @@ promotion.
    `LLMProvider`-refined rewrite (P1 already demonstrates the safe-fallback pattern once; re-proving
    it for L2 wasn't needed to close this phase's gate, and the deterministic mechanism is what
    actually ships).
+5. [x] P4 (revised — see the architectural finding below): `L3CompositionAnswerEngine` landed
+   `be29cc5` on `worktree-chatbot-conversational-agent` (isolated worktree). New
+   `src/raku_rag/chatbot/composition.py` wraps an inner `AnswerEngine` (in practice
+   `L0DeterministicAnswerEngine`) with a chatbot-layer defense-in-depth verification pass over the
+   composed answer, using P2's `GroundednessGate.claim_check` (`verify_composed_answer`) against
+   synthetic evidence built from the returned citations' OWN reference-id fields
+   (`envelope.citation_id_values` — document_id/chunk_id/source_id), never the underlying chunk text
+   (citations are receipts, not evidence blobs, at every layer of this codebase — confirmed by
+   reading the code, not assumed). The architectural question (does `"L3"` control whether real
+   generation fires at all): resolved per the roadmap's own invariant — it does NOT; that stays the
+   deployment-wide `Settings.llm_provider` switch (unchanged, unset by default, no Bedrock credentials
+   in this sandbox). `"L3"` only adds a safety net on top of whatever `inner.answer()` (==
+   `manufacturing_system.answer()`, the same call every rung uses) already returned — no second,
+   tenant-dialable generation/ACL/retrieval/safety-classifier path was built. A verification failure
+   is deliberately NOT wired to override an inner `"ok"` answer: it is strictly weaker/less-informed
+   than the base pipeline's OWN `post_check`/`claim_check`, which already ran with the REAL evidence
+   chunks before this code ever sees the answer, so downgrading on it would reject good,
+   already-verified answers with no matching safety benefit — exactly what the roadmap rules out ("do
+   not let a defense-in-depth check make things WORSE than the inner answer"). The check is fully
+   computed and unit-tested (proven to distinguish pass/fail/vacuous-pass correctly) so it is ready to
+   be wired to real enforcement once either real evidence-text plumbing exists or an explicit decision
+   accepts that trade-off — not silently assumed done.
+
+   **A significant scope change from the original plan, found by testing, not assumed**: thread-state
+   QUERY enrichment (folding the prior turn's Q&A into the outgoing query string, mirroring P3's
+   `coreference.standalone_query` precedent) was implemented, then investigated against exactly the
+   scenario this phase's own safety test cares about (a high-risk query on a turn following an
+   unrelated one) — and reproducibly broke it. `InMemoryVectorStore.lexical_matches`
+   (`providers/vectorstores.py`) scores via a flat per-match base score
+   (`LEXICAL_MATCH_BASE_SCORE=0.70`) plus a query-term-COVERAGE fraction (`core/hybrid_retrieval.py`),
+   so appending even two words of prior-turn content ("routine inspection") to a textbook-clear,
+   unrelated high-risk query ("How do I release the pressure in the hydraulic accumulator?") caused
+   retrieval to hand `ManufacturingAnswerService`'s safety-gate candidate pool an unrelated, approved
+   document instead of the real (draft) one — turning a query that must block into one answering
+   `status="ok"`/`safety_block_reason=None` with irrelevant content. Reproduced with realistic,
+   multi-sentence documents too, not just a short fixture. Properly fixing this needs to separate the
+   retrieval/classification-bound query from a generation-only one across
+   `ManufacturingSystem.answer()` → `ManufacturingAnswerService.answer()` → `AnswerService.answer()` —
+   a materially bigger, separately-reviewable change to the safety-critical answer chain than this
+   phase's scope, and one that risks a new divergence bug of its own (the safety gate approving one
+   evidence set while generation grounds in a different one). Given the severity (a
+   safety-classification bypass, not just a quality regression), thread-state query/prompt enrichment
+   is DEFERRED rather than shipped in a shrunk, "probably fine" form — shrinking the excerpt further
+   does not remove the risk (two words already reproduced it). `L3CompositionAnswerEngine` therefore
+   passes `query` through to `inner.answer(...)` byte-identical to every other rung; pinned by
+   `test_chatbot_composition.py::L3CompositionAnswerEngineTest::
+   test_query_reaches_inner_byte_identical_regardless_of_thread_state`. Full reasoning:
+   `chatbot/composition.py`'s module docstring.
+
+   `ChatbotService` registers `"L3"` as `L1EnvelopeAnswerEngine(L2QueryUnderstandingAnswerEngine(
+   L3CompositionAnswerEngine(l0_engine)), llm_provider)` — cumulative per the ladder's "+" framing
+   (coreference resolution runs first, then L3's verification pass, then L1's envelope wraps the
+   outermost result) — plus a new, independent `enable_demo_tenant_l3`/`RAKU_CHATBOT_DEMO_TENANT_L3`
+   flag (default off), mirroring L1/L2's own opt-in dial exactly.
+
+   Point 4 (verify, not assume, that the high-risk safety block reaches L3 specifically): added
+   `ChatbotManufacturingHighRiskCitationBlockAtL3Test` (4 tests) to
+   `tests/unit/test_chatbot_service.py` — a tenant explicitly dialed to `"L3"` via
+   `InMemoryChatbotAuthorityRepository`, wired to a real in-memory `ManufacturingSystem` exactly like
+   P2's own L0-level proof. Beyond mirroring P2's single-turn positive/negative control, this adds a
+   genuine MULTI-TURN variant (an unrelated first turn establishing real thread state, THEN the
+   high-risk query, in the SAME session) — the exact shape that caught the query-enrichment bug above;
+   with the reverted (pass-through) design, both the negative control (draft citation → blocked,
+   `status=insufficient_evidence`) and the positive control (approved citation → answered) hold on
+   both a fresh session and a later turn in an ongoing one. Confirmed by direct code trace (not just
+   tests) that every path from `ChatbotService.submit_message` through `L1EnvelopeAnswerEngine →
+   L2QueryUnderstandingAnswerEngine → L3CompositionAnswerEngine → L0DeterministicAnswerEngine` ends at
+   the SAME injected `rag_answerer` (`manufacturing_system.answer(...)` in production) with no
+   alternative code path — `composition.py` never constructs an answer independent of
+   `inner.answer()`'s own return value.
+
+   Eval: added a multi-turn scenario (`composition-motor-m8-multiturn-followup` /
+   `v2-composition-motor-m8-multiturn-followup`, tagged `["composition","multi_turn","l3"]` in the v2
+   set) to `scripts/demo/chatbot_golden_scenarios.json` and `chatbot_quality_v2_scenarios.json`,
+   reusing the already-seeded `eq-motor-m8-torque` equipment (not inventing unverifiable new document
+   content) with a follow-up naming a NEW fact on the same equipment (insulation resistance /
+   retightening interval) so it exercises a fresh search through the full L3 stack, not the
+   bare-pronoun reuse P3's own scenario already covers. `eval/baseline.py`/`eval/runner.py` (P2's own
+   extension point) were NOT touched again: those are single-turn, base-platform constructs with no
+   notion of a conversation, so — consistent with P3 also choosing the chatbot-specific golden-scenario
+   JSON files, not `eval/baseline.py`, for its OWN multi-turn work — a multi-turn scenario belongs in
+   the same place P3's did. Like every other scenario in both files, live pass/fail requires a deployed
+   stack this sandbox does not have; structurally validated here (schema + `--validate-only` + the
+   runner's pure-function tests, all green).
+
+   Verified independently: `scripts/gate.sh all` 1231 tests GREEN (was 1211 + 20 new: 16 in the new
+   `test_chatbot_composition.py` + 4 in `test_chatbot_service.py`'s new class), targeted verification
+   command (`test_groundedness.py test_eval_baseline_gate.py test_ci_eval_gate.py
+   tests/manufacturing/test_manufacturing_eval_gate.py test_chatbot_service.py
+   test_chatbot_golden_scenarios.py test_chatbot_answer_engine.py test_chatbot_envelope.py
+   test_chatbot_coreference.py test_chatbot_composition.py`) 159 passed/3 subtests. One pre-existing
+   test (`test_chatbot_answer_engine.py`'s
+   `test_resolve_answer_engine_falls_back_to_l0_for_unregistered_level`) used `"L3"` as its example of
+   an unregistered authority level (stale now that this phase registers it for real) — updated to
+   `"L4"` (P5, still unregistered); a one-line fix, not a design change. Deferred to P5 (agentic
+   control / tool use — a large remaining piece, not accidentally solved here): the LLM deciding
+   when/what to retrieve, multi-hop, autonomous clarifying questions; and, as a narrower, explicitly
+   scoped follow-on to THIS phase specifically: a properly separated retrieval-bound/generation-bound
+   query channel through the manufacturing answer chain, IF thread-state prompt enrichment for
+   composed prose is wanted badly enough to justify that bigger, separately-reviewed change.
