@@ -22,11 +22,15 @@ from raku_rag.chatbot.authority import (
     InMemoryChatbotAuthorityRepository,
 )
 from raku_rag.chatbot.dialogue_manager import DialogueManager
+from raku_rag.chatbot.envelope import L1EnvelopeAnswerEngine
+from raku_rag.core.config import Settings
 from raku_rag.domain.models import IdentityClaims
+from raku_rag.interfaces.base import LLMProvider
 from raku_rag.persistence.chatbot import (
     ChatbotSourcePolicyRepository,
     InMemoryChatbotSourcePolicyRepository,
 )
+from raku_rag.providers.llms import llm_provider_from_settings
 
 SESSION_ADMIN_ROLES = {"ops_owner", "tenant_admin", "reviewer"}
 HANDOFF_READ_ROLES = {"operator", "ops_owner", "tenant_admin"}
@@ -35,6 +39,11 @@ SOURCE_POLICY_ROLES = {"tenant_admin", "scenario_admin", "data_admin"}
 SCENARIO_MANAGE_ROLES = {"tenant_admin", "scenario_admin"}
 SCENARIO_APPROVE_ROLES = {"tenant_admin", "scenario_approver"}
 EXPORT_DELETE_ROLES = {"tenant_admin", "audit_admin"}
+
+# Matches the `DEMO_TENANT` env var / "demo" literal used throughout scripts/demo/ and the legacy
+# apps/answer-service/server.py `seed()` helper — the one demo tenant id this whole codebase
+# agrees on.
+DEFAULT_DEMO_TENANT_ID = "demo"
 
 
 def _now() -> str:
@@ -386,6 +395,10 @@ class ChatbotService:
         rag_answerer: RagAnswerer,
         source_policy_repository: ChatbotSourcePolicyRepository | None = None,
         authority_repository: ChatbotAuthorityRepository | None = None,
+        llm_provider: LLMProvider | None = None,
+        settings: Settings | None = None,
+        enable_demo_tenant_l1: bool = False,
+        demo_tenant_id: str = DEFAULT_DEMO_TENANT_ID,
     ) -> None:
         self._sessions: dict[tuple[str, str], ChatSession] = {}
         self._handoffs: dict[tuple[str, str], dict] = {}
@@ -397,9 +410,18 @@ class ChatbotService:
         self._scenarios: dict[tuple[str, str], ChatScenario] = {}
         self._dialogue_manager = DialogueManager()
         self._authority_repo = authority_repository or InMemoryChatbotAuthorityRepository()
+        # L1 authority is safe to register unconditionally: it is a pure envelope wrapper around L0
+        # (see envelope.py) that falls back to L0's own output verbatim whenever no real LLM is
+        # configured, the provider errors, or the mechanical guard trips. Only a tenant explicitly
+        # dialed to "L1" (see `enable_demo_tenant_l1` below) is ever routed to it.
+        self._llm_provider = llm_provider or llm_provider_from_settings(settings or Settings())
+        l0_engine = L0DeterministicAnswerEngine(rag_answerer)
         self._answer_engines: dict[str, AnswerEngine] = {
-            DEFAULT_CHATBOT_AUTHORITY_LEVEL: L0DeterministicAnswerEngine(rag_answerer),
+            DEFAULT_CHATBOT_AUTHORITY_LEVEL: l0_engine,
+            "L1": L1EnvelopeAnswerEngine(l0_engine, self._llm_provider),
         }
+        if enable_demo_tenant_l1:
+            self._authority_repo.set(demo_tenant_id, "L1")
         self._seed_scenarios()
 
     def _resolve_answer_engine(self, tenant_id: str) -> AnswerEngine:

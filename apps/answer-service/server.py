@@ -1481,6 +1481,14 @@ def make_handler(system: ProductionSystem):
             manufacturing_system.answer(principal, query, collection_id)
         ),
         source_policy_repository=_chatbot_source_policy_repository_for(system),
+        # Reuse the same LLMProvider instance the manufacturing/base answer path already built
+        # (system.llm) rather than constructing a second one — see providers/llms.py.
+        llm_provider=system.llm,
+        # Opt-in, default off (P1 of the conversational-agent roadmap): flips the demo tenant's
+        # chatbot_authority_level to "L1" (envelope phrasing). Offline-safe even when set, since
+        # RAKU_LLM_PROVIDER stays unset by default (system.llm is then the extractive no-op stub).
+        enable_demo_tenant_l1=os.environ.get("RAKU_CHATBOT_DEMO_TENANT_L1") == "1",
+        demo_tenant_id=os.environ.get("DEMO_TENANT", "demo"),
     )
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()

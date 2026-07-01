@@ -11,6 +11,7 @@ from raku_rag.chatbot.authority import (
     InMemoryChatbotAuthorityRepository,
 )
 from raku_rag.chatbot.dialogue_manager import DialogueManager
+from raku_rag.chatbot.envelope import L1EnvelopeAnswerEngine
 from raku_rag.chatbot.service import ChatbotService
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "AnswerEngine",
     "DialogueContext",
     "L0DeterministicAnswerEngine",
+    "L1EnvelopeAnswerEngine",
     "DialogueManager",
     "ChatbotAuthorityRepository",
     "InMemoryChatbotAuthorityRepository",
