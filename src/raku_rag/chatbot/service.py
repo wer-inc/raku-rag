@@ -21,6 +21,7 @@ from raku_rag.chatbot.authority import (
     ChatbotAuthorityRepository,
     InMemoryChatbotAuthorityRepository,
 )
+from raku_rag.chatbot.composition import L3CompositionAnswerEngine
 from raku_rag.chatbot.coreference import L2QueryUnderstandingAnswerEngine
 from raku_rag.chatbot.dialogue_manager import DialogueManager
 from raku_rag.chatbot.envelope import L1EnvelopeAnswerEngine
@@ -400,6 +401,7 @@ class ChatbotService:
         settings: Settings | None = None,
         enable_demo_tenant_l1: bool = False,
         enable_demo_tenant_l2: bool = False,
+        enable_demo_tenant_l3: bool = False,
         demo_tenant_id: str = DEFAULT_DEMO_TENANT_ID,
     ) -> None:
         self._sessions: dict[tuple[str, str], ChatSession] = {}
@@ -419,6 +421,15 @@ class ChatbotService:
         self._llm_provider = llm_provider or llm_provider_from_settings(settings or Settings())
         l0_engine = L0DeterministicAnswerEngine(rag_answerer)
         l2_coreference_engine = L2QueryUnderstandingAnswerEngine(l0_engine)
+        # L3 sits BELOW L2 in the wrapping (coreference resolution runs first, feeding the same
+        # deterministic L0 retrieval/answer L2 always has, then L3's defense-in-depth verification runs
+        # over whatever came back), and L1's envelope wraps the outermost result — same cumulative "+"
+        # shape as "L2" below, one rung further. L3 does NOT enrich the query (see composition.py's
+        # module docstring "Finding": that was tried and reverted as unsafe — it corrupted retrieval/
+        # the manufacturing safety gate's candidate pool), so this ordering is not load-bearing for
+        # safety the way it would have been; it is kept for consistency with the ladder's shape.
+        l3_composition_engine = L3CompositionAnswerEngine(l0_engine)
+        l2_over_l3_engine = L2QueryUnderstandingAnswerEngine(l3_composition_engine)
         self._answer_engines: dict[str, AnswerEngine] = {
             DEFAULT_CHATBOT_AUTHORITY_LEVEL: l0_engine,
             "L1": L1EnvelopeAnswerEngine(l0_engine, self._llm_provider),
@@ -428,11 +439,20 @@ class ChatbotService:
             # no LLM configured this reduces to exactly L2's deterministic behavior (L1's part is a
             # provable no-op passthrough, see envelope.py), so "L2" is just as offline-safe as "L1".
             "L2": L1EnvelopeAnswerEngine(l2_coreference_engine, self._llm_provider),
+            # L3 is L2 + composition: coreference resolution still runs first, then L3 runs its own
+            # defense-in-depth verification pass over whatever `l0_engine` returned (see
+            # composition.py), then L1's envelope wraps the result exactly as it does for every other
+            # rung. With no LLM configured (this sandbox's default), L1's wrap is a provable no-op and
+            # L3's own verification never suppresses an inner "ok" answer (see composition.py), so "L3"
+            # is exactly as offline-safe as "L1"/"L2".
+            "L3": L1EnvelopeAnswerEngine(l2_over_l3_engine, self._llm_provider),
         }
         if enable_demo_tenant_l1:
             self._authority_repo.set(demo_tenant_id, "L1")
         if enable_demo_tenant_l2:
             self._authority_repo.set(demo_tenant_id, "L2")
+        if enable_demo_tenant_l3:
+            self._authority_repo.set(demo_tenant_id, "L3")
         self._seed_scenarios()
 
     def _resolve_answer_engine(self, tenant_id: str) -> AnswerEngine:

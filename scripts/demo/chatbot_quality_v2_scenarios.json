@@ -117,6 +117,29 @@
       ]
     },
     {
+      "id": "v2-composition-motor-m8-multiturn-followup",
+      "category": "grounded_lookup",
+      "tags": ["composition", "multi_turn", "l3"],
+      "question": "モータ M8 の据付基準を整理して教えて",
+      "expected_behavior": "answer",
+      "expected_document_ids": ["eq-motor-m8-torque"],
+      "required_terms": ["M8", "25", "M16", "95"],
+      "min_answer_chars": 130,
+      "quick_reply_checks": [
+        {
+          "id": "v2-composition-motor-m8-multiturn-followup::insulation-followup",
+          "category": "composition_followup",
+          "tags": ["composition", "multi_turn", "l3"],
+          "value": "続けて、絶縁抵抗と増し締めのタイミングも教えてください",
+          "require_offered": false,
+          "expected_behavior": "answer",
+          "expected_document_ids": ["eq-motor-m8-torque"],
+          "required_terms": ["1MΩ", "100時間"],
+          "min_answer_chars": 30
+        }
+      ]
+    },
+    {
       "id": "v2-grounded-pump-lubrication-full",
       "category": "grounded_lookup",
       "tags": ["baseline_smoke", "lubrication", "numeric_threshold"],

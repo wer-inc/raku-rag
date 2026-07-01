@@ -216,6 +216,27 @@
           "min_answer_chars": 20
         }
       ]
+    },
+    {
+      "id": "composition-motor-m8-multiturn-followup",
+      "category": "grounded_lookup",
+      "question": "モータ M8 の据付基準を教えて",
+      "expected_behavior": "answer",
+      "required_citations": ["eq-motor-m8-torque"],
+      "required_terms": ["M8", "25", "M16", "95"],
+      "min_answer_chars": 70,
+      "quick_reply_checks": [
+        {
+          "id": "composition-motor-m8-multiturn-followup::insulation-followup",
+          "category": "composition_followup",
+          "value": "続けて、絶縁抵抗の基準も教えてください",
+          "require_offered": false,
+          "expected_behavior": "answer",
+          "expected_document_ids": ["eq-motor-m8-torque"],
+          "required_terms": ["1MΩ"],
+          "min_answer_chars": 20
+        }
+      ]
     }
   ]
 }

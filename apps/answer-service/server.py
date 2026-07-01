@@ -1493,6 +1493,11 @@ def make_handler(system: ProductionSystem):
         # RAKU_CHATBOT_DEMO_TENANT_L1 outright, so an existing L1 pilot is never silently upgraded —
         # a tenant needs its own explicit opt-in per rung, matching the roadmap's per-tenant dial.
         enable_demo_tenant_l2=os.environ.get("RAKU_CHATBOT_DEMO_TENANT_L2") == "1",
+        # Opt-in, default off (P4): flips the demo tenant to "L3" (defense-in-depth verification over
+        # composed answers, cumulative with L2's coreference and L1's envelope). Whether real
+        # generation ever fires stays governed entirely by RAKU_LLM_PROVIDER/system.llm (unset by
+        # default here, same as every other rung) — see chatbot/composition.py's module docstring.
+        enable_demo_tenant_l3=os.environ.get("RAKU_CHATBOT_DEMO_TENANT_L3") == "1",
         demo_tenant_id=os.environ.get("DEMO_TENANT", "demo"),
     )
     industry_api = IndustryApiService()

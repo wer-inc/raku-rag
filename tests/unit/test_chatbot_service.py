@@ -1181,5 +1181,212 @@ class ChatbotManufacturingHighRiskCitationBlockTest(unittest.TestCase):
         self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
 
 
+class ChatbotManufacturingHighRiskCitationBlockAtL3Test(unittest.TestCase):
+    """P4 (chatbot-conversational-agent-roadmap) point 4: proves the manufacturing safety hard block
+    (SC-MFG-006) reaches a tenant explicitly dialed all the way to "L3"
+    (`L1(L2(L3(L0)))`, see service.py) -- not just the default L0 path
+    `ChatbotManufacturingHighRiskCitationBlockTest` above already pins. L3CompositionAnswerEngine's
+    defense-in-depth verification (chatbot/composition.py) never touches ACL/retrieval/the safety
+    classifier/audit logging; every path still bottoms out in the SAME
+    `manufacturing_system.answer(...)` call this file's L0-level test already proves reaches
+    `RuleHighRiskClassifier`/`ManufacturingSafetyGate`.
+
+    Includes a genuine MULTI-TURN variant (an unrelated first turn, THEN the high-risk query) in the
+    SAME session, not just a fresh single-turn call -- this is exactly the shape that caught a real
+    bug during development of this phase (see composition.py's module docstring "Finding": an earlier
+    version of this engine enriched the outgoing query with prior-turn content and that corrupted
+    retrieval's candidate pool for a later, unrelated high-risk turn; this test is the regression pin
+    proving the shipped design, which passes `query` through unchanged, does not reintroduce that).
+    """
+
+    TENANT = "tenant_mfg_chat_l3"
+    HIGH_RISK_QUERY = "How do I release the pressure in the hydraulic accumulator?"
+    # Deliberately avoids every _INTENT_KEYWORDS substring (manufacturing/safety/classifier.py) and
+    # carries no safety_category metadata, so turn 1 is an ordinary, non-high-risk grounded answer
+    # that plants real thread state (previous_question/previous_answer) ahead of turn 2. Same language
+    # (English) as its own document text so extractive retrieval/generation actually overlaps (unlike
+    # HIGH_RISK_QUERY, this pairing is not already proven elsewhere in this file).
+    CONTEXT_QUERY = "How often is routine equipment inspection performed?"
+
+    def _mfg_principal(self):
+        return IdentityClaims(tenant_id=self.TENANT, user_id="alice")
+
+    def _service_over(self, mfg_sys: ManufacturingSystem) -> ChatbotService:
+        def rag_answerer(principal, query, collection_id):
+            ans = mfg_sys.answer(principal, query, collection_id)
+            return {
+                "status": ans.status,
+                "text": ans.text,
+                "confidence": ans.confidence,
+                "citations": [dataclasses.asdict(c) for c in ans.citations],
+                "used_chunks": list(ans.used_chunks),
+                "correlation_id": ans.correlation_id,
+            }
+
+        service = ChatbotService(
+            rag_answerer,
+            authority_repository=InMemoryChatbotAuthorityRepository({self.TENANT: "L3"}),
+        )
+        _enable_internal_chat_collection(
+            service, _principal(tenant=self.TENANT, roles=("tenant_admin",))
+        )
+        return service
+
+    def _ingest_context_turn_doc(self, mfg_sys: ManufacturingSystem) -> None:
+        mfg_sys.ingest_manufacturing(
+            tenant_id=self.TENANT,
+            collection_id="manuals",
+            document_id="routine-inspection-schedule",
+            text=(
+                "Routine inspection of the equipment is performed every 30 days by the "
+                "maintenance team."
+            ),
+            metadata=mfg_meta(
+                tenant_id=self.TENANT,
+                document_id="routine-inspection-schedule",
+                approval_status=ApprovalStatus.APPROVED,
+                effective_date="2026-01-01",
+            ),
+        )
+        mfg_sys.grant(self.TENANT, ScopeType.COLLECTION, "manuals", SubjectType.USER, "alice")
+
+    def _ingest_high_risk_doc(self, mfg_sys: ManufacturingSystem, *, document_id, approval_status, **meta):
+        mfg_sys.ingest_manufacturing(
+            tenant_id=self.TENANT,
+            collection_id="manuals",
+            document_id=document_id,
+            text=(
+                "Release the accumulator pressure slowly using the manual bleed valve before "
+                "opening the line."
+            ),
+            metadata=mfg_meta(
+                tenant_id=self.TENANT,
+                document_id=document_id,
+                approval_status=approval_status,
+                safety_category="pressure",
+                **meta,
+            ),
+        )
+        mfg_sys.grant(self.TENANT, ScopeType.COLLECTION, "manuals", SubjectType.USER, "alice")
+
+    def test_high_risk_query_without_approved_citation_is_blocked_at_l3(self):
+        mfg_sys = ManufacturingSystem()
+        self._ingest_high_risk_doc(
+            mfg_sys,
+            document_id="hydraulic-accumulator-draft-l3",
+            approval_status=ApprovalStatus.PENDING_REVIEW,
+        )
+
+        direct = mfg_sys.answer(self._mfg_principal(), self.HIGH_RISK_QUERY, "manuals")
+        self.assertTrue(direct.high_risk, "query must classify high-risk (pressure category)")
+        self.assertEqual(direct.safety_block_reason, "approved_citation_missing")
+        self.assertEqual(direct.status, "insufficient_evidence")
+
+        service = self._service_over(mfg_sys)
+        _, created = service.create_session(self._mfg_principal(), {"channel": "web_chat"})
+        status, turn = service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": self.HIGH_RISK_QUERY, "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(turn["rag"]["answerable"])
+        self.assertEqual(turn["assistant_message"]["ai_action"], "handoff")
+        self.assertIsNotNone(turn["handoff"])
+        self.assertNotIn("bleed valve", turn["assistant_message"]["message"])
+        self.assertEqual(turn["rag"]["status"], "insufficient_evidence")
+
+    def test_positive_control_high_risk_query_with_approved_citation_is_answered_at_l3(self):
+        # Guards against a degenerate "block everything" stand-in silently passing the test above --
+        # same positive-control philosophy as tests/manufacturing/test_safety_gate.py and this file's
+        # L0-level equivalent above.
+        mfg_sys = ManufacturingSystem()
+        self._ingest_high_risk_doc(
+            mfg_sys,
+            document_id="hydraulic-accumulator-approved-l3",
+            approval_status=ApprovalStatus.APPROVED,
+            effective_date="2026-01-01",
+        )
+
+        direct = mfg_sys.answer(self._mfg_principal(), self.HIGH_RISK_QUERY, "manuals")
+        self.assertTrue(direct.high_risk)
+        self.assertEqual(direct.status, "ok")
+
+        service = self._service_over(mfg_sys)
+        _, created = service.create_session(self._mfg_principal(), {"channel": "web_chat"})
+        status, turn = service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": self.HIGH_RISK_QUERY, "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(turn["rag"]["answerable"])
+        self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
+
+    def test_high_risk_query_is_still_blocked_at_l3_on_a_later_turn_in_the_same_session(self):
+        mfg_sys = ManufacturingSystem()
+        self._ingest_context_turn_doc(mfg_sys)
+        self._ingest_high_risk_doc(
+            mfg_sys,
+            document_id="hydraulic-accumulator-draft-l3-turn2",
+            approval_status=ApprovalStatus.PENDING_REVIEW,
+        )
+
+        service = self._service_over(mfg_sys)
+        _, created = service.create_session(self._mfg_principal(), {"channel": "web_chat"})
+        _, first_turn = service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": self.CONTEXT_QUERY, "collection_id": "manuals"},
+        )
+        self.assertTrue(first_turn["rag"]["answerable"], "context turn must itself be answerable")
+
+        status, second_turn = service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": self.HIGH_RISK_QUERY, "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(second_turn["rag"]["answerable"])
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "handoff")
+        self.assertIsNotNone(second_turn["handoff"])
+        self.assertNotIn("bleed valve", second_turn["assistant_message"]["message"])
+        self.assertEqual(second_turn["rag"]["status"], "insufficient_evidence")
+
+    def test_high_risk_query_is_still_answered_at_l3_with_approved_citation_on_a_later_turn_in_the_same_session(
+        self,
+    ):
+        mfg_sys = ManufacturingSystem()
+        self._ingest_context_turn_doc(mfg_sys)
+        self._ingest_high_risk_doc(
+            mfg_sys,
+            document_id="hydraulic-accumulator-approved-l3-turn2",
+            approval_status=ApprovalStatus.APPROVED,
+            effective_date="2026-01-01",
+        )
+
+        service = self._service_over(mfg_sys)
+        _, created = service.create_session(self._mfg_principal(), {"channel": "web_chat"})
+        _, first_turn = service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": self.CONTEXT_QUERY, "collection_id": "manuals"},
+        )
+        self.assertTrue(first_turn["rag"]["answerable"])
+
+        status, second_turn = service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": self.HIGH_RISK_QUERY, "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(second_turn["rag"]["answerable"])
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "answer_with_citations")
+
+
 if __name__ == "__main__":
     unittest.main()
