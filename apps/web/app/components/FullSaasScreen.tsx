@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type {
@@ -125,6 +127,25 @@ type ViewState<T> =
   | { state: "ready"; data: T };
 
 type AdminListRow = { id: string; label: string; meta?: string; status?: string };
+
+const CHAT_MARKDOWN_ALLOWED_ELEMENTS = [
+  "blockquote",
+  "br",
+  "code",
+  "em",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "strong",
+  "table",
+  "tbody",
+  "td",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+];
 
 const MOCK_USERS: AdminListRow[] = [
   { id: "alice", label: "Alice Tanaka", meta: "tenant_admin · reviewer", status: "active" },
@@ -321,6 +342,48 @@ function statusLabel(status: string): string {
 
 function citationLabel(citation: { document_id: string; chunk_id?: string | null }): string {
   return citation.chunk_id ? `${citation.document_id} / ${citation.chunk_id}` : citation.document_id;
+}
+
+function compactCitationLabel(citation: { document_id: string; chunk_id?: string | null }): string {
+  if (!citation.chunk_id || citation.chunk_id.startsWith(`${citation.document_id}:`)) {
+    return citation.document_id;
+  }
+  return citationLabel(citation);
+}
+
+function citationKindLabel(kind?: string | null): string {
+  switch (kind) {
+    case "visual":
+      return "画像";
+    case "spreadsheet":
+      return "表計算";
+    case "table_row":
+      return "表";
+    case "form_field":
+      return "帳票";
+    case "chart_series":
+      return "グラフ";
+    case "figure_caption":
+      return "図表";
+    default:
+      return "文書";
+  }
+}
+
+function citationLocationLabel(citation: Citation): string | null {
+  if (citation.page_number) return `${citation.page_number}ページ`;
+  if (citation.sheet_name && citation.cell_range) return `${citation.sheet_name} ${citation.cell_range}`;
+  if (citation.sheet_name) return citation.sheet_name;
+  if (citation.cell_range) return citation.cell_range;
+  if (citation.row_id) return `行 ${citation.row_id}`;
+  return null;
+}
+
+function citationEffectiveDateLabel(date: string | null | undefined): string | null {
+  if (!date) return null;
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return `有効日 ${parsed.toLocaleDateString("ja-JP")}`;
 }
 
 function downloadCsv(filename: string, rows: Array<Array<string | number | boolean | null | undefined>>): void {
@@ -528,11 +591,13 @@ function canViewChatbotOps(roles: readonly string[]): boolean {
   return roles.some((role) => allowed.has(role));
 }
 
-function ragStatusLabel(status: string): string {
-  if (status === "ok") return "根拠確認済み";
-  if (status === "insufficient_evidence") return "根拠不足";
-  if (status === "budget_exceeded") return "予算上限";
-  return "根拠確認中";
+function chatQuickReplyTone(label: string, value: string): { label: string; cls: string } {
+  const text = `${label} ${value}`;
+  if (text.includes("手順")) return { label: "手順", cls: "chat-action-procedure" };
+  if (text.includes("表") || text.includes("判断基準")) return { label: "表", cls: "chat-action-table" };
+  if (text.includes("根拠")) return { label: "根拠", cls: "chat-action-evidence" };
+  if (text.includes("注意")) return { label: "注意", cls: "chat-action-warning" };
+  return { label: "詳細", cls: "chat-action-detail" };
 }
 
 function handoffReasonLabel(reason: string): string {
@@ -947,7 +1012,7 @@ function chatActionLabel(action?: string | null): string {
     case "collect_slot":
       return "確認中";
     case "answer_with_citations":
-      return "根拠付き回答";
+      return "回答";
     case "confirm_action":
       return "最終確認";
     case "ticket_created":
@@ -957,6 +1022,17 @@ function chatActionLabel(action?: string | null): string {
     default:
       return action || "応答";
   }
+}
+
+function chatPrimaryBadge(action?: string | null, ragStatus?: string | null): { label: string; cls: string } {
+  if (action === "handoff") return { label: "担当者確認", cls: "chat-badge-handoff" };
+  if (action === "ticket_created") return { label: "受付作成", cls: "chat-badge-handoff" };
+  if (ragStatus === "ok") return { label: "根拠確認済み", cls: "chat-badge-evidence-ok" };
+  if (ragStatus === "insufficient_evidence") return { label: "根拠不足", cls: "chat-badge-evidence-warn" };
+  if (ragStatus === "budget_exceeded") return { label: "予算上限", cls: "chat-badge-evidence-warn" };
+  if (action === "collect_slot") return { label: "確認中", cls: "chat-badge-neutral" };
+  if (action === "confirm_action") return { label: "最終確認", cls: "chat-badge-neutral" };
+  return { label: chatActionLabel(action), cls: "chat-badge-neutral" };
 }
 
 function chatProgressDetail(state: "thinking" | "checking_rag" | "delayed"): string {
@@ -1011,6 +1087,118 @@ function ChatThinkingBubble({
   );
 }
 
+function ChatMessageMarkdown({ content }: { content: string }) {
+  return (
+    <div className="chat-markdown">
+      <ReactMarkdown
+        allowedElements={CHAT_MARKDOWN_ALLOWED_ELEMENTS}
+        remarkPlugins={[remarkGfm]}
+        skipHtml
+        unwrapDisallowed
+        components={{
+          table: ({ node: _node, ...props }) => (
+            <div className="chat-markdown-table-wrap">
+              <table {...props} />
+            </div>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function ChatEvidencePanel({
+  message,
+  onOpenCitation,
+}: {
+  message: ChatAssistantMessage;
+  onOpenCitation: (target: CitationViewTarget) => void;
+}) {
+  if (message.citations.length === 0) return null;
+  return (
+    <section className="chat-evidence-panel" aria-label="参照した根拠">
+      <div className="chat-evidence-head">
+        <div>
+          <span>参照した根拠</span>
+          <strong>{message.citations.length}件</strong>
+        </div>
+        <small>回答に使った承認済みナレッジ</small>
+      </div>
+      <div className="chat-evidence-list">
+        {message.citations.map((citation, index) => {
+          const approval = citeApproval(citation.approval_status);
+          const location = citationLocationLabel(citation);
+          const effectiveDate = citationEffectiveDateLabel(citation.effective_date);
+          return (
+            <button
+              key={`${citation.document_id}-${citation.chunk_id ?? index}`}
+              type="button"
+              className="chat-evidence-card"
+              onClick={() =>
+                onOpenCitation({
+                  citation,
+                  answerId: message.message_id,
+                  groundedText: message.message,
+                  index: index + 1,
+                })
+              }
+              aria-label={`根拠${index + 1}を開く: ${compactCitationLabel(citation)}`}
+            >
+              <span className="chat-evidence-index" aria-hidden="true">
+                {index + 1}
+              </span>
+              <span className="chat-evidence-main">
+                <span className="chat-evidence-title">{compactCitationLabel(citation)}</span>
+                <span className="chat-evidence-meta">
+                  {[citationKindLabel(citation.kind), location, effectiveDate]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </span>
+              <span className={`chat-evidence-state ${approval.cls}`}>{approval.label}</span>
+              <span className="chat-evidence-open">該当箇所</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ChatQuickReplyActions({
+  message,
+  onQuickReply,
+}: {
+  message: ChatAssistantMessage;
+  onQuickReply: (label: string, value: string) => void;
+}) {
+  if (message.quick_replies.length === 0) return null;
+  return (
+    <div className="chat-actions-panel" aria-label="次の見方">
+      <span className="chat-actions-label">次の見方</span>
+      <div className="chat-quick-replies">
+        {message.quick_replies.map((reply) => {
+          const tone = chatQuickReplyTone(reply.label, reply.value);
+          return (
+            <button
+              key={`${message.message_id}-${reply.value}`}
+              type="button"
+              className={`chat-action-chip ${tone.cls}`}
+              onClick={() => onQuickReply(reply.label, reply.value)}
+              aria-label={`${reply.label}で回答を見直す`}
+            >
+              <span>{tone.label}</span>
+              {reply.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ChatAssistantBubble({
   turn,
   onQuickReply,
@@ -1021,54 +1209,19 @@ function ChatAssistantBubble({
   onOpenCitation: (target: CitationViewTarget) => void;
 }) {
   const message = turn.message;
-  const ragClass = turn.ragStatus === "ok" ? "approval-approved" : "approval-draft";
+  const primaryBadge = chatPrimaryBadge(message.ai_action, turn.ragStatus);
   return (
     <article className="chat-bot-bubble">
       <div className="chat-bubble-head">
-        <span className="status-badge">{chatActionLabel(message.ai_action)}</span>
-        {turn.ragStatus && <span className={`citation-chip ${ragClass}`}>{ragStatusLabel(turn.ragStatus)}</span>}
-        {turn.ticketId && <span className="citation-chip approval-approved">受付 {turn.ticketId}</span>}
-        {turn.handoffPackageId && <span className="citation-chip approval-approved">確認依頼 {turn.handoffPackageId}</span>}
-        {turn.handoffReason && <span className="citation-chip approval-obsolete">{handoffReasonLabel(turn.handoffReason)}</span>}
+        <span className={`chat-answer-badge ${primaryBadge.cls}`}>{primaryBadge.label}</span>
+        {turn.ticketId && <span className="chat-answer-badge chat-badge-neutral">受付 {turn.ticketId}</span>}
+        {turn.handoffPackageId && <span className="chat-answer-badge chat-badge-handoff">確認依頼 {turn.handoffPackageId}</span>}
+        {turn.handoffReason && <span className="chat-answer-badge chat-badge-evidence-warn">{handoffReasonLabel(turn.handoffReason)}</span>}
       </div>
-      <p>{message.message}</p>
+      <ChatMessageMarkdown content={message.message} />
 
-      {message.citations.length > 0 && (
-        <div className="chat-citation-strip" aria-label="引用ソース">
-          {message.citations.map((citation, index) => (
-            <button
-              key={`${citation.document_id}-${citation.chunk_id ?? index}`}
-              type="button"
-              className="citation-open"
-              onClick={() =>
-                onOpenCitation({
-                  citation,
-                  answerId: message.message_id,
-                  groundedText: message.message,
-                  index: index + 1,
-                })
-              }
-            >
-              {citationLabel(citation)}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {message.quick_replies.length > 0 && (
-        <div className="chat-quick-replies" aria-label="返信候補">
-          {message.quick_replies.map((reply) => (
-            <button
-              key={`${message.message_id}-${reply.value}`}
-              type="button"
-              className="citation-open"
-              onClick={() => onQuickReply(reply.label, reply.value)}
-            >
-              {reply.label}
-            </button>
-          ))}
-        </div>
-      )}
+      <ChatEvidencePanel message={message} onOpenCitation={onOpenCitation} />
+      <ChatQuickReplyActions message={message} onQuickReply={onQuickReply} />
     </article>
   );
 }
