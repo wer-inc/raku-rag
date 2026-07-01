@@ -236,13 +236,31 @@ textarea {
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
+  position: relative;
   width: 16px;
   height: 16px;
   border: 1px solid currentColor;
   border-radius: 999px;
-  font-size: 14px;
+  font-size: 0;
   font-weight: 700;
-  line-height: 1;
+  line-height: 0;
+}
+
+.add-source-plus::before,
+.add-source-plus::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+  transform: translate(-50%, -50%);
+}
+
+.add-source-plus::after {
+  transform: translate(-50%, -50%) rotate(90deg);
 }
 
 .button-link.secondary {
@@ -5180,7 +5198,12 @@ button,
 }
 
 .add-source-back:hover {
+  background: transparent;
   text-decoration: underline;
+}
+
+.add-source-back:focus-visible {
+  background: transparent;
 }
 
 .add-source-actions {
