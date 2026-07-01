@@ -17,6 +17,7 @@ from raku_rag.eval.models import (
 )
 from raku_rag.eval.probes import SecurityProbeSuite
 from raku_rag.eval.version_registry import build_version_registry
+from raku_rag.services.groundedness import GroundednessGate
 
 SECURITY_CHECKS = (
     "acl_leakage",
@@ -54,6 +55,11 @@ class EvaluationRunner:
         # is supplied the completed run is persisted (metrics/security/baseline/gate/provenance) so
         # results are trendable across releases. Any object with .save(run) works (in-memory/Postgres).
         self.run_repository = run_repository
+        # P2 (chatbot-conversational-agent-roadmap): the same per-claim grounding check that gates
+        # every live answer (services/answer.py) also scores `claim_groundedness` below, so a
+        # released regression that invents an unsupported number is caught here, release-gated,
+        # not just live. Stateless — a fresh instance is fine even when `system` builds its own.
+        self._gate = GroundednessGate()
 
     def run(
         self,
@@ -69,6 +75,7 @@ class EvaluationRunner:
         recall_hits = 0
         citation_hits = 0
         grounded_hits = 0
+        claim_grounded_hits = 0
         precision_sum = 0.0
         rr_sum = 0.0
         gradeable = 0
@@ -123,15 +130,21 @@ class EvaluationRunner:
             if answer.status == "ok" and answer.citations and answer.used_chunks:
                 grounded_hits += 1
             if answer.status == "ok" and answer.text and answer.used_chunks:
+                used_ids = set(answer.used_chunks)
+                used_chunks = [
+                    result.chunk for result in retrieved if result.chunk.chunk_id in used_ids
+                ]
                 # Deterministic faithfulness: fraction of the asserted answer's content-terms that are
                 # actually supported by the cited/used evidence text (stronger than the structural
                 # groundedness proxy; catches a plausibly-worded unsupported answer from a real LLM).
-                used_ids = set(answer.used_chunks)
-                evidence_text = " ".join(
-                    result.chunk.text for result in retrieved if result.chunk.chunk_id in used_ids
-                )
+                evidence_text = " ".join(chunk.text for chunk in used_chunks)
                 faithful_gradeable += 1
                 faithful_sum += _term_support(answer.text, evidence_text)
+                # Per-claim grounding (P2): same GroundednessGate.claim_check the live answer path
+                # gates on, scored here so a release that starts inventing unsupported numbers/
+                # identifiers fails this gate before it ships, not just at live-answer time.
+                if self._gate.claim_check(answer.text, used_chunks).passed:
+                    claim_grounded_hits += 1
             if expected_docs:
                 # precision@k and MRR over the (ranked, deduped) retrieved docs — graded over items
                 # that carry expected evidence (recall_at_k stays a per-item hit-rate for continuity).
@@ -202,6 +215,7 @@ class EvaluationRunner:
             "mrr": rr_sum / gradeable if gradeable else 0.0,
             "citation_accuracy": citation_hits / count,
             "groundedness": grounded_hits / count,
+            "claim_groundedness": claim_grounded_hits / count,
             "faithfulness": faithful_sum / faithful_gradeable if faithful_gradeable else 0.0,
             "p95_latency_ms": _p95(latencies),
             "query_cost": total_cost,

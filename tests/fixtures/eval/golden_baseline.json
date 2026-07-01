@@ -1,11 +1,12 @@
 {
-  "_doc": "012/P1-5 COMMITTED deterministic baseline for tests/fixtures/uat/golden_corpus.json. These are measured, fixed values (NOT self-derived via baseline_from_run) so cross-commit quality drift is detectable. min_metrics are release-blocking floors; max_metrics are ceilings. p95_latency_ms is intentionally a generous ceiling only (latency is environment-dependent, not deterministic). precision_at_k=0.2 reflects precision@k with top_k=5 and one relevant doc per item (structural max 1/5); recall/mrr/citation/groundedness/faithfulness are 1.0 because each query's unique-token target is retrieved at rank 1 and the extractive answer is faithful by construction.",
+  "_doc": "012/P1-5 COMMITTED deterministic baseline for tests/fixtures/uat/golden_corpus.json. These are measured, fixed values (NOT self-derived via baseline_from_run) so cross-commit quality drift is detectable. min_metrics are release-blocking floors; max_metrics are ceilings. p95_latency_ms is intentionally a generous ceiling only (latency is environment-dependent, not deterministic). precision_at_k=0.2 reflects precision@k with top_k=5 and one relevant doc per item (structural max 1/5); recall/mrr/citation/groundedness/claim_groundedness/faithfulness are 1.0 because each query's unique-token target is retrieved at rank 1 and the extractive answer is faithful by construction. claim_groundedness (P2, chatbot-conversational-agent-roadmap) is the per-claim/per-span strengthening of groundedness: every numeric/identifier span in an answer must trace to its cited evidence, not just share one term with it.",
   "metrics": {
     "recall_at_k": 1.0,
     "precision_at_k": 0.2,
     "mrr": 1.0,
     "citation_accuracy": 1.0,
     "groundedness": 1.0,
+    "claim_groundedness": 1.0,
     "faithfulness": 1.0,
     "query_cost": 18.0
   },
@@ -15,6 +16,7 @@
     "mrr": 1.0,
     "citation_accuracy": 1.0,
     "groundedness": 1.0,
+    "claim_groundedness": 1.0,
     "faithfulness": 1.0
   },
   "max_metrics": {

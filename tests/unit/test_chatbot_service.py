@@ -1,8 +1,12 @@
+import dataclasses
 import unittest
 
 from raku_rag.chatbot import ChatbotService
-from raku_rag.domain.models import IdentityClaims
+from raku_rag.domain.models import IdentityClaims, ScopeType, SubjectType
+from raku_rag.manufacturing.app import ManufacturingSystem
+from raku_rag.manufacturing.domain.metadata import ApprovalStatus
 from raku_rag.persistence.chatbot import InMemoryChatbotSourcePolicyRepository
+from tests.manufacturing.helpers import mfg_meta
 
 
 def _principal(tenant="tenant_a", user="alice", roles=()):
@@ -837,6 +841,130 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(turn["assistant_message"]["ai_action"], "handoff")
         self.assertEqual(turn["rag"]["no_answer_reason"], "source_not_enabled_for_chatbot")
+
+
+class ChatbotManufacturingHighRiskCitationBlockTest(unittest.TestCase):
+    """P2 (chatbot-conversational-agent-roadmap) point 3.
+
+    Every other test in this file wires ChatbotService to a hand-written `rag_answerer` stub (see
+    `_rag_ok`/`_rag_answer` above), so none of them can prove that the manufacturing
+    safety_category=high_risk / approved-citation-required hard block (SC-MFG-006, pinned in
+    isolation by tests/manufacturing/test_safety_gate.py) actually reaches a request that came in
+    through the chatbot's own `submit_message` — as opposed to the chatbot's OWN, unrelated
+    `_classify_intent` "high_risk" keyword pre-filter (返金保証/法的/medical/... — a coarse
+    off-topic-for-a-bot filter that hands off WITHOUT ever calling the RAG/answer pipeline). This
+    wires ChatbotService to a real in-memory ManufacturingSystem exactly the way
+    apps/answer-service/server.py's deployed handler does
+    (`manufacturing_system.answer(principal, query, collection_id)`, converted to the RagAnswerer
+    dict shape that file's `_manufacturing_answer_json` builds) and pins the property directly.
+    """
+
+    TENANT = "tenant_mfg_chat"
+    # "pressure"-category query (classifier.py _INTENT_KEYWORDS): shares "pressure"/"hydraulic"/
+    # "accumulator". Deliberately does NOT contain any of the chatbot's OWN _classify_intent
+    # "high_risk" keywords (返金保証/補償/訴訟/法的/損害賠償/medical/legal) so this reaches
+    # _run_rag_turn as an ordinary "rag_question", not the chatbot's separate pre-filter handoff.
+    HIGH_RISK_QUERY = "How do I release the pressure in the hydraulic accumulator?"
+
+    def _mfg_principal(self):
+        return IdentityClaims(tenant_id=self.TENANT, user_id="alice")
+
+    def _service_over(self, mfg_sys: ManufacturingSystem) -> ChatbotService:
+        def rag_answerer(principal, query, collection_id):
+            # Mirrors apps/answer-service/server.py's `_manufacturing_answer_json` (status/text/
+            # confidence/citations/used_chunks/correlation_id) closely enough for _run_rag_turn's
+            # `answerable` computation; not importing that function since apps/answer-service is not
+            # an importable package (hyphenated dir name — see tests/contract/
+            # test_manufacturing_answer_route_audit.py, which source-scans it for the same reason).
+            ans = mfg_sys.answer(principal, query, collection_id)
+            return {
+                "status": ans.status,
+                "text": ans.text,
+                "confidence": ans.confidence,
+                "citations": [dataclasses.asdict(c) for c in ans.citations],
+                "used_chunks": list(ans.used_chunks),
+                "correlation_id": ans.correlation_id,
+            }
+
+        service = ChatbotService(rag_answerer)
+        _enable_internal_chat_collection(
+            service, _principal(tenant=self.TENANT, roles=("tenant_admin",))
+        )
+        return service
+
+    def _ask(self, service: ChatbotService):
+        _, created = service.create_session(self._mfg_principal(), {"channel": "web_chat"})
+        return service.submit_message(
+            self._mfg_principal(),
+            created["session_id"],
+            {"message": self.HIGH_RISK_QUERY, "collection_id": "manuals"},
+        )
+
+    def _ingest(self, mfg_sys: ManufacturingSystem, *, document_id: str, approval_status, **meta):
+        mfg_sys.ingest_manufacturing(
+            tenant_id=self.TENANT,
+            collection_id="manuals",
+            document_id=document_id,
+            text=(
+                "Release the accumulator pressure slowly using the manual bleed valve before "
+                "opening the line."
+            ),
+            metadata=mfg_meta(
+                tenant_id=self.TENANT,
+                document_id=document_id,
+                approval_status=approval_status,
+                safety_category="pressure",
+                **meta,
+            ),
+        )
+        mfg_sys.grant(self.TENANT, ScopeType.COLLECTION, "manuals", SubjectType.USER, "alice")
+
+    def test_high_risk_query_without_approved_citation_is_blocked_not_answered(self):
+        mfg_sys = ManufacturingSystem()
+        self._ingest(
+            mfg_sys,
+            document_id="hydraulic-accumulator-draft",
+            approval_status=ApprovalStatus.PENDING_REVIEW,
+        )
+
+        # Confirm the premise directly against ManufacturingSystem first (matches the assertion
+        # style of tests/manufacturing/test_safety_gate.py) before proving it also holds THROUGH
+        # ChatbotService below — isolating "is the safety gate itself correct" from "does the
+        # chatbot's wiring actually reach it".
+        direct = mfg_sys.answer(self._mfg_principal(), self.HIGH_RISK_QUERY, "manuals")
+        self.assertTrue(direct.high_risk, "query must classify high-risk (pressure category)")
+        self.assertEqual(direct.safety_block_reason, "approved_citation_missing")
+        self.assertEqual(direct.status, "insufficient_evidence")
+
+        status, turn = self._ask(self._service_over(mfg_sys))
+
+        self.assertEqual(status, 200)
+        self.assertFalse(turn["rag"]["answerable"])
+        self.assertEqual(turn["assistant_message"]["ai_action"], "handoff")
+        self.assertIsNotNone(turn["handoff"])
+        self.assertNotIn("bleed valve", turn["assistant_message"]["message"])
+        self.assertEqual(turn["rag"]["status"], "insufficient_evidence")
+
+    def test_positive_control_high_risk_query_with_approved_citation_is_answered(self):
+        # Guards against a degenerate "block everything" stand-in silently passing the test above —
+        # same positive-control philosophy as tests/manufacturing/test_safety_gate.py.
+        mfg_sys = ManufacturingSystem()
+        self._ingest(
+            mfg_sys,
+            document_id="hydraulic-accumulator-approved",
+            approval_status=ApprovalStatus.APPROVED,
+            effective_date="2026-01-01",
+        )
+
+        direct = mfg_sys.answer(self._mfg_principal(), self.HIGH_RISK_QUERY, "manuals")
+        self.assertTrue(direct.high_risk)
+        self.assertEqual(direct.status, "ok")
+
+        status, turn = self._ask(self._service_over(mfg_sys))
+
+        self.assertEqual(status, 200)
+        self.assertTrue(turn["rag"]["answerable"])
+        self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
 
 
 if __name__ == "__main__":
