@@ -284,8 +284,25 @@ promotion.
    chatbot suite 56 passed/3 subtests. Per-tenant authority is in-memory only for now (documented in
    `authority.py`: a Postgres-backed repository mirroring migration 0016 is deferred until a second
    rung exists to make persistence meaningful).
-2. [ ] P1 (revised): `L1EnvelopeAnswerEngine` reusing the existing `BedrockClaudeLLMProvider` (no new
-   provider code) + numeric/citation preservation guard; ship L1 to the demo tenant behind a flag,
-   offline/mocked-invoker only in this sandbox.
+2. [x] P1 (revised): `L1EnvelopeAnswerEngine` landed `0ca9e1a` on `worktree-chatbot-conversational-agent`.
+   New `src/raku_rag/chatbot/envelope.py`: wraps `L0DeterministicAnswerEngine`'s answer dict
+   unchanged and, only when a real `LLMProvider` is configured, calls it for envelope-only text
+   (acknowledgment + next-step) via `build_envelope_prompt` — a narrow prompt kept separate from
+   `build_grounded_prompt`, with no retrieval context (the deterministic answer is embedded in the
+   prompt itself, not passed as evidence). The mechanical guard (`is_envelope_grounded`) renders the
+   wrapped text only if every numeric token and citation-id-shaped token in it is already present in
+   the deterministic answer's own text/citations; guard violation, parse failure, or provider
+   exception all fall back to the deterministic answer verbatim (no new provider code — reuses
+   `BedrockClaudeLLMProvider`/`llm_provider_from_settings` exactly as-is). `ChatbotService` now
+   registers `"L1"` in `_answer_engines` unconditionally (safe: with no LLM configured, or the
+   default `ExtractiveLLMProvider`, it is a provable no-op passthrough — see tests) and accepts an
+   optional `llm_provider`/`settings` plus an `enable_demo_tenant_l1` flag (default OFF) that dials
+   the demo tenant's `chatbot_authority_level` to `"L1"`; `apps/answer-service/server.py` wires this
+   from `system.llm` (reusing the manufacturing path's already-built provider, not a second instance)
+   and a new `RAKU_CHATBOT_DEMO_TENANT_L1` env flag, still unset by default. `RAKU_LLM_PROVIDER`
+   stays unset too, so this is fully offline/mocked-invoker-only in this sandbox, exactly like
+   `tests/unit/test_bedrock_claude_llm.py`. Verified independently: `gate.sh all` 1160 tests GREEN
+   (was 1135 + 25 new), targeted chatbot suite (service + golden scenarios + answer_engine +
+   envelope) 81 passed/3 subtests (was 56 + 25).
 3. [ ] P2 (revised): strengthen `GroundednessGate.post_check` to a per-claim check; extend the
    existing `eval/baseline.py` release-gated eval rather than building a parallel harness.
