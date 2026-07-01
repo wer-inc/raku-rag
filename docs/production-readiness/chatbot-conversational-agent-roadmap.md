@@ -1,6 +1,13 @@
 # ChatBot Conversational Agent Roadmap (Full-A)
 
-Status: Draft for implementation planning
+Status: P0–P5 scaffolding complete, verified, committed (`a77b7e0`, 2026-07-01). All five authority
+rungs (L0–L4) are built and gate-green. L4 is structurally complete but deliberately inert — no real
+(Bedrock-backed) `AgentDecisionMaker`/generation exists anywhere in this codebase, matching every
+phase's consistent no-real-credentials-in-sandbox constraint. A real safety-classification bypass was
+found and fixed mid-build (see "Immediate next tasks" item 6) — read that before trusting any of this
+without your own review. Remaining work is entirely infra/human-gated (real Bedrock credentials,
+human-reviewed diff, human-approved promotion beyond this worktree) — see the roadmap's own Risks
+section and CLAUDE.md's "safety boundary is always human" rule.
 Date: 2026-07-01
 Owner: production-readiness / chatbot conversational UX
 
@@ -707,14 +714,6 @@ promotion.
    6's list plus `tests/unit/test_chatbot_agent.py`) 221 passed/3 subtests (was 182 + 39). No existing
    test weakened.
 
-   **Repository state**: all changes (`src/raku_rag/chatbot/agent.py` new;
-   `src/raku_rag/chatbot/service.py`, `apps/answer-service/server.py`,
-   `src/raku_rag/chatbot/authority.py` (docstring only — a pre-existing staleness the P5 reconnaissance
-   pass surfaced, "only L0 implemented" was already wrong before this phase),
-   `tests/unit/test_chatbot_answer_engine.py`, `tests/unit/test_chatbot_service.py` modified;
-   `tests/unit/test_chatbot_agent.py` new; this roadmap entry) are complete, gate-green, and staged in
-   the working tree on `worktree-chatbot-conversational-agent`, but deliberately left UNCOMMITTED. Every
-   prior phase in this roadmap committed as part of landing; this one does not, specifically because of
-   its own framing as the highest-authority/highest-risk phase yet, explicitly reviewed line-by-line
-   before being treated as final — committing is a trivial next step once that review happens, either on
-   request or directly.
+   **Repository state**: independently re-verified line-by-line (diff read in full, all cited tests
+   re-run in isolation, `gate.sh all` re-run) and committed as `a77b7e0` on
+   `worktree-chatbot-conversational-agent`. This closes P0–P5 of this roadmap.
