@@ -3,6 +3,7 @@ import unittest
 from raku_rag.chatbot import ChatbotService
 from raku_rag.chatbot.answer_engine import DialogueContext, L0DeterministicAnswerEngine
 from raku_rag.chatbot.authority import InMemoryChatbotAuthorityRepository
+from raku_rag.chatbot.coreference import L2QueryUnderstandingAnswerEngine
 from raku_rag.chatbot.dialogue_manager import DialogueManager
 from raku_rag.chatbot.envelope import L1EnvelopeAnswerEngine
 from raku_rag.chatbot.service import ChatSession, StoredMessage
@@ -115,21 +116,45 @@ class DialogueManagerTest(unittest.TestCase):
         self.assertIsNone(context.previous_question)
         self.assertEqual(context.previous_citations, ())
         self.assertEqual(context.source_policy_ids, ("pol_1",))
+        self.assertIsNone(context.previous_source_answer_text)
+
+    def test_build_context_carries_the_raw_source_answer_text_separate_from_the_formatted_one(self):
+        manager = DialogueManager()
+        session = ChatSession(tenant_id="tenant_a", user_id="alice", session_id="s1")
+        session.messages.append(
+            StoredMessage(message_id="m1", role="user", content_redacted="AL-21の手順は？")
+        )
+        session.messages.append(
+            StoredMessage(
+                message_id="m2",
+                role="assistant",
+                content_redacted="結論: 整形済みの表示テキストです。",
+                ai_action="answer_with_citations",
+                citations=[{"document_id": "doc_1"}],
+                metadata={"source_answer_text": "raw answer", "source_question": "AL-21の手順は？"},
+            )
+        )
+
+        context = manager.build_context(session, _no_quick_reply, "manuals", ["pol_1"])
+
+        self.assertEqual(context.previous_answer, "結論: 整形済みの表示テキストです。")
+        self.assertEqual(context.previous_source_answer_text, "raw answer")
 
 
 class ChatbotAuthorityResolutionTest(unittest.TestCase):
     def test_resolve_answer_engine_defaults_to_l0_for_unconfigured_tenant(self):
         service = ChatbotService(lambda principal, query, collection_id: _rag_answer())
 
-        # L1 is registered by default (P1) but must never apply to a tenant nobody dialed to it.
+        # L1/L2 are registered by default (P1/P3) but must never apply to a tenant nobody dialed to.
         self.assertIn("L1", service._answer_engines)
+        self.assertIn("L2", service._answer_engines)
         engine = service._resolve_answer_engine("tenant_a")
 
         self.assertIsInstance(engine, L0DeterministicAnswerEngine)
 
     def test_resolve_answer_engine_falls_back_to_l0_for_unregistered_level(self):
         repo = InMemoryChatbotAuthorityRepository()
-        repo.set("tenant_a", "L2")
+        repo.set("tenant_a", "L3")
         service = ChatbotService(
             lambda principal, query, collection_id: _rag_answer(),
             authority_repository=repo,
@@ -148,6 +173,23 @@ class ChatbotAuthorityResolutionTest(unittest.TestCase):
         )
 
         self.assertIsInstance(service._resolve_answer_engine("tenant_a"), L1EnvelopeAnswerEngine)
+        self.assertIsInstance(
+            service._resolve_answer_engine("tenant_b"), L0DeterministicAnswerEngine
+        )
+
+    def test_resolve_answer_engine_resolves_to_l2_only_for_a_tenant_explicitly_set(self):
+        repo = InMemoryChatbotAuthorityRepository()
+        repo.set("tenant_a", "L2")
+        service = ChatbotService(
+            lambda principal, query, collection_id: _rag_answer(),
+            authority_repository=repo,
+        )
+
+        # L2 is registered as L1(L2(L0)) — cumulative envelope-over-coreference (see service.py) —
+        # so it still surfaces as an L1EnvelopeAnswerEngine at the top level.
+        l2_engine = service._resolve_answer_engine("tenant_a")
+        self.assertIsInstance(l2_engine, L1EnvelopeAnswerEngine)
+        self.assertIsInstance(l2_engine._inner, L2QueryUnderstandingAnswerEngine)
         self.assertIsInstance(
             service._resolve_answer_engine("tenant_b"), L0DeterministicAnswerEngine
         )

@@ -21,6 +21,7 @@ from raku_rag.chatbot.authority import (
     ChatbotAuthorityRepository,
     InMemoryChatbotAuthorityRepository,
 )
+from raku_rag.chatbot.coreference import L2QueryUnderstandingAnswerEngine
 from raku_rag.chatbot.dialogue_manager import DialogueManager
 from raku_rag.chatbot.envelope import L1EnvelopeAnswerEngine
 from raku_rag.core.config import Settings
@@ -398,6 +399,7 @@ class ChatbotService:
         llm_provider: LLMProvider | None = None,
         settings: Settings | None = None,
         enable_demo_tenant_l1: bool = False,
+        enable_demo_tenant_l2: bool = False,
         demo_tenant_id: str = DEFAULT_DEMO_TENANT_ID,
     ) -> None:
         self._sessions: dict[tuple[str, str], ChatSession] = {}
@@ -416,12 +418,21 @@ class ChatbotService:
         # dialed to "L1" (see `enable_demo_tenant_l1` below) is ever routed to it.
         self._llm_provider = llm_provider or llm_provider_from_settings(settings or Settings())
         l0_engine = L0DeterministicAnswerEngine(rag_answerer)
+        l2_coreference_engine = L2QueryUnderstandingAnswerEngine(l0_engine)
         self._answer_engines: dict[str, AnswerEngine] = {
             DEFAULT_CHATBOT_AUTHORITY_LEVEL: l0_engine,
             "L1": L1EnvelopeAnswerEngine(l0_engine, self._llm_provider),
+            # L2 is cumulative, per the authority ladder's "+" framing: coreference resolution runs
+            # first (feeding the same deterministic L0 retrieval/answer), then L1's envelope wraps
+            # whichever — possibly rewritten, possibly reused-from-citations — answer resulted. With
+            # no LLM configured this reduces to exactly L2's deterministic behavior (L1's part is a
+            # provable no-op passthrough, see envelope.py), so "L2" is just as offline-safe as "L1".
+            "L2": L1EnvelopeAnswerEngine(l2_coreference_engine, self._llm_provider),
         }
         if enable_demo_tenant_l1:
             self._authority_repo.set(demo_tenant_id, "L1")
+        if enable_demo_tenant_l2:
+            self._authority_repo.set(demo_tenant_id, "L2")
         self._seed_scenarios()
 
     def _resolve_answer_engine(self, tenant_id: str) -> AnswerEngine:

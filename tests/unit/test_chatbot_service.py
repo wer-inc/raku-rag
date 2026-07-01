@@ -2,6 +2,7 @@ import dataclasses
 import unittest
 
 from raku_rag.chatbot import ChatbotService
+from raku_rag.chatbot.authority import InMemoryChatbotAuthorityRepository
 from raku_rag.domain.models import IdentityClaims, ScopeType, SubjectType
 from raku_rag.manufacturing.app import ManufacturingSystem
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus
@@ -841,6 +842,219 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(turn["assistant_message"]["ai_action"], "handoff")
         self.assertEqual(turn["rag"]["no_answer_reason"], "source_not_enabled_for_chatbot")
+
+
+class ChatbotL2CoreferenceTest(unittest.TestCase):
+    """P3 (chatbot-conversational-agent-roadmap): the ORIGINAL complaint this phase closes — "その
+    締付トルクは?" after a question naming equipment "P-101" was searched with "P-101" lost entirely.
+
+    `_p101_rag_answerer` below is a deliberately literal stand-in for that bug report: it can only
+    find the equipment's document when its own query text contains "P-101"/"p101", exactly the
+    identifier the raw follow-up text does not carry on its own.
+    """
+
+    def _p101_rag_answerer(self, queries: list[str]):
+        def rag_answerer(_principal, query, _collection_id):
+            queries.append(query)
+            if "p-101" in query.casefold() or "p101" in query.casefold():
+                return _rag_answer(text="P-101の締付トルクは25N・mです。", document_id="eq-p101")
+            return _rag_insufficient(_principal, query, _collection_id)
+
+        return rag_answerer
+
+    def _l2_service(self, rag_answerer) -> ChatbotService:
+        repo = InMemoryChatbotAuthorityRepository()
+        repo.set("tenant_a", "L2")
+        service = ChatbotService(rag_answerer, authority_repository=repo)
+        _enable_internal_chat_collection(service)
+        return service
+
+    def test_bare_pronoun_followup_resolves_to_the_same_equipment_as_turn_one_under_l2(self):
+        queries: list[str] = []
+        service = self._l2_service(self._p101_rag_answerer(queries))
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+
+        _, first_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "P-101 の点検手順を教えて", "collection_id": "manuals"},
+        )
+        self.assertEqual(first_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101")
+
+        status, second_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "その締付トルクは?", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(second_turn["rag"]["answerable"])
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "answer_with_citations")
+        self.assertEqual(
+            second_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101"
+        )
+        self.assertIn("25N・m", second_turn["assistant_message"]["message"])
+        # The fix is that retrieval itself received the carried-over identifier, not a coincidence.
+        self.assertEqual(len(queries), 2)
+        self.assertIn("p-101", queries[1].casefold())
+
+    def test_same_two_turns_fail_under_default_l0_authority_the_bug_this_phase_closes(self):
+        # Same session, same stub, same two messages, in the SAME order -- the ONLY difference from
+        # the test above is that this tenant was never dialed to "L2". This is the "before" behavior
+        # the roadmap complaint describes: the raw follow-up text alone has no "P-101" for even this
+        # permissive stub to recognize, so it comes back insufficient_evidence.
+        queries: list[str] = []
+        service = ChatbotService(self._p101_rag_answerer(queries))
+        _enable_internal_chat_collection(service)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+
+        service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "P-101 の点検手順を教えて", "collection_id": "manuals"},
+        )
+        status, second_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "その締付トルクは?", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(second_turn["rag"]["answerable"])
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "handoff")
+        self.assertEqual(second_turn["rag"]["no_answer_reason"], "insufficient_evidence")
+        self.assertEqual(queries[1], "その締付トルクは?")
+        self.assertNotIn("p-101", queries[1].casefold())
+
+    def test_pure_elaboration_followup_reuses_previous_citations_without_a_new_search(self):
+        queries: list[str] = []
+
+        def rag_answerer(_principal, query, _collection_id):
+            queries.append(query)
+            return _rag_answer(
+                text="P-101の点検手順は電源停止、外観確認、記録の順です。", document_id="eq-p101"
+            )
+
+        service = self._l2_service(rag_answerer)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+        service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "P-101 の点検手順を教えて", "collection_id": "manuals"},
+        )
+
+        status, second_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "それについてもう少し詳しく教えてください", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(len(queries), 1, "the elaboration turn must not trigger a new RAG search")
+        self.assertTrue(second_turn["rag"]["answerable"])
+        self.assertEqual(
+            second_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101"
+        )
+
+    def test_self_contained_first_turn_naming_its_own_equipment_is_untouched_by_l2(self):
+        # The overwhelming majority of turns (including every first turn) must be byte-identical to
+        # today's L0 behavior: no marker, or an identifier of its own -> passthrough, never rewritten.
+        queries: list[str] = []
+        service = self._l2_service(self._p101_rag_answerer(queries))
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+
+        service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "P-101 の点検手順を教えて", "collection_id": "manuals"},
+        )
+        service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "P-101のその締付トルクは?", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(queries, ["P-101 の点検手順を教えて", "P-101のその締付トルクは?"])
+
+    def test_scope_carry_does_not_widen_to_a_different_collection_with_no_active_policy(self):
+        queries: list[str] = []
+
+        def rag_answerer(_principal, query, collection_id):
+            if collection_id == "restricted":
+                raise AssertionError(
+                    "must not run retrieval/answer for a collection this turn has no policy for"
+                )
+            queries.append(query)
+            return _rag_answer(text="P-101の締付トルクは25N・mです。", document_id="eq-p101")
+
+        service = self._l2_service(rag_answerer)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+        _, first_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "P-101 の点検手順を教えて", "collection_id": "manuals"},
+        )
+        self.assertEqual(first_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101")
+
+        # Same session, same referential follow-up, but this turn declares a DIFFERENT collection
+        # that has no chatbot source policy at all -- a naive rewrite/reformat could otherwise have
+        # smuggled turn 1's "manuals" citation into a "restricted" turn's answer.
+        status, second_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "その締付トルクは?", "collection_id": "restricted"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(second_turn["rag"]["answerable"])
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "handoff")
+        self.assertEqual(second_turn["assistant_message"]["citations"], [])
+        self.assertEqual(second_turn["rag"]["no_answer_reason"], "source_not_enabled_for_chatbot")
+        self.assertEqual(len(queries), 1, "retrieval must not have run a second time at all")
+
+    def test_scope_carry_does_not_survive_a_policy_revoked_between_turns(self):
+        # Complements the different-collection case above: proves the block tracks the CURRENT,
+        # live policy state (re-read every turn), not a snapshot of "was this collection allowed
+        # earlier in the session" -- same collection_id string both turns, policy changes between.
+        queries: list[str] = []
+
+        def rag_answerer(_principal, query, _collection_id):
+            queries.append(query)
+            return _rag_answer(text="P-101の締付トルクは25N・mです。", document_id="eq-p101")
+
+        repo = InMemoryChatbotAuthorityRepository()
+        repo.set("tenant_a", "L2")
+        service = ChatbotService(rag_answerer, authority_repository=repo)
+        admin = _principal(roles=("tenant_admin",))
+        _enable_internal_chat_collection(service, admin)
+        _, created = service.create_session(_principal(), {"channel": "web_chat"})
+        service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "P-101 の点検手順を教えて", "collection_id": "manuals"},
+        )
+
+        service.upsert_source_policy(
+            admin,
+            "pol_collection",
+            {
+                "source_id": "",
+                "collection_id": "manuals",
+                "exposure_mode": "disabled",
+                "allowed_channels": ["web_chat"],
+            },
+        )
+
+        status, second_turn = service.submit_message(
+            _principal(),
+            created["session_id"],
+            {"message": "その締付トルクは?", "collection_id": "manuals"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(second_turn["rag"]["answerable"])
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "handoff")
+        self.assertEqual(len(queries), 1)
 
 
 class ChatbotManufacturingHighRiskCitationBlockTest(unittest.TestCase):

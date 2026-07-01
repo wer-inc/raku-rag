@@ -28,6 +28,11 @@ class DialogueContext:
     previous_citations: tuple[dict, ...] = ()
     previous_document_ids: tuple[str, ...] = ()
     source_policy_ids: tuple[str, ...] = ()
+    # The raw, pre-`_format_chatbot_answer` extractive text behind `previous_answer` (which is the
+    # already section-formatted display string). A rung that reuses the prior turn's facts without a
+    # new search (see chatbot/coreference.py) needs this raw form so `_run_rag_turn` can format it
+    # once, not twice — mirrors `_previous_reformat_turn`'s own `source_answer_text` field.
+    previous_source_answer_text: str | None = None
 
 
 class AnswerEngine(Protocol):

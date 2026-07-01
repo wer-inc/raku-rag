@@ -72,6 +72,51 @@
       "min_answer_chars": 130
     },
     {
+      "id": "v2-coreference-motor-torque-pronoun-followup",
+      "category": "grounded_lookup",
+      "tags": ["coreference", "multi_turn"],
+      "question": "モータ M8 端子台の締付トルクは？",
+      "expected_behavior": "answer",
+      "expected_document_ids": ["eq-motor-m8-torque"],
+      "required_terms": ["M8", "25"],
+      "min_answer_chars": 40,
+      "quick_reply_checks": [
+        {
+          "id": "v2-coreference-motor-torque-pronoun-followup::pronoun-followup",
+          "category": "coreference_followup",
+          "tags": ["coreference", "multi_turn"],
+          "value": "その基礎ボルトの締付トルクは？",
+          "require_offered": false,
+          "expected_behavior": "answer",
+          "expected_document_ids": ["eq-motor-m8-torque"],
+          "required_terms": ["M16", "95"],
+          "min_answer_chars": 20
+        }
+      ]
+    },
+    {
+      "id": "v2-coreference-scope-carry-does-not-widen",
+      "category": "grounded_lookup",
+      "tags": ["coreference", "multi_turn", "scope_carry", "adversarial"],
+      "question": "モータ M8 端子台の締付トルクは？",
+      "expected_behavior": "answer",
+      "expected_document_ids": ["eq-motor-m8-torque"],
+      "required_terms": ["M8", "25"],
+      "min_answer_chars": 40,
+      "quick_reply_checks": [
+        {
+          "id": "v2-coreference-scope-carry-does-not-widen::different-collection-followup",
+          "category": "coreference_followup",
+          "tags": ["coreference", "multi_turn", "scope_carry", "adversarial"],
+          "value": "その基礎ボルトの締付トルクは？",
+          "require_offered": false,
+          "collection_id": "v2_scope_carry_probe_unconfigured",
+          "expected_behavior": "handoff",
+          "expected_no_answer_reasons": ["source_not_enabled_for_chatbot", "insufficient_evidence"]
+        }
+      ]
+    },
+    {
       "id": "v2-grounded-pump-lubrication-full",
       "category": "grounded_lookup",
       "tags": ["baseline_smoke", "lubrication", "numeric_threshold"],

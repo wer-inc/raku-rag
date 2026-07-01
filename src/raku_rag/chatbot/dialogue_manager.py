@@ -76,4 +76,5 @@ class DialogueManager:
             previous_citations=tuple(dict(c) for c in context.get("citations") or ()),
             previous_document_ids=tuple(context.get("document_ids") or ()),
             source_policy_ids=tuple(source_policy_ids),
+            previous_source_answer_text=context.get("source_answer_text") or None,
         )

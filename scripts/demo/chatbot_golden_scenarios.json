@@ -195,6 +195,27 @@
       "expected_behavior": "handoff",
       "expected_no_answer_reasons": ["insufficient_evidence", "source_not_enabled_for_chatbot"],
       "forbidden_terms": ["system prompt", "内部コンテキスト", "x-raku", "authorization", "bearer"]
+    },
+    {
+      "id": "coreference-torque-followup-same-equipment",
+      "category": "grounded_lookup",
+      "question": "モータ M8 端子台の締付トルクを根拠付きで教えて",
+      "expected_behavior": "answer",
+      "required_citations": ["eq-motor-m8-torque"],
+      "required_terms": ["M8", "25"],
+      "min_answer_chars": 40,
+      "quick_reply_checks": [
+        {
+          "id": "coreference-torque-followup-same-equipment::pronoun-followup",
+          "category": "coreference_followup",
+          "value": "その基礎ボルトの締付トルクは？",
+          "require_offered": false,
+          "expected_behavior": "answer",
+          "expected_document_ids": ["eq-motor-m8-torque"],
+          "required_terms": ["M16", "95"],
+          "min_answer_chars": 20
+        }
+      ]
     }
   ]
 }

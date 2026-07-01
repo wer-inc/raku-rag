@@ -1488,6 +1488,11 @@ def make_handler(system: ProductionSystem):
         # chatbot_authority_level to "L1" (envelope phrasing). Offline-safe even when set, since
         # RAKU_LLM_PROVIDER stays unset by default (system.llm is then the extractive no-op stub).
         enable_demo_tenant_l1=os.environ.get("RAKU_CHATBOT_DEMO_TENANT_L1") == "1",
+        # Opt-in, default off (P3): flips the demo tenant to "L2" (coreference resolution, cumulative
+        # with L1's envelope) instead of "L1". Independent flag rather than replacing
+        # RAKU_CHATBOT_DEMO_TENANT_L1 outright, so an existing L1 pilot is never silently upgraded —
+        # a tenant needs its own explicit opt-in per rung, matching the roadmap's per-tenant dial.
+        enable_demo_tenant_l2=os.environ.get("RAKU_CHATBOT_DEMO_TENANT_L2") == "1",
         demo_tenant_id=os.environ.get("DEMO_TENANT", "demo"),
     )
     industry_api = IndustryApiService()
