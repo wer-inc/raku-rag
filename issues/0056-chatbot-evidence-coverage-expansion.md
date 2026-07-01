@@ -41,10 +41,18 @@ stg の v2品質テストでは expected citation hit rate が 100% だった一
 4. trouble case は構造化データから `原因`, `暫定処置`, `恒久対策`, `効果` を分けて使う。
 5. raw context をログ出力しないまま、coverage diagnostics を scorecard に出す。
 
+## 実装メモ
+
+- 2026-07-01: `ExtractiveLLMProvider` で複数項目を求める日本語質問の場合、ベスト文書の短い
+  承認済みチャンク内の周辺文を最大12文まで保持するように変更。
+- 2026-07-01: `非常 停止` → `非常停止`, `V ベルト` → `Vベルト`, `0.5mm 超` → `0.5mm超`
+  のように、根拠の意味を変えない範囲で日本語回答の不要スペースを正規化。
+- 2026-07-01: AL-21 と M8 初回増し締めの再現 unit test を追加。
+
 ## QA checklist
 
-- [ ] 再現テストがある。
-- [ ] 正常系が確認できる。
+- [x] 再現テストがある。
+- [x] 正常系が確認できる。
 - [ ] 失敗時の表示/応答が確認できる。
 - [ ] tenant/ACL 境界を越えない。
 - [ ] security/safety gate を弱めていない。
@@ -70,4 +78,3 @@ stg の v2品質テストでは expected citation hit rate が 100% だった一
 - `src/raku_rag/services/answer.py`
 - `src/raku_rag/production.py`
 - `docs/production-readiness/chatbot-golden-scenarios.md`
-

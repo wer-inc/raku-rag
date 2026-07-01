@@ -17,6 +17,8 @@ from raku_rag.domain.models import Chunk
 from raku_rag.interfaces.base import LLMProvider
 
 _SENT = re.compile(r".+?(?:[。．！？]|(?<!\d)[.!?](?!\d)|\n|$)")
+_CJK = r"\u3040-\u30ff\u3400-\u9fff"
+_COMPLETE_ANSWER_SENTENCE_LIMIT = 12
 _IDENTIFIER = re.compile(
     r"(?<![A-Za-z0-9])(?:"
     r"[A-Za-z]{1,12}(?:[-_][A-Za-z0-9]{1,16})+"
@@ -94,22 +96,59 @@ def _complete_answer_query(query: str) -> bool:
         marker in (query or "")
         for marker in (
             "手順",
+            "順",
             "順番",
             "抜け漏れ",
             "原因",
             "対策",
             "恒久",
             "整理",
+            "教えて",
+            "いつ",
+            "何",
+            "どれ",
+            "誰",
+            "どう",
+            "どんな",
+            "点検",
+            "確認",
+            "条件",
+            "間隔",
+            "トルク",
+            "温度",
+            "圧力",
+            "発報",
             "注意点",
             "必要",
             "保護具",
+            "検電",
+            "解錠",
+            "張力",
+            "摩耗",
+            "補給",
             "保持時間",
             "速度",
+            "効果",
+            "改善結果",
             "管理値",
             "合否判定",
             "しきい値",
         )
     )
+
+
+def _normalize_answer_spacing(text: str) -> str:
+    """Keep Japanese extractive answers readable without changing the evidence meaning."""
+
+    normalized = re.sub(rf"(?<=[{_CJK}])\s+(?=[{_CJK}])", "", text)
+    normalized = re.sub(rf"(?<=[A-Z])\s+(?=[{_CJK}])", "", normalized)
+    normalized = re.sub(
+        rf"(?<=[A-Za-z0-9%μΩ℃・.])\s+"
+        r"(?=(?:超|以上|以下|未満|以内|ごと|後|へ|で|を|に|は|と|が|も))",
+        "",
+        normalized,
+    )
+    return re.sub(r"\s{2,}", " ", normalized).strip()
 
 
 def _sentence_score(query: str, query_terms: set[str], sentence: str) -> int:
@@ -163,7 +202,7 @@ class ExtractiveLLMProvider(LLMProvider):
                 continue
             chunk_items: list[tuple[int, int, str]] = []
             for sentence_index, sent in enumerate(_SENT.findall(chunk.text)):
-                s = sent.strip()
+                s = _normalize_answer_spacing(sent.strip())
                 if not s:
                     continue
                 score = _sentence_score(query, q, s)
@@ -196,13 +235,15 @@ class ExtractiveLLMProvider(LLMProvider):
                 if chunk_index not in target_chunks:
                     continue
                 for sentence_index, sent in enumerate(_SENT.findall(chunk.text)):
-                    s = sent.strip()
+                    s = _normalize_answer_spacing(sent.strip())
                     if s:
                         selected_complete.append((chunk_index, sentence_index, s))
-                if len(selected_complete) >= 8:
+                if len(selected_complete) >= _COMPLETE_ANSWER_SENTENCE_LIMIT:
                     break
             if selected_complete:
-                return " ".join(s for _, _, s in selected_complete[:8])
+                return " ".join(
+                    s for _, _, s in selected_complete[:_COMPLETE_ANSWER_SENTENCE_LIMIT]
+                )
 
         best_overlap = max(overlap for overlap, _, _, _ in best)
         min_overlap = max(1, best_overlap // 3)

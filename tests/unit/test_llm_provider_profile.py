@@ -156,6 +156,42 @@ class LlmProviderProfileTest(unittest.TestCase):
             self.assertIn(expected, out)
         self.assertNotIn("一般点検メモ", out)
 
+    def test_japanese_multi_item_query_keeps_short_best_chunk_coverage(self) -> None:
+        out = ExtractiveLLMProvider().generate(
+            "設備 E-152 で AL-21 過負荷が出た時、何を示し、どの順で点検し、何Aを超えると発報しますか",
+            [
+                _chunk(
+                    "設備 E-152 アラーム AL-21 過負荷 対応 手順。\n"
+                    "・AL-21 は コンベア 駆動 過負荷 を示す。\n"
+                    "・まず 非常 停止 を確認 し リセット。\n"
+                    "・V ベルト の 張力 10mm と 噛み込み 異物 を点検。\n"
+                    "・過負荷 電流 は 定格 12A を超えると AL-21 発報。\n"
+                    "・復旧 後 は 試運転 で 電流値 を再確認。",
+                    document_id="eq-alarm-e152-al21",
+                )
+            ],
+        )
+
+        for expected in ("非常停止", "Vベルト", "10mm", "12A", "試運転"):
+            self.assertIn(expected, out)
+
+    def test_when_query_keeps_numeric_terms_from_best_chunk(self) -> None:
+        out = ExtractiveLLMProvider().generate(
+            "モータ M8 の増し締めはいつ実施しますか。トルク値も合わせて教えて",
+            [
+                _chunk(
+                    "モータ M8 据付 締付トルク 規定。\n"
+                    "・基礎 ボルト M16 は 締付トルク 95 N・m。\n"
+                    "・端子台 M8 ねじ は 締付トルク 25 N・m。\n"
+                    "・増し締め は 初回 運転 100時間 後 に実施。",
+                    document_id="eq-motor-m8-torque",
+                )
+            ],
+        )
+
+        for expected in ("初回運転", "100時間", "25", "95"):
+            self.assertIn(expected, out)
+
 
 if __name__ == "__main__":
     unittest.main()
