@@ -13,16 +13,20 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable
 from urllib.parse import urlparse
 
+from raku_rag.chatbot.answer_engine import AnswerEngine, L0DeterministicAnswerEngine, RagAnswerer
+from raku_rag.chatbot.authority import (
+    DEFAULT_CHATBOT_AUTHORITY_LEVEL,
+    ChatbotAuthorityRepository,
+    InMemoryChatbotAuthorityRepository,
+)
+from raku_rag.chatbot.dialogue_manager import DialogueManager
 from raku_rag.domain.models import IdentityClaims
 from raku_rag.persistence.chatbot import (
     ChatbotSourcePolicyRepository,
     InMemoryChatbotSourcePolicyRepository,
 )
-
-RagAnswerer = Callable[[IdentityClaims, str, str | None], dict]
 
 SESSION_ADMIN_ROLES = {"ops_owner", "tenant_admin", "reviewer"}
 HANDOFF_READ_ROLES = {"operator", "ops_owner", "tenant_admin"}
@@ -381,8 +385,8 @@ class ChatbotService:
         self,
         rag_answerer: RagAnswerer,
         source_policy_repository: ChatbotSourcePolicyRepository | None = None,
+        authority_repository: ChatbotAuthorityRepository | None = None,
     ) -> None:
-        self._rag_answerer = rag_answerer
         self._sessions: dict[tuple[str, str], ChatSession] = {}
         self._handoffs: dict[tuple[str, str], dict] = {}
         self._feedback: dict[tuple[str, str], dict] = {}
@@ -391,7 +395,18 @@ class ChatbotService:
             self._source_policies
         )
         self._scenarios: dict[tuple[str, str], ChatScenario] = {}
+        self._dialogue_manager = DialogueManager()
+        self._authority_repo = authority_repository or InMemoryChatbotAuthorityRepository()
+        self._answer_engines: dict[str, AnswerEngine] = {
+            DEFAULT_CHATBOT_AUTHORITY_LEVEL: L0DeterministicAnswerEngine(rag_answerer),
+        }
         self._seed_scenarios()
+
+    def _resolve_answer_engine(self, tenant_id: str) -> AnswerEngine:
+        level = self._authority_repo.get(tenant_id)
+        return self._answer_engines.get(
+            level, self._answer_engines[DEFAULT_CHATBOT_AUTHORITY_LEVEL]
+        )
 
     # --- sessions and turns -------------------------------------------------
 
@@ -1058,7 +1073,11 @@ class ChatbotService:
             )
             return assistant, rag, handoff
 
-        rag_response = self._rag_answerer(principal, text, collection_id)
+        engine = self._resolve_answer_engine(session.tenant_id)
+        context = self._dialogue_manager.build_context(
+            session, self._quick_reply_action, collection_id, pre_rag_policy_ids
+        )
+        rag_response = engine.answer(principal, text, collection_id, context)
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_citations = [dict(c) for c in (rag_response.get("citations") or [])]
         citations, policy_ids = self._filter_chatbot_citations(
@@ -1521,45 +1540,7 @@ class ChatbotService:
         return any(term.lower() in lower for term in terms)
 
     def _last_answer_context(self, session: ChatSession) -> dict | None:
-        answer_index = -1
-        answer_message: StoredMessage | None = None
-        for index in range(len(session.messages) - 1, -1, -1):
-            message = session.messages[index]
-            if (
-                message.role == "assistant"
-                and message.ai_action == "answer_with_citations"
-                and message.citations
-            ):
-                answer_index = index
-                answer_message = message
-                break
-        if answer_message is None:
-            return None
-
-        metadata = dict(answer_message.metadata or {})
-        previous_question = ""
-        for message in reversed(session.messages[:answer_index]):
-            if message.role == "user" and not self._quick_reply_action(message.content_redacted):
-                previous_question = message.content_redacted
-                break
-        if not previous_question:
-            previous_question = str(metadata.get("source_question") or "")
-
-        document_ids = [
-            str(citation.get("document_id") or "")
-            for citation in answer_message.citations
-            if citation.get("document_id")
-        ]
-        return {
-            "question": previous_question,
-            "answer": answer_message.content_redacted,
-            "source_answer_text": str(
-                metadata.get("source_answer_text") or answer_message.content_redacted
-            ),
-            "source_question": str(metadata.get("source_question") or previous_question),
-            "citations": [dict(citation) for citation in answer_message.citations],
-            "document_ids": list(dict.fromkeys(document_ids)),
-        }
+        return self._dialogue_manager.last_answer_context(session, self._quick_reply_action)
 
     def _previous_reformat_turn(
         self, session: ChatSession, action: str, collection_id: str | None
