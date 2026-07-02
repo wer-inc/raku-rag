@@ -86,6 +86,16 @@ on:
         type: string
         required: false
         default: ""
+      phone_telephony:
+        description: Live telephony channel (connect = deploy the Amazon Connect adapter Lambda + DID map SSM)
+        type: choice
+        options: [none, connect]
+        default: none
+      connect_instance_arn:
+        description: Amazon Connect instance ARN (scopes the Lambda invoke permission; required when phone_telephony=connect)
+        type: string
+        required: false
+        default: ""
       dry_run:
         description: Synth/plan only (no AWS changes)
         type: boolean
@@ -118,6 +128,8 @@ jobs:
       VISUAL_VERIFIER_SAME_FAMILY_ATTESTATION: ${{ inputs.visual_verifier_same_family_attestation }}
       BEDROCK_GUARDRAIL_ID: ${{ inputs.bedrock_guardrail_id }}
       BEDROCK_GUARDRAIL_VERSION: ${{ inputs.bedrock_guardrail_version }}
+      PHONE_TELEPHONY: ${{ inputs.phone_telephony }}
+      CONNECT_INSTANCE_ARN: ${{ inputs.connect_instance_arn }}
       # Textract is not available in every AWS region where the app can run (for example Tokyo).
       # Keep the app stack regional, but route Textract OCR/layout calls to a supported region by
       # default. Override with repo/environment Variable TEXTRACT_REGION if residency requires it.
@@ -165,6 +177,14 @@ jobs:
             echo "::error::bedrock_guardrail_version is required when bedrock_guardrail_id is set"
             exit 1
           fi
+          if [ -n "${CONNECT_INSTANCE_ARN}" ] && ! printf '%s\n' "${CONNECT_INSTANCE_ARN}" | grep -qE '^arn:aws:connect:[a-z0-9-]+:[0-9]{12}:instance/[a-f0-9-]{36}$'; then
+            echo "::error::connect_instance_arn must be a Connect instance ARN"
+            exit 1
+          fi
+          if [ "${PHONE_TELEPHONY}" = "connect" ] && [ -z "${CONNECT_INSTANCE_ARN}" ]; then
+            echo "::error::connect_instance_arn is required when phone_telephony=connect"
+            exit 1
+          fi
           case "${VISUAL_PROVIDER_PROFILE}" in
             default|aws-textract-bedrock) ;;
             *)
@@ -203,6 +223,9 @@ jobs:
           if [ -n "${BEDROCK_GUARDRAIL_ID}" ]; then
             CTX="${CTX} --context bedrockGuardrailId=${BEDROCK_GUARDRAIL_ID} --context bedrockGuardrailVersion=${BEDROCK_GUARDRAIL_VERSION}"
           fi
+          if [ "${PHONE_TELEPHONY}" = "connect" ]; then
+            CTX="${CTX} --context phoneTelephony=connect --context connectInstanceArn=${CONNECT_INSTANCE_ARN}"
+          fi
           npx cdk synth ${CTX} --quiet
 
       - name: Configure AWS credentials (OIDC)
@@ -240,6 +263,9 @@ jobs:
           fi
           if [ -n "${BEDROCK_GUARDRAIL_ID}" ]; then
             CTX="${CTX} --context bedrockGuardrailId=${BEDROCK_GUARDRAIL_ID} --context bedrockGuardrailVersion=${BEDROCK_GUARDRAIL_VERSION}"
+          fi
+          if [ "${PHONE_TELEPHONY}" = "connect" ]; then
+            CTX="${CTX} --context phoneTelephony=connect --context connectInstanceArn=${CONNECT_INSTANCE_ARN}"
           fi
           npx cdk deploy --require-approval never ${CTX}
 
