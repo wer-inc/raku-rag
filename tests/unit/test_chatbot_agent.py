@@ -236,7 +236,9 @@ class L4AgenticAnswerEngineSingleHopTest(unittest.TestCase):
         self.assertEqual(inner.calls, ["original question"])
         self.assertEqual(result["citations"][0]["document_id"], "doc_floor")
 
-    def test_decide_receives_the_original_query_context_and_empty_observations_on_the_first_call(self):
+    def test_decide_receives_the_original_query_context_and_empty_observations_on_the_first_call(
+        self,
+    ):
         inner = _RecordingInner()
         decision_maker = _ScriptedDecisionMaker([FinishAction()])
         engine = L4AgenticAnswerEngine(inner, decision_maker=decision_maker)
@@ -332,7 +334,9 @@ class L4AgenticAnswerEngineMultiHopTest(unittest.TestCase):
         result = engine.answer(_principal(), "original question", "manuals", _context())
 
         document_ids = [c["document_id"] for c in result["citations"]]
-        self.assertEqual(document_ids, ["doc_2"], "must be exactly ONE hop's own citations, never both")
+        self.assertEqual(
+            document_ids, ["doc_2"], "must be exactly ONE hop's own citations, never both"
+        )
 
     def test_every_hop_reuses_the_same_fixed_principal_and_collection_id(self):
         # Module docstring point 4: the loop's only freedom is query text -- it never constructs its
@@ -440,7 +444,9 @@ class L4AgenticAnswerEngineHighRiskSignalTest(unittest.TestCase):
 
         result = engine.answer(_principal(), "original question", "manuals", _context())
 
-        self.assertEqual(calls, ["benign-hop", "hazardous-hop"], "checked on EVERY hop, not just the first")
+        self.assertEqual(
+            calls, ["benign-hop", "hazardous-hop"], "checked on EVERY hop, not just the first"
+        )
         self.assertNotIn("hazardous-hop", inner.calls)
         self.assertEqual(
             result["citations"][0]["document_id"],

@@ -105,26 +105,36 @@ class GroundednessGateClaimCheckTest(unittest.TestCase):
 
     def test_purely_qualitative_answer_passes_vacuously(self) -> None:
         evidence = [_chunk("設備の点検は目視で実施し異常があれば保全部門に連絡します。")]
-        self.assertTrue(self.gate.claim_check("点検は目視で実施し異常時は保全部門へ連絡する。", evidence).passed)
+        self.assertTrue(
+            self.gate.claim_check("点検は目視で実施し異常時は保全部門へ連絡する。", evidence).passed
+        )
 
     def test_passes_a_genuinely_extractive_answer(self) -> None:
         evidence = [_chunk("試験圧力は設計圧の1.5倍=1.5MPaとし、保持時間は30分とする。")]
         answer = "試験圧力は設計圧の1.5倍=1.5MPaとし、保持時間は30分とする。"
-        self.assertTrue(self.gate.claim_check(answer, evidence).passed, "no false negative on extractive text")
+        self.assertTrue(
+            self.gate.claim_check(answer, evidence).passed, "no false negative on extractive text"
+        )
 
     def test_degrees_celsius_ascii_and_cjk_spelling_are_not_a_false_mismatch(self) -> None:
         # _normalize_answer_spacing rewrites "°C" -> "℃" in generated text but not in evidence;
         # claim_check canonicalizes both so this is not read as an unsupported claim.
         evidence = [_chunk("保持温度は595±15°Cとする。")]
         answer = "保持温度は595±15℃とする。"
-        self.assertTrue(self.gate.claim_check(answer, evidence).passed, self.gate.claim_check(answer, evidence).reason)
+        self.assertTrue(
+            self.gate.claim_check(answer, evidence).passed,
+            self.gate.claim_check(answer, evidence).reason,
+        )
 
     def test_glued_particle_is_not_a_false_mismatch(self) -> None:
         # _normalize_answer_spacing deletes the space in "17 が" -> "17が"; the _GLUED_PARTICLES guard
         # stops the numeric run at the particle so it is not misread as the number's unit.
         evidence = [_chunk("アラームコード TX-17 が表示された場合は保全部門に連絡します。")]
         answer = "アラームコードTX-17が表示された場合は保全部門に連絡します。"
-        self.assertTrue(self.gate.claim_check(answer, evidence).passed, self.gate.claim_check(answer, evidence).reason)
+        self.assertTrue(
+            self.gate.claim_check(answer, evidence).passed,
+            self.gate.claim_check(answer, evidence).reason,
+        )
 
     def test_false_positives_on_word_spaced_japanese_the_reason_it_is_opt_in(self) -> None:
         # The exact false positive that keeps claim_check OFF the live path: word-spaced evidence

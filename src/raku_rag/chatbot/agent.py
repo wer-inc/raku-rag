@@ -220,9 +220,7 @@ class L4AgenticAnswerEngine:
             if not isinstance(action, RetrieveAction):
                 break
             hop_query = action.query
-            if self._high_risk_query_signal is not None and self._high_risk_query_signal(
-                hop_query
-            ):
+            if self._high_risk_query_signal is not None and self._high_risk_query_signal(hop_query):
                 # Module docstring point 2: never let a hazard-signalling proposed query touch
                 # retrieval -- abandon the whole agentic attempt for this turn (not just this hop,
                 # and discarding any earlier hop's `last_answer` from this same turn) and answer the

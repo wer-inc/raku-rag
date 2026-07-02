@@ -33,7 +33,9 @@ def _context(**overrides) -> DialogueContext:
         previous_question="P-101 の点検手順を教えて",
         previous_answer="結論:\n点検手順は電源停止、外観確認、記録の順です。\n\n根拠:\n- eq-p101",
         previous_source_answer_text="点検手順は電源停止、外観確認、記録の順です。",
-        previous_citations=({"document_id": "eq-p101", "chunk_id": "eq-p101:0", "source_id": "src"},),
+        previous_citations=(
+            {"document_id": "eq-p101", "chunk_id": "eq-p101:0", "source_id": "src"},
+        ),
         previous_document_ids=("eq-p101",),
         source_policy_ids=("pol_collection",),
     )
@@ -242,7 +244,9 @@ class L2QueryUnderstandingAnswerEngineTest(unittest.TestCase):
         engine = L2QueryUnderstandingAnswerEngine(inner)
         context = _context()
 
-        result = engine.answer(self.principal, "それについてもう少し詳しく教えてください", "manuals", context)
+        result = engine.answer(
+            self.principal, "それについてもう少し詳しく教えてください", "manuals", context
+        )
 
         self.assertEqual(inner.calls, [])
         self.assertEqual(result["text"], context.previous_source_answer_text)
@@ -266,11 +270,15 @@ class L2QueryUnderstandingAnswerEngineTest(unittest.TestCase):
         engine = L2QueryUnderstandingAnswerEngine(inner)
         context = _context(previous_citations=())
 
-        engine.answer(self.principal, "それについてもう少し詳しく教えてください", "manuals", context)
+        engine.answer(
+            self.principal, "それについてもう少し詳しく教えてください", "manuals", context
+        )
 
         self.assertEqual(len(inner.calls), 1)
 
-    def test_collection_id_and_context_are_forwarded_to_inner_on_rewrite_only_setting_intent_query(self):
+    def test_collection_id_and_context_are_forwarded_to_inner_on_rewrite_only_setting_intent_query(
+        self,
+    ):
         import dataclasses
 
         inner = SpyInnerEngine()
@@ -349,7 +357,9 @@ class IntentQueryOnRewriteTest(unittest.TestCase):
         # The keyword-only signal gate was replaced by the root-cause intent_query threading; guard
         # against it silently creeping back into L2's constructor.
         with self.assertRaises(TypeError):
-            L2QueryUnderstandingAnswerEngine(SpyInnerEngine(), high_risk_query_signal=lambda q: True)
+            L2QueryUnderstandingAnswerEngine(
+                SpyInnerEngine(), high_risk_query_signal=lambda q: True
+            )
 
 
 if __name__ == "__main__":

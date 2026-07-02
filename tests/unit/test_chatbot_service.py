@@ -85,7 +85,8 @@ class _ScriptedAgentDecisionMaker:
     """P5 (chatbot-conversational-agent-roadmap) test double for `chatbot.agent.AgentDecisionMaker`:
     returns one `RetrieveAction` per call from a fixed script, then `FinishAction()` forever after the
     script is exhausted. Used to drive `L4AgenticAnswerEngine` deterministically end-to-end through a
-    real `ChatbotService`/`ManufacturingSystem`, mirroring how P0-P4 mock an LLM invoker/provider."""
+    real `ChatbotService`/`ManufacturingSystem`, mirroring how P0-P4 mock an LLM invoker/provider.
+    """
 
     def __init__(self, actions):
         self._actions = list(actions)
@@ -458,7 +459,7 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertTrue(details_turn["rag"]["answerable"])
         self.assertEqual(
             details_turn["assistant_message"]["citations"][0]["document_id"],
-                "eq-motor-m8-torque",
+            "eq-motor-m8-torque",
         )
         self.assertEqual(len(queries), 1)
         self.assertIn("結論:", details_turn["assistant_message"]["message"])
@@ -489,8 +490,7 @@ class ChatbotServiceTest(unittest.TestCase):
                             document_id="eq-alarm-e152-al21",
                         )
                     if any(
-                        noise in query
-                        for noise in ("前回回答:", "参照範囲:", "不明点:", "担当者")
+                        noise in query for noise in ("前回回答:", "参照範囲:", "不明点:", "担当者")
                     ):
                         return _rag_insufficient(_principal, query, _collection_id)
                     if "AL-21 の点検手順" in query and "eq-alarm-e152-al21" in query:
@@ -560,7 +560,9 @@ class ChatbotServiceTest(unittest.TestCase):
             )
             self.assertEqual(status, 200)
             messages[action] = turn["assistant_message"]["message"]
-            self.assertEqual(turn["assistant_message"]["citations"][0]["document_id"], "eq-alarm-e152-al21")
+            self.assertEqual(
+                turn["assistant_message"]["citations"][0]["document_id"], "eq-alarm-e152-al21"
+            )
 
         self.assertEqual(len(queries), 1)
         self.assertIn("手順:\n1.", messages["steps"])
@@ -605,7 +607,9 @@ class ChatbotServiceTest(unittest.TestCase):
         self.assertEqual(len(queries), 1)
         self.assertIn("結論:", turn["assistant_message"]["message"])
         self.assertIn("eq-motor-m8-torque", turn["assistant_message"]["message"])
-        self.assertNotIn("承認済みの根拠だけでは回答を確定できません", turn["assistant_message"]["message"])
+        self.assertNotIn(
+            "承認済みの根拠だけでは回答を確定できません", turn["assistant_message"]["message"]
+        )
 
     def test_rag_citation_without_chatbot_source_policy_fails_closed(self):
         service = ChatbotService(_rag_ok)
@@ -981,9 +985,7 @@ class ChatbotL2CoreferenceTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(second_turn["rag"]["answerable"])
         self.assertEqual(second_turn["assistant_message"]["ai_action"], "answer_with_citations")
-        self.assertEqual(
-            second_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101"
-        )
+        self.assertEqual(second_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101")
         self.assertIn("25N・m", second_turn["assistant_message"]["message"])
         # The fix is that retrieval itself received the carried-over identifier, not a coincidence.
         self.assertEqual(len(queries), 2)
@@ -1043,9 +1045,7 @@ class ChatbotL2CoreferenceTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(queries), 1, "the elaboration turn must not trigger a new RAG search")
         self.assertTrue(second_turn["rag"]["answerable"])
-        self.assertEqual(
-            second_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101"
-        )
+        self.assertEqual(second_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101")
 
     def test_self_contained_first_turn_naming_its_own_equipment_is_untouched_by_l2(self):
         # The overwhelming majority of turns (including every first turn) must be byte-identical to
@@ -1341,7 +1341,9 @@ class ChatbotManufacturingHighRiskCitationBlockAtL3Test(unittest.TestCase):
         )
         mfg_sys.grant(self.TENANT, ScopeType.COLLECTION, "manuals", SubjectType.USER, "alice")
 
-    def _ingest_high_risk_doc(self, mfg_sys: ManufacturingSystem, *, document_id, approval_status, **meta):
+    def _ingest_high_risk_doc(
+        self, mfg_sys: ManufacturingSystem, *, document_id, approval_status, **meta
+    ):
         mfg_sys.ingest_manufacturing(
             tenant_id=self.TENANT,
             collection_id="manuals",
@@ -1516,9 +1518,7 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
     # independently classifies high_risk via the KEYWORD stage ("圧力" = pressure).
     FOLLOWUP_QUERY = "その圧力の抜き方を教えて"
     REAL_DOC_ID = "accumulator-pressure-release-pending"
-    REAL_DOC_TEXT = (
-        "蓄圧器の圧力を抜く際は、手動排出弁をゆっくり開いてから配管を開放してください。"
-    )
+    REAL_DOC_TEXT = "蓄圧器の圧力を抜く際は、手動排出弁をゆっくり開いてから配管を開放してください。"
 
     def _mfg_principal(self):
         return IdentityClaims(tenant_id=self.TENANT, user_id="alice")
@@ -1755,9 +1755,7 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertTrue(second_turn["rag"]["answerable"])
-        self.assertEqual(
-            second_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101"
-        )
+        self.assertEqual(second_turn["assistant_message"]["citations"][0]["document_id"], "eq-p101")
         self.assertIn("25N・m", second_turn["assistant_message"]["message"])
 
 
@@ -2042,7 +2040,9 @@ class ChatbotL4AgenticSecondHopAclReassertionTest(unittest.TestCase):
         self.assertTrue(turn["rag"]["answerable"])
         self.assertEqual(turn["assistant_message"]["ai_action"], "answer_with_citations")
         cited = [c["document_id"] for c in turn["assistant_message"]["citations"]]
-        self.assertEqual(cited, [self.DOC_A_ID], "hop 2 must independently retrieve+ACL-check DOC_A")
+        self.assertEqual(
+            cited, [self.DOC_A_ID], "hop 2 must independently retrieve+ACL-check DOC_A"
+        )
 
 
 class ChatbotL4AgenticHopCapEndToEndTest(unittest.TestCase):

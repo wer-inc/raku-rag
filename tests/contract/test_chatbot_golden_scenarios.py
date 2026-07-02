@@ -6,7 +6,6 @@ from pathlib import Path
 import sys
 import unittest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts" / "demo" / "chatbot_golden_scenarios.py"
 DATASET = ROOT / "scripts" / "demo" / "chatbot_golden_scenarios.json"
@@ -524,7 +523,9 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
                         "ai_action": "answer_with_citations",
                         "message": "結論: M8 は 25 N.m です。\n\n根拠:\n- doc-a",
                         "citations": [{"document_id": "doc-a"}],
-                        "quick_replies": [{"label": "判断基準を表にする", "value": "criteria_table"}],
+                        "quick_replies": [
+                            {"label": "判断基準を表にする", "value": "criteria_table"}
+                        ],
                     },
                     "rag": {"answerable": True},
                 }
@@ -574,7 +575,9 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
         self.assertEqual(results[1].quick_reply_value, "criteria_table")
         self.assertEqual(calls[1][2]["message"], "criteria_table")
 
-    def test_quick_reply_check_can_target_a_different_collection_for_scope_carry_checks(self) -> None:
+    def test_quick_reply_check_can_target_a_different_collection_for_scope_carry_checks(
+        self,
+    ) -> None:
         calls = []
 
         def fake_http_json(method, _base_url, path, **kwargs):

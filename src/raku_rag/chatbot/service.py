@@ -411,8 +411,8 @@ class ChatbotService:
         self._handoffs: dict[tuple[str, str], dict] = {}
         self._feedback: dict[tuple[str, str], dict] = {}
         self._source_policies: dict[tuple[str, str], dict] = {}
-        self._source_policy_repo = source_policy_repository or InMemoryChatbotSourcePolicyRepository(
-            self._source_policies
+        self._source_policy_repo = (
+            source_policy_repository or InMemoryChatbotSourcePolicyRepository(self._source_policies)
         )
         self._scenarios: dict[tuple[str, str], ChatScenario] = {}
         self._dialogue_manager = DialogueManager()
@@ -1463,7 +1463,7 @@ class ChatbotService:
                     self._bullet_lines(self._uncertainty_lines()),
                 ),
                 ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
-        ]
+            ]
         return "\n\n".join(f"{title}:\n{body}" for title, body in sections)
 
     def _answer_template_intent(self, question: str, answer: str) -> str:
@@ -1864,8 +1864,10 @@ class ChatbotService:
         if channels and session.channel not in channels:
             return False
         intents = set(str(x) for x in (policy.get("allowed_intents") or []))
-        if intents and session.current_intent and not self._policy_intent_allows_rag_turn(
-            intents, session.current_intent
+        if (
+            intents
+            and session.current_intent
+            and not self._policy_intent_allows_rag_turn(intents, session.current_intent)
         ):
             return False
         scenarios = set(str(x) for x in (policy.get("allowed_scenario_ids") or []))
@@ -1873,7 +1875,9 @@ class ChatbotService:
             return False
         return True
 
-    def _policy_intent_allows_rag_turn(self, allowed_intents: set[str], current_intent: str) -> bool:
+    def _policy_intent_allows_rag_turn(
+        self, allowed_intents: set[str], current_intent: str
+    ) -> bool:
         if current_intent in allowed_intents:
             return True
         non_rag_intents = {"cancel_subscription", "confirm", "human_handoff", "high_risk"}
@@ -1957,7 +1961,9 @@ class ChatbotService:
             return True
         if "ボルト" in text and "トルク" in text and not self._has_specific_target(text):
             return True
-        if "薬液濃度" in text and any(word in text for word in ("どれくらい", "どのくらい", "足せ")):
+        if "薬液濃度" in text and any(
+            word in text for word in ("どれくらい", "どのくらい", "足せ")
+        ):
             return True
         if "scc" in normalized and "ピンホール" in text and "作業指示" in text:
             return True

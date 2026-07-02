@@ -26,7 +26,9 @@ def _context(**overrides) -> DialogueContext:
         previous_question="P-101 の点検手順を教えて",
         previous_answer="結論:\n点検手順は電源停止、外観確認、記録の順です。\n\n根拠:\n- eq-p101",
         previous_source_answer_text="点検手順は電源停止、外観確認、記録の順です。",
-        previous_citations=({"document_id": "eq-p101", "chunk_id": "eq-p101:0", "source_id": "src"},),
+        previous_citations=(
+            {"document_id": "eq-p101", "chunk_id": "eq-p101:0", "source_id": "src"},
+        ),
         previous_document_ids=("eq-p101",),
         source_policy_ids=("pol_collection",),
     )
@@ -118,7 +120,9 @@ class VerifyComposedAnswerTest(unittest.TestCase):
         self.assertFalse(decision.passed)
 
     def test_empty_citations_still_passes_vacuously_for_non_claim_text(self):
-        decision = verify_composed_answer(self.gate, self.principal, "manuals", "問題ありません。", [])
+        decision = verify_composed_answer(
+            self.gate, self.principal, "manuals", "問題ありません。", []
+        )
         self.assertTrue(decision.passed)
 
 

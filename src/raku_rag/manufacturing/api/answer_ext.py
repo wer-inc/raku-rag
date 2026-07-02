@@ -898,7 +898,9 @@ class ManufacturingAnswerService:
         # keeps its recall. (The high-risk gate already blocked the case where none is responsive.)
         if effective_intent is not None and effective_intent != query:
             intent_terms = set(lexical_query_terms(effective_intent))
-            responsive = [s for s in approved_lookup if _lexically_responsive(s.chunk.text, intent_terms)]
+            responsive = [
+                s for s in approved_lookup if _lexically_responsive(s.chunk.text, intent_terms)
+            ]
             if responsive:
                 approved_lookup = responsive
         if not approved_lookup:
