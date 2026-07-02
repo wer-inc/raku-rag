@@ -1,0 +1,74 @@
+{
+  "call_start": {
+    "Name": "ContactFlowEvent",
+    "Details": {
+      "ContactData": {
+        "ContactId": "cf-contact-0001",
+        "Channel": "VOICE",
+        "LanguageCode": "ja-JP",
+        "CustomerEndpoint": { "Address": "+819012345678", "Type": "TELEPHONE_NUMBER" },
+        "SystemEndpoint": { "Address": "+815055550100", "Type": "TELEPHONE_NUMBER" },
+        "Attributes": {}
+      },
+      "Parameters": { "action": "call_start" }
+    }
+  },
+  "turn_faq": {
+    "Name": "ContactFlowEvent",
+    "Details": {
+      "ContactData": {
+        "ContactId": "cf-contact-0001",
+        "Channel": "VOICE",
+        "LanguageCode": "ja-JP",
+        "CustomerEndpoint": { "Address": "+819012345678", "Type": "TELEPHONE_NUMBER" },
+        "SystemEndpoint": { "Address": "+815055550100", "Type": "TELEPHONE_NUMBER" },
+        "Attributes": { "raku_call_id": "" }
+      },
+      "Parameters": {
+        "action": "turn",
+        "utterance": "営業時間を教えてください",
+        "asr_confidence": "0.96"
+      }
+    }
+  },
+  "turn_handoff": {
+    "Name": "ContactFlowEvent",
+    "Details": {
+      "ContactData": {
+        "ContactId": "cf-contact-0001",
+        "Channel": "VOICE",
+        "LanguageCode": "ja-JP",
+        "CustomerEndpoint": { "Address": "+819012345678", "Type": "TELEPHONE_NUMBER" },
+        "SystemEndpoint": { "Address": "+815055550100", "Type": "TELEPHONE_NUMBER" },
+        "Attributes": { "raku_call_id": "" }
+      },
+      "Parameters": { "action": "turn", "utterance": "人につないでください" }
+    }
+  },
+  "hangup": {
+    "Name": "ContactFlowEvent",
+    "Details": {
+      "ContactData": {
+        "ContactId": "cf-contact-0001",
+        "Channel": "VOICE",
+        "CustomerEndpoint": { "Address": "+819012345678", "Type": "TELEPHONE_NUMBER" },
+        "SystemEndpoint": { "Address": "+815055550100", "Type": "TELEPHONE_NUMBER" },
+        "Attributes": { "raku_call_id": "" }
+      },
+      "Parameters": { "action": "hangup" }
+    }
+  },
+  "unknown_did": {
+    "Name": "ContactFlowEvent",
+    "Details": {
+      "ContactData": {
+        "ContactId": "cf-contact-0002",
+        "Channel": "VOICE",
+        "CustomerEndpoint": { "Address": "+819012345678", "Type": "TELEPHONE_NUMBER" },
+        "SystemEndpoint": { "Address": "+815099999999", "Type": "TELEPHONE_NUMBER" },
+        "Attributes": {}
+      },
+      "Parameters": { "action": "call_start" }
+    }
+  }
+}

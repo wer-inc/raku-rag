@@ -1582,6 +1582,7 @@ const OPENAPI_DOC = {
           call_state: { type: "string" },
           ai_action: { type: "string", nullable: true },
           ai_response_text: { type: "string", nullable: true },
+          speech_text: { type: "string", nullable: true },
           tts_audio_ref: { type: "string", nullable: true },
           citations: { type: "array", items: { $ref: "#/components/schemas/PhoneCitationRef" } },
           // Nullable in practice; the doc references the shape (contract test requires $ref|typed).
@@ -1646,6 +1647,7 @@ const OPENAPI_DOC = {
           dtmf_digits: { type: "string" },
           barge_in: { type: "boolean" },
           ai_action: { type: "string", nullable: true },
+          speech_text: { type: "string", nullable: true },
           tts_audio_ref: { type: "string", nullable: true },
           citations: { type: "array", items: { $ref: "#/components/schemas/PhoneCitationRef" } },
           latency_ms: { type: "object", additionalProperties: true },

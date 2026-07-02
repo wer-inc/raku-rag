@@ -156,6 +156,7 @@ class ConversationTurn:
     redacted_text: str | None = None
     ai_action: str | None = None
     ai_response_text: str | None = None
+    speech_text: str | None = None
     tts_audio_ref: str | None = None
     intent: str | None = None
     sentiment: str | None = None
@@ -185,6 +186,7 @@ class ConversationTurn:
             payload.update(
                 {
                     "ai_action": self.ai_action,
+                    "speech_text": self.speech_text,
                     "tts_audio_ref": self.tts_audio_ref,
                     "citations": [c.public() for c in self.citations],
                     "latency_ms": dict(self.latency_ms),

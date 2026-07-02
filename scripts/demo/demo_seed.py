@@ -31,7 +31,9 @@ COLLECTION = os.environ.get("DEMO_COLLECTION", "manuals")
 # authenticate as real email users with the ``sales_demo`` group/role, not as one of the local dev-token
 # users below. Granting the role keeps ACL deny-by-default intact while letting sales-demo accounts
 # retrieve the prepared corpus.
-DEMO_USERS = ["alice", "misaki", "bob", "carol", "dave"]
+# "phone-gateway" is the 024 telephony-channel SERVICE identity (Connect adapter Lambda): what the
+# phone AI can answer = what this user is granted, keeping ACL deny-by-default for the phone path.
+DEMO_USERS = ["alice", "misaki", "bob", "carol", "dave", "phone-gateway"]
 DEMO_ROLES = ["sales_demo"]
 
 

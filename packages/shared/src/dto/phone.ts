@@ -83,6 +83,8 @@ export interface PhoneTurnResponse {
   call_state: PhoneCallState | string;
   ai_action: PhoneAiAction | string | null;
   ai_response_text: string | null;
+  /** Voice-rendered short form for TTS (024 FR-L05). */
+  speech_text?: string | null;
   tts_audio_ref: string | null;
   citations: PhoneCitationRef[];
   handoff: PhoneHandoffSummary | null;
@@ -120,6 +122,7 @@ export interface PhoneTranscriptTurn {
   dtmf_digits?: string;
   barge_in?: boolean;
   ai_action?: PhoneAiAction | string | null;
+  speech_text?: string | null;
   tts_audio_ref?: string | null;
   citations?: PhoneCitationRef[];
   latency_ms?: Record<string, number | string>;

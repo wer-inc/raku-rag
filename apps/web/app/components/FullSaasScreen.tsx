@@ -1905,6 +1905,34 @@ function SourceSearchBody() {
 
 type PhoneChatLine = { caller: string | null; turn: PhoneTurnResponse };
 
+// 024 L030 — browser voice mode (Web Speech API): zero-cost voice UX on the existing
+// simulate/turn API. Recognition/synthesis stay entirely in the browser (FR-L09).
+type SpeechRecognitionLike = {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  continuous: boolean;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+function speechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as {
+    SpeechRecognition?: new () => SpeechRecognitionLike;
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
+function speechSynthesisSupported(): boolean {
+  return typeof window !== "undefined" && "speechSynthesis" in window;
+}
+
 function phoneActionLabel(action: string | null | undefined): string {
   const labels: Record<string, string> = {
     answer_with_citations: "根拠付き回答",
@@ -1962,6 +1990,14 @@ function PhoneSimulatorSection() {
   const [scenarioId, setScenarioId] = useState("");
   const [scenarios, setScenarios] = useState<PhoneScenarioSummary[]>([]);
   const [loading, setLoading] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const voiceModeRef = useRef(false);
+  const voiceSupported = useMemo(
+    () => speechRecognitionCtor() !== null && speechSynthesisSupported(),
+    [],
+  );
 
   useEffect(() => {
     void getSessionToken()
@@ -1970,9 +2006,76 @@ function PhoneSimulatorSection() {
       .catch(() => {
         /* scenario list is optional for the simulator */
       });
+    return () => {
+      recognitionRef.current?.abort();
+      if (speechSynthesisSupported()) window.speechSynthesis.cancel();
+    };
   }, []);
 
   const terminal = ["transferred", "completed", "abandoned", "failed"].includes(callState);
+
+  function speakTurn(turn: PhoneTurnResponse | null | undefined) {
+    if (!turn || !voiceModeRef.current || !speechSynthesisSupported()) return;
+    const text = turn.speech_text || turn.ai_response_text || "";
+    if (!text) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "ja-JP";
+    utterance.onend = () => {
+      // Conversational loop: after the AI finishes speaking, listen again — unless the
+      // call ended or was handed off to a human.
+      const state = turn.call_state;
+      const done = ["transferred", "completed", "abandoned", "failed", "handoff_pending"].includes(
+        String(state),
+      );
+      if (voiceModeRef.current && !done) startListening();
+    };
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function startListening() {
+    const Ctor = speechRecognitionCtor();
+    if (!Ctor || recognitionRef.current) return;
+    // Barge-in equivalent: the mic opening cancels any ongoing synthesis.
+    if (speechSynthesisSupported()) window.speechSynthesis.cancel();
+    const recognition = new Ctor();
+    recognition.lang = "ja-JP";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.continuous = false;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript?.trim() ?? "";
+      if (transcript) void send(transcript);
+    };
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      setListening(false);
+    };
+    recognition.onerror = (event) => {
+      recognitionRef.current = null;
+      setListening(false);
+      if (event.error && event.error !== "no-speech" && event.error !== "aborted") {
+        toast(`音声認識エラー: ${event.error}`, "error");
+      }
+    };
+    recognitionRef.current = recognition;
+    setListening(true);
+    recognition.start();
+  }
+
+  function stopVoice() {
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    setListening(false);
+    if (speechSynthesisSupported()) window.speechSynthesis.cancel();
+  }
+
+  function toggleVoiceMode() {
+    const next = !voiceMode;
+    setVoiceMode(next);
+    voiceModeRef.current = next;
+    if (!next) stopVoice();
+  }
 
   async function send(text: string, eventType: "speech" | "hangup" = "speech") {
     if (loading) return;
@@ -1994,6 +2097,7 @@ function PhoneSimulatorSection() {
         setCallId(response.call_id);
         setCallState(response.status);
         setLines(response.turns.map((turn) => ({ caller: text, turn })));
+        speakTurn(response.turns[response.turns.length - 1]);
       } else {
         const turn = await phoneSubmitTurn(
           callId,
@@ -2002,6 +2106,7 @@ function PhoneSimulatorSection() {
         );
         setCallState(turn.call_state);
         setLines((current) => [...current, { caller: eventType === "speech" ? text : null, turn }]);
+        speakTurn(turn);
       }
       setInput("");
     } catch (err) {
@@ -2068,6 +2173,31 @@ function PhoneSimulatorSection() {
           <button type="button" onClick={() => void send("", "hangup")} disabled={loading || !callId || terminal}>
             終話
           </button>
+        </div>
+        <div className="screen-actions">
+          <button
+            type="button"
+            onClick={toggleVoiceMode}
+            disabled={!voiceSupported}
+            title={voiceSupported ? "マイクで話し、音声で回答を聞きます(ブラウザ内で完結)" : "このブラウザは音声認識に対応していません(Chrome推奨)"}
+            aria-pressed={voiceMode}
+          >
+            {voiceMode ? "音声モード: ON" : "音声モード: OFF"}
+          </button>
+          {voiceMode && (
+            <button
+              type="button"
+              onClick={() => (listening ? stopVoice() : startListening())}
+              disabled={loading || terminal}
+            >
+              {listening ? "聞き取り中…(停止)" : "🎤 マイクで話す"}
+            </button>
+          )}
+          {voiceMode && (
+            <span role="status" aria-live="polite">
+              {listening ? "どうぞお話しください" : "回答は音声でも読み上げられます"}
+            </span>
+          )}
         </div>
       </Section>
       <Section title="会話ログ">
