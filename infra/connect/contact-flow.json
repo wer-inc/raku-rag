@@ -95,17 +95,21 @@
         "LexV2Bot": {
           "AliasArn": "REPLACE_ME_LEX_BOT_ALIAS_ARN"
         },
-        "Text": "どうぞ、お話しください。"
+        "Text": "どうぞ、お話しください。",
+        "LexSessionAttributes": {
+          "x-amz-lex:audio:start-timeout-ms:*:*": "8000",
+          "x-amz-lex:audio:max-length-ms:*:*": "15000"
+        }
       },
       "Transitions": {
         "NextAction": "a-turn",
         "Errors": [
           {
-            "NextAction": "a-error-speak",
+            "NextAction": "a-reprompt",
             "ErrorType": "NoMatchingError"
           },
           {
-            "NextAction": "a-error-speak",
+            "NextAction": "a-reprompt",
             "ErrorType": "NoMatchingCondition"
           }
         ]
@@ -325,6 +329,22 @@
       "Type": "DisconnectParticipant",
       "Parameters": {},
       "Transitions": {}
+    },
+    {
+      "Identifier": "a-reprompt",
+      "Type": "MessageParticipant",
+      "Parameters": {
+        "Text": "ご質問をどうぞ。終了する場合はそのままお切りください。"
+      },
+      "Transitions": {
+        "NextAction": "a-listen",
+        "Errors": [
+          {
+            "NextAction": "a-disconnect",
+            "ErrorType": "NoMatchingError"
+          }
+        ]
+      }
     }
   ]
 }
