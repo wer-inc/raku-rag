@@ -95,11 +95,7 @@
         "LexV2Bot": {
           "AliasArn": "REPLACE_ME_LEX_BOT_ALIAS_ARN"
         },
-        "Text": "どうぞ、お話しください。",
-        "LexSessionAttributes": {
-          "x-amz-lex:audio:start-timeout-ms:*:*": "8000",
-          "x-amz-lex:audio:max-length-ms:*:*": "15000"
-        }
+        "Text": "どうぞ、お話しください。"
       },
       "Transitions": {
         "NextAction": "a-turn",
