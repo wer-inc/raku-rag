@@ -80,9 +80,11 @@ export class RakuRagStack extends cdk.Stack {
     // guardrail/reranker stay deterministic, so nothing fails closed). Requires Bedrock model access
     // enabled in this account/region (IAM InvokeModel is already granted). Optionally override the
     // model id with `--context bedrockClaudeModelId=<id>`.
-    const useBedrockAnswerLlm =
-      String(this.node.tryGetContext("answerLlm") ?? "extractive") === "bedrock";
+    const answerLlmCtx = String(this.node.tryGetContext("answerLlm") ?? "extractive");
+    const useBedrockAnswerLlm = answerLlmCtx === "bedrock";
     const bedrockModelIdCtx = this.node.tryGetContext("bedrockClaudeModelId") as string | undefined;
+    // Provider-swap seam (llm_provider_from_settings): the LLM is a leaf part; retrieval/ACL/
+    // groundedness/guardrail are provider-agnostic, so openai/gemini reuse everything else as-is.
     const answerLlmEnvironment: Record<string, string> = useBedrockAnswerLlm
       ? {
           RAKU_LLM_PROVIDER: "bedrock_claude",
@@ -90,10 +92,27 @@ export class RakuRagStack extends cdk.Stack {
           AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
           ...(bedrockModelIdCtx ? { RAKU_BEDROCK_CLAUDE_MODEL_ID: bedrockModelIdCtx } : {})
         }
-      : {
-          RAKU_LLM_PROVIDER: "extractive",
-          RAKU_OUTPUT_GUARDRAIL_PROVIDER: "none"
-        };
+      : answerLlmCtx === "openai"
+        ? { RAKU_LLM_PROVIDER: "openai" }
+        : answerLlmCtx === "gemini"
+          ? { RAKU_LLM_PROVIDER: "gemini" }
+          : {
+              RAKU_LLM_PROVIDER: "extractive",
+              RAKU_OUTPUT_GUARDRAIL_PROVIDER: "none"
+            };
+    // openai answer LLM shares the embeddings secret; gemini needs `raku-rag/gemini-api-key`.
+    const openAiSecretForLlm =
+      answerLlmCtx === "openai" && !openAiSecret
+        ? secretsmanager.Secret.fromSecretNameV2(this, "OpenAiApiKeyLlmSecret", "raku-rag/openai-api-key")
+        : undefined;
+    const geminiSecret =
+      answerLlmCtx === "gemini"
+        ? secretsmanager.Secret.fromSecretNameV2(this, "GeminiApiKeySecret", "raku-rag/gemini-api-key")
+        : undefined;
+    const answerLlmSecrets: Record<string, ecs.Secret> = {
+      ...(openAiSecretForLlm ? { OPENAI_API_KEY: ecs.Secret.fromSecretsManager(openAiSecretForLlm) } : {}),
+      ...(geminiSecret ? { GEMINI_API_KEY: ecs.Secret.fromSecretsManager(geminiSecret) } : {})
+    };
     const bedrockGuardrailIdCtx = this.node.tryGetContext("bedrockGuardrailId") as
       | string
       | undefined;
@@ -814,6 +833,7 @@ export class RakuRagStack extends cdk.Stack {
       },
       secrets: {
         ...embeddingSecrets,
+        ...answerLlmSecrets,
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password")
       }
     });
@@ -913,6 +933,7 @@ export class RakuRagStack extends cdk.Stack {
       },
       secrets: {
         ...embeddingSecrets,
+        ...answerLlmSecrets,
         RAKU_INTERNAL_AUTH_SECRET: ecs.Secret.fromSecretsManager(internalAuthSecret, "secret"),
         DATABASE_PASSWORD: ecs.Secret.fromSecretsManager(database.secret!, "password"),
         // client_secret is consumed ONLY here (code/refresh exchange); never sent to the API/browser.

@@ -54,9 +54,9 @@ on:
         options: [hashing, openai]
         default: hashing
       answer_llm:
-        description: Answer LLM (bedrock = real Bedrock Claude; needs Bedrock model access in the account)
+        description: Answer LLM (bedrock = Bedrock Claude / openai = OpenAI Chat / gemini = Google Gemini; openai reuses raku-rag/openai-api-key, gemini needs raku-rag/gemini-api-key)
         type: choice
-        options: [extractive, bedrock]
+        options: [extractive, bedrock, openai, gemini]
         default: extractive
       visual_provider_profile:
         description: Visual/PDF providers (promotion remains off unless CDK context explicitly enables it)
@@ -186,7 +186,7 @@ jobs:
           if [ -n "${DOMAIN_NAME}" ]; then CTX="${CTX} --context domainName=${DOMAIN_NAME}"; fi
           if [ "${BASIC_AUTH}" = "true" ]; then CTX="${CTX} --context basicAuthUser=${BASIC_AUTH_USER}"; fi
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
-          if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
+          if [ "${ANSWER_LLM}" != "extractive" ]; then CTX="${CTX} --context answerLlm=${ANSWER_LLM}"; fi
           if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
             CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock --context textractRegion=${TEXTRACT_REGION} --context ocrRegion=${TEXTRACT_REGION}"
           fi
@@ -224,7 +224,7 @@ jobs:
           if [ -n "${DOMAIN_NAME}" ]; then CTX="${CTX} --context domainName=${DOMAIN_NAME}"; fi
           if [ "${BASIC_AUTH}" = "true" ]; then CTX="${CTX} --context basicAuthUser=${BASIC_AUTH_USER}"; fi
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
-          if [ "${ANSWER_LLM}" = "bedrock" ]; then CTX="${CTX} --context answerLlm=bedrock"; fi
+          if [ "${ANSWER_LLM}" != "extractive" ]; then CTX="${CTX} --context answerLlm=${ANSWER_LLM}"; fi
           if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
             CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock --context textractRegion=${TEXTRACT_REGION} --context ocrRegion=${TEXTRACT_REGION}"
           fi
