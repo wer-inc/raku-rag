@@ -31,8 +31,12 @@ SECRET_UTTERANCE = "折り返しは09012345678へ。返金条件を教えてく�
 class OkGateway:
     def answer(self, principal, query, collection_id):
         return {
-            "status": "insufficient_evidence", "text": "", "confidence": None,
-            "citations": [], "correlation_id": "corr", "manufacturing": {},
+            "status": "insufficient_evidence",
+            "text": "",
+            "confidence": None,
+            "citations": [],
+            "correlation_id": "corr",
+            "manufacturing": {},
         }
 
 
@@ -74,7 +78,8 @@ class PhoneDataLifecycleTest(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertEqual(payload["error"], "export_not_enabled")
         denials = [
-            e for e in self.audit.read_all(ADMIN)
+            e
+            for e in self.audit.read_all(ADMIN)
             if e.action == "phone.export_requested" and e.decision == "export_not_enabled"
         ]
         self.assertEqual(len(denials), 1)
@@ -106,9 +111,7 @@ class PhoneDataLifecycleTest(unittest.TestCase):
         self.assertTrue(all(t["turn_id"] for t in detail["transcript"]))
         if detail["handoff"]:
             self.assertEqual(detail["handoff"]["transcript_excerpt_redacted"], "[削除済み]")
-        audited = [
-            e for e in self.audit.read_all(ADMIN) if e.action == "phone.delete_request"
-        ]
+        audited = [e for e in self.audit.read_all(ADMIN) if e.action == "phone.delete_request"]
         self.assertEqual(len(audited), 1)
 
     def test_delete_request_is_tenant_admin_or_audit_only(self) -> None:

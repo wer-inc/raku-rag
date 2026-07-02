@@ -8,9 +8,17 @@ from raku_rag.phone.domain import CallSession, ConversationTurn, QualityEvaluati
 from raku_rag.phone.metrics import aggregate_call_metrics
 
 
-def _call(call_id: str, *, state: str, handoff: bool = False, reason: str | None = None,
-          intent: str | None = None, started: str = "2026-07-02T10:00:00Z",
-          ended: str | None = "2026-07-02T10:03:00Z", totals: tuple[float, ...] = ()) -> CallSession:
+def _call(
+    call_id: str,
+    *,
+    state: str,
+    handoff: bool = False,
+    reason: str | None = None,
+    intent: str | None = None,
+    started: str = "2026-07-02T10:00:00Z",
+    ended: str | None = "2026-07-02T10:03:00Z",
+    totals: tuple[float, ...] = (),
+) -> CallSession:
     call = CallSession(tenant_id="t", call_id=call_id, correlation_id=f"corr_{call_id}")
     call.state = state
     call.handoff_required = handoff
@@ -27,8 +35,13 @@ def _call(call_id: str, *, state: str, handoff: bool = False, reason: str | None
     for index, total in enumerate(totals, start=1):
         call.turns.append(
             ConversationTurn(
-                tenant_id="t", call_id=call_id, turn_id=f"turn_{index}", sequence_no=index,
-                speaker="ai", event_type="speech", latency_ms={"total": total, "rag": total / 2},
+                tenant_id="t",
+                call_id=call_id,
+                turn_id=f"turn_{index}",
+                sequence_no=index,
+                speaker="ai",
+                event_type="speech",
+                latency_ms={"total": total, "rag": total / 2},
             )
         )
     return call
@@ -38,10 +51,22 @@ class TestAggregateCallMetrics(unittest.TestCase):
     def setUp(self) -> None:
         self.calls = [
             _call("c1", state="completed", intent="business_hours", totals=(100.0, 200.0)),
-            _call("c2", state="transferred", handoff=True, reason="customer_requested_human",
-                  intent="pricing_plan", totals=(150.0,)),
-            _call("c3", state="transferred", handoff=True, reason="insufficient_evidence",
-                  intent="pricing_plan", totals=(300.0,)),
+            _call(
+                "c2",
+                state="transferred",
+                handoff=True,
+                reason="customer_requested_human",
+                intent="pricing_plan",
+                totals=(150.0,),
+            ),
+            _call(
+                "c3",
+                state="transferred",
+                handoff=True,
+                reason="insufficient_evidence",
+                intent="pricing_plan",
+                totals=(300.0,),
+            ),
             _call("c4", state="abandoned", intent="faq", ended="2026-07-02T10:00:30Z"),
         ]
 
@@ -66,10 +91,20 @@ class TestAggregateCallMetrics(unittest.TestCase):
 
     def test_knowledge_gap_topics_from_evaluations(self) -> None:
         evaluations = [
-            QualityEvaluation(tenant_id="t", evaluation_id="e1", call_id="c3",
-                              reviewer_id="qa", knowledge_gap_topics=["返金条件", "保証範囲"]),
-            QualityEvaluation(tenant_id="t", evaluation_id="e2", call_id="c2",
-                              reviewer_id="qa", knowledge_gap_topics=["返金条件"]),
+            QualityEvaluation(
+                tenant_id="t",
+                evaluation_id="e1",
+                call_id="c3",
+                reviewer_id="qa",
+                knowledge_gap_topics=["返金条件", "保証範囲"],
+            ),
+            QualityEvaluation(
+                tenant_id="t",
+                evaluation_id="e2",
+                call_id="c2",
+                reviewer_id="qa",
+                knowledge_gap_topics=["返金条件"],
+            ),
         ]
         result = aggregate_call_metrics(self.calls, evaluations)
         topics = {item["key"]: item["count"] for item in result["knowledge_gap_topics"]}

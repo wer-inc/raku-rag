@@ -24,8 +24,12 @@ OTHER_TENANT = IdentityClaims(tenant_id="tenant_b", user_id="mallory", roles=("t
 class InsufficientGateway:
     def answer(self, principal, query, collection_id):
         return {
-            "status": "insufficient_evidence", "text": "", "confidence": None,
-            "citations": [], "correlation_id": "corr", "manufacturing": {},
+            "status": "insufficient_evidence",
+            "text": "",
+            "confidence": None,
+            "citations": [],
+            "correlation_id": "corr",
+            "manufacturing": {},
         }
 
 

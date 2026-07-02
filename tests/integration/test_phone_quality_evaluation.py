@@ -27,8 +27,12 @@ NOROLE = IdentityClaims(tenant_id="tenant_a", user_id="norole", roles=())
 class InsufficientGateway:
     def answer(self, principal, query, collection_id):
         return {
-            "status": "insufficient_evidence", "text": "", "confidence": None,
-            "citations": [], "correlation_id": "corr", "manufacturing": {},
+            "status": "insufficient_evidence",
+            "text": "",
+            "confidence": None,
+            "citations": [],
+            "correlation_id": "corr",
+            "manufacturing": {},
         }
 
 
@@ -57,8 +61,11 @@ class PhoneQualityEvaluationTest(unittest.TestCase):
     def test_evaluation_persists_and_links_improvement(self) -> None:
         status, payload = self._evaluate(
             {
-                "answer_correctness": 3, "tone_score": 4, "handoff_appropriateness": 5,
-                "hallucination_detected": True, "suggested_fix": "返金条件FAQを追加",
+                "answer_correctness": 3,
+                "tone_score": 4,
+                "handoff_appropriateness": 5,
+                "hallucination_detected": True,
+                "suggested_fix": "返金条件FAQを追加",
                 "knowledge_gap_topics": ["返金条件"],
             }
         )
@@ -70,9 +77,7 @@ class PhoneQualityEvaluationTest(unittest.TestCase):
         self.assertEqual(len(listing["items"]), 1)
 
     def test_flagged_reviews_surface_in_improvement_queue(self) -> None:
-        self._evaluate(
-            {"hallucination_detected": True, "knowledge_gap_topics": ["返金条件"]}
-        )
+        self._evaluate({"hallucination_detected": True, "knowledge_gap_topics": ["返金条件"]})
         queue = ImprovementQueueService(self.audit).list_items(ADMIN)
         phone_items = [i for i in queue.items if i.kind == "phone_qa"]
         self.assertEqual(len(phone_items), 1)

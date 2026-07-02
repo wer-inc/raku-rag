@@ -22,7 +22,7 @@ OPERATOR = IdentityClaims(tenant_id="tenant_a", user_id="op", roles=("operator",
 RAW_PHONE = "+81300001234"
 SPOKEN_PHONE = "09012345678"
 CARD = "4111 1111 1111 1111"
-SECRET = "sk-abcdefghijklmnop"
+SECRET = "sk-abcdefghijklmnop"  # pragma: allowlist secret -- redaction-test fixture
 
 
 class InsufficientGateway:

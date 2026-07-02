@@ -308,9 +308,7 @@ class PhoneCallService:
             return status, payload
         return 201, {**self._envelope(principal, new_id("corr")), **payload}
 
-    def list_quality_evaluations(
-        self, principal: IdentityClaims, call_id: str
-    ) -> tuple[int, dict]:
+    def list_quality_evaluations(self, principal: IdentityClaims, call_id: str) -> tuple[int, dict]:
         if self._quality is None:
             return 503, {"error": "quality_service_unavailable"}
         status, payload = self._quality.list_for_call(principal, call_id)
@@ -358,9 +356,7 @@ class PhoneCallService:
                 os.environ.get("RAKU_PHONE_TRANSCRIPT_RETENTION_DAYS", "365")
             ),
             "audio_retention_days": None,
-            "export_retention_days": int(
-                os.environ.get("RAKU_PHONE_EXPORT_RETENTION_DAYS", "30")
-            ),
+            "export_retention_days": int(os.environ.get("RAKU_PHONE_EXPORT_RETENTION_DAYS", "30")),
             "export_enabled": os.environ.get("RAKU_PHONE_EXPORT_ENABLED") == "1",
         }
 
@@ -568,12 +564,20 @@ class PhoneCallService:
         turns: list[dict] = []
         would_handoff = False
         for utterance in body.get("utterances") or []:
-            raw = utterance if isinstance(utterance, dict) else {"type": "speech", "text": str(utterance)}
+            raw = (
+                utterance
+                if isinstance(utterance, dict)
+                else {"type": "speech", "text": str(utterance)}
+            )
             if call.is_terminal():
                 break
             _, payload = self._execute_turn(
-                principal, call, dict(raw), collection_id=body.get("collection_id"),
-                scenario_version=version, persist_handoff=False,
+                principal,
+                call,
+                dict(raw),
+                collection_id=body.get("collection_id"),
+                scenario_version=version,
+                persist_handoff=False,
             )
             turns.append(
                 {
@@ -656,18 +660,29 @@ class PhoneCallService:
             reason = self._rules.pre_rag_reason(call, text, asr.confidence, scenario_reasons)
             if reason:
                 return self._handoff_turn(
-                    principal, call, reason, sentiment, started, version,
+                    principal,
+                    call,
+                    reason,
+                    sentiment,
+                    started,
+                    version,
                     persist_handoff=persist_handoff,
                 )
             call.clarification_count += 1
-            turn = self._ai_turn(call, "ask_clarification", _LOW_CONFIDENCE_PROMPT, started,
-                                 asr_ms=asr_ms)
+            turn = self._ai_turn(
+                call, "ask_clarification", _LOW_CONFIDENCE_PROMPT, started, asr_ms=asr_ms
+            )
             return 200, self._turn_payload(principal, call, turn, handoff=None)
 
         reason = self._rules.pre_rag_reason(call, text, asr.confidence, scenario_reasons)
         if reason:
             return self._handoff_turn(
-                principal, call, reason, sentiment, started, version,
+                principal,
+                call,
+                reason,
+                sentiment,
+                started,
+                version,
                 persist_handoff=persist_handoff,
             )
 
@@ -678,9 +693,7 @@ class PhoneCallService:
                 value = event.dtmf_digits or self._slot_value(text)
                 if value:
                     call.collected_slots[call.awaiting_slot] = redact_text(value).text
-                    call.missing_slots = [
-                        s for s in call.missing_slots if s != call.awaiting_slot
-                    ]
+                    call.missing_slots = [s for s in call.missing_slots if s != call.awaiting_slot]
                     call.awaiting_slot = None
                 if call.missing_slots:
                     call.awaiting_slot = call.missing_slots[0]
@@ -700,14 +713,24 @@ class PhoneCallService:
 
         if event.event_type == "dtmf":
             turn = self._ai_turn(
-                call, "ask_clarification", "番号を受け付けました。ご用件をお話しください。",
-                started, asr_ms=asr_ms,
+                call,
+                "ask_clarification",
+                "番号を受け付けました。ご用件をお話しください。",
+                started,
+                asr_ms=asr_ms,
             )
             return 200, self._turn_payload(principal, call, turn, handoff=None)
 
         return self._rag_turn(
-            principal, call, text, collection_id, started, asr_ms, version,
-            sentiment=sentiment, persist_handoff=persist_handoff,
+            principal,
+            call,
+            text,
+            collection_id,
+            started,
+            asr_ms,
+            version,
+            sentiment=sentiment,
+            persist_handoff=persist_handoff,
         )
 
     def _rag_turn(
@@ -729,7 +752,12 @@ class PhoneCallService:
         except Exception:
             # Fail closed (FR-045): a broken RAG path never produces an unsupported answer.
             return self._handoff_turn(
-                principal, call, "provider_failure", sentiment, started, version,
+                principal,
+                call,
+                "provider_failure",
+                sentiment,
+                started,
+                version,
                 persist_handoff=persist_handoff,
             )
         rag_ms = (time.perf_counter() - rag_started) * 1000
@@ -776,7 +804,12 @@ class PhoneCallService:
 
         # Insufficient / blocked evidence -> never assert; transfer with context (FR-010/012).
         return self._handoff_turn(
-            principal, call, "insufficient_evidence", sentiment, started, version,
+            principal,
+            call,
+            "insufficient_evidence",
+            sentiment,
+            started,
+            version,
             blocked_reason=str(blocked_reason or "insufficient_evidence"),
             persist_handoff=persist_handoff,
         )
@@ -799,7 +832,12 @@ class PhoneCallService:
             return 200, self._turn_payload(principal, call, turn, handoff=None)
         # LLM/RAG/handoff/telephony failures fail closed into a human path.
         return self._handoff_turn(
-            principal, call, "provider_failure", "unknown", started, version,
+            principal,
+            call,
+            "provider_failure",
+            "unknown",
+            started,
+            version,
             persist_handoff=persist_handoff,
         )
 
@@ -844,8 +882,10 @@ class PhoneCallService:
             citations=(),
             safety={
                 "answered_with_evidence": False,
-                "blocked_reason": blocked_reason if blocked_reason else (
-                    reason if reason == "insufficient_evidence" else None
+                "blocked_reason": (
+                    blocked_reason
+                    if blocked_reason
+                    else (reason if reason == "insufficient_evidence" else None)
                 ),
             },
             handoff_reason=reason,
@@ -1019,15 +1059,11 @@ class PhoneCallService:
         if not version or not version.handoff_conditions:
             return set()
         return {
-            str(c.get("reason") or "")
-            for c in version.handoff_conditions
-            if c.get("enabled", True)
+            str(c.get("reason") or "") for c in version.handoff_conditions if c.get("enabled", True)
         }
 
     def _has_answer(self, call: CallSession) -> bool:
-        return any(
-            t.speaker == "ai" and t.ai_action == "answer_with_citations" for t in call.turns
-        )
+        return any(t.speaker == "ai" and t.ai_action == "answer_with_citations" for t in call.turns)
 
     def _update_summary(self, call: CallSession) -> None:
         caller_lines = [

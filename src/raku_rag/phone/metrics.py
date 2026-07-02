@@ -66,14 +66,11 @@ def aggregate_call_metrics(
     count = len(scoped)
     answered = sum(1 for c in scoped if any(t.speaker == "ai" for t in c.turns))
     handoff_count = sum(1 for c in scoped if c.handoff_required)
-    contained = sum(
-        1 for c in scoped if c.state == "completed" and not c.handoff_required
-    )
+    contained = sum(1 for c in scoped if c.state == "completed" and not c.handoff_required)
     unresolved = sum(
         1
         for c in scoped
-        if (c.resolution_status in _UNRESOLVED)
-        or (c.state in {"abandoned", "failed"})
+        if (c.resolution_status in _UNRESOLVED) or (c.state in {"abandoned", "failed"})
     )
     completed_terminal = sum(1 for c in scoped if c.state in _TERMINAL)
 

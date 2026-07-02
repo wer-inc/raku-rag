@@ -87,9 +87,7 @@ class InMemoryPhoneQualityRepository:
         ]
 
     def list_all(self, tenant_id: str) -> list[QualityEvaluation]:
-        return [
-            e for (stored_tenant, _), e in self._items.items() if stored_tenant == tenant_id
-        ]
+        return [e for (stored_tenant, _), e in self._items.items() if stored_tenant == tenant_id]
 
 
 class PostgresPhoneQualityRepository:
