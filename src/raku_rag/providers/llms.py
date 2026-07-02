@@ -316,6 +316,111 @@ class BedrockClaudeLLMProvider(LLMProvider):
 _DEFAULT_BEDROCK_CLAUDE_MODEL_ID = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 
+# Injectable HTTPS seam shared by the OpenAI/Gemini adapters: (url, headers, body, timeout) -> dict.
+HttpTransport = Callable[[str, dict, bytes, float], dict]
+
+
+def _https_json_transport(url: str, headers: dict, body: bytes, timeout: float) -> dict:
+    import urllib.request
+
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed https endpoints
+        return json.loads(resp.read().decode("utf-8"))
+
+
+class OpenAIChatLLMProvider(LLMProvider):
+    """Grounded generator over the OpenAI Chat Completions REST API (stdlib HTTP, same seam shape
+    as BedrockClaudeLLMProvider). Sees ONLY the pre-filtered context chunks; the provider swap
+    changes nothing about retrieval/ACL/groundedness/guardrail, which all live outside."""
+
+    def __init__(
+        self,
+        *,
+        model: str = "gpt-4o-mini",
+        api_key: str = "",
+        max_tokens: int = 1024,
+        base_url: str = "https://api.openai.com/v1",
+        timeout: float = 60.0,
+        transport: HttpTransport | None = None,
+    ) -> None:
+        import os
+
+        self.model = model
+        self._api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        self._max_tokens = max_tokens
+        self._base_url = base_url
+        self._timeout = timeout
+        self._transport = transport
+
+    def generate(self, query: str, context: Sequence[Chunk]) -> str:
+        if not self._api_key:
+            raise RuntimeError(
+                "openai_llm_not_configured: set OPENAI_API_KEY for answer_llm=openai"
+            )
+        prompt = build_grounded_prompt(query, context)
+        body = json.dumps(
+            {
+                "model": self.model,
+                "max_tokens": self._max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+        ).encode("utf-8")
+        headers = {
+            "content-type": "application/json",
+            "authorization": f"Bearer {self._api_key}",
+        }
+        transport = self._transport or _https_json_transport
+        payload = transport(f"{self._base_url}/chat/completions", headers, body, self._timeout)
+        choices = payload.get("choices") or []
+        message = (choices[0] or {}).get("message") if choices else {}
+        return str((message or {}).get("content") or "")
+
+
+class GeminiLLMProvider(LLMProvider):
+    """Grounded generator over the Google Gemini generateContent REST API (stdlib HTTP)."""
+
+    def __init__(
+        self,
+        *,
+        model: str = "gemini-2.5-flash",
+        api_key: str = "",
+        max_tokens: int = 1024,
+        base_url: str = "https://generativelanguage.googleapis.com/v1beta",
+        timeout: float = 60.0,
+        transport: HttpTransport | None = None,
+    ) -> None:
+        import os
+
+        self.model = model
+        self._api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
+        self._max_tokens = max_tokens
+        self._base_url = base_url
+        self._timeout = timeout
+        self._transport = transport
+
+    def generate(self, query: str, context: Sequence[Chunk]) -> str:
+        if not self._api_key:
+            raise RuntimeError(
+                "gemini_llm_not_configured: set GEMINI_API_KEY for answer_llm=gemini"
+            )
+        prompt = build_grounded_prompt(query, context)
+        body = json.dumps(
+            {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"maxOutputTokens": self._max_tokens},
+            }
+        ).encode("utf-8")
+        # The key travels as a header (never in the URL, so it cannot leak into logs).
+        headers = {"content-type": "application/json", "x-goog-api-key": self._api_key}
+        transport = self._transport or _https_json_transport
+        payload = transport(
+            f"{self._base_url}/models/{self.model}:generateContent", headers, body, self._timeout
+        )
+        candidates = payload.get("candidates") or []
+        parts = ((candidates[0] or {}).get("content") or {}).get("parts") if candidates else []
+        return "".join(str(p.get("text") or "") for p in parts or [] if isinstance(p, dict))
+
+
 def build_bedrock_claude_invoker(
     *, region_name: str = "us-east-1", client: object | None = None
 ) -> BedrockInvoker:
@@ -373,6 +478,16 @@ def llm_provider_from_settings(settings, *, invoker: BedrockInvoker | None = Non
         return BedrockClaudeLLMProvider(
             model_id=model_id,
             invoker=invoker or build_bedrock_claude_invoker(region_name=region),
+        )
+    if llm_name in {"openai", "openai_chat", "gpt"}:
+        return OpenAIChatLLMProvider(
+            model=str(getattr(settings, "openai_llm_model", "") or "gpt-4o-mini"),
+            api_key=str(getattr(settings, "openai_api_key", "") or ""),
+        )
+    if llm_name in {"gemini", "google_gemini"}:
+        return GeminiLLMProvider(
+            model=str(getattr(settings, "gemini_llm_model", "") or "gemini-2.5-flash"),
+            api_key=str(getattr(settings, "gemini_api_key", "") or ""),
         )
 
     profile = str(getattr(settings, "runtime_profile", "deterministic") or "deterministic")

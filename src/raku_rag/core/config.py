@@ -79,6 +79,9 @@ class Settings:
     # "bedrock_guardrail" = real Bedrock Guardrails.
     output_guardrail_provider: str = ""
     bedrock_claude_model_id: str = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    openai_llm_model: str = "gpt-4o-mini"
+    gemini_api_key: str = ""
+    gemini_llm_model: str = "gemini-2.5-flash"
     bedrock_guardrail_id: str = ""
     bedrock_guardrail_version: str = ""
     langfuse_enabled: bool = False
@@ -249,6 +252,9 @@ def settings_from_env(env: dict | None = None) -> Settings:
         ),
         force_deterministic=_bool("RAKU_FORCE_DETERMINISTIC", Settings.force_deterministic),
         llm_provider=_get("RAKU_LLM_PROVIDER", Settings.llm_provider),
+        openai_llm_model=_get("RAKU_OPENAI_LLM_MODEL", Settings.openai_llm_model),
+        gemini_api_key=_get("GEMINI_API_KEY", Settings.gemini_api_key),
+        gemini_llm_model=_get("RAKU_GEMINI_LLM_MODEL", Settings.gemini_llm_model),
         output_guardrail_provider=_get(
             "RAKU_OUTPUT_GUARDRAIL_PROVIDER",
             Settings.output_guardrail_provider,
