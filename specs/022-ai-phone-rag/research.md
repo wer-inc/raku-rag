@@ -139,5 +139,8 @@
 
 ## Remaining Open Questions
 
-1. 最初の production telephony target は Amazon Connect / Twilio / SIP/PBX / existing customer PBX のどれか。
+1. ~~最初の production telephony target は Amazon Connect / Twilio / SIP/PBX / existing customer PBX のどれか。~~
+   **RESOLVED (2026-07-02): Amazon Connect** — 決定の根拠と実装は `specs/024-phone-live-telephony/`
+   (research.md Decision 1)。AWS完結の請求/IAM/監視一元化、キュー+CCP による人間転送の標準装備、
+   Lex V2 ja-JP / Polly のASR/TTS内蔵、050 DID の低ランニングコストが決め手。
 2. 最初の production CRM/order/reservation integration target はどの顧客・業務APIか。

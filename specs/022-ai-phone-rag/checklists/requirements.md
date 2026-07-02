@@ -28,7 +28,7 @@
 
 ## Clarifications / Open Questions
 
-- [ ] Choose first production telephony provider target.
+- [x] Choose first production telephony provider target. (Amazon Connect — decided 2026-07-02, see `specs/024-phone-live-telephony/research.md` Decision 1.)
 - [x] Decide whether MVP persists audio recording or transcript-only history: product MVP is transcript-first; recording is optional by tenant policy.
 - [x] Decide initial operator console target: product MVP uses built-in handoff queue/detail stub.
 - [x] Decide first CRM/order/reservation lookup integration for MVP: deterministic stub or existing demo data only.

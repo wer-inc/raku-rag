@@ -1,0 +1,178 @@
+{
+  "Version": "2019-10-30",
+  "StartAction": "a-enable-logging",
+  "Metadata": {
+    "entryPointPosition": { "x": 20, "y": 20 },
+    "description": "raku-rag 024 inbound AI flow: greeting -> Lex(ja-JP ASR) -> adapter Lambda -> branch on action (continue/handoff/end_call/reject/error). Replace REPLACE_ME_* before import (see infra/connect/README.md)."
+  },
+  "Actions": [
+    {
+      "Identifier": "a-enable-logging",
+      "Type": "UpdateFlowLoggingBehavior",
+      "Parameters": { "FlowLoggingBehavior": "Enabled" },
+      "Transitions": { "NextAction": "a-set-voice" }
+    },
+    {
+      "Identifier": "a-set-voice",
+      "Type": "UpdateContactTextToSpeechVoice",
+      "Parameters": { "TextToSpeechVoice": "Kazuha", "TextToSpeechEngine": "Neural", "TextToSpeechStyle": "None" },
+      "Transitions": { "NextAction": "a-call-start" }
+    },
+    {
+      "Identifier": "a-call-start",
+      "Type": "InvokeLambdaFunction",
+      "Parameters": {
+        "LambdaFunctionARN": "REPLACE_ME_LAMBDA_ARN",
+        "InvocationTimeLimitSeconds": "8",
+        "LambdaInvocationAttributes": { "action": "call_start" },
+        "ResponseValidation": { "ResponseType": "STRING_MAP" }
+      },
+      "Transitions": {
+        "NextAction": "a-store-call-id",
+        "Errors": [ { "NextAction": "a-error-speak", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-store-call-id",
+      "Type": "UpdateContactAttributes",
+      "Parameters": { "Attributes": { "raku_call_id": "$.External.call_id" } },
+      "Transitions": {
+        "NextAction": "a-greeting",
+        "Errors": [ { "NextAction": "a-error-speak", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-greeting",
+      "Type": "MessageParticipant",
+      "Parameters": { "Text": "お電話ありがとうございます。AIアシスタントが承ります。ご用件をどうぞ。" },
+      "Transitions": {
+        "NextAction": "a-listen",
+        "Errors": [ { "NextAction": "a-error-speak", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-listen",
+      "Type": "ConnectParticipantWithLexBot",
+      "Parameters": {
+        "LexV2Bot": { "AliasArn": "REPLACE_ME_LEX_BOT_ALIAS_ARN" }
+      },
+      "Transitions": {
+        "NextAction": "a-turn",
+        "Errors": [ { "NextAction": "a-error-speak", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-turn",
+      "Type": "InvokeLambdaFunction",
+      "Parameters": {
+        "LambdaFunctionARN": "REPLACE_ME_LAMBDA_ARN",
+        "InvocationTimeLimitSeconds": "8",
+        "LambdaInvocationAttributes": {
+          "action": "turn",
+          "call_id": "$.Attributes.raku_call_id",
+          "utterance": "$.Lex.InputTranscript"
+        },
+        "ResponseValidation": { "ResponseType": "STRING_MAP" }
+      },
+      "Transitions": {
+        "NextAction": "a-branch",
+        "Errors": [ { "NextAction": "a-error-speak", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-branch",
+      "Type": "Compare",
+      "Parameters": { "ComparisonValue": "$.External.action" },
+      "Transitions": {
+        "NextAction": "a-error-speak",
+        "Conditions": [
+          { "NextAction": "a-speak-continue", "Condition": { "Operator": "Equals", "Operands": ["continue"] } },
+          { "NextAction": "a-speak-handoff", "Condition": { "Operator": "Equals", "Operands": ["handoff"] } },
+          { "NextAction": "a-speak-end", "Condition": { "Operator": "Equals", "Operands": ["end_call"] } },
+          { "NextAction": "a-reject-speak", "Condition": { "Operator": "Equals", "Operands": ["reject"] } }
+        ],
+        "Errors": [ { "NextAction": "a-error-speak", "ErrorType": "NoMatchingCondition" } ]
+      }
+    },
+    {
+      "Identifier": "a-speak-continue",
+      "Type": "MessageParticipant",
+      "Parameters": { "Text": "$.External.speech_text" },
+      "Transitions": {
+        "NextAction": "a-listen",
+        "Errors": [ { "NextAction": "a-error-speak", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-speak-handoff",
+      "Type": "MessageParticipant",
+      "Parameters": { "Text": "$.External.speech_text" },
+      "Transitions": {
+        "NextAction": "a-set-queue",
+        "Errors": [ { "NextAction": "a-set-queue", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-set-queue",
+      "Type": "UpdateContactTargetQueue",
+      "Parameters": { "QueueId": "REPLACE_ME_QUEUE_ARN" },
+      "Transitions": {
+        "NextAction": "a-transfer",
+        "Errors": [ { "NextAction": "a-transfer-fail-speak", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-transfer",
+      "Type": "TransferContactToQueue",
+      "Parameters": {},
+      "Transitions": {
+        "Errors": [
+          { "NextAction": "a-transfer-fail-speak", "ErrorType": "QueueAtCapacity" },
+          { "NextAction": "a-transfer-fail-speak", "ErrorType": "NoMatchingError" }
+        ]
+      }
+    },
+    {
+      "Identifier": "a-speak-end",
+      "Type": "MessageParticipant",
+      "Parameters": { "Text": "お電話ありがとうございました。失礼いたします。" },
+      "Transitions": {
+        "NextAction": "a-disconnect",
+        "Errors": [ { "NextAction": "a-disconnect", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-error-speak",
+      "Type": "MessageParticipant",
+      "Parameters": { "Text": "申し訳ありません。システムの確認が必要です。担当者におつなぎします。" },
+      "Transitions": {
+        "NextAction": "a-set-queue",
+        "Errors": [ { "NextAction": "a-disconnect", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-reject-speak",
+      "Type": "MessageParticipant",
+      "Parameters": { "Text": "$.External.speech_text" },
+      "Transitions": {
+        "NextAction": "a-disconnect",
+        "Errors": [ { "NextAction": "a-disconnect", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-transfer-fail-speak",
+      "Type": "MessageParticipant",
+      "Parameters": { "Text": "ただいま担当者におつなぎできません。恐れ入りますが、のちほどおかけ直しください。" },
+      "Transitions": {
+        "NextAction": "a-disconnect",
+        "Errors": [ { "NextAction": "a-disconnect", "ErrorType": "NoMatchingError" } ]
+      }
+    },
+    {
+      "Identifier": "a-disconnect",
+      "Type": "DisconnectParticipant",
+      "Parameters": {},
+      "Transitions": {}
+    }
+  ]
+}

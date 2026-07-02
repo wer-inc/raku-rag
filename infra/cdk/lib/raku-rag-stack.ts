@@ -9,12 +9,14 @@ import * as ecsPatterns from "aws-cdk-lib/aws-ecs-patterns";
 import * as elbv2 from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as kms from "aws-cdk-lib/aws-kms";
+import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as rds from "aws-cdk-lib/aws-rds";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as sqs from "aws-cdk-lib/aws-sqs";
+import * as ssm from "aws-cdk-lib/aws-ssm";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as path from "path";
 import { Construct } from "constructs";
@@ -945,6 +947,66 @@ export class RakuRagStack extends cdk.Stack {
       "ANSWER_SERVICE_URL",
       `http://${answerService.loadBalancer.loadBalancerDnsName}:8088`
     );
+
+    // 024-phone-live-telephony: OPT-IN Amazon Connect channel adapter (`-c phoneTelephony=connect`).
+    // Default OFF — a normal deploy synthesizes nothing here. When enabled it adds ONLY a stdlib
+    // Lambda + an SSM routing parameter + SG wiring; the Connect instance / phone number / contact
+    // flow / Lex bot stay human-gated console steps (docs/phone/connect-setup-runbook.md).
+    if (contextString("phoneTelephony") === "connect") {
+      const connectInstanceArn = contextString("connectInstanceArn");
+      const phoneDidMap = String(this.node.tryGetContext("phoneDidMap") ?? "{}");
+      const didMapParam = new ssm.StringParameter(this, "PhoneDidMapParameter", {
+        parameterName: `/raku-rag/${props.stageName}/phone/did-map`,
+        stringValue: phoneDidMap,
+        description:
+          "Inbound DID -> {tenant_id,user_id,groups,collection_id,scenario_id} routing (024 FR-L02)"
+      });
+      const phoneAdapterSecurityGroup = new ec2.SecurityGroup(this, "ConnectPhoneAdapterSg", {
+        vpc,
+        description: "Connect phone adapter Lambda -> internal answer-service",
+        allowAllOutbound: true
+      });
+      const phoneAdapter = new lambda.Function(this, "ConnectPhoneAdapter", {
+        functionName: `${servicePrefix}-connect-phone-adapter`,
+        runtime: lambda.Runtime.PYTHON_3_12,
+        handler: "connect_phone_adapter.lambda_handler",
+        code: lambda.Code.fromAsset(path.join(REPO_ROOT, "infra", "connect", "lambda")),
+        vpc,
+        vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+        securityGroups: [phoneAdapterSecurityGroup],
+        // Connect caps a Lambda invocation at 8 seconds: time out INSIDE that budget so the
+        // caller hears the spoken fallback instead of a dead flow branch (SC-L3).
+        timeout: cdk.Duration.seconds(7),
+        memorySize: 256,
+        description: "Translates Amazon Connect contact-flow events to /internal/phone/* turns",
+        environment: {
+          RAKU_INTERNAL_API_BASE: `http://${answerService.loadBalancer.loadBalancerDnsName}:8088`,
+          RAKU_INTERNAL_AUTH_SECRET_ARN: internalAuthSecret.secretArn,
+          RAKU_PHONE_DID_MAP_SSM_PARAM: didMapParam.parameterName,
+          RAKU_PHONE_HANDOFF_URL_BASE:
+            contextString("phoneHandoffUrlBase") || `http://${publicAlb.loadBalancerDnsName}/phone`,
+          RAKU_PHONE_HTTP_TIMEOUT_SECONDS: "6"
+        }
+      });
+      internalAuthSecret.grantRead(phoneAdapter);
+      didMapParam.grantRead(phoneAdapter);
+      answerService.loadBalancer.connections.allowFrom(
+        phoneAdapterSecurityGroup,
+        ec2.Port.tcp(8088),
+        "Connect phone adapter Lambda"
+      );
+      if (connectInstanceArn) {
+        // Restrict invocation to THIS Connect instance (set `-c connectInstanceArn=...` once the
+        // instance exists; without it the permission is omitted and Connect cannot invoke yet).
+        phoneAdapter.addPermission("ConnectInvokePermission", {
+          principal: new iam.ServicePrincipal("connect.amazonaws.com"),
+          sourceAccount: cdk.Aws.ACCOUNT_ID,
+          sourceArn: connectInstanceArn
+        });
+      }
+      new cdk.CfnOutput(this, "ConnectPhoneAdapterArn", { value: phoneAdapter.functionArn });
+      new cdk.CfnOutput(this, "PhoneDidMapParameterName", { value: didMapParam.parameterName });
+    }
 
     // One-off ops task (NOT a service): applies schema migrations (psql + the SQL files) and seeds the
     // curated demo KB. Aurora is private-isolated and the answer-service is internal-only, so this MUST

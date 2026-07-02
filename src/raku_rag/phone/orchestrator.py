@@ -31,8 +31,12 @@ from raku_rag.phone.interfaces import (
 )
 from raku_rag.phone.redaction import mask_phone_number, redact_text
 from raku_rag.phone.scenarios import PhoneScenarioService, ScenarioError
+from raku_rag.phone.voice import render_for_voice
 
-SIMULATE_ROLES = frozenset({"tenant_admin", "ops_owner", "qa_reviewer"})
+# `phone_gateway` is the telephony-channel SERVICE role (024 FR-L03): it may start calls and
+# submit turns (the inbound-call path) but can NOT read call history, accept handoffs, or manage
+# scenarios — those stay with human roles. The public NestJS facade does not accept it at all.
+SIMULATE_ROLES = frozenset({"tenant_admin", "ops_owner", "qa_reviewer", "phone_gateway"})
 CALL_READ_ROLES = frozenset({"ops_owner", "tenant_admin", "qa_reviewer"})
 HANDOFF_READ_ROLES = frozenset({"operator", "ops_owner", "tenant_admin"})
 
@@ -107,7 +111,8 @@ class PhoneCallService:
             call_id=new_id("call"),
             correlation_id=new_id("corr"),
             channel=str(body.get("channel") or "simulator"),
-            provider=self._telephony.name,
+            provider=str(body.get("provider") or self._telephony.name),
+            provider_call_id=str(body.get("provider_call_id") or "") or None,
             caller_phone_number_masked=mask_phone_number(str(caller.get("phone_number") or "")),
             customer_id=str(caller.get("customer_id") or "") or None,
             scenario_id=scenario_id,
@@ -413,7 +418,12 @@ class PhoneCallService:
                 principal, call, event, version, persist_handoff=persist_handoff
             )
         if event.event_type == "hangup":
-            call.transition("completed" if self._has_answer(call) else "abandoned")
+            if call.state == "handoff_pending":
+                # Caller left while waiting for the transfer: abandoned (completed is not a
+                # legal transition from handoff_pending — caught by the Connect flow test).
+                call.transition("abandoned")
+            else:
+                call.transition("completed" if self._has_answer(call) else "abandoned")
             turn = self._ai_turn(call, "end_call", "お電話ありがとうございました。", started)
             return 200, self._turn_payload(principal, call, turn, handoff=None)
         if event.event_type == "hold":
@@ -682,10 +692,12 @@ class PhoneCallService:
         trace_id: str = "",
     ) -> ConversationTurn:
         turn_id = f"turn_{call.next_sequence_no():03d}"
-        tts_started = time.perf_counter()
-        tts = self._tts.synthesize(call.tenant_id, call.call_id, turn_id, text)
-        tts_ms = (time.perf_counter() - tts_started) * 1000
         redaction = redact_text(text)
+        # Voice rendering happens AFTER redaction so masked values are what gets spoken (FR-L05).
+        speech = render_for_voice(redaction.text) or redaction.text
+        tts_started = time.perf_counter()
+        tts = self._tts.synthesize(call.tenant_id, call.call_id, turn_id, speech)
+        tts_ms = (time.perf_counter() - tts_started) * 1000
         turn = ConversationTurn(
             tenant_id=call.tenant_id,
             call_id=call.call_id,
@@ -696,6 +708,7 @@ class PhoneCallService:
             redacted_text=redaction.text,
             ai_action=action,
             ai_response_text=redaction.text,
+            speech_text=speech,
             tts_audio_ref=tts.audio_ref,
             intent=call.intent,
             citations=citations,
@@ -742,6 +755,7 @@ class PhoneCallService:
             "call_state": call.state,
             "ai_action": turn.ai_action,
             "ai_response_text": turn.ai_response_text,
+            "speech_text": turn.speech_text,
             "tts_audio_ref": turn.tts_audio_ref,
             "citations": [c.public() for c in turn.citations],
             "handoff": (
