@@ -3159,6 +3159,80 @@ def make_handler(system: ProductionSystem):
     return Handler
 
 
+def _start_auto_sync_scheduler(dsn: str, port: int) -> None:
+    """S2-1 (#0034): background thread that executes stored `sync_schedule` values.
+
+    - Discovery reads the 0019 registry via a PRIVATE psycopg connection (per-source re-resolution
+      stays RLS-checked through the normal repository `get`).
+    - Firing POSTs the EXISTING internal manual-sync route on 127.0.0.1 with a slot-scoped
+      idempotency key, so scheduled syncs reuse the exact run/queue/dedup machinery manual syncs
+      have — and never touch the request thread's connection or stores.
+    """
+    import threading
+    import urllib.request
+
+    from raku_rag.services.sync_scheduler import AutoSyncScheduler
+
+    interval = max(15, int(os.environ.get("RAKU_AUTO_SYNC_INTERVAL_SECONDS", "60")))
+
+    def _log(event: str, **fields: object) -> None:
+        print(json.dumps({"event": event, **{k: str(v) for k, v in fields.items()}}), flush=True)
+
+    def _trigger(tenant_id: str, source_id: str, idempotency_key: str) -> None:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/internal/manufacturing/sources/{quote(source_id)}/sync",
+            data=json.dumps(
+                {"idempotency_key": idempotency_key, "requested_by": "auto-sync-scheduler"}
+            ).encode("utf-8"),
+            headers={
+                "content-type": "application/json",
+                "x-raku-tenant-id": tenant_id,
+                "x-raku-user-id": "auto-sync-scheduler",
+                "x-raku-groups": "[]",
+                "x-raku-roles": "[]",
+                "X-Internal-Auth": _INTERNAL_AUTH_SECRET,
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            response.read()
+
+    def _run() -> None:
+        try:
+            import psycopg
+
+            from raku_rag.persistence.postgres import _set_app_role
+
+            conn = psycopg.connect(dsn, autocommit=True)
+            # Same posture as every other connection: drop to the non-owner raku_app role so RLS
+            # governs the scheduler too (its registry read escape is the explicit GUC policy).
+            with conn.cursor() as cur:
+                _set_app_role(conn, cur)
+            runtime_settings = settings_from_env()
+            repo = PostgresDataSourceRepository(conn, secret_store_from_settings(runtime_settings))
+        except Exception as exc:  # noqa: BLE001 — scheduler must never take the server down
+            _log("auto_sync.disabled", reason=f"scheduler_connection_failed: {exc}")
+            return
+        scheduler = AutoSyncScheduler(
+            list_scheduled=repo.list_scheduled,
+            get_source=repo.get,
+            trigger=_trigger,
+            prune=repo.remove_schedule,
+            log=_log,
+        )
+        _log("auto_sync.started", interval_seconds=interval)
+        import time as _time
+
+        while True:
+            try:
+                scheduler.tick()
+            except Exception as exc:  # noqa: BLE001
+                _log("auto_sync.tick_error", error=str(exc))
+            _time.sleep(interval)
+
+    threading.Thread(target=_run, name="auto-sync-scheduler", daemon=True).start()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="raku-rag answer-service (ProductionSystem over HTTP)")
     ap.add_argument("--port", type=int, default=int(os.environ.get("ANSWER_SERVICE_PORT", "8088")))
@@ -3187,6 +3261,11 @@ def main() -> None:
     host = os.environ.get("ANSWER_SERVICE_HOST", "127.0.0.1")
     httpd = HTTPServer((host, args.port), make_handler(system))
     print(f"answer-service listening on http://{host}:{args.port} (/internal/answer)", flush=True)
+    # S2-1 (#0034): the auto-sync scheduler runs ONLY in the real server process (never in tests
+    # importing make_handler). It owns a private DB connection and fires syncs through this
+    # server's own internal HTTP route, so it shares no state with request handling.
+    if os.environ.get("RAKU_AUTO_SYNC_ENABLED", "1") == "1":
+        _start_auto_sync_scheduler(dsn, args.port)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

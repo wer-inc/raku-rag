@@ -73,6 +73,16 @@ class DataSourceRepository(Protocol):
         self, tenant_id: str, source_id: str, body: Mapping[str, object], *, actor: str = ""
     ) -> dict: ...
 
+    def list_scheduled(self) -> list[dict]:
+        """S2-1 scheduler bootstrap: [{tenant_id, source_id, sync_schedule}] across tenants.
+
+        Metadata only (never config/credentials). The Postgres impl reads
+        `sync_schedule_registry` under the dedicated `app.sync_scheduler` GUC (the policy's
+        explicit read escape — see the 0019 migration header); consumers MUST re-resolve each
+        entry through the RLS-checked `get()` before acting on it.
+        """
+        ...
+
 
 @dataclass
 class InMemoryDataSourceRepository:
@@ -89,6 +99,13 @@ class InMemoryDataSourceRepository:
     def get(self, tenant_id: str, source_id: str) -> dict | None:
         record = self._items.get((tenant_id, source_id))
         return record.to_public_dict() if record else None
+
+    def list_scheduled(self) -> list[dict]:
+        return [
+            {"tenant_id": t, "source_id": s, "sync_schedule": record.sync_schedule or ""}
+            for (t, s), record in self._items.items()
+            if (record.sync_schedule or "").strip()
+        ]
 
     def upsert(
         self, tenant_id: str, source_id: str, body: Mapping[str, object], *, actor: str = ""
@@ -188,9 +205,55 @@ class PostgresDataSourceRepository:
                     str(clean.get("status") or (existing or {}).get("status") or "active"),
                 ),
             )
+            # S2-1: mirror scheduling metadata into the scheduler bootstrap registry (0019).
+            schedule_value = (
+                _optional_str(clean.get("sync_schedule"), (existing or {}).get("sync_schedule"))
+                or ""
+            ).strip()
+            if schedule_value:
+                cur.execute(
+                    "INSERT INTO sync_schedule_registry (tenant_id, source_id, sync_schedule) "
+                    "VALUES (%s,%s,%s) "
+                    "ON CONFLICT (tenant_id, source_id) DO UPDATE SET "
+                    "sync_schedule=EXCLUDED.sync_schedule, updated_at=now()",
+                    (tenant_id, source_id, schedule_value),
+                )
+            else:
+                cur.execute(
+                    "DELETE FROM sync_schedule_registry "
+                    "WHERE tenant_id = %s AND source_id = %s",
+                    (tenant_id, source_id),
+                )
         saved = self.get(tenant_id, source_id)
         assert saved is not None
         return saved
+
+    def list_scheduled(self) -> list[dict]:
+        """Cross-tenant scheduling metadata via the registry's explicit scheduler read escape."""
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT set_config('app.sync_scheduler', '1', false)")
+            try:
+                cur.execute(
+                    "SELECT tenant_id, source_id, sync_schedule FROM sync_schedule_registry "
+                    "WHERE sync_schedule <> '' ORDER BY tenant_id, source_id"
+                )
+                rows = cur.fetchall()
+            finally:
+                cur.execute("SELECT set_config('app.sync_scheduler', '', false)")
+        return [
+            {"tenant_id": row[0], "source_id": row[1], "sync_schedule": row[2]} for row in rows
+        ]
+
+    def remove_schedule(self, tenant_id: str, source_id: str) -> None:
+        """Prune a stale registry row (datasource no longer resolves)."""
+        from raku_rag.persistence.postgres import _use_tenant
+
+        _use_tenant(self._conn, tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM sync_schedule_registry WHERE tenant_id = %s AND source_id = %s",
+                (tenant_id, source_id),
+            )
 
 
 def materialize_datasource_credentials(

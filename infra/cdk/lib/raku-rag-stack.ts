@@ -896,6 +896,10 @@ export class RakuRagStack extends cdk.Stack {
         // Listen on all interfaces so the internal ALB health check reaches the task ENI (the default
         // 127.0.0.1 bind is loopback-only → failed ELB health checks → ECS kills the task).
         ANSWER_SERVICE_HOST: "0.0.0.0",
+        // S2-1 (#0034): execute stored `sync_schedule` values (registry 0019 + private-connection
+        // scheduler thread in server.py). Set to "0" to disable in an emergency.
+        RAKU_AUTO_SYNC_ENABLED: "1",
+        RAKU_AUTO_SYNC_INTERVAL_SECONDS: "60",
         INGESTION_QUEUE_URL: ingestionQueue.queueUrl,
         SQS_DLQ_URL: deadLetterQueue.queueUrl,
         DATABASE_HOST: database.clusterEndpoint.hostname,
