@@ -86,6 +86,17 @@ from workers.ingest.provider_policy import (  # noqa: E402
     capability_for,
 )
 from raku_rag.chatbot import ChatbotService  # noqa: E402
+from raku_rag.persistence.phone_models import (  # noqa: E402
+    InMemoryPhoneCallRepository,
+    InMemoryPhoneScenarioRepository,
+    PostgresPhoneCallRepository,
+    PostgresPhoneScenarioRepository,
+)
+from raku_rag.phone import PhoneCallService, PhoneScenarioService  # noqa: E402
+from raku_rag.phone.interfaces import CallableAnswerGateway  # noqa: E402
+from raku_rag.providers.asr import DeterministicAsrProvider  # noqa: E402
+from raku_rag.providers.telephony import DeterministicCallSimulator  # noqa: E402
+from raku_rag.providers.tts import DeterministicTtsProvider  # noqa: E402
 
 _LOCAL_DEMO_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _LOCAL_DEMO_DBS = {"raku", "raku_demo", "raku_parity"}
@@ -1491,6 +1502,20 @@ def _chatbot_source_policy_repository_for(system: ProductionSystem):
     return InMemoryChatbotSourcePolicyRepository()
 
 
+def _phone_call_repository_for(system: ProductionSystem):
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return PostgresPhoneCallRepository(conn)
+    return InMemoryPhoneCallRepository()
+
+
+def _phone_scenario_repository_for(system: ProductionSystem):
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return PostgresPhoneScenarioRepository(conn)
+    return InMemoryPhoneScenarioRepository()
+
+
 def _source_sync_queue_from_env():
     queue_url = os.environ.get("INGESTION_QUEUE_URL") or os.environ.get("SQS_QUEUE_URL")
     if not queue_url:
@@ -1579,6 +1604,20 @@ def make_handler(system: ProductionSystem):
         ),
         source_policy_repository=_chatbot_source_policy_repository_for(system),
     )
+    # 022-ai-phone-rag: the phone layer reuses the SAME audited manufacturing answer path as the
+    # chatbot (FR-009) — no separate retrieval/citation path for the phone channel.
+    phone = PhoneCallService(
+        CallableAnswerGateway(
+            lambda principal, query, collection_id: _manufacturing_answer_json(
+                manufacturing_system.answer(principal, query, collection_id)
+            )
+        ),
+        repository=_phone_call_repository_for(system),
+        scenarios=PhoneScenarioService(_phone_scenario_repository_for(system)),
+        telephony=DeterministicCallSimulator(),
+        asr=DeterministicAsrProvider(),
+        tts=DeterministicTtsProvider(),
+    )
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()
     investment_api = InvestmentApiService()
@@ -1649,6 +1688,17 @@ def make_handler(system: ProductionSystem):
                     )
                 elif parts == ["internal", "chat", "scenarios"]:
                     self._send_result(chatbot.list_scenarios(_claims_from_headers(self.headers)))
+                elif parts == ["internal", "phone", "calls"]:
+                    qs = parse_qs(parsed.query)
+                    self._send_result(phone.list_calls(_claims_from_headers(self.headers), qs))
+                elif len(parts) == 4 and parts[:3] == ["internal", "phone", "calls"]:
+                    self._send_result(phone.get_call(_claims_from_headers(self.headers), parts[3]))
+                elif len(parts) == 4 and parts[:3] == ["internal", "phone", "handoffs"]:
+                    self._send_result(
+                        phone.get_handoff(_claims_from_headers(self.headers), parts[3])
+                    )
+                elif parts == ["internal", "phone", "scenarios"]:
+                    self._send_result(phone.list_scenarios(_claims_from_headers(self.headers)))
                 elif parts == ["internal", "industries"]:
                     self._send(200, industry_api.list_industries(tenant_id=self._tenant_header()))
                 elif (
@@ -2134,6 +2184,52 @@ def make_handler(system: ProductionSystem):
                 ):
                     self._send_result(
                         chatbot.rollback_scenario(_claims_from_headers(self.headers), parts[3])
+                    )
+                elif parts == ["internal", "phone", "calls", "simulate"]:
+                    self._send_result(
+                        phone.simulate_call(_claims_from_headers(self.headers), body)
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "phone", "calls"]
+                    and parts[4] == "turns"
+                ):
+                    self._send_result(
+                        phone.submit_turn(_claims_from_headers(self.headers), parts[3], body)
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "phone", "handoffs"]
+                    and parts[4] == "accept"
+                ):
+                    self._send_result(
+                        phone.accept_handoff(_claims_from_headers(self.headers), parts[3], body)
+                    )
+                elif parts == ["internal", "phone", "scenarios"]:
+                    self._send_result(
+                        phone.create_scenario(_claims_from_headers(self.headers), body)
+                    )
+                elif (
+                    len(parts) == 7
+                    and parts[:3] == ["internal", "phone", "scenarios"]
+                    and parts[4] == "versions"
+                ):
+                    self._send_result(
+                        phone.scenario_action(
+                            _claims_from_headers(self.headers),
+                            parts[3],
+                            parts[5],
+                            parts[6],
+                            body,
+                        )
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "phone", "scenarios"]
+                    and parts[4] == "rollback"
+                ):
+                    self._send_result(
+                        phone.rollback_scenario(_claims_from_headers(self.headers), parts[3], body)
                     )
                 elif path == "/internal/manufacturing/answer":
                     # P2-1: the manufacturing safety overlay (high-risk gate, approved+effective
@@ -2863,6 +2959,16 @@ def make_handler(system: ProductionSystem):
                 ):
                     self._send_result(
                         chatbot.upsert_scenario_version(
+                            _claims_from_headers(self.headers), parts[3], parts[5], body
+                        )
+                    )
+                elif (
+                    len(parts) == 6
+                    and parts[:3] == ["internal", "phone", "scenarios"]
+                    and parts[4] == "versions"
+                ):
+                    self._send_result(
+                        phone.upsert_scenario_version(
                             _claims_from_headers(self.headers), parts[3], parts[5], body
                         )
                     )

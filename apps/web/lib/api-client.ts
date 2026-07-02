@@ -37,6 +37,21 @@ import type {
   ManufacturingIngestionRun,
   ManufacturingKpi,
   ManufacturingSourceSyncStatus,
+  PhoneCallDetailResponse,
+  PhoneCallListResponse,
+  PhoneHandoffAcceptRequest,
+  PhoneHandoffAcceptResponse,
+  PhoneHandoffResponse,
+  PhoneScenarioCreateRequest,
+  PhoneScenarioListResponse,
+  PhoneScenarioMutationResponse,
+  PhoneScenarioPreviewRequest,
+  PhoneScenarioPreviewResponse,
+  PhoneScenarioVersionRequest,
+  PhoneSimulateCallRequest,
+  PhoneSimulateCallResponse,
+  PhoneTurnRequest,
+  PhoneTurnResponse,
   ReviewDraftRequest,
   SafetyTelemetryView,
   SearchRequest,
@@ -228,6 +243,130 @@ export async function upsertChatSourceExposurePolicy(
   return apiPutJson<ChatbotSourceExposurePolicy>(
     `/chat/source-exposure-policies/${encodeURIComponent(policyId)}`,
     policy,
+    userToken,
+  );
+}
+
+// --- 022-ai-phone-rag: /v1/phone/* (deterministic call simulator + handoff + scenarios) --------
+
+export async function phoneSimulateCall(
+  req: PhoneSimulateCallRequest,
+  userToken: string,
+): Promise<PhoneSimulateCallResponse> {
+  return apiPostJson<PhoneSimulateCallResponse>("/phone/calls/simulate", req, userToken);
+}
+
+export async function phoneSubmitTurn(
+  callId: string,
+  req: PhoneTurnRequest,
+  userToken: string,
+): Promise<PhoneTurnResponse> {
+  return apiPostJson<PhoneTurnResponse>(
+    `/phone/calls/${encodeURIComponent(callId)}/turns`,
+    req,
+    userToken,
+  );
+}
+
+export async function phoneListCalls(
+  userToken: string,
+  query?: Record<string, string>,
+): Promise<PhoneCallListResponse> {
+  const qs = query ? `?${new URLSearchParams(query).toString()}` : "";
+  return apiGetJson<PhoneCallListResponse>(`/phone/calls${qs}`, userToken);
+}
+
+export async function phoneCallDetail(
+  callId: string,
+  userToken: string,
+): Promise<PhoneCallDetailResponse> {
+  return apiGetJson<PhoneCallDetailResponse>(
+    `/phone/calls/${encodeURIComponent(callId)}`,
+    userToken,
+  );
+}
+
+export async function phoneHandoffDetail(
+  handoffId: string,
+  userToken: string,
+): Promise<PhoneHandoffResponse> {
+  return apiGetJson<PhoneHandoffResponse>(
+    `/phone/handoffs/${encodeURIComponent(handoffId)}`,
+    userToken,
+  );
+}
+
+export async function phoneAcceptHandoff(
+  handoffId: string,
+  req: PhoneHandoffAcceptRequest,
+  userToken: string,
+): Promise<PhoneHandoffAcceptResponse> {
+  return apiPostJson<PhoneHandoffAcceptResponse>(
+    `/phone/handoffs/${encodeURIComponent(handoffId)}/accept`,
+    req,
+    userToken,
+  );
+}
+
+export async function phoneListScenarios(userToken: string): Promise<PhoneScenarioListResponse> {
+  return apiGetJson<PhoneScenarioListResponse>("/phone/scenarios", userToken);
+}
+
+export async function phoneCreateScenario(
+  req: PhoneScenarioCreateRequest,
+  userToken: string,
+): Promise<PhoneScenarioMutationResponse> {
+  return apiPostJson<PhoneScenarioMutationResponse>("/phone/scenarios", req, userToken);
+}
+
+export async function phoneUpsertScenarioVersion(
+  scenarioId: string,
+  versionId: string,
+  req: PhoneScenarioVersionRequest,
+  userToken: string,
+): Promise<PhoneScenarioMutationResponse> {
+  return apiPutJson<PhoneScenarioMutationResponse>(
+    `/phone/scenarios/${encodeURIComponent(scenarioId)}/versions/${encodeURIComponent(versionId)}`,
+    req,
+    userToken,
+  );
+}
+
+export async function phoneScenarioAction(
+  scenarioId: string,
+  versionId: string,
+  action: "submit-review" | "approve" | "publish" | "schedule" | "archive",
+  body: Record<string, unknown>,
+  userToken: string,
+): Promise<PhoneScenarioMutationResponse> {
+  return apiPostJson<PhoneScenarioMutationResponse>(
+    `/phone/scenarios/${encodeURIComponent(scenarioId)}/versions/${encodeURIComponent(versionId)}/${action}`,
+    body,
+    userToken,
+  );
+}
+
+export async function phonePreviewScenario(
+  scenarioId: string,
+  versionId: string,
+  req: PhoneScenarioPreviewRequest,
+  userToken: string,
+): Promise<PhoneScenarioPreviewResponse> {
+  return apiPostJson<PhoneScenarioPreviewResponse>(
+    `/phone/scenarios/${encodeURIComponent(scenarioId)}/versions/${encodeURIComponent(versionId)}/test`,
+    req,
+    userToken,
+  );
+}
+
+export async function phoneRollbackScenario(
+  scenarioId: string,
+  targetVersionId: string,
+  userToken: string,
+): Promise<PhoneScenarioMutationResponse> {
+  return apiPostJson<PhoneScenarioMutationResponse>(
+    `/phone/scenarios/${encodeURIComponent(scenarioId)}/rollback`,
+    { target_version_id: targetVersionId },
     userToken,
   );
 }

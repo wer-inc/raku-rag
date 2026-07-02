@@ -48,6 +48,9 @@ const TENANT_ADMIN_ONLY_HREFS = new Set(
 // avoid a "nav shows it, API 403s it" dead screen. (issue 0011 DoD#4 / 0024)
 const OPS_OWNER_HREFS = new Set([
   ...FIELD_USER_HREFS,
+  // 022-ai-phone-rag: phone simulate/call-history are ops_owner+tenant_admin surfaces
+  // (screens.manifest.json phone rbac=[ops_owner, tenant_admin]); NOT field_user.
+  "/phone",
   "/files",
   "/sources/list",
   "/sources",

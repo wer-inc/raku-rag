@@ -38,6 +38,32 @@ export function assertReviewViewAllowed(req: Request): void {
   }
 }
 
+// 022-ai-phone-rag — phone-channel role sets (contracts/phone-rag-openapi.md §Authorization
+// Matrix). The answer-service phone layer re-checks the same sets; this facade gate is the
+// defense-in-depth outer wall, mirroring the chat controller pattern.
+export const PHONE_SIMULATE_ROLES = ["tenant_admin", "ops_owner", "qa_reviewer"] as const;
+export const PHONE_CALL_READ_ROLES = ["ops_owner", "tenant_admin", "qa_reviewer"] as const;
+export const PHONE_HANDOFF_READ_ROLES = ["operator", "ops_owner", "tenant_admin"] as const;
+export const PHONE_SCENARIO_READ_ROLES = [
+  "tenant_admin",
+  "scenario_admin",
+  "scenario_approver",
+  "ops_owner",
+] as const;
+export const PHONE_SCENARIO_MANAGE_ROLES = ["tenant_admin", "scenario_admin"] as const;
+export const PHONE_SCENARIO_APPROVE_ROLES = ["tenant_admin", "scenario_approver"] as const;
+
+export function assertAnyRoleAllowed(
+  req: Request,
+  allowedRoles: readonly string[],
+  message = "phone_role_required",
+): void {
+  const roles = new Set(req.principal?.roles ?? []);
+  if (!allowedRoles.some((role) => roles.has(role))) {
+    throw new ForbiddenException(message);
+  }
+}
+
 /**
  * Gate tenant-wide AGGREGATE read views (audit / dashboard / KPI / safety-telemetry). These have no
  * per-document ACL — they expose cross-user activity for the whole tenant — so an un-provisioned

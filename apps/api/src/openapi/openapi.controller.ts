@@ -1491,6 +1491,359 @@ const OPENAPI_DOC = {
           correlation_id: { type: "string" },
         },
       },
+      PhoneCitationRef: {
+        type: "object",
+        required: ["source_id", "document_id", "chunk_id", "retrieval_score"],
+        properties: {
+          source_id: { type: "string" },
+          document_id: { type: "string" },
+          chunk_id: { type: "string" },
+          version: { type: "string", nullable: true },
+          retrieval_score: { type: "number" },
+          approval_status: { type: "string", nullable: true },
+          effective_date: { type: "string", nullable: true },
+          snippet_redacted: { type: "string", nullable: true },
+        },
+      },
+      PhoneUtterance: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            enum: ["speech", "dtmf", "barge_in", "hold", "resume", "hangup", "provider_failure"],
+          },
+          text: { type: "string" },
+          dtmf_digits: { type: "string" },
+          asr_confidence: { type: "number" },
+          failed_provider: { type: "string" },
+        },
+      },
+      PhoneSimulateCallRequest: {
+        type: "object",
+        properties: {
+          caller: {
+            type: "object",
+            properties: {
+              phone_number: { type: "string" },
+              customer_id: { type: "string" },
+            },
+          },
+          channel: { type: "string" },
+          scenario_id: { type: "string" },
+          collection_id: { type: "string" },
+          utterances: { type: "array", items: { $ref: "#/components/schemas/PhoneUtterance" } },
+          options: {
+            type: "object",
+            properties: {
+              recording_enabled: { type: "boolean" },
+              force_asr_confidence: { type: "number" },
+            },
+          },
+        },
+      },
+      PhoneTurnRequest: {
+        type: "object",
+        properties: {
+          event_type: { type: "string" },
+          text: { type: "string" },
+          dtmf_digits: { type: "string", nullable: true },
+          asr_confidence: { type: "number" },
+          collection_id: { type: "string" },
+          failed_provider: { type: "string" },
+        },
+      },
+      PhoneSafetyDecision: {
+        type: "object",
+        required: ["answered_with_evidence"],
+        properties: {
+          answered_with_evidence: { type: "boolean" },
+          blocked_reason: { type: "string", nullable: true },
+        },
+      },
+      PhoneHandoffSummary: {
+        type: "object",
+        required: ["handoff_package_id", "reason", "destination_type", "destination_id", "status"],
+        properties: {
+          handoff_package_id: { type: "string" },
+          reason: { type: "string" },
+          destination_type: { type: "string" },
+          destination_id: { type: "string" },
+          status: { type: "string" },
+        },
+      },
+      PhoneTurnResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "call_id", "turn_id", "call_state", "safety", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          call_id: { type: "string" },
+          turn_id: { type: "string" },
+          call_state: { type: "string" },
+          ai_action: { type: "string", nullable: true },
+          ai_response_text: { type: "string", nullable: true },
+          tts_audio_ref: { type: "string", nullable: true },
+          citations: { type: "array", items: { $ref: "#/components/schemas/PhoneCitationRef" } },
+          // Nullable in practice; the doc references the shape (contract test requires $ref|typed).
+          handoff: { $ref: "#/components/schemas/PhoneHandoffSummary" },
+          safety: { $ref: "#/components/schemas/PhoneSafetyDecision" },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneSimulateCallResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "call_id", "status", "status_url", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          call_id: { type: "string" },
+          status: { type: "string" },
+          status_url: { type: "string" },
+          turns: { type: "array", items: { $ref: "#/components/schemas/PhoneTurnResponse" } },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneCallSummaryItem: {
+        type: "object",
+        required: ["call_id", "started_at", "state", "handoff_required"],
+        properties: {
+          call_id: { type: "string" },
+          started_at: { type: "string" },
+          ended_at: { type: "string", nullable: true },
+          caller_phone_number_masked: { type: "string", nullable: true },
+          customer_id: { type: "string", nullable: true },
+          intent: { type: "string", nullable: true },
+          state: { type: "string" },
+          resolution_status: { type: "string", nullable: true },
+          handoff_required: { type: "boolean" },
+          handoff_reason: { type: "string", nullable: true },
+          scenario_id: { type: "string", nullable: true },
+          scenario_version_id: { type: "string", nullable: true },
+        },
+      },
+      PhoneCallListResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "items", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          items: { type: "array", items: { $ref: "#/components/schemas/PhoneCallSummaryItem" } },
+          next_cursor: { type: "string", nullable: true },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneTranscriptTurn: {
+        type: "object",
+        required: ["turn_id", "sequence_no", "speaker", "event_type"],
+        properties: {
+          turn_id: { type: "string" },
+          sequence_no: { type: "integer" },
+          speaker: { type: "string" },
+          event_type: { type: "string" },
+          redacted_text: { type: "string", nullable: true },
+          created_at: { type: "string" },
+          asr_confidence: { type: "number", nullable: true },
+          dtmf_digits: { type: "string" },
+          barge_in: { type: "boolean" },
+          ai_action: { type: "string", nullable: true },
+          tts_audio_ref: { type: "string", nullable: true },
+          citations: { type: "array", items: { $ref: "#/components/schemas/PhoneCitationRef" } },
+          latency_ms: { type: "object", additionalProperties: true },
+          safety: { $ref: "#/components/schemas/PhoneSafetyDecision" },
+          handoff_reason: { type: "string" },
+        },
+      },
+      PhoneCallDetailResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "call_id", "state", "transcript", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          call_id: { type: "string" },
+          state: { type: "string" },
+          started_at: { type: "string" },
+          ended_at: { type: "string", nullable: true },
+          caller_phone_number_masked: { type: "string", nullable: true },
+          customer_id: { type: "string", nullable: true },
+          intent: { type: "string", nullable: true },
+          summary: { type: "string" },
+          resolution_status: { type: "string", nullable: true },
+          scenario_id: { type: "string", nullable: true },
+          scenario_version_id: { type: "string", nullable: true },
+          recording_enabled: { type: "boolean" },
+          recording_disclosure_played: { type: "boolean" },
+          transcript_redaction_status: { type: "string" },
+          transcript: { type: "array", items: { $ref: "#/components/schemas/PhoneTranscriptTurn" } },
+          // Nullable in practice; the doc references the shape (contract test requires $ref|typed).
+          handoff: { $ref: "#/components/schemas/PhoneHandoffPackage" },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneHandoffPackage: {
+        type: "object",
+        required: ["handoff_package_id", "call_id", "status", "reason", "destination_type", "destination_id", "summary"],
+        properties: {
+          handoff_package_id: { type: "string" },
+          call_id: { type: "string" },
+          status: { type: "string" },
+          reason: { type: "string" },
+          priority: { type: "string" },
+          destination_type: { type: "string" },
+          destination_id: { type: "string" },
+          customer: {
+            type: "object",
+            properties: {
+              customer_id: { type: "string", nullable: true },
+              phone_number_masked: { type: "string", nullable: true },
+            },
+          },
+          intent: { type: "string", nullable: true },
+          summary: { type: "string" },
+          transcript_excerpt_redacted: { type: "string" },
+          confirmed_slots: { type: "object", additionalProperties: { type: "string" } },
+          citations: { type: "array", items: { $ref: "#/components/schemas/PhoneCitationRef" } },
+          sentiment: { type: "string", nullable: true },
+          recommended_next_action: { type: "string", nullable: true },
+          operator_id: { type: "string", nullable: true },
+          accepted_at: { type: "string", nullable: true },
+          failure_reason: { type: "string", nullable: true },
+          created_at: { type: "string" },
+        },
+      },
+      PhoneHandoffAcceptRequest: {
+        type: "object",
+        properties: {
+          operator_id: { type: "string" },
+          queue_id: { type: "string" },
+        },
+      },
+      PhoneHandoffAcceptResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "handoff_package_id", "status", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          handoff_package_id: { type: "string" },
+          status: { type: "string" },
+          accepted_at: { type: "string", nullable: true },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneScenarioSummary: {
+        type: "object",
+        required: ["scenario_id", "name", "intent", "status"],
+        properties: {
+          scenario_id: { type: "string" },
+          name: { type: "string" },
+          intent: { type: "string" },
+          status: { type: "string" },
+          active_version_id: { type: "string", nullable: true },
+          updated_at: { type: "string" },
+        },
+      },
+      PhoneScenarioListResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "items", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          items: { type: "array", items: { $ref: "#/components/schemas/PhoneScenarioSummary" } },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneScenarioCreateRequest: {
+        type: "object",
+        required: ["name", "intent"],
+        properties: {
+          scenario_id: { type: "string" },
+          name: { type: "string" },
+          intent: { type: "string" },
+          description: { type: "string" },
+          owner_group: { type: "string" },
+        },
+      },
+      PhoneScenarioVersionRequest: {
+        type: "object",
+        properties: {
+          entry_conditions: { type: "array", items: { type: "object", additionalProperties: true } },
+          steps: { type: "array", items: { type: "object", additionalProperties: true } },
+          required_slots: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["slot"],
+              properties: {
+                slot: { type: "string" },
+                prompt: { type: "string" },
+                max_attempts: { type: "integer" },
+              },
+            },
+          },
+          branch_conditions: { type: "array", items: { type: "object", additionalProperties: true } },
+          allowed_actions: { type: "array", items: { type: "string" } },
+          handoff_conditions: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["reason"],
+              properties: {
+                reason: { type: "string" },
+                enabled: { type: "boolean" },
+              },
+            },
+          },
+          fallback_message: { type: "string" },
+          response_templates: { type: "array", items: { type: "object", additionalProperties: true } },
+        },
+      },
+      PhoneScenarioMutationResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "scenario_id", "status", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          scenario_id: { type: "string" },
+          scenario_version_id: { type: "string" },
+          status: { type: "string" },
+          active_version_id: { type: "string", nullable: true },
+          scheduled_publish_at: { type: "string", nullable: true },
+          rollback_target_version_id: { type: "string", nullable: true },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneScenarioPreviewRequest: {
+        type: "object",
+        required: ["utterances"],
+        properties: {
+          // Plain utterance strings (contract example); structured PhoneUtterance objects are
+          // also accepted by the service.
+          utterances: { type: "array", items: { type: "string" } },
+          collection_id: { type: "string" },
+        },
+      },
+      PhoneScenarioPreviewResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "scenario_id", "scenario_version_id", "turns", "would_handoff", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          scenario_id: { type: "string" },
+          scenario_version_id: { type: "string" },
+          turns: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                ai_action: { type: "string", nullable: true },
+                ai_response_text: { type: "string", nullable: true },
+                citations: { type: "array", items: { $ref: "#/components/schemas/PhoneCitationRef" } },
+              },
+            },
+          },
+          would_handoff: { type: "boolean" },
+          correlation_id: { type: "string" },
+        },
+      },
       ManufacturingAnswerRequest: {
         type: "object",
         required: ["query"],
@@ -2769,6 +3122,382 @@ const OPENAPI_DOC = {
           "403": { description: "Forbidden: scenario approver role required", content: { "application/json": {} } },
           "404": { description: "Scenario not found", content: { "application/json": {} } },
           "502": { description: "Chat service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/calls/simulate": {
+      post: {
+        operationId: "simulatePhoneCall",
+        security: [{ bearerAuth: [], userToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/PhoneSimulateCallRequest" } },
+          },
+        },
+        responses: {
+          "202": {
+            description: "Deterministic simulated inbound phone call accepted",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneSimulateCallResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: phone simulate role required", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/calls": {
+      get: {
+        operationId: "listPhoneCalls",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "from", in: "query", required: false, schema: { type: "string" } },
+          { name: "to", in: "query", required: false, schema: { type: "string" } },
+          { name: "customer_id", in: "query", required: false, schema: { type: "string" } },
+          { name: "phone_number", in: "query", required: false, schema: { type: "string" } },
+          { name: "intent", in: "query", required: false, schema: { type: "string" } },
+          { name: "state", in: "query", required: false, schema: { type: "string" } },
+          { name: "handoff_reason", in: "query", required: false, schema: { type: "string" } },
+          { name: "scenario_id", in: "query", required: false, schema: { type: "string" } },
+          { name: "limit", in: "query", required: false, schema: { type: "integer" } },
+          { name: "cursor", in: "query", required: false, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "Tenant-scoped phone call history",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneCallListResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: call history role required", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/calls/{call_id}": {
+      get: {
+        operationId: "getPhoneCall",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "call_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "Redacted phone call detail with transcript and citation trace",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneCallDetailResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "404": { description: "Call not found or not visible", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/calls/{call_id}/turns": {
+      post: {
+        operationId: "postPhoneCallTurn",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "call_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/PhoneTurnRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "AI turn decision: answer_with_citations / ask_clarification / handoff / fallback / end_call",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneTurnResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "404": { description: "Call not found or not visible", content: { "application/json": {} } },
+          "409": { description: "Terminal call cannot receive turns (call_terminal)", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/handoffs/{handoff_package_id}": {
+      get: {
+        operationId: "getPhoneHandoffPackage",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "handoff_package_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "Operator handoff package (masked/redacted caller context)",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneHandoffPackage" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: handoff read role required", content: { "application/json": {} } },
+          "404": { description: "Handoff package not found", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/handoffs/{handoff_package_id}/accept": {
+      post: {
+        operationId: "acceptPhoneHandoff",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "handoff_package_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/PhoneHandoffAcceptRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Handoff accepted by operator",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneHandoffAcceptResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: handoff read role required", content: { "application/json": {} } },
+          "404": { description: "Handoff package not found", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/scenarios": {
+      get: {
+        operationId: "listPhoneScenarios",
+        security: [{ bearerAuth: [], userToken: [] }],
+        responses: {
+          "200": {
+            description: "Tenant-scoped phone call scenarios",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneScenarioListResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario role required", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+      post: {
+        operationId: "createPhoneScenario",
+        security: [{ bearerAuth: [], userToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/PhoneScenarioCreateRequest" } },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Created phone scenario draft (with seeded draft version)",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneScenarioMutationResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario admin role required", content: { "application/json": {} } },
+          "409": { description: "Scenario already exists", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/scenarios/{scenario_id}/versions/{version_id}": {
+      put: {
+        operationId: "upsertPhoneScenarioVersion",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "scenario_id", in: "path", required: true, schema: { type: "string" } },
+          { name: "version_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/PhoneScenarioVersionRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Draft phone scenario version updated",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneScenarioMutationResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario admin role required", content: { "application/json": {} } },
+          "404": { description: "Scenario not found", content: { "application/json": {} } },
+          "409": { description: "Published scenario version is immutable (scenario_version_immutable)", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/scenarios/{scenario_id}/versions/{version_id}/test": {
+      post: {
+        operationId: "previewPhoneScenario",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "scenario_id", in: "path", required: true, schema: { type: "string" } },
+          { name: "version_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/PhoneScenarioPreviewRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Non-persisted preview conversation for a scenario version",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneScenarioPreviewResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario role required", content: { "application/json": {} } },
+          "404": { description: "Scenario or version not found", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/scenarios/{scenario_id}/versions/{version_id}/{action}": {
+      post: {
+        operationId: "phoneScenarioAction",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "scenario_id", in: "path", required: true, schema: { type: "string" } },
+          { name: "version_id", in: "path", required: true, schema: { type: "string" } },
+          {
+            name: "action",
+            in: "path",
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["submit-review", "approve", "publish", "schedule", "archive"],
+            },
+          },
+        ],
+        requestBody: {
+          required: false,
+          content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+        },
+        responses: {
+          "200": {
+            description: "Phone scenario version lifecycle action applied",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneScenarioMutationResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario approver role required for approve/publish/schedule/archive", content: { "application/json": {} } },
+          "404": { description: "Scenario or version not found", content: { "application/json": {} } },
+          "409": { description: "Publish before approval (scenario_version_not_approved) or immutable version", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/scenarios/{scenario_id}/rollback": {
+      post: {
+        operationId: "rollbackPhoneScenario",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "scenario_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["target_version_id"],
+                properties: {
+                  target_version_id: { type: "string" },
+                  rollback_comment: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "New published version referencing the rollback target",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneScenarioMutationResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: scenario approver role required", content: { "application/json": {} } },
+          "404": { description: "Scenario or target version not found", content: { "application/json": {} } },
+          "409": { description: "Rollback target was never approved (scenario_version_not_approved)", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
         },
       },
     },

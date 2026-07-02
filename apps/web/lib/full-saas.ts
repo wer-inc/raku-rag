@@ -41,7 +41,7 @@ export const APPROVAL_WORKFLOW_ENABLED =
 export const REVIEW_BADGE_COUNT = APPROVAL_WORKFLOW_ENABLED ? 2 : 0;
 
 export type NavIconName =
-  | "home" | "answers" | "chatbot" | "history" | "sources" | "documents" | "search"
+  | "home" | "answers" | "chatbot" | "phone" | "history" | "sources" | "documents" | "search"
   | "ingestion" | "reviewqueue" | "approvalsettings" | "operations" | "safety"
   | "quality" | "audit" | "compliance" | "users" | "roles" | "integrations"
   | "apikeys" | "billing" | "support" | "provider" | "retrieval" | "logging" | "improvements";
@@ -77,6 +77,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "回答",
     items: [
       { href: "/chatbot", label: "チャットボット", icon: "chatbot" },
+      { href: "/phone", label: "電話AI", icon: "phone" },
     ],
   },
   {

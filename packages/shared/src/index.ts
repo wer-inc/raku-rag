@@ -2,6 +2,7 @@
 export * from "./dto/search.js";
 export * from "./dto/answer.js";
 export * from "./dto/chat.js";
+export * from "./dto/phone.js";
 export * from "./dto/manufacturing.js";
 export * from "./dto/ingest.js";
 export * from "./dto/eval.js";

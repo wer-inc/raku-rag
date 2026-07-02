@@ -22,6 +22,10 @@ import type {
   ManufacturingIngestionRun,
   ManufacturingKpi,
   ManufacturingSourceSyncStatus,
+  PhoneCallSummaryItem,
+  PhoneHandoffPackage,
+  PhoneScenarioSummary,
+  PhoneTurnResponse,
   SafetyTelemetryView,
   SearchResultItem,
   DraftArtifact,
@@ -70,6 +74,17 @@ import {
   manufacturingSourceSyncStatus,
   manufacturingTroubleCaseSearch,
   manufacturingUpdateDocumentMetadata,
+  phoneAcceptHandoff,
+  phoneCallDetail,
+  phoneCreateScenario,
+  phoneListCalls,
+  phoneListScenarios,
+  phonePreviewScenario,
+  phoneRollbackScenario,
+  phoneScenarioAction,
+  phoneSimulateCall,
+  phoneSubmitTurn,
+  phoneUpsertScenarioVersion,
   submitFeedback,
 } from "../../lib/api-client";
 import {
@@ -1883,6 +1898,475 @@ function SourceSearchBody() {
         </section>
       </aside>
     </div>
+  );
+}
+
+// --- 022-ai-phone-rag: 電話AI対応 (T038 simulator / T049 handoff queue / T061 scenarios) --------
+
+type PhoneChatLine = { caller: string | null; turn: PhoneTurnResponse };
+
+function phoneActionLabel(action: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    answer_with_citations: "根拠付き回答",
+    ask_clarification: "聞き返し",
+    handoff: "人間へ転送",
+    fallback: "フォールバック",
+    end_call: "終話",
+  };
+  return action ? labels[action] ?? action : "-";
+}
+
+function PhoneBody() {
+  const [tab, setTab] = useState<"simulator" | "handoffs" | "scenarios">("simulator");
+  return (
+    <>
+      <div className="screen-actions" role="tablist" aria-label="電話AIの機能">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "simulator"}
+          onClick={() => setTab("simulator")}
+        >
+          通話シミュレータ
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "handoffs"}
+          onClick={() => setTab("handoffs")}
+        >
+          転送キュー
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "scenarios"}
+          onClick={() => setTab("scenarios")}
+        >
+          シナリオ管理
+        </button>
+      </div>
+      {tab === "simulator" && <PhoneSimulatorSection />}
+      {tab === "handoffs" && <PhoneHandoffSection />}
+      {tab === "scenarios" && <PhoneScenarioSection />}
+    </>
+  );
+}
+
+function PhoneSimulatorSection() {
+  const toast = useToast();
+  const [callId, setCallId] = useState<string | null>(null);
+  const [callState, setCallState] = useState<string>("idle");
+  const [lines, setLines] = useState<PhoneChatLine[]>([]);
+  const [input, setInput] = useState("");
+  const [scenarioId, setScenarioId] = useState("");
+  const [scenarios, setScenarios] = useState<PhoneScenarioSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    void getSessionToken()
+      .then((token) => phoneListScenarios(token))
+      .then((response) => setScenarios(response.items.filter((s) => s.status === "published")))
+      .catch(() => {
+        /* scenario list is optional for the simulator */
+      });
+  }, []);
+
+  const terminal = ["transferred", "completed", "abandoned", "failed"].includes(callState);
+
+  async function send(text: string, eventType: "speech" | "hangup" = "speech") {
+    if (loading) return;
+    if (eventType === "speech" && !text.trim()) return;
+    setLoading(true);
+    try {
+      const token = await getSessionToken();
+      const collectionId = loadAnswerCollection() || DEMO_COLLECTION;
+      if (!callId) {
+        const response = await phoneSimulateCall(
+          {
+            caller: { phone_number: "+81300000000", customer_id: "cust_demo" },
+            scenario_id: scenarioId || undefined,
+            collection_id: collectionId,
+            utterances: [{ type: eventType, text }],
+          },
+          token,
+        );
+        setCallId(response.call_id);
+        setCallState(response.status);
+        setLines(response.turns.map((turn) => ({ caller: text, turn })));
+      } else {
+        const turn = await phoneSubmitTurn(
+          callId,
+          { event_type: eventType, text, collection_id: collectionId },
+          token,
+        );
+        setCallState(turn.call_state);
+        setLines((current) => [...current, { caller: eventType === "speech" ? text : null, turn }]);
+      }
+      setInput("");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "通話処理に失敗しました", "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function reset() {
+    setCallId(null);
+    setCallState("idle");
+    setLines([]);
+    setInput("");
+  }
+
+  return (
+    <>
+      <Section
+        title="通話シミュレータ"
+        note="決定論的なテレフォニーシミュレータで着信を再現し、承認済みナレッジに基づく応答・聞き返し・人間転送を確認できます。実回線には接続しません。"
+      >
+        <div className="screen-actions">
+          <label>
+            シナリオ:{" "}
+            <select value={scenarioId} onChange={(event) => setScenarioId(event.target.value)} disabled={Boolean(callId)}>
+              <option value="">（シナリオなし）</option>
+              {scenarios.map((scenario) => (
+                <option key={scenario.scenario_id} value={scenario.scenario_id}>
+                  {scenario.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span>通話状態: {callId ? `${callState}（${callId}）` : "未開始"}</span>
+          {callId && (
+            <button type="button" onClick={reset}>
+              新しい通話
+            </button>
+          )}
+        </div>
+        <div className="screen-actions">
+          <input
+            type="text"
+            value={input}
+            placeholder="顧客の発話（例: 営業時間を教えてください）"
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void send(input);
+            }}
+            disabled={loading || terminal}
+            style={{ minWidth: "24rem" }}
+          />
+          <button type="button" onClick={() => void send(input)} disabled={loading || terminal}>
+            {callId ? "発話を送信" : "通話を開始"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void send("人につないでください")}
+            disabled={loading || terminal}
+          >
+            人につないで
+          </button>
+          <button type="button" onClick={() => void send("", "hangup")} disabled={loading || !callId || terminal}>
+            終話
+          </button>
+        </div>
+      </Section>
+      <Section title="会話ログ">
+        {lines.length === 0 && <p className="ops-empty">まだ通話がありません。発話を送信してください。</p>}
+        {lines.map(({ caller, turn }) => (
+          <div key={turn.turn_id} className="screen-section" style={{ marginBottom: "0.75rem" }}>
+            {caller && <p>顧客: {caller}</p>}
+            <p>
+              <strong>AI（{phoneActionLabel(turn.ai_action)}）:</strong> {turn.ai_response_text}
+            </p>
+            {turn.citations.length > 0 && (
+              <DataTable
+                columns={["根拠文書", "チャンク", "スコア", "承認状態"]}
+                rows={turn.citations.map((citation) => [
+                  citation.document_id,
+                  citation.chunk_id,
+                  citation.retrieval_score.toFixed(2),
+                  citation.approval_status ?? "-",
+                ])}
+                empty="引用はありません。"
+              />
+            )}
+            {turn.handoff && (
+              <p role="status">
+                転送先キュー {turn.handoff.destination_id}（理由: {turn.handoff.reason} / 状態: {turn.handoff.status}）
+              </p>
+            )}
+            {!turn.safety.answered_with_evidence && turn.safety.blocked_reason && (
+              <p className="screen-note">根拠判定: {turn.safety.blocked_reason}</p>
+            )}
+          </div>
+        ))}
+      </Section>
+    </>
+  );
+}
+
+function PhoneHandoffSection() {
+  const toast = useToast();
+  const [selected, setSelected] = useState<PhoneHandoffPackage | null>(null);
+  const [state, reload] = useLoad(async () => {
+    const token = await getSessionToken();
+    const calls = await phoneListCalls(token);
+    return calls.items.filter((item) => item.handoff_required);
+  }, []);
+
+  async function open(item: PhoneCallSummaryItem) {
+    try {
+      const token = await getSessionToken();
+      const detail = await phoneCallDetail(item.call_id, token);
+      setSelected(detail.handoff);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "転送内容の取得に失敗しました", "error");
+    }
+  }
+
+  async function accept(handoff: PhoneHandoffPackage) {
+    try {
+      const token = await getSessionToken();
+      const result = await phoneAcceptHandoff(
+        handoff.handoff_package_id,
+        { operator_id: "workspace-operator" },
+        token,
+      );
+      setSelected({ ...handoff, status: result.status, accepted_at: result.accepted_at });
+      toast("転送を受理しました", "success");
+      reload();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "転送の受理に失敗しました", "error");
+    }
+  }
+
+  if (state.state === "loading") return <p className="ops-empty" role="status">転送キューを読み込み中…</p>;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
+  return (
+    <>
+      <Section title="転送キュー" note="AIが人間対応へ切り替えた通話の一覧です。行を選択すると引き継ぎ内容を確認できます。">
+        <DataTable
+          columns={["通話ID", "意図", "転送理由", "通話状態", ""]}
+          rows={state.data.map((item) => [
+            item.call_id,
+            item.intent ?? "-",
+            item.handoff_reason ?? "-",
+            item.state,
+            <button key={item.call_id} type="button" onClick={() => void open(item)}>
+              引き継ぎを見る
+            </button>,
+          ])}
+          empty="転送された通話はまだありません。"
+        />
+      </Section>
+      {selected && (
+        <Section title={`引き継ぎパッケージ ${selected.handoff_package_id}`}>
+          <FieldGrid
+            rows={[
+              ["状態", selected.status],
+              ["理由", selected.reason],
+              ["優先度", selected.priority],
+              ["転送先", `${selected.destination_type}: ${selected.destination_id}`],
+              ["顧客", `${selected.customer.customer_id ?? "-"} / ${selected.customer.phone_number_masked ?? "-"}`],
+              ["感情", selected.sentiment ?? "-"],
+              ["要約", selected.summary],
+              ["推奨アクション", selected.recommended_next_action ?? "-"],
+            ]}
+          />
+          <Section title="会話抜粋（マスク済み）">
+            <pre style={{ whiteSpace: "pre-wrap" }}>{selected.transcript_excerpt_redacted}</pre>
+          </Section>
+          {selected.citations.length > 0 && (
+            <DataTable
+              columns={["根拠文書", "チャンク", "承認状態"]}
+              rows={selected.citations.map((citation) => [
+                citation.document_id,
+                citation.chunk_id,
+                citation.approval_status ?? "-",
+              ])}
+              empty="引用はありません。"
+            />
+          )}
+          <div className="screen-actions">
+            <button
+              type="button"
+              onClick={() => void accept(selected)}
+              disabled={selected.status === "accepted"}
+            >
+              {selected.status === "accepted" ? "受理済み" : "この転送を受理する"}
+            </button>
+          </div>
+        </Section>
+      )}
+    </>
+  );
+}
+
+function PhoneScenarioSection() {
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [intent, setIntent] = useState("faq");
+  const [versionId, setVersionId] = useState("scv_1");
+  const [previewText, setPreviewText] = useState("");
+  const [preview, setPreview] = useState<string | null>(null);
+  const [state, reload] = useLoad(async () => {
+    const token = await getSessionToken();
+    return (await phoneListScenarios(token)).items;
+  }, []);
+
+  async function run(action: () => Promise<unknown>, success: string) {
+    try {
+      await action();
+      toast(success, "success");
+      reload();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "操作に失敗しました", "error");
+    }
+  }
+
+  async function create() {
+    if (!name.trim()) return;
+    await run(async () => {
+      const token = await getSessionToken();
+      await phoneCreateScenario({ name, intent }, token);
+      setName("");
+    }, "シナリオを作成しました（下書き版 scv_1 が用意されます）");
+  }
+
+  async function lifecycle(
+    scenarioId: string,
+    action: "submit-review" | "approve" | "publish" | "archive",
+  ) {
+    await run(async () => {
+      const token = await getSessionToken();
+      await phoneScenarioAction(scenarioId, versionId, action, {}, token);
+    }, `${action} を実行しました`);
+  }
+
+  async function rollback(scenarioId: string) {
+    await run(async () => {
+      const token = await getSessionToken();
+      await phoneRollbackScenario(scenarioId, versionId, token);
+    }, "ロールバックを実行しました");
+  }
+
+  async function ensureDefaults(scenarioId: string) {
+    await run(async () => {
+      const token = await getSessionToken();
+      await phoneUpsertScenarioVersion(
+        scenarioId,
+        versionId,
+        {
+          handoff_conditions: [
+            { reason: "customer_requested_human", enabled: true },
+            { reason: "insufficient_evidence", enabled: true },
+          ],
+          fallback_message: "確認して担当者におつなぎします。",
+        },
+        token,
+      );
+    }, "下書き版を更新しました");
+  }
+
+  async function runPreview(scenarioId: string) {
+    if (!previewText.trim()) return;
+    try {
+      const token = await getSessionToken();
+      const result = await phonePreviewScenario(
+        scenarioId,
+        versionId,
+        { utterances: [previewText] },
+        token,
+      );
+      const first = result.turns[0];
+      setPreview(
+        `${phoneActionLabel(first?.ai_action)}: ${first?.ai_response_text ?? "-"}${
+          result.would_handoff ? "（転送が発生します）" : ""
+        }`,
+      );
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "プレビューに失敗しました", "error");
+    }
+  }
+
+  if (state.state === "loading") return <p className="ops-empty" role="status">シナリオを読み込み中…</p>;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
+  return (
+    <>
+      <Section
+        title="シナリオ管理"
+        note="公開には承認者による明示的な承認が必要です（下書き→レビュー→承認→公開）。公開済みの版は変更できず、ロールバックは対象版を参照する新しい版を公開します。ナレッジ自体の承認は既存の文書承認フローを共用します。"
+      >
+        <div className="screen-actions">
+          <input
+            type="text"
+            value={name}
+            placeholder="シナリオ名（例: FAQ基本対応）"
+            onChange={(event) => setName(event.target.value)}
+          />
+          <select value={intent} onChange={(event) => setIntent(event.target.value)}>
+            <option value="faq">FAQ</option>
+            <option value="business_hours">営業時間</option>
+            <option value="pricing_plan">料金・プラン</option>
+            <option value="reservation_order_status">予約・注文状況</option>
+            <option value="document_request">資料請求</option>
+            <option value="department_routing">部署取次</option>
+          </select>
+          <button type="button" onClick={() => void create()}>
+            シナリオを作成
+          </button>
+          <label>
+            対象版:{" "}
+            <input
+              type="text"
+              value={versionId}
+              onChange={(event) => setVersionId(event.target.value)}
+              style={{ width: "6rem" }}
+            />
+          </label>
+        </div>
+        <DataTable
+          columns={["シナリオ", "意図", "状態", "公開中の版", "操作"]}
+          rows={state.data.map((scenario) => [
+            scenario.name,
+            scenario.intent,
+            scenario.status,
+            scenario.active_version_id ?? "-",
+            <span key={scenario.scenario_id} className="screen-actions">
+              <button type="button" onClick={() => void ensureDefaults(scenario.scenario_id)}>
+                下書き更新
+              </button>
+              <button type="button" onClick={() => void lifecycle(scenario.scenario_id, "submit-review")}>
+                レビュー依頼
+              </button>
+              <button type="button" onClick={() => void lifecycle(scenario.scenario_id, "approve")}>
+                承認
+              </button>
+              <button type="button" onClick={() => void lifecycle(scenario.scenario_id, "publish")}>
+                公開
+              </button>
+              <button type="button" onClick={() => void rollback(scenario.scenario_id)}>
+                ロールバック
+              </button>
+              <button type="button" onClick={() => void runPreview(scenario.scenario_id)}>
+                プレビュー
+              </button>
+            </span>,
+          ])}
+          empty="シナリオはまだありません。"
+        />
+        <div className="screen-actions">
+          <input
+            type="text"
+            value={previewText}
+            placeholder="プレビュー発話（例: 営業時間を教えてください）"
+            onChange={(event) => setPreviewText(event.target.value)}
+            style={{ minWidth: "20rem" }}
+          />
+        </div>
+        {preview && <p role="status">プレビュー結果 — {preview}</p>}
+      </Section>
+    </>
   );
 }
 
@@ -4577,6 +5061,7 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
     <ScreenShell screen={screen}>
       {screen.id === "answers" && <AnswersBody />}
       {screen.id === "chatbot" && <ChatBotBody />}
+      {screen.id === "phone" && <PhoneBody />}
       {screen.id === "home-dashboard" && <HomeDashboardBody />}
       {screen.id === "answer-history" && <AnswerHistoryBody />}
       {screen.id === "source-search" && <SourceSearchBody />}
