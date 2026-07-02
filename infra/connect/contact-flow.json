@@ -101,11 +101,11 @@
         "NextAction": "a-turn",
         "Errors": [
           {
-            "NextAction": "a-reprompt",
+            "NextAction": "a-retry-loop",
             "ErrorType": "NoMatchingError"
           },
           {
-            "NextAction": "a-reprompt",
+            "NextAction": "a-retry-loop",
             "ErrorType": "NoMatchingCondition"
           }
         ]
@@ -229,7 +229,7 @@
         "QueueId": "REPLACE_ME_QUEUE_ARN"
       },
       "Transitions": {
-        "NextAction": "a-transfer",
+        "NextAction": "a-set-queue-flow",
         "Errors": [
           {
             "NextAction": "a-transfer-fail-speak",
@@ -334,6 +334,76 @@
       },
       "Transitions": {
         "NextAction": "a-listen",
+        "Errors": [
+          {
+            "NextAction": "a-disconnect",
+            "ErrorType": "NoMatchingError"
+          }
+        ]
+      }
+    },
+    {
+      "Identifier": "a-set-queue-flow",
+      "Type": "UpdateContactEventHooks",
+      "Parameters": {
+        "EventHooks": {
+          "CustomerQueue": "REPLACE_ME_CUSTOMER_QUEUE_FLOW_ARN"
+        }
+      },
+      "Transitions": {
+        "NextAction": "a-transfer",
+        "Errors": [
+          {
+            "NextAction": "a-transfer",
+            "ErrorType": "NoMatchingError"
+          }
+        ]
+      }
+    },
+    {
+      "Identifier": "a-retry-loop",
+      "Type": "Loop",
+      "Parameters": {
+        "LoopCount": "2"
+      },
+      "Transitions": {
+        "NextAction": "a-nohear-goodbye",
+        "Conditions": [
+          {
+            "NextAction": "a-reprompt",
+            "Condition": {
+              "Operator": "Equals",
+              "Operands": [
+                "ContinueLooping"
+              ]
+            }
+          },
+          {
+            "NextAction": "a-nohear-goodbye",
+            "Condition": {
+              "Operator": "Equals",
+              "Operands": [
+                "DoneLooping"
+              ]
+            }
+          }
+        ],
+        "Errors": [
+          {
+            "NextAction": "a-nohear-goodbye",
+            "ErrorType": "NoMatchingError"
+          }
+        ]
+      }
+    },
+    {
+      "Identifier": "a-nohear-goodbye",
+      "Type": "MessageParticipant",
+      "Parameters": {
+        "Text": "ご質問をお伺いできませんでした。おそれいりますが、のちほどおかけ直しください。"
+      },
+      "Transitions": {
+        "NextAction": "a-disconnect",
         "Errors": [
           {
             "NextAction": "a-disconnect",

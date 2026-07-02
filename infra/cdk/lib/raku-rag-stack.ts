@@ -1001,8 +1001,9 @@ export class RakuRagStack extends cdk.Stack {
         vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
         securityGroups: [phoneAdapterSecurityGroup],
         // Connect caps a Lambda invocation at 8 seconds: time out INSIDE that budget so the
-        // caller hears the spoken fallback instead of a dead flow branch (SC-L3).
-        timeout: cdk.Duration.seconds(7),
+        // caller hears the spoken fallback instead of a dead flow branch (SC-L3). Real-LLM
+        // generation p95 is ~5.8s, so keep the HTTP budget at 7s inside the full 8s cap.
+        timeout: cdk.Duration.seconds(8),
         memorySize: 256,
         description: "Translates Amazon Connect contact-flow events to /internal/phone/* turns",
         environment: {
@@ -1011,7 +1012,7 @@ export class RakuRagStack extends cdk.Stack {
           RAKU_PHONE_DID_MAP_SSM_PARAM: didMapParam.parameterName,
           RAKU_PHONE_HANDOFF_URL_BASE:
             contextString("phoneHandoffUrlBase") || `http://${publicAlb.loadBalancerDnsName}/phone`,
-          RAKU_PHONE_HTTP_TIMEOUT_SECONDS: "6"
+          RAKU_PHONE_HTTP_TIMEOUT_SECONDS: "7"
         }
       });
       internalAuthSecret.grantRead(phoneAdapter);
