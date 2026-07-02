@@ -49,6 +49,8 @@ Lex は **ASR としてだけ**使う(NLU 判断は raku-rag orchestrator 側 �
    - `REPLACE_ME_LAMBDA_ARN` → CDK 出力 `ConnectPhoneAdapterArn`
    - `REPLACE_ME_LEX_BOT_ALIAS_ARN` → §1 のエイリアス ARN
    - `REPLACE_ME_QUEUE_ARN` → 転送先キュー(まずは既定の **BasicQueue** の ARN)
+   - `REPLACE_ME_CUSTOMER_QUEUE_FLOW_ARN` → `customer-queue-flow.json` を type=CUSTOMER_QUEUE で
+     先に取込んだ flow の ARN(キュー待ちを ~70秒で丁寧に打ち切る。無人キューでの無限保留防止)
 2. Connect 管理画面(`https://<alias>.my.connect.aws/`)→ ルーティング → **フロー → フローの作成 →
    インポート** で JSON を取込み → **保存 → 公開**。
    - インポートがスキーマ差異で失敗した場合は、上の構成図どおりに手動配線しても10ブロック程度

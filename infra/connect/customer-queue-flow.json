@@ -1,0 +1,7 @@
+{"Version":"2019-10-30","StartAction":"q-announce","Actions":[
+ {"Identifier":"q-announce","Type":"MessageParticipant","Parameters":{"Text":"オペレーターにおつなぎしています。そのままお待ちください。"},"Transitions":{"NextAction":"q-loop","Errors":[{"NextAction":"q-loop","ErrorType":"NoMatchingError"}]}},
+ {"Identifier":"q-loop","Type":"Loop","Parameters":{"LoopCount":"3"},"Transitions":{"NextAction":"q-giveup","Conditions":[{"NextAction":"q-wait","Condition":{"Operator":"Equals","Operands":["ContinueLooping"]}},{"NextAction":"q-giveup","Condition":{"Operator":"Equals","Operands":["DoneLooping"]}}],"Errors":[{"NextAction":"q-giveup","ErrorType":"NoMatchingError"}]}},
+ {"Identifier":"q-wait","Type":"MessageParticipant","Parameters":{"SSML":"<speak>おつなぎするまで、いましばらくお待ちください。<break time='10s'/><break time='10s'/></speak>"},"Transitions":{"NextAction":"q-loop","Errors":[{"NextAction":"q-loop","ErrorType":"NoMatchingError"}]}},
+ {"Identifier":"q-giveup","Type":"MessageParticipant","Parameters":{"Text":"申し訳ありません。ただいまオペレーターにつながりませんでした。のちほどおかけ直しください。"},"Transitions":{"NextAction":"q-disconnect","Errors":[{"NextAction":"q-disconnect","ErrorType":"NoMatchingError"}]}},
+ {"Identifier":"q-disconnect","Type":"DisconnectParticipant","Parameters":{},"Transitions":{}}
+]}
