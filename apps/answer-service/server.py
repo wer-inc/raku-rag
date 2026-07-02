@@ -96,11 +96,14 @@ from workers.ingest.provider_policy import (  # noqa: E402
 from raku_rag.chatbot import ChatbotService  # noqa: E402
 from raku_rag.persistence.phone_models import (  # noqa: E402
     InMemoryPhoneCallRepository,
+    InMemoryPhoneQualityRepository,
     InMemoryPhoneScenarioRepository,
     PostgresPhoneCallRepository,
+    PostgresPhoneQualityRepository,
     PostgresPhoneScenarioRepository,
 )
 from raku_rag.phone import PhoneCallService, PhoneScenarioService  # noqa: E402
+from raku_rag.phone.quality import PhoneQualityService  # noqa: E402
 from raku_rag.phone.interfaces import CallableAnswerGateway  # noqa: E402
 from raku_rag.providers.asr import DeterministicAsrProvider  # noqa: E402
 from raku_rag.providers.telephony import DeterministicCallSimulator  # noqa: E402
@@ -1543,6 +1546,13 @@ def _phone_scenario_repository_for(system: ProductionSystem):
     return InMemoryPhoneScenarioRepository()
 
 
+def _phone_quality_repository_for(system: ProductionSystem):
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return PostgresPhoneQualityRepository(conn)
+    return InMemoryPhoneQualityRepository()
+
+
 def _source_sync_queue_from_env():
     queue_url = os.environ.get("INGESTION_QUEUE_URL") or os.environ.get("SQS_QUEUE_URL")
     if not queue_url:
@@ -1683,6 +1693,12 @@ def make_handler(system: ProductionSystem):
         telephony=DeterministicCallSimulator(),
         asr=DeterministicAsrProvider(),
         tts=DeterministicTtsProvider(),
+        # US4: QA reviews persist via 0017 and flow into the audit-derived improvement queue
+        # through the SAME manufacturing audit writer (single source of truth).
+        quality=PhoneQualityService(
+            _phone_quality_repository_for(system), audit=manufacturing_system.audit
+        ),
+        audit=manufacturing_system.audit,
     )
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()
@@ -1763,6 +1779,21 @@ def make_handler(system: ProductionSystem):
                     self._send_result(
                         phone.get_handoff(_claims_from_headers(self.headers), parts[3])
                     )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "phone", "calls"]
+                    and parts[4] == "quality-evaluations"
+                ):
+                    self._send_result(
+                        phone.list_quality_evaluations(
+                            _claims_from_headers(self.headers), parts[3]
+                        )
+                    )
+                elif parts == ["internal", "phone", "metrics"]:
+                    qs = parse_qs(parsed.query)
+                    self._send_result(phone.metrics(_claims_from_headers(self.headers), qs))
+                elif parts == ["internal", "phone", "retention-policy"]:
+                    self._send_result(phone.retention_policy(_claims_from_headers(self.headers)))
                 elif parts == ["internal", "phone", "scenarios"]:
                     self._send_result(phone.list_scenarios(_claims_from_headers(self.headers)))
                 elif parts == ["internal", "industries"]:
@@ -2254,6 +2285,30 @@ def make_handler(system: ProductionSystem):
                 elif parts == ["internal", "phone", "calls", "simulate"]:
                     self._send_result(
                         phone.simulate_call(_claims_from_headers(self.headers), body)
+                    )
+                elif parts == ["internal", "phone", "calls", "export"]:
+                    self._send_result(
+                        phone.export_calls(_claims_from_headers(self.headers), body)
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "phone", "calls"]
+                    and parts[4] == "quality-evaluations"
+                ):
+                    self._send_result(
+                        phone.create_quality_evaluation(
+                            _claims_from_headers(self.headers), parts[3], body
+                        )
+                    )
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "phone", "calls"]
+                    and parts[4] == "delete-request"
+                ):
+                    self._send_result(
+                        phone.delete_call_request(
+                            _claims_from_headers(self.headers), parts[3], body
+                        )
                     )
                 elif (
                     len(parts) == 5

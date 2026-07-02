@@ -118,6 +118,14 @@ FEEDBACK_LOW_DECISION = "low_rating"
 ANSWER_ACTION = "answer.safety_evaluated"
 CITATION_ACTION = "citation.access"
 
+# 022 US4 (T072): phone QA reviews feed the SAME audit-derived improvement queue. Decisions carry
+# the improvement-worthy signal; free-text (suggested_fix) never reaches the audit — reference IDs
+# and flags only, mirroring the feedback funnel above.
+PHONE_QA_ACTION = "phone.quality_evaluated"
+PHONE_QA_HALLUCINATION_DECISION = "hallucination"
+PHONE_QA_KNOWLEDGE_GAP_DECISION = "knowledge_gap"
+PHONE_QA_REVIEWED_DECISION = "reviewed"
+
 
 def answer_entries(entries):
     """Answer-path safety-decision entries (the high_risk / block / answer counters derive from these)."""
@@ -177,3 +185,61 @@ def record_answer_feedback(
     )
     writer.record(entry)
     return is_low
+
+
+def phone_qa_entries(entries):
+    """Phone QA review entries that flag improvement-worthy findings (queue derives from these)."""
+    return [
+        e
+        for e in entries
+        if e.action == PHONE_QA_ACTION
+        and e.decision in {PHONE_QA_HALLUCINATION_DECISION, PHONE_QA_KNOWLEDGE_GAP_DECISION}
+    ]
+
+
+def record_phone_quality_evaluation(
+    writer: AuditLogWriter,
+    *,
+    tenant_id: str,
+    actor_id: str,
+    call_id: str,
+    evaluation_id: str,
+    hallucination_detected: bool,
+    knowledge_gap: bool,
+    compliance_issue: bool = False,
+    privacy_issue: bool = False,
+    improvement_item_id: str | None = None,
+) -> None:
+    """Audit one phone QA review (022 US4, reference IDs + flags only — never review free text).
+
+    The decision label routes the entry into the audit-derived improvement queue:
+    hallucination > knowledge_gap > reviewed (plain reviews are audited for access-trail purposes
+    but do not surface as improvement items).
+    """
+    if hallucination_detected:
+        decision = PHONE_QA_HALLUCINATION_DECISION
+    elif knowledge_gap:
+        decision = PHONE_QA_KNOWLEDGE_GAP_DECISION
+    else:
+        decision = PHONE_QA_REVIEWED_DECISION
+    ts = _now()
+    entry = AuditLogEntry(
+        tenant_id=tenant_id,
+        log_id=f"phone_qa:{evaluation_id}:{ts}",
+        timestamp=ts,
+        actor_id=actor_id,
+        action=PHONE_QA_ACTION,
+        resource_type="phone_call",
+        resource_id=call_id,  # reference ID only
+        decision=decision,
+        reason="phone_quality_evaluation",
+        client_metadata={
+            "evaluation_id": evaluation_id,
+            "hallucination_detected": bool(hallucination_detected),
+            "knowledge_gap": bool(knowledge_gap),
+            "compliance_issue": bool(compliance_issue),
+            "privacy_issue": bool(privacy_issue),
+            **({"improvement_item_id": improvement_item_id} if improvement_item_id else {}),
+        },
+    )
+    writer.record(entry)

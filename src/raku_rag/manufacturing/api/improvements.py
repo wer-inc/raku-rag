@@ -94,6 +94,20 @@ class ImprovementQueueService:
                     )
                 )
 
+        # 022 US4 (T072): phone QA reviews flagging hallucination / knowledge gaps surface in the
+        # SAME queue (answer_id carries the call_id reference; details live in the phone QA API).
+        for e in audit_derive.phone_qa_entries(entries):
+            items.append(
+                ImprovementQueueItem(
+                    id=e.log_id,
+                    kind="phone_qa",
+                    answer_id=e.resource_id,
+                    document_ids=tuple(e.document_ids_used),
+                    reason=e.decision,
+                    created_at=e.timestamp,
+                )
+            )
+
         items.sort(key=lambda i: i.created_at, reverse=True)
         capped = tuple(items[: max(1, min(limit, 500))])
         return ImprovementQueueView(

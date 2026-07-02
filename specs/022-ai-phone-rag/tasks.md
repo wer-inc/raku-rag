@@ -159,24 +159,24 @@
 
 ### Tests for User Story 4
 
-- [ ] T063 [P] [US4] Add call history list/detail integration tests in `tests/integration/test_phone_call_history.py`.
-- [ ] T064 [P] [US4] Add QA evaluation and improvement item tests in `tests/integration/test_phone_quality_evaluation.py`.
-- [ ] T065 [P] [US4] Add audit coverage tests for transcript, recording, identifier, and QA access in `tests/security/test_phone_audit_access.py`.
-- [ ] T066 [P] [US4] Add NestJS e2e tests for `GET /v1/phone/calls`, `GET /v1/phone/calls/{call_id}`, and `POST /v1/phone/calls/{call_id}/quality-evaluations` in `apps/api/test/phone.e2e-spec.ts`.
-- [ ] T067 [P] [US4] Add export, retention policy, and call deletion/redaction request tests in `tests/security/test_phone_data_lifecycle.py` and `apps/api/test/phone.e2e-spec.ts`.
+- [x] T063 [P] [US4] Add call history list/detail integration tests in `tests/integration/test_phone_call_history.py`.
+- [x] T064 [P] [US4] Add QA evaluation and improvement item tests in `tests/integration/test_phone_quality_evaluation.py`.
+- [x] T065 [P] [US4] Add audit coverage tests for transcript, recording, identifier, and QA access in `tests/security/test_phone_audit_access.py`. (Recording-audio access has no path yet — see T070 deferral; transcript/identifier/handoff/QA reads are audited.)
+- [x] T066 [P] [US4] Add NestJS e2e tests for `GET /v1/phone/calls`, `GET /v1/phone/calls/{call_id}`, and `POST /v1/phone/calls/{call_id}/quality-evaluations` in `apps/api/test/phone.e2e-spec.ts`.
+- [x] T067 [P] [US4] Add export, retention policy, and call deletion/redaction request tests in `tests/security/test_phone_data_lifecycle.py` and `apps/api/test/phone.e2e-spec.ts`.
 
 ### Implementation for User Story 4
 
-- [ ] T068 [US4] Implement call history search filters for call ID, date/time, customer ID, phone number, intent, result, handoff reason, and scenario in `src/raku_rag/persistence/phone_models.py`.
-- [ ] T069 [US4] Implement redacted call detail projection with transcript, AI responses, citations, handoff, scenario version, and correlation ID in `src/raku_rag/phone/orchestrator.py`.
-- [ ] T070 [US4] Implement optional audio object reference access checks and audit logging in `src/raku_rag/persistence/phone_models.py` and `src/raku_rag/observability/audit.py`.
-- [ ] T071 [US4] Implement quality evaluation creation and validation in `src/raku_rag/phone/quality.py`.
-- [ ] T072 [US4] Connect QA hallucination/knowledge-gap flags to the existing improvement workflow in `src/raku_rag/manufacturing/api/improvements.py` or a shared improvement service if one exists.
-- [ ] T073 [US4] Implement internal call history and QA endpoints in `apps/answer-service/server.py`.
-- [ ] T074 [US4] Implement public call history and QA endpoints in `apps/api/src/phone/phone.controller.ts`.
-- [ ] T075 [US4] Add call history, call detail, and QA review UI to `apps/web/app/components/FullSaasScreen.tsx`.
-- [ ] T076 [US4] Implement redacted call/QA export request handling or explicit audited `export_not_enabled` responses in `apps/answer-service/server.py` and `apps/api/src/phone/phone.controller.ts`.
-- [ ] T077 [US4] Implement retention policy read and call deletion/redaction request handling in `apps/answer-service/server.py`, `apps/api/src/phone/phone.controller.ts`, and `src/raku_rag/persistence/phone_models.py`.
+- [x] T068 [US4] Implement call history search filters for call ID, date/time, customer ID, phone number, intent, result, handoff reason, and scenario. (Implemented in `PhoneCallService.list_calls` over the repository listing — one common path for the in-memory and Postgres repos — rather than per-repo SQL in `phone_models.py`.)
+- [x] T069 [US4] Implement redacted call detail projection with transcript, AI responses, citations, handoff, scenario version, and correlation ID in `src/raku_rag/phone/orchestrator.py`.
+- [ ] T070 [US4] Implement optional audio object reference access checks and audit logging in `src/raku_rag/persistence/phone_models.py` and `src/raku_rag/observability/audit.py`. (DEFERRED: the deterministic MVP stores no audio objects — `tts_audio_ref` is a synthetic URI and recording capture is 024 live-telephony scope. Transcript/identifier access auditing shipped under T065.)
+- [x] T071 [US4] Implement quality evaluation creation and validation in `src/raku_rag/phone/quality.py`.
+- [x] T072 [US4] Connect QA hallucination/knowledge-gap flags to the existing improvement workflow in `src/raku_rag/manufacturing/api/improvements.py` (audit-derived `phone_qa` items; no parallel store).
+- [x] T073 [US4] Implement internal call history and QA endpoints in `apps/answer-service/server.py`.
+- [x] T074 [US4] Implement public call history and QA endpoints in `apps/api/src/phone/phone.controller.ts`.
+- [x] T075 [US4] Add call history, call detail, and QA review UI to `apps/web/app/components/FullSaasScreen.tsx` (通話履歴 tab).
+- [x] T076 [US4] Implement redacted call/QA export request handling or explicit audited `export_not_enabled` responses in `apps/answer-service/server.py` and `apps/api/src/phone/phone.controller.ts` (409 + audit unless `RAKU_PHONE_EXPORT_ENABLED=1`).
+- [x] T077 [US4] Implement retention policy read and call deletion/redaction request handling in `apps/answer-service/server.py`, `apps/api/src/phone/phone.controller.ts`, and `src/raku_rag/persistence/phone_models.py`. (Live-PG smoke caught and fixed a `save_handoff` upsert that dropped redacted summary/excerpt/slots on the Postgres path.)
 
 **Checkpoint**: Supervisors can audit and improve phone AI behavior from persisted call evidence.
 
@@ -190,18 +190,18 @@
 
 ### Tests for User Story 5
 
-- [ ] T078 [P] [US5] Add KPI aggregation unit tests for call count, AI containment, handoff rate, unresolved rate, top reasons, and p95 latency in `tests/unit/test_phone_metrics.py`.
-- [ ] T079 [P] [US5] Add metrics endpoint integration tests in `tests/integration/test_phone_metrics_endpoint.py`.
-- [ ] T080 [P] [US5] Add NestJS e2e test for `GET /v1/phone/metrics` in `apps/api/test/phone.e2e-spec.ts`.
+- [x] T078 [P] [US5] Add KPI aggregation unit tests for call count, AI containment, handoff rate, unresolved rate, top reasons, and p95 latency in `tests/unit/test_phone_metrics.py`.
+- [x] T079 [P] [US5] Add metrics endpoint integration tests in `tests/integration/test_phone_metrics_endpoint.py`.
+- [x] T080 [P] [US5] Add NestJS e2e test for `GET /v1/phone/metrics` in `apps/api/test/phone.e2e-spec.ts`.
 
 ### Implementation for User Story 5
 
-- [ ] T081 [US5] Implement call metric aggregation in `src/raku_rag/phone/metrics.py`.
-- [ ] T082 [US5] Persist or compute `CallMetricSnapshot` records in `src/raku_rag/persistence/phone_models.py`.
-- [ ] T083 [US5] Implement internal metrics endpoint in `apps/answer-service/server.py`.
-- [ ] T084 [US5] Implement public `GET /v1/phone/metrics` endpoint in `apps/api/src/phone/phone.controller.ts`.
-- [ ] T085 [US5] Add metrics DTOs in `packages/shared/src/dto/phone.ts`.
-- [ ] T086 [US5] Add phone operations KPI panel to `apps/web/app/components/FullSaasScreen.tsx`.
+- [x] T081 [US5] Implement call metric aggregation in `src/raku_rag/phone/metrics.py`.
+- [x] T082 [US5] Persist or compute `CallMetricSnapshot` records. (Computed on read from persisted calls + QA evaluations via `aggregate_call_metrics` — no snapshot table; the "or compute" branch.)
+- [x] T083 [US5] Implement internal metrics endpoint in `apps/answer-service/server.py`.
+- [x] T084 [US5] Implement public `GET /v1/phone/metrics` endpoint in `apps/api/src/phone/phone.controller.ts`.
+- [x] T085 [US5] Add metrics DTOs in `packages/shared/src/dto/phone.ts`.
+- [x] T086 [US5] Add phone operations KPI panel to `apps/web/app/components/FullSaasScreen.tsx` (KPI tab).
 
 **Checkpoint**: P2 operations dashboard can be validated from deterministic seeded calls.
 

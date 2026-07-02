@@ -269,6 +269,107 @@ export interface PhoneScenarioPreviewRequest {
   collection_id?: string;
 }
 
+// --- 022 US4/US5: quality reviews, metrics, data lifecycle -------------------------------------
+
+export interface PhoneQualityEvaluationRequest {
+  answer_correctness?: number | null;
+  tone_score?: number | null;
+  handoff_appropriateness?: number | null;
+  compliance_issue?: boolean;
+  hallucination_detected?: boolean;
+  privacy_issue?: boolean;
+  suggested_fix?: string;
+  knowledge_gap_topics?: string[];
+}
+
+export interface PhoneQualityEvaluation {
+  evaluation_id: string;
+  call_id: string;
+  reviewer_id: string;
+  reviewed_at: string;
+  answer_correctness: number | null;
+  tone_score: number | null;
+  handoff_appropriateness: number | null;
+  compliance_issue: boolean;
+  hallucination_detected: boolean;
+  privacy_issue: boolean;
+  suggested_fix: string | null;
+  knowledge_gap_topics: string[];
+  review_status: string;
+  improvement_item_id: string | null;
+}
+
+export interface PhoneQualityEvaluationResponse extends PhoneQualityEvaluation {
+  api_version: "v1" | string;
+  tenant_id: string;
+  correlation_id: string;
+}
+
+export interface PhoneQualityEvaluationListResponse {
+  api_version: "v1" | string;
+  tenant_id: string;
+  items: PhoneQualityEvaluation[];
+  correlation_id: string;
+}
+
+export interface PhoneMetricsSummary {
+  call_count: number;
+  answered_count: number;
+  answer_rate: number;
+  ai_containment_rate: number;
+  handoff_rate: number;
+  unresolved_rate: number;
+  terminal_count: number;
+  average_handle_time_seconds: number;
+  p95_total_turn_latency_ms: number | null;
+  p95_rag_latency_ms: number | null;
+}
+
+export interface PhoneMetricPair {
+  key: string;
+  count: number;
+}
+
+export interface PhoneMetricsResponse {
+  api_version: "v1" | string;
+  tenant_id: string;
+  summary: PhoneMetricsSummary;
+  top_handoff_reasons: PhoneMetricPair[];
+  top_intents: PhoneMetricPair[];
+  knowledge_gap_topics: PhoneMetricPair[];
+  correlation_id: string;
+}
+
+export interface PhoneRetentionPolicyResponse {
+  api_version: "v1" | string;
+  tenant_id: string;
+  recording_enabled_default: boolean;
+  transcript_retention_days: number;
+  audio_retention_days: number | null;
+  export_retention_days: number;
+  export_enabled: boolean;
+  correlation_id: string;
+}
+
+export interface PhoneExportResponse {
+  api_version: "v1" | string;
+  tenant_id: string;
+  export_job_id: string;
+  status: string;
+  redacted: boolean;
+  correlation_id: string;
+}
+
+export interface PhoneDeleteRequestResponse {
+  api_version: "v1" | string;
+  tenant_id: string;
+  call_id: string;
+  deletion_request_id: string;
+  mode: string;
+  status: string;
+  correlation_id: string;
+}
+
 export interface PhoneScenarioPreviewResponse {
   api_version: "v1" | string;
   tenant_id: string;

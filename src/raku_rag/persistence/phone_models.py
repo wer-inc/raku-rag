@@ -17,6 +17,7 @@ from raku_rag.phone.domain import (
     ConversationTurn,
     HandoffPackage,
     PhoneCitationRef,
+    QualityEvaluation,
     ScenarioVersion,
 )
 
@@ -67,6 +68,117 @@ class InMemoryPhoneScenarioRepository:
             ),
             key=lambda s: s.scenario_id,
         )
+
+
+@dataclass
+class InMemoryPhoneQualityRepository:
+    """Tenant-keyed QA evaluation storage (QualityRepository contract, 022 US4)."""
+
+    _items: dict[tuple[str, str], QualityEvaluation] = field(default_factory=dict)
+
+    def save(self, evaluation: QualityEvaluation) -> None:
+        self._items[(evaluation.tenant_id, evaluation.evaluation_id)] = evaluation
+
+    def list_for_call(self, tenant_id: str, call_id: str) -> list[QualityEvaluation]:
+        return [
+            e
+            for (stored_tenant, _), e in self._items.items()
+            if stored_tenant == tenant_id and e.call_id == call_id
+        ]
+
+    def list_all(self, tenant_id: str) -> list[QualityEvaluation]:
+        return [
+            e for (stored_tenant, _), e in self._items.items() if stored_tenant == tenant_id
+        ]
+
+
+class PostgresPhoneQualityRepository:
+    """phone_quality_evaluations (0017) — typed columns, RLS-forced."""
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def save(self, evaluation: QualityEvaluation) -> None:
+        from raku_rag.persistence.postgres import _use_tenant
+
+        _use_tenant(self._conn, evaluation.tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tenants (tenant_id) VALUES (%s) ON CONFLICT DO NOTHING",
+                (evaluation.tenant_id,),
+            )
+            cur.execute(
+                "INSERT INTO phone_quality_evaluations "
+                "(tenant_id, evaluation_id, call_id, reviewer_id, reviewed_at, "
+                " answer_correctness, tone_score, handoff_appropriateness, compliance_issue, "
+                " hallucination_detected, privacy_issue, suggested_fix, knowledge_gap_topics, "
+                " review_status, improvement_item_id) "
+                "VALUES (%s,%s,%s,%s, COALESCE(%s::timestamptz, now()), %s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (tenant_id, evaluation_id) DO UPDATE SET "
+                "review_status=EXCLUDED.review_status, suggested_fix=EXCLUDED.suggested_fix, "
+                "knowledge_gap_topics=EXCLUDED.knowledge_gap_topics",
+                (
+                    evaluation.tenant_id,
+                    evaluation.evaluation_id,
+                    evaluation.call_id,
+                    evaluation.reviewer_id,
+                    evaluation.reviewed_at or None,
+                    evaluation.answer_correctness,
+                    evaluation.tone_score,
+                    evaluation.handoff_appropriateness,
+                    evaluation.compliance_issue,
+                    evaluation.hallucination_detected,
+                    evaluation.privacy_issue,
+                    evaluation.suggested_fix or "",
+                    list(evaluation.knowledge_gap_topics),
+                    evaluation.review_status,
+                    evaluation.improvement_item_id or "",
+                ),
+            )
+
+    def list_for_call(self, tenant_id: str, call_id: str) -> list[QualityEvaluation]:
+        return self._query(tenant_id, "AND call_id = %s", (call_id,))
+
+    def list_all(self, tenant_id: str) -> list[QualityEvaluation]:
+        return self._query(tenant_id, "", ())
+
+    def _query(self, tenant_id: str, extra: str, params: tuple) -> list[QualityEvaluation]:
+        from raku_rag.persistence.postgres import _iso, _use_tenant
+
+        _use_tenant(self._conn, tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT tenant_id, evaluation_id, call_id, reviewer_id, reviewed_at, "
+                "answer_correctness, tone_score, handoff_appropriateness, compliance_issue, "
+                "hallucination_detected, privacy_issue, suggested_fix, knowledge_gap_topics, "
+                "review_status, improvement_item_id "
+                f"FROM phone_quality_evaluations WHERE tenant_id = %s {extra} "
+                "ORDER BY reviewed_at DESC",
+                (tenant_id, *params),
+            )
+            rows = cur.fetchall()
+        out: list[QualityEvaluation] = []
+        for row in rows:
+            out.append(
+                QualityEvaluation(
+                    tenant_id=row[0],
+                    evaluation_id=row[1],
+                    call_id=row[2],
+                    reviewer_id=row[3],
+                    reviewed_at=_iso(row[4]) or "",
+                    answer_correctness=row[5],
+                    tone_score=row[6],
+                    handoff_appropriateness=row[7],
+                    compliance_issue=bool(row[8]),
+                    hallucination_detected=bool(row[9]),
+                    privacy_issue=bool(row[10]),
+                    suggested_fix=(row[11] or None),
+                    knowledge_gap_topics=list(row[12] or []),
+                    review_status=row[13],
+                    improvement_item_id=(row[14] or None),
+                )
+            )
+        return out
 
 
 class PostgresPhoneCallRepository:
@@ -181,7 +293,12 @@ class PostgresPhoneCallRepository:
                 "ON CONFLICT (tenant_id, handoff_package_id) DO UPDATE SET "
                 "status=EXCLUDED.status, operator_id=EXCLUDED.operator_id, "
                 "accepted_at=EXCLUDED.accepted_at, failure_reason=EXCLUDED.failure_reason, "
-                "destination_id=EXCLUDED.destination_id",
+                "destination_id=EXCLUDED.destination_id, "
+                # Content fields must follow too — delete-request (FR-047) re-saves the package
+                # with summary/excerpt/slots blanked; dropping them here would leak the excerpt.
+                "summary=EXCLUDED.summary, "
+                "transcript_excerpt_redacted=EXCLUDED.transcript_excerpt_redacted, "
+                "confirmed_slots=EXCLUDED.confirmed_slots",
                 (
                     package.tenant_id,
                     package.handoff_package_id,

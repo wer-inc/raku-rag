@@ -42,6 +42,10 @@ import type {
   PhoneHandoffAcceptRequest,
   PhoneHandoffAcceptResponse,
   PhoneHandoffResponse,
+  PhoneMetricsResponse,
+  PhoneQualityEvaluationListResponse,
+  PhoneQualityEvaluationRequest,
+  PhoneQualityEvaluationResponse,
   PhoneScenarioCreateRequest,
   PhoneScenarioListResponse,
   PhoneScenarioMutationResponse,
@@ -284,6 +288,38 @@ export async function phoneCallDetail(
     `/phone/calls/${encodeURIComponent(callId)}`,
     userToken,
   );
+}
+
+// --- 022 US4/US5: QA reviews + KPI metrics --------------------------------------------------
+
+export async function phoneCreateQualityEvaluation(
+  callId: string,
+  req: PhoneQualityEvaluationRequest,
+  userToken: string,
+): Promise<PhoneQualityEvaluationResponse> {
+  return apiPostJson<PhoneQualityEvaluationResponse>(
+    `/phone/calls/${encodeURIComponent(callId)}/quality-evaluations`,
+    req,
+    userToken,
+  );
+}
+
+export async function phoneListQualityEvaluations(
+  callId: string,
+  userToken: string,
+): Promise<PhoneQualityEvaluationListResponse> {
+  return apiGetJson<PhoneQualityEvaluationListResponse>(
+    `/phone/calls/${encodeURIComponent(callId)}/quality-evaluations`,
+    userToken,
+  );
+}
+
+export async function phoneMetrics(
+  userToken: string,
+  query?: Record<string, string>,
+): Promise<PhoneMetricsResponse> {
+  const qs = query && Object.keys(query).length ? `?${new URLSearchParams(query).toString()}` : "";
+  return apiGetJson<PhoneMetricsResponse>(`/phone/metrics${qs}`, userToken);
 }
 
 export async function phoneHandoffDetail(

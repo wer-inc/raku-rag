@@ -52,6 +52,11 @@ export const PHONE_SCENARIO_READ_ROLES = [
 ] as const;
 export const PHONE_SCENARIO_MANAGE_ROLES = ["tenant_admin", "scenario_admin"] as const;
 export const PHONE_SCENARIO_APPROVE_ROLES = ["tenant_admin", "scenario_approver"] as const;
+// 022 US4/US5 (contract §Authorization Matrix).
+export const PHONE_QA_ROLES = ["qa_reviewer", "ops_owner", "tenant_admin"] as const;
+export const PHONE_METRICS_ROLES = ["ops_owner", "tenant_admin"] as const;
+export const PHONE_LIFECYCLE_ROLES = ["ops_owner", "tenant_admin", "audit_admin"] as const;
+export const PHONE_DELETE_ROLES = ["tenant_admin", "audit_admin"] as const;
 
 export function assertAnyRoleAllowed(
   req: Request,

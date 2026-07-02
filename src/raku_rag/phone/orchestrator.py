@@ -9,6 +9,7 @@ transition itself is decided by hard policy/scenario/safety rules, never by the 
 
 from __future__ import annotations
 
+import os
 import re
 import time
 
@@ -29,6 +30,8 @@ from raku_rag.phone.interfaces import (
     TelephonyProvider,
     TtsProvider,
 )
+from raku_rag.phone.metrics import aggregate_call_metrics
+from raku_rag.phone.quality import PhoneQualityService
 from raku_rag.phone.redaction import mask_phone_number, redact_text
 from raku_rag.phone.scenarios import PhoneScenarioService, ScenarioError
 from raku_rag.phone.voice import render_for_voice
@@ -39,6 +42,11 @@ from raku_rag.phone.voice import render_for_voice
 SIMULATE_ROLES = frozenset({"tenant_admin", "ops_owner", "qa_reviewer", "phone_gateway"})
 CALL_READ_ROLES = frozenset({"ops_owner", "tenant_admin", "qa_reviewer"})
 HANDOFF_READ_ROLES = frozenset({"operator", "ops_owner", "tenant_admin"})
+# 022 US4/US5 (contract §Authorization Matrix): metrics = ops; export/retention adds the audit
+# role; deletion/redaction stays with tenant_admin + privileged audit only.
+METRICS_ROLES = frozenset({"ops_owner", "tenant_admin"})
+LIFECYCLE_READ_ROLES = frozenset({"ops_owner", "tenant_admin", "audit_admin"})
+DELETE_REQUEST_ROLES = frozenset({"tenant_admin", "audit_admin"})
 
 # Citations whose approval metadata marks them not currently usable never ground a spoken answer
 # (spec edge case: 古い版・停止中・承認待ち・権限外のみ → 正式回答に使わない).
@@ -87,6 +95,8 @@ class PhoneCallService:
         tts: TtsProvider,
         handoff: HandoffService | None = None,
         rules: HandoffRules | None = None,
+        quality: PhoneQualityService | None = None,
+        audit=None,
     ) -> None:
         self._gateway = answer_gateway
         self._repo = repository
@@ -96,6 +106,8 @@ class PhoneCallService:
         self._tts = tts
         self._handoff = handoff or HandoffService()
         self._rules = rules or HandoffRules()
+        self._quality = quality
+        self._audit = audit
 
     # --- public API (internal HTTP surface) ----------------------------------------------------
 
@@ -172,6 +184,13 @@ class PhoneCallService:
             if call.handoff_package_id
             else None
         )
+        # FR-035: transcript / customer-identifier access is itself audited.
+        self._record_lifecycle_audit(
+            principal,
+            action="phone.transcript_viewed",
+            resource_id=call_id,
+            decision="redacted_view",
+        )
         return 200, {
             **self._envelope(principal, call.correlation_id),
             "call_id": call.call_id,
@@ -215,6 +234,16 @@ class PhoneCallService:
                 continue
             if _q("customer_id") and call.customer_id != _q("customer_id"):
                 continue
+            # US4 (T068): date-range + masked-number suffix filters for supervisor search.
+            if _q("from") and call.started_at < _q("from"):
+                continue
+            if _q("to") and call.started_at > _q("to"):
+                continue
+            phone_query = re.sub(r"\D", "", _q("phone_number"))
+            if phone_query:
+                masked_digits = re.sub(r"\D", "", call.caller_phone_number_masked or "")
+                if not masked_digits.endswith(phone_query[-4:]):
+                    continue
             items.append(call.summary_item())
         items.sort(key=lambda item: item["started_at"], reverse=True)
         return 200, {
@@ -229,6 +258,13 @@ class PhoneCallService:
         package = self._repo.get_handoff(principal.tenant_id, handoff_package_id)
         if not package:
             return 404, {"error": "not_found"}
+        # FR-035: the handoff package carries a transcript excerpt + customer identifiers.
+        self._record_lifecycle_audit(
+            principal,
+            action="phone.handoff_viewed",
+            resource_id=handoff_package_id,
+            decision="redacted_view",
+        )
         return 200, {**self._envelope(principal, new_id("corr")), **package.public()}
 
     def accept_handoff(
@@ -255,6 +291,168 @@ class PhoneCallService:
             "status": package.status,
             "accepted_at": package.accepted_at,
         }
+
+    # --- US4/US5: quality reviews, metrics, retention/export/deletion --------------------------
+
+    def create_quality_evaluation(
+        self, principal: IdentityClaims, call_id: str, body: dict
+    ) -> tuple[int, dict]:
+        if self._quality is None:
+            return 503, {"error": "quality_service_unavailable"}
+        if not self._quality.can_review(principal):
+            return 403, {"error": "forbidden"}
+        if self._repo.get_call(principal.tenant_id, call_id) is None:
+            return 404, {"error": "not_found"}
+        status, payload, _ = self._quality.create_evaluation(principal, call_id, body)
+        if status != 201:
+            return status, payload
+        return 201, {**self._envelope(principal, new_id("corr")), **payload}
+
+    def list_quality_evaluations(
+        self, principal: IdentityClaims, call_id: str
+    ) -> tuple[int, dict]:
+        if self._quality is None:
+            return 503, {"error": "quality_service_unavailable"}
+        status, payload = self._quality.list_for_call(principal, call_id)
+        if status != 200:
+            return status, payload
+        # FR-035: QA review access is audited alongside transcript access.
+        self._record_lifecycle_audit(
+            principal,
+            action="phone.qa_reviews_viewed",
+            resource_id=call_id,
+            decision="viewed",
+        )
+        return 200, {**self._envelope(principal, new_id("corr")), **payload}
+
+    def metrics(self, principal: IdentityClaims, query: dict | None = None) -> tuple[int, dict]:
+        if not self._has_any_role(principal, METRICS_ROLES):
+            return 403, {"error": "forbidden"}
+        query = query or {}
+
+        def _q(name: str) -> str | None:
+            value = query.get(name)
+            if isinstance(value, list):
+                return str(value[0]) if value else None
+            return str(value) if value else None
+
+        calls = self._repo.list_calls(principal.tenant_id)
+        evaluations = (
+            self._quality._repo.list_all(principal.tenant_id)  # noqa: SLF001 — same composition
+            if self._quality is not None
+            else []
+        )
+        aggregated = aggregate_call_metrics(
+            calls, evaluations, range_from=_q("from"), range_to=_q("to")
+        )
+        return 200, {**self._envelope(principal, new_id("corr")), **aggregated}
+
+    def retention_policy(self, principal: IdentityClaims) -> tuple[int, dict]:
+        if not self._has_any_role(principal, LIFECYCLE_READ_ROLES):
+            return 403, {"error": "forbidden"}
+        # Transcript-first defaults (research.md Decision 7); per-tenant overrides are post-MVP.
+        return 200, {
+            **self._envelope(principal, new_id("corr")),
+            "recording_enabled_default": False,
+            "transcript_retention_days": int(
+                os.environ.get("RAKU_PHONE_TRANSCRIPT_RETENTION_DAYS", "365")
+            ),
+            "audio_retention_days": None,
+            "export_retention_days": int(
+                os.environ.get("RAKU_PHONE_EXPORT_RETENTION_DAYS", "30")
+            ),
+            "export_enabled": os.environ.get("RAKU_PHONE_EXPORT_ENABLED") == "1",
+        }
+
+    def export_calls(self, principal: IdentityClaims, body: dict) -> tuple[int, dict]:
+        if not self._has_any_role(principal, LIFECYCLE_READ_ROLES):
+            return 403, {"error": "forbidden"}
+        enabled = os.environ.get("RAKU_PHONE_EXPORT_ENABLED") == "1"
+        self._record_lifecycle_audit(
+            principal,
+            action="phone.export_requested",
+            resource_id="calls",
+            decision="queued" if enabled else "export_not_enabled",
+        )
+        if not enabled:
+            # FR-038/FR-046: the denial itself is audited above.
+            return 409, {"error": "export_not_enabled"}
+        return 202, {
+            **self._envelope(principal, new_id("corr")),
+            "export_job_id": new_id("phone_export"),
+            "status": "queued",
+            "redacted": True,
+        }
+
+    def delete_call_request(
+        self, principal: IdentityClaims, call_id: str, body: dict
+    ) -> tuple[int, dict]:
+        if not self._has_any_role(principal, DELETE_REQUEST_ROLES):
+            return 403, {"error": "forbidden"}
+        call = self._repo.get_call(principal.tenant_id, call_id)
+        if call is None:
+            return 404, {"error": "not_found"}
+        mode = str(body.get("mode") or "redact")
+        # Redaction is applied SYNCHRONOUSLY (FR-047): transcript text, summary, and slots are
+        # blanked while trace identifiers (call/turn/citation ids) remain for audit continuity.
+        for turn in call.turns:
+            if turn.asr_text_redacted:
+                turn.asr_text_redacted = "[削除済み]"
+            if turn.redacted_text:
+                turn.redacted_text = "[削除済み]"
+            if turn.ai_response_text:
+                turn.ai_response_text = "[削除済み]"
+            if turn.speech_text:
+                turn.speech_text = "[削除済み]"
+        call.summary = ""
+        call.collected_slots = {}
+        call.transcript_redaction_status = "redacted"
+        self._repo.save_call(call)
+        if call.handoff_package_id:
+            package = self._repo.get_handoff(principal.tenant_id, call.handoff_package_id)
+            if package is not None:
+                package.summary = ""
+                package.transcript_excerpt_redacted = "[削除済み]"
+                package.confirmed_slots = {}
+                self._repo.save_handoff(package)
+        self._record_lifecycle_audit(
+            principal,
+            action="phone.delete_request",
+            resource_id=call_id,
+            decision=mode,
+        )
+        return 202, {
+            **self._envelope(principal, new_id("corr")),
+            "call_id": call_id,
+            "deletion_request_id": new_id("del"),
+            "mode": mode,
+            "status": "completed",
+        }
+
+    def _record_lifecycle_audit(
+        self, principal: IdentityClaims, *, action: str, resource_id: str, decision: str
+    ) -> None:
+        if self._audit is None:
+            return
+        try:
+            from raku_rag.manufacturing.api.audit import _now as _audit_now
+            from raku_rag.manufacturing.domain.audit import AuditLogEntry
+
+            self._audit.record(
+                AuditLogEntry(
+                    tenant_id=principal.tenant_id,
+                    log_id=f"phone_lifecycle:{resource_id}:{_audit_now()}",
+                    timestamp=_audit_now(),
+                    actor_id=principal.user_id,
+                    action=action,
+                    resource_type="phone_call",
+                    resource_id=resource_id,
+                    decision=decision,
+                    reason="phone_data_lifecycle",
+                )
+            )
+        except Exception:  # noqa: BLE001 — audit best-effort must not break the request
+            pass
 
     # --- scenario HTTP surface (delegates lifecycle to PhoneScenarioService) --------------------
 

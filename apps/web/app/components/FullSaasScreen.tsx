@@ -22,8 +22,11 @@ import type {
   ManufacturingIngestionRun,
   ManufacturingKpi,
   ManufacturingSourceSyncStatus,
+  PhoneCallDetailResponse,
   PhoneCallSummaryItem,
   PhoneHandoffPackage,
+  PhoneMetricsResponse,
+  PhoneQualityEvaluation,
   PhoneScenarioSummary,
   PhoneTurnResponse,
   SafetyTelemetryView,
@@ -76,9 +79,12 @@ import {
   manufacturingUpdateDocumentMetadata,
   phoneAcceptHandoff,
   phoneCallDetail,
+  phoneCreateQualityEvaluation,
   phoneCreateScenario,
   phoneListCalls,
+  phoneListQualityEvaluations,
   phoneListScenarios,
+  phoneMetrics,
   phonePreviewScenario,
   phoneRollbackScenario,
   phoneScenarioAction,
@@ -1945,7 +1951,9 @@ function phoneActionLabel(action: string | null | undefined): string {
 }
 
 function PhoneBody() {
-  const [tab, setTab] = useState<"simulator" | "handoffs" | "scenarios">("simulator");
+  const [tab, setTab] = useState<"simulator" | "handoffs" | "calls" | "kpi" | "scenarios">(
+    "simulator",
+  );
   return (
     <>
       <div className="screen-actions" role="tablist" aria-label="電話AIの機能">
@@ -1968,6 +1976,22 @@ function PhoneBody() {
         <button
           type="button"
           role="tab"
+          aria-selected={tab === "calls"}
+          onClick={() => setTab("calls")}
+        >
+          通話履歴
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "kpi"}
+          onClick={() => setTab("kpi")}
+        >
+          KPI
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === "scenarios"}
           onClick={() => setTab("scenarios")}
         >
@@ -1976,6 +2000,8 @@ function PhoneBody() {
       </div>
       {tab === "simulator" && <PhoneSimulatorSection />}
       {tab === "handoffs" && <PhoneHandoffSection />}
+      {tab === "calls" && <PhoneCallHistorySection />}
+      {tab === "kpi" && <PhoneKpiSection />}
       {tab === "scenarios" && <PhoneScenarioSection />}
     </>
   );
@@ -2328,6 +2354,408 @@ function PhoneHandoffSection() {
           </div>
         </Section>
       )}
+    </>
+  );
+}
+
+// --- 022 US4: 通話履歴の検索・詳細・QAレビュー ---------------------------------------------------
+
+const PHONE_STATE_OPTIONS = [
+  ["", "すべて"],
+  ["completed", "完了"],
+  ["transferred", "転送済み"],
+  ["abandoned", "放棄"],
+  ["handoff_pending", "転送待ち"],
+  ["active", "対応中"],
+  ["failed", "失敗"],
+] as const;
+
+function PhoneCallHistorySection() {
+  const toast = useToast();
+  const [filters, setFilters] = useState({ from: "", to: "", phone_number: "", intent: "", state: "" });
+  const [applied, setApplied] = useState<Record<string, string>>({});
+  const [detail, setDetail] = useState<PhoneCallDetailResponse | null>(null);
+  const [evaluations, setEvaluations] = useState<PhoneQualityEvaluation[]>([]);
+  const [state, reload] = useLoad(async () => {
+    const token = await getSessionToken();
+    return phoneListCalls(token, applied);
+  }, [applied]);
+
+  function applyFilters(event: FormEvent) {
+    event.preventDefault();
+    const next: Record<string, string> = {};
+    for (const [key, value] of Object.entries(filters)) {
+      if (value.trim()) next[key] = value.trim();
+    }
+    setDetail(null);
+    setApplied(next);
+  }
+
+  async function open(item: PhoneCallSummaryItem) {
+    try {
+      const token = await getSessionToken();
+      const [callDetail, evals] = await Promise.all([
+        phoneCallDetail(item.call_id, token),
+        phoneListQualityEvaluations(item.call_id, token).catch(() => null),
+      ]);
+      setDetail(callDetail);
+      setEvaluations(evals?.items ?? []);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "通話詳細の取得に失敗しました", "error");
+    }
+  }
+
+  if (state.state === "loading") return <p className="ops-empty" role="status">通話履歴を読み込み中…</p>;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
+  return (
+    <>
+      <Section
+        title="通話履歴"
+        note="期間・電話番号(下4桁)・意図・状態で絞り込めます。行を選択すると全文文字起こしとQAレビューを確認できます。"
+      >
+        <form className="src-inline-form" onSubmit={applyFilters} aria-label="通話履歴の絞り込み">
+          <input
+            type="date"
+            value={filters.from}
+            onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))}
+            aria-label="開始日"
+          />
+          <input
+            type="date"
+            value={filters.to}
+            onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))}
+            aria-label="終了日"
+          />
+          <input
+            value={filters.phone_number}
+            onChange={(e) => setFilters((f) => ({ ...f, phone_number: e.target.value }))}
+            placeholder="電話番号(下4桁)"
+            aria-label="電話番号"
+            autoComplete="off"
+          />
+          <input
+            value={filters.intent}
+            onChange={(e) => setFilters((f) => ({ ...f, intent: e.target.value }))}
+            placeholder="意図"
+            aria-label="意図"
+            autoComplete="off"
+          />
+          <select
+            value={filters.state}
+            onChange={(e) => setFilters((f) => ({ ...f, state: e.target.value }))}
+            aria-label="通話状態"
+          >
+            {PHONE_STATE_OPTIONS.map(([value, label]) => (
+              <option key={value || "all"} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <button type="submit">検索</button>
+        </form>
+        <DataTable
+          columns={["開始", "通話ID", "発信者", "意図", "状態", "解決", ""]}
+          rows={state.data.items.map((item) => [
+            item.started_at.replace("T", " ").slice(0, 16),
+            item.call_id,
+            item.caller_phone_number_masked ?? "-",
+            item.intent ?? "-",
+            item.state,
+            item.resolution_status ?? "-",
+            <button key={item.call_id} type="button" onClick={() => void open(item)}>
+              詳細
+            </button>,
+          ])}
+          empty="条件に一致する通話はありません。"
+        />
+      </Section>
+      {detail && (
+        <>
+          <Section title={`通話 ${detail.call_id}`}>
+            <FieldGrid
+              rows={[
+                ["状態", detail.state],
+                ["開始", detail.started_at],
+                ["終了", detail.ended_at ?? "-"],
+                ["発信者", detail.caller_phone_number_masked ?? "-"],
+                ["意図", detail.intent ?? "-"],
+                ["要約", detail.summary || "-"],
+                ["解決状態", detail.resolution_status ?? "-"],
+                ["録音", detail.recording_enabled ? "有効" : "無効"],
+                ["マスキング", detail.transcript_redaction_status],
+              ]}
+            />
+            <DataTable
+              columns={["#", "話者", "発話（マスク済み）", "AI判断"]}
+              rows={detail.transcript.map((turn) => [
+                String(turn.sequence_no),
+                turn.speaker,
+                turn.redacted_text ?? "-",
+                phoneActionLabel(turn.ai_action),
+              ])}
+              empty="発話はありません。"
+            />
+          </Section>
+          <PhoneQualityReviewSection
+            callId={detail.call_id}
+            evaluations={evaluations}
+            onCreated={(created) => setEvaluations((prev) => [...prev, created])}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+function PhoneQualityReviewSection({
+  callId,
+  evaluations,
+  onCreated,
+}: {
+  callId: string;
+  evaluations: PhoneQualityEvaluation[];
+  onCreated: (created: PhoneQualityEvaluation) => void;
+}) {
+  const toast = useToast();
+  const [scores, setScores] = useState({ answer_correctness: "", tone_score: "", handoff_appropriateness: "" });
+  const [flags, setFlags] = useState({ hallucination_detected: false, compliance_issue: false, privacy_issue: false });
+  const [suggestedFix, setSuggestedFix] = useState("");
+  const [gapTopics, setGapTopics] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const token = await getSessionToken();
+      const created = await phoneCreateQualityEvaluation(
+        callId,
+        {
+          answer_correctness: scores.answer_correctness ? Number(scores.answer_correctness) : null,
+          tone_score: scores.tone_score ? Number(scores.tone_score) : null,
+          handoff_appropriateness: scores.handoff_appropriateness
+            ? Number(scores.handoff_appropriateness)
+            : null,
+          ...flags,
+          suggested_fix: suggestedFix.trim() || undefined,
+          knowledge_gap_topics: gapTopics
+            .split(/[、,]/)
+            .map((topic) => topic.trim())
+            .filter(Boolean),
+        },
+        token,
+      );
+      onCreated(created);
+      setScores({ answer_correctness: "", tone_score: "", handoff_appropriateness: "" });
+      setFlags({ hallucination_detected: false, compliance_issue: false, privacy_issue: false });
+      setSuggestedFix("");
+      setGapTopics("");
+      toast(
+        created.improvement_item_id
+          ? `QAレビューを記録し、改善キューに追加しました（${created.improvement_item_id}）`
+          : "QAレビューを記録しました",
+        "success",
+      );
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "QAレビューの記録に失敗しました", "error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const scoreSelect = (
+    label: string,
+    key: keyof typeof scores,
+  ) => (
+    <label className="history-filter-field">
+      <span>{label}</span>
+      <select
+        value={scores[key]}
+        onChange={(e) => setScores((s) => ({ ...s, [key]: e.target.value }))}
+        aria-label={label}
+      >
+        <option value="">未評価</option>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <option key={n} value={String(n)}>
+            {n}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  return (
+    <Section
+      title="QAレビュー"
+      note="1〜5で評価します。ハルシネーション/ナレッジ不足を記録すると改善キューに自動連携されます。"
+    >
+      {evaluations.length > 0 && (
+        <DataTable
+          columns={["レビュー日時", "担当", "正確性", "トーン", "転送妥当性", "フラグ", "改善キュー"]}
+          rows={evaluations.map((ev) => [
+            ev.reviewed_at.replace("T", " ").slice(0, 16),
+            ev.reviewer_id,
+            ev.answer_correctness != null ? String(ev.answer_correctness) : "-",
+            ev.tone_score != null ? String(ev.tone_score) : "-",
+            ev.handoff_appropriateness != null ? String(ev.handoff_appropriateness) : "-",
+            [
+              ev.hallucination_detected ? "ハルシネーション" : null,
+              ev.compliance_issue ? "コンプライアンス" : null,
+              ev.privacy_issue ? "プライバシー" : null,
+            ]
+              .filter(Boolean)
+              .join(" / ") || "-",
+            ev.improvement_item_id ?? "-",
+          ])}
+          empty=""
+        />
+      )}
+      <form onSubmit={submit} aria-label="QAレビューを記録">
+        <div className="screen-actions">
+          {scoreSelect("回答の正確性", "answer_correctness")}
+          {scoreSelect("トーン", "tone_score")}
+          {scoreSelect("転送の妥当性", "handoff_appropriateness")}
+        </div>
+        <div className="screen-actions">
+          <label>
+            <input
+              type="checkbox"
+              checked={flags.hallucination_detected}
+              onChange={(e) => setFlags((f) => ({ ...f, hallucination_detected: e.target.checked }))}
+            />
+            ハルシネーションあり
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={flags.compliance_issue}
+              onChange={(e) => setFlags((f) => ({ ...f, compliance_issue: e.target.checked }))}
+            />
+            コンプライアンス問題
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={flags.privacy_issue}
+              onChange={(e) => setFlags((f) => ({ ...f, privacy_issue: e.target.checked }))}
+            />
+            プライバシー問題
+          </label>
+        </div>
+        <div className="src-inline-form">
+          <input
+            value={suggestedFix}
+            onChange={(e) => setSuggestedFix(e.target.value)}
+            placeholder="改善提案（例: 返金条件FAQを追加）"
+            aria-label="改善提案"
+            autoComplete="off"
+          />
+          <input
+            value={gapTopics}
+            onChange={(e) => setGapTopics(e.target.value)}
+            placeholder="不足トピック（カンマ区切り）"
+            aria-label="不足トピック"
+            autoComplete="off"
+          />
+          <button type="submit" disabled={submitting}>
+            {submitting ? "記録中…" : "レビューを記録"}
+          </button>
+        </div>
+      </form>
+    </Section>
+  );
+}
+
+// --- 022 US5: 電話KPI（応答率・AI完結率・転送率・レイテンシ・ナレッジギャップ） -------------------
+
+function PhoneKpiSection() {
+  const [range, setRange] = useState({ from: "", to: "" });
+  const [applied, setApplied] = useState<Record<string, string>>({});
+  const [state, reload] = useLoad(async () => {
+    const token = await getSessionToken();
+    return phoneMetrics(token, applied);
+  }, [applied]);
+
+  function applyRange(event: FormEvent) {
+    event.preventDefault();
+    const next: Record<string, string> = {};
+    if (range.from) next.from = range.from;
+    if (range.to) next.to = range.to;
+    setApplied(next);
+  }
+
+  if (state.state === "loading") return <p className="ops-empty" role="status">KPIを読み込み中…</p>;
+  if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
+  const metrics = state.data;
+  const seconds = metrics.summary.average_handle_time_seconds;
+  return (
+    <>
+      <Section title="電話KPI" note="通話履歴とQAレビューから集計した運用指標です。">
+        <form className="src-inline-form" onSubmit={applyRange} aria-label="KPI集計期間">
+          <input
+            type="date"
+            value={range.from}
+            onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
+            aria-label="集計開始日"
+          />
+          <input
+            type="date"
+            value={range.to}
+            onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+            aria-label="集計終了日"
+          />
+          <button type="submit">集計</button>
+        </form>
+        <div className="metric-grid">
+          <Stat label="通話数" value={String(metrics.summary.call_count)} />
+          <Stat label="応答率" value={pct(metrics.summary.answer_rate)} />
+          <Stat label="AI完結率" value={pct(metrics.summary.ai_containment_rate)} />
+          <Stat label="転送率" value={pct(metrics.summary.handoff_rate)} />
+        </div>
+        <FieldGrid
+          rows={[
+            ["未解決率", pct(metrics.summary.unresolved_rate)],
+            ["平均処理時間", seconds ? `${seconds.toFixed(1)} 秒` : "-"],
+            [
+              "ターン応答 p95",
+              metrics.summary.p95_total_turn_latency_ms != null
+                ? `${Math.round(metrics.summary.p95_total_turn_latency_ms)} ms`
+                : "-",
+            ],
+            [
+              "RAG検索 p95",
+              metrics.summary.p95_rag_latency_ms != null
+                ? `${Math.round(metrics.summary.p95_rag_latency_ms)} ms`
+                : "-",
+            ],
+          ]}
+        />
+      </Section>
+      <Section title="転送理由 上位">
+        <DataTable
+          columns={["理由", "件数"]}
+          rows={metrics.top_handoff_reasons.map((pair) => [pair.key, String(pair.count)])}
+          empty="転送はまだありません。"
+        />
+      </Section>
+      <Section title="問い合わせ意図 上位">
+        <DataTable
+          columns={["意図", "件数"]}
+          rows={metrics.top_intents.map((pair) => [pair.key, String(pair.count)])}
+          empty="意図の記録はまだありません。"
+        />
+      </Section>
+      <Section
+        title="ナレッジギャップ"
+        note="QAレビューで「不足トピック」として記録された内容です。ナレッジ整備の優先度判断に使えます。"
+      >
+        <DataTable
+          columns={["トピック", "件数"]}
+          rows={metrics.knowledge_gap_topics.map((pair) => [pair.key, String(pair.count)])}
+          empty="記録されたナレッジギャップはありません。"
+        />
+      </Section>
     </>
   );
 }

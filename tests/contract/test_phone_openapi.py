@@ -16,6 +16,11 @@ PHONE_PATHS = {
     "/phone/calls": {"get"},
     "/phone/calls/{call_id}": {"get"},
     "/phone/calls/{call_id}/turns": {"post"},
+    "/phone/calls/{call_id}/quality-evaluations": {"get", "post"},
+    "/phone/metrics": {"get"},
+    "/phone/retention-policy": {"get"},
+    "/phone/calls/export": {"post"},
+    "/phone/calls/{call_id}/delete-request": {"post"},
     "/phone/handoffs/{handoff_package_id}": {"get"},
     "/phone/handoffs/{handoff_package_id}/accept": {"post"},
     "/phone/scenarios": {"get", "post"},
@@ -38,6 +43,13 @@ PHONE_SCHEMAS = (
     "PhoneScenarioListResponse",
     "PhoneScenarioMutationResponse",
     "PhoneScenarioPreviewResponse",
+    "PhoneQualityEvaluationRequest",
+    "PhoneQualityEvaluationResponse",
+    "PhoneQualityEvaluationListResponse",
+    "PhoneMetricsResponse",
+    "PhoneRetentionPolicyResponse",
+    "PhoneExportResponse",
+    "PhoneDeleteRequestResponse",
 )
 
 
