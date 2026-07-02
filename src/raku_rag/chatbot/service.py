@@ -30,7 +30,15 @@ from raku_rag.core.config import Settings
 from raku_rag.domain.models import IdentityClaims
 from raku_rag.interfaces.base import LLMProvider
 from raku_rag.persistence.chatbot import (
+    ChatFeedbackRepository,
+    ChatHandoffRepository,
+    ChatScenarioRepository,
+    ChatSessionRepository,
     ChatbotSourcePolicyRepository,
+    InMemoryChatFeedbackRepository,
+    InMemoryChatHandoffRepository,
+    InMemoryChatScenarioRepository,
+    InMemoryChatSessionRepository,
     InMemoryChatbotSourcePolicyRepository,
 )
 from raku_rag.providers.llms import llm_provider_from_settings
@@ -284,6 +292,33 @@ class StoredMessage:
             payload["citations"] = list(self.citations)
         return payload
 
+    def to_payload(self) -> dict:
+        return {
+            "message_id": self.message_id,
+            "role": self.role,
+            "content_redacted": self.content_redacted,
+            "message_type": self.message_type,
+            "ai_action": self.ai_action,
+            "citations": [dict(c) for c in self.citations],
+            "quick_replies": [dict(q) for q in self.quick_replies],
+            "metadata": dict(self.metadata),
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_payload(cls, data: dict) -> "StoredMessage":
+        return cls(
+            message_id=str(data.get("message_id") or ""),
+            role=str(data.get("role") or "user"),
+            content_redacted=str(data.get("content_redacted") or ""),
+            message_type=str(data.get("message_type") or "text"),
+            ai_action=data.get("ai_action"),
+            citations=[dict(c) for c in data.get("citations") or []],
+            quick_replies=[dict(q) for q in data.get("quick_replies") or []],
+            metadata=dict(data.get("metadata") or {}),
+            created_at=str(data.get("created_at") or _now()),
+        )
+
 
 @dataclass
 class ChatSession:
@@ -324,6 +359,60 @@ class ChatSession:
             "handoff_required": self.handoff_required,
         }
 
+    def to_payload(self) -> dict:
+        """JSON-safe full serialization for the session repository (restart-durable)."""
+        return {
+            "tenant_id": self.tenant_id,
+            "user_id": self.user_id,
+            "session_id": self.session_id,
+            "channel": self.channel,
+            "status": self.status,
+            "current_intent": self.current_intent,
+            "current_step": self.current_step,
+            "scenario_id": self.scenario_id,
+            "scenario_version_id": self.scenario_version_id,
+            "collected_slots": dict(self.collected_slots),
+            "missing_slots": list(self.missing_slots),
+            "summary": self.summary,
+            "handoff_required": self.handoff_required,
+            "handoff_package_id": self.handoff_package_id,
+            "ticket": dict(self.ticket) if self.ticket else None,
+            "messages": [m.to_payload() for m in self.messages],
+            "last_rag": dict(self.last_rag) if self.last_rag else None,
+            "failure_count": self.failure_count,
+            "started_at": self.started_at,
+            "last_message_at": self.last_message_at,
+            "correlation_id": self.correlation_id,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_payload(cls, data: dict) -> "ChatSession":
+        return cls(
+            tenant_id=str(data.get("tenant_id") or ""),
+            user_id=str(data.get("user_id") or ""),
+            session_id=str(data.get("session_id") or ""),
+            channel=str(data.get("channel") or "web_chat"),
+            status=str(data.get("status") or "active"),
+            current_intent=data.get("current_intent"),
+            current_step=data.get("current_step"),
+            scenario_id=data.get("scenario_id"),
+            scenario_version_id=data.get("scenario_version_id"),
+            collected_slots=dict(data.get("collected_slots") or {}),
+            missing_slots=list(data.get("missing_slots") or []),
+            summary=str(data.get("summary") or ""),
+            handoff_required=bool(data.get("handoff_required")),
+            handoff_package_id=data.get("handoff_package_id"),
+            ticket=dict(data["ticket"]) if data.get("ticket") else None,
+            messages=[StoredMessage.from_payload(m) for m in data.get("messages") or []],
+            last_rag=dict(data["last_rag"]) if data.get("last_rag") else None,
+            failure_count=int(data.get("failure_count") or 0),
+            started_at=str(data.get("started_at") or _now()),
+            last_message_at=str(data.get("last_message_at") or _now()),
+            correlation_id=str(data.get("correlation_id") or _id("corr")),
+            metadata=dict(data.get("metadata") or {}),
+        )
+
 
 @dataclass
 class ScenarioVersion:
@@ -362,6 +451,26 @@ class ScenarioVersion:
             "published_at": self.published_at,
         }
 
+    @classmethod
+    def from_payload(cls, data: dict) -> "ScenarioVersion":
+        return cls(
+            version_id=str(data.get("version_id") or ""),
+            status=str(data.get("status") or "draft"),
+            required_slots=[str(s) for s in data.get("required_slots") or []],
+            optional_slots=[str(s) for s in data.get("optional_slots") or []],
+            steps=[dict(s) for s in data.get("steps") or []],
+            validation_rules=[dict(r) for r in data.get("validation_rules") or []],
+            rag_policy=dict(data.get("rag_policy") or {}),
+            actions=[dict(a) for a in data.get("actions") or []],
+            response_templates=dict(data.get("response_templates") or {}),
+            handoff_conditions=[dict(c) for c in data.get("handoff_conditions") or []],
+            updated_at=str(data.get("updated_at") or _now()),
+            approved_by=data.get("approved_by"),
+            approved_at=data.get("approved_at"),
+            published_by=data.get("published_by"),
+            published_at=data.get("published_at"),
+        )
+
 
 @dataclass
 class ChatScenario:
@@ -391,6 +500,32 @@ class ChatScenario:
             return None
         return self.versions.get(self.active_version_id)
 
+    def to_payload(self) -> dict:
+        return {
+            "scenario_id": self.scenario_id,
+            "name": self.name,
+            "intents": list(self.intents),
+            "status": self.status,
+            "active_version_id": self.active_version_id,
+            "versions": {vid: v.public() for vid, v in self.versions.items()},
+        }
+
+    @classmethod
+    def from_payload(cls, data: dict) -> "ChatScenario":
+        versions_raw = data.get("versions") or {}
+        if isinstance(versions_raw, list):  # tolerate list form
+            versions_raw = {str(v.get("version_id")): v for v in versions_raw}
+        return cls(
+            scenario_id=str(data.get("scenario_id") or ""),
+            name=str(data.get("name") or ""),
+            intents=[str(i) for i in data.get("intents") or []],
+            status=str(data.get("status") or "draft"),
+            active_version_id=data.get("active_version_id"),
+            versions={
+                str(vid): ScenarioVersion.from_payload(v) for vid, v in versions_raw.items()
+            },
+        )
+
 
 class ChatbotService:
     def __init__(
@@ -406,15 +541,24 @@ class ChatbotService:
         demo_tenant_id: str = DEFAULT_DEMO_TENANT_ID,
         high_risk_query_signal: HighRiskQuerySignal | None = None,
         agent_decision_maker: AgentDecisionMaker | None = None,
+        session_repository: ChatSessionRepository | None = None,
+        handoff_repository: ChatHandoffRepository | None = None,
+        feedback_repository: ChatFeedbackRepository | None = None,
+        scenario_repository: ChatScenarioRepository | None = None,
     ) -> None:
-        self._sessions: dict[tuple[str, str], ChatSession] = {}
-        self._handoffs: dict[tuple[str, str], dict] = {}
-        self._feedback: dict[tuple[str, str], dict] = {}
+        # S1-3: conversation state is repository-backed (Postgres in production) so an
+        # answer-service restart no longer loses sessions/handoffs/feedback/scenarios.
+        self._session_repo = session_repository or InMemoryChatSessionRepository()
+        self._handoff_repo = handoff_repository or InMemoryChatHandoffRepository()
+        self._feedback_repo = feedback_repository or InMemoryChatFeedbackRepository()
+        self._scenario_repo = scenario_repository or InMemoryChatScenarioRepository()
         self._source_policies: dict[tuple[str, str], dict] = {}
         self._source_policy_repo = (
             source_policy_repository or InMemoryChatbotSourcePolicyRepository(self._source_policies)
         )
-        self._scenarios: dict[tuple[str, str], ChatScenario] = {}
+        # In-code default scenarios (copy-on-write into the tenant repo on first touch); never
+        # stored under a "*" tenant row (the tenants FK/RLS has no wildcard tenant).
+        self._seed_defaults: dict[str, ChatScenario] = {}
         self._dialogue_manager = DialogueManager()
         self._authority_repo = authority_repository or InMemoryChatbotAuthorityRepository()
         # L1 authority is safe to register unconditionally: it is a pure envelope wrapper around L0
@@ -512,7 +656,7 @@ class ChatbotService:
             channel=channel,
             metadata=metadata,
         )
-        self._sessions[(principal.tenant_id, session.session_id)] = session
+        self._save_session(session)
 
         initial = str(body.get("initial_message") or "").strip()
         if initial:
@@ -544,6 +688,15 @@ class ChatbotService:
             session = self._require_session(principal, session_id)
         except KeyError:
             return 404, {"error": "not_found"}
+        status, payload = self._submit_message_impl(principal, session, body)
+        # One persistence point for every turn outcome (messages/state/rag/handoff linkage);
+        # the impl below has many early returns and each of them mutates the session.
+        self._save_session(session)
+        return status, payload
+
+    def _submit_message_impl(
+        self, principal: IdentityClaims, session: ChatSession, body: dict
+    ) -> tuple[int, dict]:
         if session.status in {"resolved", "ticket_created", "closed"}:
             return 409, {"error": "session_terminal"}
 
@@ -655,7 +808,7 @@ class ChatbotService:
         )
 
     def get_session(self, principal: IdentityClaims, session_id: str) -> tuple[int, dict]:
-        session = self._sessions.get((principal.tenant_id, session_id))
+        session = self._load_session(principal.tenant_id, session_id)
         if not session or not self._can_read_session(principal, session):
             return 404, {"error": "not_found"}
         return 200, self._session_detail(principal, session)
@@ -677,8 +830,8 @@ class ChatbotService:
             else query.get("status") or ""
         )
         items = []
-        for (tenant_id, _), session in self._sessions.items():
-            if tenant_id != principal.tenant_id or not self._can_read_session(principal, session):
+        for session in self._iter_sessions(principal.tenant_id):
+            if not self._can_read_session(principal, session):
                 continue
             if intent and session.current_intent != intent:
                 continue
@@ -715,6 +868,7 @@ class ChatbotService:
         handoff = self._create_handoff(
             session, reason=reason, comment=str(body.get("comment") or "")
         )
+        self._save_session(session)
         return 200, {
             **_tenant_body(principal, _id("corr")),
             "session_id": session.session_id,
@@ -726,7 +880,7 @@ class ChatbotService:
     def get_handoff(self, principal: IdentityClaims, handoff_id: str) -> tuple[int, dict]:
         if not self._has_any_role(principal, HANDOFF_READ_ROLES):
             return 403, {"error": "chat_role_required"}
-        handoff = self._handoffs.get((principal.tenant_id, handoff_id))
+        handoff = self._handoff_repo.get(principal.tenant_id, handoff_id)
         if not handoff:
             return 404, {"error": "not_found"}
         return 200, {**_tenant_body(principal, _id("corr")), **handoff}
@@ -752,7 +906,7 @@ class ChatbotService:
             "improvement_item_id": improvement_id,
             "created_at": _now(),
         }
-        self._feedback[(principal.tenant_id, evaluation_id)] = item
+        self._feedback_repo.save(principal.tenant_id, evaluation_id, item)
         return 201, {
             **_tenant_body(principal, _id("corr")),
             "evaluation_id": evaluation_id,
@@ -764,8 +918,8 @@ class ChatbotService:
             return 403, {"error": "chat_role_required"}
         sessions = [
             s
-            for (tenant_id, _), s in self._sessions.items()
-            if tenant_id == principal.tenant_id and self._can_read_session(principal, s)
+            for s in self._iter_sessions(principal.tenant_id)
+            if self._can_read_session(principal, s)
         ]
         count = len(sessions)
         handoff_count = sum(1 for s in sessions if s.handoff_required)
@@ -782,7 +936,7 @@ class ChatbotService:
             if s.current_intent:
                 intents[s.current_intent] = intents.get(s.current_intent, 0) + 1
             if s.handoff_package_id:
-                h = self._handoffs.get((s.tenant_id, s.handoff_package_id))
+                h = self._handoff_repo.get(s.tenant_id, s.handoff_package_id)
                 if h:
                     reasons[h["reason"]] = reasons.get(h["reason"], 0) + 1
         return 200, {
@@ -871,11 +1025,14 @@ class ChatbotService:
     def list_scenarios(self, principal: IdentityClaims) -> tuple[int, dict]:
         if not self._has_any_role(principal, SCENARIO_MANAGE_ROLES | SCENARIO_APPROVE_ROLES):
             return 403, {"error": "chat_role_required"}
-        scenarios = [
-            s.public(principal.tenant_id)
-            for (tenant_id, _), s in self._scenarios.items()
-            if tenant_id in {"*", principal.tenant_id}
+        stored = {
+            s.scenario_id: s for s in self._iter_scenarios(principal.tenant_id)
+        }
+        # Seed defaults show up until a tenant copy overrides them (previous "*"-row behavior).
+        combined = list(stored.values()) + [
+            seed for sid, seed in self._seed_defaults.items() if sid not in stored
         ]
+        scenarios = [s.public(principal.tenant_id) for s in combined]
         return 200, {**_tenant_body(principal, _id("corr")), "items": scenarios}
 
     def create_scenario(self, principal: IdentityClaims, body: dict) -> tuple[int, dict]:
@@ -904,7 +1061,7 @@ class ChatbotService:
                 status="draft",
                 required_slots=self._required_slots_from_definition(body),
             )
-        self._scenarios[(principal.tenant_id, scenario_id)] = scenario
+        self._save_scenario(principal.tenant_id, scenario)
         return 201, {**_tenant_body(principal, _id("corr")), **scenario.public(principal.tenant_id)}
 
     def upsert_scenario_version(
@@ -967,6 +1124,7 @@ class ChatbotService:
             scenario.active_version_id = version_id
         if scenario.status not in {"published", "scheduled"}:
             scenario.status = version.status
+        self._save_scenario(principal.tenant_id, scenario)
         return 200, {**_tenant_body(principal, _id("corr")), **scenario.public(principal.tenant_id)}
 
     def scenario_action(
@@ -1018,6 +1176,7 @@ class ChatbotService:
             if action == "archive" and scenario.active_version_id == version.version_id:
                 scenario.active_version_id = None
             scenario.status = version.status
+            self._save_scenario(principal.tenant_id, scenario)
             return 200, {
                 **_tenant_body(principal, _id("corr")),
                 **scenario.public(principal.tenant_id),
@@ -1027,7 +1186,7 @@ class ChatbotService:
     def rollback_scenario(self, principal: IdentityClaims, scenario_id: str) -> tuple[int, dict]:
         if not self._has_any_role(principal, SCENARIO_APPROVE_ROLES):
             return 403, {"error": "chat_role_required"}
-        scenario = self._scenarios.get((principal.tenant_id, scenario_id))
+        scenario = self._load_scenario(principal.tenant_id, scenario_id)
         if not scenario:
             return 404, {"error": "not_found"}
         published = [v for v in scenario.versions.values() if v.status == "published"]
@@ -1035,6 +1194,7 @@ class ChatbotService:
             return 409, {"error": "scenario_version_not_approved"}
         scenario.active_version_id = published[-1].version_id
         scenario.status = "published"
+        self._save_scenario(principal.tenant_id, scenario)
         return 200, {**_tenant_body(principal, _id("corr")), **scenario.public(principal.tenant_id)}
 
     # --- lifecycle stubs ----------------------------------------------------
@@ -1285,7 +1445,7 @@ class ChatbotService:
             "messages": [m.public() for m in session.messages],
             "state": session.state(),
             "handoff": (
-                self._handoffs.get((session.tenant_id, session.handoff_package_id))
+                self._handoff_repo.get(session.tenant_id, session.handoff_package_id)
                 if session.handoff_package_id
                 else None
             ),
@@ -1742,7 +1902,7 @@ class ChatbotService:
         self, session: ChatSession, *, reason: str, comment: str, priority: str = "normal"
     ) -> dict:
         if session.handoff_package_id:
-            existing = self._handoffs.get((session.tenant_id, session.handoff_package_id))
+            existing = self._handoff_repo.get(session.tenant_id, session.handoff_package_id)
             if existing:
                 return existing
         handoff_id = _id("handoff")
@@ -1761,7 +1921,7 @@ class ChatbotService:
             "transcript": [m.public() for m in session.messages],
             "created_at": _now(),
         }
-        self._handoffs[(session.tenant_id, handoff_id)] = package
+        self._handoff_repo.save(session.tenant_id, handoff_id, package)
         session.handoff_required = True
         session.handoff_package_id = handoff_id
         session.status = "handoff_pending"
@@ -2016,10 +2176,32 @@ class ChatbotService:
         return " / ".join(latest)
 
     def _require_session(self, principal: IdentityClaims, session_id: str) -> ChatSession:
-        session = self._sessions.get((principal.tenant_id, session_id))
+        session = self._load_session(principal.tenant_id, session_id)
         if not session or not self._can_read_session(principal, session):
             raise KeyError("session")
         return session
+
+    # --- repository seams (S1-3): dataclasses in memory, payload dicts at rest ------------------
+
+    def _load_session(self, tenant_id: str, session_id: str) -> ChatSession | None:
+        payload = self._session_repo.get(tenant_id, session_id)
+        return ChatSession.from_payload(payload) if payload else None
+
+    def _save_session(self, session: ChatSession) -> None:
+        self._session_repo.save(session.tenant_id, session.session_id, session.to_payload())
+
+    def _iter_sessions(self, tenant_id: str) -> list[ChatSession]:
+        return [ChatSession.from_payload(p) for p in self._session_repo.list(tenant_id)]
+
+    def _load_scenario(self, tenant_id: str, scenario_id: str) -> ChatScenario | None:
+        payload = self._scenario_repo.get(tenant_id, scenario_id)
+        return ChatScenario.from_payload(payload) if payload else None
+
+    def _save_scenario(self, tenant_id: str, scenario: ChatScenario) -> None:
+        self._scenario_repo.save(tenant_id, scenario.scenario_id, scenario.to_payload())
+
+    def _iter_scenarios(self, tenant_id: str) -> list[ChatScenario]:
+        return [ChatScenario.from_payload(p) for p in self._scenario_repo.list(tenant_id)]
 
     def _can_read_session(self, principal: IdentityClaims, session: ChatSession) -> bool:
         if principal.tenant_id != session.tenant_id:
@@ -2032,50 +2214,24 @@ class ChatbotService:
         return bool(set(principal.roles) & roles)
 
     def _tenant_scenario(self, tenant_id: str, scenario_id: str) -> ChatScenario | None:
-        scenario = self._scenarios.get((tenant_id, scenario_id))
+        scenario = self._load_scenario(tenant_id, scenario_id)
         if scenario:
             return scenario
-        base = self._scenarios.get(("*", scenario_id))
+        base = self._seed_defaults.get(scenario_id)
         if not base:
             return None
-        copy = ChatScenario(
-            scenario_id=base.scenario_id,
-            name=base.name,
-            intents=list(base.intents),
-            status=base.status,
-            active_version_id=base.active_version_id,
-            versions={
-                version_id: ScenarioVersion(
-                    version_id=version.version_id,
-                    status=version.status,
-                    required_slots=list(version.required_slots),
-                    optional_slots=list(version.optional_slots),
-                    steps=[dict(step) for step in version.steps],
-                    validation_rules=[dict(rule) for rule in version.validation_rules],
-                    rag_policy=dict(version.rag_policy),
-                    actions=[dict(action) for action in version.actions],
-                    response_templates=dict(version.response_templates),
-                    handoff_conditions=[
-                        dict(condition) for condition in version.handoff_conditions
-                    ],
-                    updated_at=version.updated_at,
-                    approved_by=version.approved_by,
-                    approved_at=version.approved_at,
-                    published_by=version.published_by,
-                    published_at=version.published_at,
-                )
-                for version_id, version in base.versions.items()
-            },
-        )
-        self._scenarios[(tenant_id, scenario_id)] = copy
+        # Copy-on-write: materialize the seed default as a tenant-owned row (round-tripping
+        # through the payload form gives a deep copy for free).
+        copy = ChatScenario.from_payload(base.to_payload())
+        self._save_scenario(tenant_id, copy)
         return copy
 
     def _scenario_for_session(self, session: ChatSession) -> ChatScenario | None:
         if not session.scenario_id:
             return None
-        return self._scenarios.get((session.tenant_id, session.scenario_id)) or self._scenarios.get(
-            ("*", session.scenario_id)
-        )
+        return self._load_scenario(
+            session.tenant_id, session.scenario_id
+        ) or self._seed_defaults.get(session.scenario_id)
 
     def _required_slots_from_definition(
         self, body: dict, *, fallback: list[str] | None = None
@@ -2093,7 +2249,7 @@ class ChatbotService:
         return list(fallback or [])
 
     def _seed_scenarios(self) -> None:
-        self._scenarios[("*", "cancel-basic")] = ChatScenario(
+        self._seed_defaults["cancel-basic"] = ChatScenario(
             scenario_id="cancel-basic",
             name="解約受付",
             intents=["cancel_subscription"],
