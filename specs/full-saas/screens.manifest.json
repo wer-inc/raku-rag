@@ -99,6 +99,31 @@
       "status": "spec"
     },
     {
+      "id": "phone",
+      "category": "workspace",
+      "route": "/phone",
+      "title": "電話AI対応",
+      "absorbs": [],
+      "data": ["call_session", "conversation_turns", "phone_citations", "handoff_package", "call_scenarios", "scenario_versions"],
+      "apis": [
+        { "method": "POST", "path": "/v1/phone/calls/simulate", "status": "existing" },
+        { "method": "POST", "path": "/v1/phone/calls/:call_id/turns", "status": "existing" },
+        { "method": "GET", "path": "/v1/phone/calls", "status": "existing" },
+        { "method": "GET", "path": "/v1/phone/calls/:call_id", "status": "existing" },
+        { "method": "GET", "path": "/v1/phone/handoffs/:handoff_package_id", "status": "existing" },
+        { "method": "POST", "path": "/v1/phone/handoffs/:handoff_package_id/accept", "status": "existing" },
+        { "method": "GET", "path": "/v1/phone/scenarios", "status": "existing" },
+        { "method": "POST", "path": "/v1/phone/scenarios", "status": "existing" },
+        { "method": "PUT", "path": "/v1/phone/scenarios/:scenario_id/versions/:version_id", "status": "existing" },
+        { "method": "POST", "path": "/v1/phone/scenarios/:scenario_id/versions/:version_id/:action", "status": "existing" },
+        { "method": "POST", "path": "/v1/phone/scenarios/:scenario_id/rollback", "status": "existing" }
+      ],
+      "states": ["idle", "in_call", "answered", "handoff_pending", "transferred", "error"],
+      "rbac": ["ops_owner", "tenant_admin"],
+      "deps": ["chatbot", "source-list"],
+      "status": "spec"
+    },
+    {
       "id": "answer-history",
       "category": "workspace",
       "route": "/answers/history",

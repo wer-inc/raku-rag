@@ -1,0 +1,37 @@
+{
+  "scenarios": [
+    {
+      "scenario_id": "faq-basic",
+      "name": "FAQ基本対応",
+      "intent": "faq",
+      "description": "承認済みFAQを根拠に回答し、根拠不足なら人間へ転送する",
+      "owner_group": "support-admin",
+      "version": {
+        "required_slots": [],
+        "handoff_conditions": [
+          { "reason": "customer_requested_human", "enabled": true },
+          { "reason": "insufficient_evidence", "enabled": true }
+        ],
+        "fallback_message": "確認して担当者におつなぎします。"
+      }
+    },
+    {
+      "scenario_id": "billing-basic",
+      "name": "請求問い合わせ",
+      "intent": "pricing_plan",
+      "description": "契約番号を確認して料金FAQを参照する",
+      "owner_group": "billing-admin",
+      "version": {
+        "required_slots": [
+          { "slot": "contract_id", "prompt": "ご契約番号を教えてください", "max_attempts": 2 }
+        ],
+        "handoff_conditions": [
+          { "reason": "customer_requested_human", "enabled": true },
+          { "reason": "insufficient_evidence", "enabled": true },
+          { "reason": "negative_sentiment", "enabled": true }
+        ],
+        "fallback_message": "確認して担当者におつなぎします。"
+      }
+    }
+  ]
+}

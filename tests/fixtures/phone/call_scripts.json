@@ -1,0 +1,51 @@
+{
+  "scripts": [
+    {
+      "script_id": "answerable_faq",
+      "description": "S1: 営業時間FAQは根拠付きで回答される",
+      "utterances": [{ "type": "speech", "text": "営業時間を教えてください" }],
+      "expect": { "ai_action": "answer_with_citations", "min_citations": 1 }
+    },
+    {
+      "script_id": "insufficient_evidence",
+      "description": "S2: 未登録の返金条件は断定せず転送する",
+      "utterances": [
+        { "type": "speech", "text": "この契約で返金を確約できますか？" }
+      ],
+      "expect": { "ai_action": "handoff", "reasons": ["high_risk_intent", "insufficient_evidence"] }
+    },
+    {
+      "script_id": "customer_requested_human",
+      "description": "S3: 「人につないで」は1ターンで転送に入る",
+      "utterances": [{ "type": "speech", "text": "人につないでください" }],
+      "expect": { "ai_action": "handoff", "reasons": ["customer_requested_human"] }
+    },
+    {
+      "script_id": "low_asr_confidence",
+      "description": "ASR信頼度が低い発話は聞き返し、繰り返しで転送する",
+      "utterances": [
+        { "type": "speech", "text": "えー、あの", "asr_confidence": 0.2 },
+        { "type": "speech", "text": "えっと", "asr_confidence": 0.2 },
+        { "type": "speech", "text": "うーん", "asr_confidence": 0.2 }
+      ],
+      "expect": { "final_ai_action": "handoff", "reasons": ["low_asr_confidence"] }
+    },
+    {
+      "script_id": "barge_in",
+      "description": "AI発話中の割り込みは顧客発話を優先する",
+      "utterances": [
+        { "type": "speech", "text": "料金プランを教えてください" },
+        { "type": "barge_in", "text": "やっぱり営業時間を教えて" }
+      ],
+      "expect": { "barge_in_recorded": true }
+    },
+    {
+      "script_id": "provider_failure",
+      "description": "S8: LLM障害時は無音にせず人間転送へ倒す",
+      "utterances": [
+        { "type": "provider_failure", "failed_provider": "llm" }
+      ],
+      "expect": { "ai_action": "handoff", "reasons": ["provider_failure"] }
+    }
+  ]
+}

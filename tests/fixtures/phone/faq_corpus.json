@@ -1,0 +1,29 @@
+{
+  "collection_id": "phone_faq",
+  "documents": [
+    {
+      "document_id": "FAQ-HOURS",
+      "text": "当社の営業時間は平日9時から18時までです。土日祝日は休業です。営業時間内はオペレーターが対応します。",
+      "approval_status": "approved",
+      "effective_date": "2026-06-01"
+    },
+    {
+      "document_id": "FAQ-PRICING",
+      "text": "スタンダードプランの料金は月額5000円です。プレミアムプランの料金は月額12000円で、優先サポートが含まれます。",
+      "approval_status": "approved",
+      "effective_date": "2026-06-01"
+    },
+    {
+      "document_id": "FAQ-DOCS",
+      "text": "製品資料とカタログは、お客様の登録住所またはメールアドレスへ送付できます。資料請求の受付後、3営業日以内に発送します。",
+      "approval_status": "approved",
+      "effective_date": "2026-06-01"
+    },
+    {
+      "document_id": "FAQ-OLD-PRICING",
+      "text": "旧料金プランは月額3000円です。この案内は旧版です。",
+      "approval_status": "obsolete",
+      "effective_date": "2024-01-01"
+    }
+  ]
+}
