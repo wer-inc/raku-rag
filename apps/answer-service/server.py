@@ -102,6 +102,11 @@ from raku_rag.persistence.phone_models import (  # noqa: E402
     PostgresPhoneQualityRepository,
     PostgresPhoneScenarioRepository,
 )
+from raku_rag.persistence.lexicon import (  # noqa: E402
+    InMemoryLexiconRepository,
+    PostgresLexiconRepository,
+)
+from raku_rag.services.lexicon import LexiconError, LexiconService  # noqa: E402
 from raku_rag.persistence.uploads import (  # noqa: E402
     InMemoryUploadRecordRepository,
     PostgresUploadRecordRepository,
@@ -1567,6 +1572,13 @@ def _phone_quality_repository_for(system: ProductionSystem):
     return InMemoryPhoneQualityRepository()
 
 
+def _lexicon_repository_for(system: ProductionSystem):
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return PostgresLexiconRepository(conn)
+    return InMemoryLexiconRepository()
+
+
 def _upload_record_repository_for(system: ProductionSystem):
     conn = getattr(system, "_conn", None)
     if isinstance(system, ProductionSystem) and conn is not None:
@@ -1729,12 +1741,18 @@ def make_handler(system: ProductionSystem):
             _phone_quality_repository_for(system), audit=manufacturing_system.audit
         ),
         audit=manufacturing_system.audit,
+        lexicon=None,
     )
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()
     investment_api = InvestmentApiService()
     # 0045: server-issued S3 upload provenance — presign registers, ingest resolves + consumes.
     upload_records = _upload_record_repository_for(system)
+    # ★V2 tenant_lexicon: per-tenant vocabulary extensions, shared across the three channels.
+    lexicon = LexiconService(_lexicon_repository_for(system), audit=manufacturing_system.audit)
+    manufacturing_system.lexicon = lexicon
+    chatbot._lexicon = lexicon
+    phone._lexicon = lexicon
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, payload: dict) -> None:
@@ -1939,6 +1957,18 @@ def make_handler(system: ProductionSystem):
                     )
                 elif parts == ["internal", "manufacturing", "governance", "status"]:
                     self._send(200, manufacturing_system.governance_status(self._tenant_header()))
+                elif len(parts) == 4 and parts[:3] == ["internal", "admin", "lexicon"]:
+                    principal = _claims_from_headers(self.headers)
+                    self._send(
+                        200,
+                        {
+                            "namespace": parts[3],
+                            "entries": {
+                                k: list(v)
+                                for k, v in lexicon.entries(principal.tenant_id, parts[3]).items()
+                            },
+                        },
+                    )
                 elif parts == ["internal", "manufacturing", "audit", "evidence-pack"]:
                     # ★1: the audit hash chain rendered as a monthly compliance artifact
                     # (reference IDs only; includes the chain verification verdict).
@@ -3234,6 +3264,23 @@ def make_handler(system: ProductionSystem):
                             body,
                             actor=self.headers.get("x-raku-user-id") or "unknown",
                         ),
+                    )
+                elif len(parts) == 5 and parts[:3] == ["internal", "admin", "lexicon"]:
+                    principal = _claims_from_headers(self.headers)
+                    try:
+                        values = lexicon.update(
+                            principal.tenant_id,
+                            parts[3],
+                            parts[4],
+                            list(body.get("values") or []),
+                            actor_id=principal.user_id,
+                        )
+                    except LexiconError as exc:
+                        self._send(422, {"error": exc.code})
+                        return
+                    self._send(
+                        200,
+                        {"namespace": parts[3], "key": parts[4], "values": list(values)},
                     )
                 elif len(parts) == 3 and parts[:2] == ["internal", "admin"] and parts[2] == "acl":
                     self._send(

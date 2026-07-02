@@ -304,6 +304,7 @@ class RuleHighRiskClassifier:
         query: str,
         candidate_metadata: Sequence[ManufacturingDocumentMetadata],
         intent_hint: str | None = None,
+        extra_keywords: "Mapping[str, tuple[str, ...]] | None" = None,
     ) -> HighRiskClassification:
         reason_codes: list[str] = []
         first_source: ClassificationSource | None = None
@@ -316,7 +317,7 @@ class RuleHighRiskClassifier:
 
         # --- (2) RULE + KEYWORD stage --------------------------------------------------------------
         haystack = f"{query} {intent_hint or ''}".lower()
-        intent_codes = self._intent_reason_codes(haystack)
+        intent_codes = self._intent_reason_codes(haystack, extra_keywords)
         if intent_codes:
             if first_source is None:
                 first_source = ClassificationSource.KEYWORD
@@ -373,9 +374,15 @@ class RuleHighRiskClassifier:
                         codes.append(code)
         return codes
 
-    def _intent_reason_codes(self, haystack: str) -> list[str]:
+    def _intent_reason_codes(self, haystack: str, extra_keywords=None) -> list[str]:
         codes: list[str] = []
-        for code, keywords in _INTENT_KEYWORDS.items():
+        merged: dict[str, tuple[str, ...]] = dict(_INTENT_KEYWORDS)
+        # ★V2 tenant_lexicon: per-tenant vocabulary EXTENDS the built-in danger sets — union only,
+        # so detection can be widened for a new industry but never weakened.
+        for code, extras in (extra_keywords or {}).items():
+            base = merged.get(code, ())
+            merged[code] = (*base, *tuple(k.lower() for k in extras if k))
+        for code, keywords in merged.items():
             if any(kw in haystack for kw in keywords):
                 codes.append(code)
         return codes

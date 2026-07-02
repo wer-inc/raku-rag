@@ -73,10 +73,16 @@ _INTENT_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def classify_intent(text: str, current: str | None) -> str:
+def classify_intent(text: str, current: str | None, extra_keywords: dict | None = None) -> str:
     lowered = text.lower()
+    # ★V2 tenant_lexicon: tenant vocabulary EXTENDS the built-in intent sets (union only).
+    extras = extra_keywords or {}
     for intent, keywords in _INTENT_KEYWORDS:
-        if any(k in lowered for k in keywords):
+        merged = (*keywords, *tuple(extras.get(intent, ())))
+        if any(k in lowered for k in merged):
+            return intent
+    for intent, keywords in extras.items():
+        if intent not in dict(_INTENT_KEYWORDS) and any(k in lowered for k in keywords):
             return intent
     return current or "faq"
 
@@ -97,6 +103,7 @@ class PhoneCallService:
         rules: HandoffRules | None = None,
         quality: PhoneQualityService | None = None,
         audit=None,
+        lexicon=None,
     ) -> None:
         self._gateway = answer_gateway
         self._repo = repository
@@ -108,6 +115,7 @@ class PhoneCallService:
         self._rules = rules or HandoffRules()
         self._quality = quality
         self._audit = audit
+        self._lexicon = lexicon
 
     # --- public API (internal HTTP surface) ----------------------------------------------------
 
@@ -425,6 +433,14 @@ class PhoneCallService:
             "status": "completed",
         }
 
+    def _lexicon_extras(self, namespace: str, tenant_id: str) -> dict:
+        if self._lexicon is None:
+            return {}
+        try:
+            return self._lexicon.entries(tenant_id, namespace)
+        except Exception:  # noqa: BLE001 — lexicon outage must not break call handling
+            return {}
+
     def _record_lifecycle_audit(
         self, principal: IdentityClaims, *, action: str, resource_id: str, decision: str
     ) -> None:
@@ -649,7 +665,9 @@ class PhoneCallService:
         caller_turn.sentiment = sentiment
 
         if text:
-            intent = classify_intent(text, call.intent)
+            intent = classify_intent(
+                text, call.intent, self._lexicon_extras("phone.intents", principal.tenant_id)
+            )
             caller_turn.intent = intent
             if intent != "human_handoff":
                 call.intent = intent

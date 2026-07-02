@@ -707,7 +707,7 @@ class ChatbotService:
         rag_text = self._expand_quick_reply_for_rag(session, text)
 
         user_message = self._add_message(session, "user", display_text)
-        intent = self._classify_intent(rag_text, session.current_intent)
+        intent = self._classify_intent(rag_text, session.current_intent, session.tenant_id)
         if intent not in {"confirm", "needs_clarification", "security_refusal"}:
             session.current_intent = intent
         session.last_message_at = _now()
@@ -2039,7 +2039,18 @@ class ChatbotService:
         non_rag_intents = {"cancel_subscription", "confirm", "human_handoff", "high_risk"}
         return "rag_question" in allowed_intents and current_intent not in non_rag_intents
 
-    def _classify_intent(self, text: str, current: str | None) -> str:
+    def _lexicon_words(self, namespace: str, tenant_id: str) -> tuple[str, ...]:
+        """★V2 tenant_lexicon: additive trigger vocabulary; no lexicon/tenant -> empty (defaults)."""
+        lexicon = getattr(self, "_lexicon", None)
+        if lexicon is None or not tenant_id:
+            return ()
+        try:
+            entries = lexicon.entries(tenant_id, namespace)
+        except Exception:  # noqa: BLE001 — lexicon outage must not break chat
+            return ()
+        return tuple(w for values in entries.values() for w in values)
+
+    def _classify_intent(self, text: str, current: str | None, tenant_id: str = "") -> str:
         normalized = text.lower()
         if self._is_confirmation(text):
             return "confirm"
@@ -2048,7 +2059,15 @@ class ChatbotService:
         if self._needs_clarification(text):
             return "needs_clarification"
         if any(
-            word in normalized for word in ("人間", "担当者", "オペレーター", "human", "operator")
+            word in normalized
+            for word in (
+                "人間",
+                "担当者",
+                "オペレーター",
+                "human",
+                "operator",
+                *self._lexicon_words("chat.handoff_triggers", tenant_id),
+            )
         ):
             return "human_handoff"
         if any(
