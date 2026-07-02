@@ -480,6 +480,16 @@ class AnswerService:
             citation_anchor_threshold = self._citation_anchor_threshold(
                 query_anchor_terms, evidence
             )
+            # Answer-number attribution (stg live finding 2026-07-02): when the ANSWER carries
+            # digit-bearing terms (45/nm/m10 …), the chunk holding those numbers is the true
+            # source even if plain term overlap favors a fluent same-language lookalike (a
+            # Textract-OCR'd English PDF lost attribution to a Japanese torque doc this way).
+            ans_anchor_terms = {t for t in ans_terms if any(ch.isdigit() for ch in t)}
+            best_ans_anchor_hits = (
+                max((len(ans_anchor_terms & _terms(s.chunk.text)) for s in evidence), default=0)
+                if ans_anchor_terms
+                else 0
+            )
             citations: list[Citation] = []
             used: list[str] = []
             freshness: list[Freshness] = []
@@ -488,7 +498,14 @@ class AnswerService:
             for s in evidence:
                 c = s.chunk
                 chunk_terms = _terms(c.text)
-                if len(ans_terms & chunk_terms) < citation_overlap_threshold:
+                ans_anchor_hits = len(ans_anchor_terms & chunk_terms) if ans_anchor_terms else 0
+                carries_answer_numbers = (
+                    best_ans_anchor_hits > 0 and ans_anchor_hits == best_ans_anchor_hits
+                )
+                if (
+                    len(ans_terms & chunk_terms) < citation_overlap_threshold
+                    and not carries_answer_numbers
+                ):
                     continue  # cite only chunks that actually support the answer (FR-012)
                 doc = self._get_document(c.tenant_id, c.document_id)
                 if (
