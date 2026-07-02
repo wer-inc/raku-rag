@@ -988,7 +988,8 @@ export class RakuRagStack extends cdk.Stack {
       });
       const phoneAdapterSecurityGroup = new ec2.SecurityGroup(this, "ConnectPhoneAdapterSg", {
         vpc,
-        description: "Connect phone adapter Lambda -> internal answer-service",
+        // EC2 SG descriptions reject '>' (allowed: a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*).
+        description: "Connect phone adapter Lambda to internal answer-service",
         allowAllOutbound: true
       });
       const phoneAdapter = new lambda.Function(this, "ConnectPhoneAdapter", {
