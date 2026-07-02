@@ -1,6 +1,6 @@
 # 0047 — ファイル画面アップロードの S3 presign metadata 署名漏れ(系統 = production / upload)
 
-> Priority: **P0 / High** / Status: Open / Labels: `production`, `upload`, `files`, `aws`
+> Priority: **P0 / High** / Status: **Resolved(repo-side, live smoke pending cognito deploy)** / Labels: `production`, `upload`, `files`, `aws`
 
 ## 背景(なぜ今)
 
@@ -64,3 +64,13 @@ Playwright で確認した。
 - `apps/web/app/components/FullSaasScreen.tsx`
 - `apps/web/app/globals.css`
 - AWS SDK `@aws-sdk/s3-request-presigner` `unhoistableHeaders` / `signableHeaders`
+
+## 対応メモ
+
+- 署名修正は `bb61c4f fix(web): sign file upload metadata headers` で実装済み
+  (`getSignedUrl` に `signableHeaders`/`unhoistableHeaders` を明示)。
+- 2026-07-02: 契約テスト `tests/contract/test_upload_presign_route.py` で
+  signableHeaders / unhoistableHeaders / tenant prefix / 登録先行(0045)をソース固定。
+- `/files` は list view 化済み(`fb-list-row`)。
+- 残: cognito デプロイ後の live smoke(presign 200 → S3 PUT 200 → ingest)。手順は
+  `docs/deploy/cognito-stg-runbook.md` §3。

@@ -57,7 +57,7 @@ const OPENAPI_DOC = {
       },
       IngestRequest: {
         type: "object",
-        required: ["collection_id", "source_id", "document_id", "ref"],
+        required: ["collection_id", "source_id", "document_id"],
         properties: {
           collection_id: { type: "string" },
           source_id: { type: "string" },
@@ -65,10 +65,43 @@ const OPENAPI_DOC = {
           ref: {
             type: "string",
             description:
-              "Connector ref. Production S3 uploads must use an allowed bucket and tenants/<tenant>/uploads/... key.",
+              "Connector ref. Production S3 uploads must use an allowed bucket and tenants/<tenant>/uploads/... key. Optional when upload_id is supplied.",
+          },
+          upload_id: {
+            type: "string",
+            description:
+              "Server-issued upload provenance id (POST /v1/uploads). The server resolves bucket/key from the registered record and consumes it once; if ref is also present they must match.",
           },
           content_type: { type: "string" },
           manufacturing: { $ref: "#/components/schemas/ManufacturingIngestMetadata" },
+        },
+      },
+      UploadRegisterRequest: {
+        type: "object",
+        required: ["upload_id", "bucket", "object_key"],
+        properties: {
+          upload_id: { type: "string" },
+          bucket: { type: "string" },
+          object_key: { type: "string" },
+          content_type: { type: "string" },
+          content_length: { type: "integer" },
+          filename: { type: "string" },
+        },
+      },
+      UploadRegisterResponse: {
+        type: "object",
+        required: ["tenant_id", "upload_id", "bucket", "object_key", "expires_at"],
+        properties: {
+          tenant_id: { type: "string" },
+          upload_id: { type: "string" },
+          bucket: { type: "string" },
+          object_key: { type: "string" },
+          content_type: { type: "string" },
+          content_length: { type: "integer", nullable: true },
+          filename: { type: "string" },
+          created_at: { type: "string" },
+          expires_at: { type: "string" },
+          consumed_at: { type: "string", nullable: true },
         },
       },
       ManufacturingIngestMetadata: {
@@ -3896,6 +3929,37 @@ const OPENAPI_DOC = {
               "application/json": { schema: { $ref: "#/components/schemas/ErrorResponse" } },
             },
           },
+        },
+      },
+    },
+    "/uploads": {
+      post: {
+        operationId: "registerUpload",
+        security: [{ bearerAuth: [], userToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/UploadRegisterRequest" } },
+          },
+        },
+        responses: {
+          "201": {
+            description:
+              "Upload provenance registered (one-time-use, expiring). Ingest resolves upload_id from this record.",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/UploadRegisterResponse" } },
+            },
+          },
+          "400": { description: "upload_id, bucket and object_key are required", content: { "application/json": {} } },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Bucket not allowed or key outside the tenant prefix", content: { "application/json": {} } },
+          "409": { description: "upload_id already registered", content: { "application/json": {} } },
+          "502": { description: "Ingestion service unavailable", content: { "application/json": {} } },
         },
       },
     },

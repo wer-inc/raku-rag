@@ -1,4 +1,12 @@
-import { BadGatewayException, Body, Controller, HttpCode, Post, Req } from "@nestjs/common";
+import {
+  BadGatewayException,
+  BadRequestException,
+  Body,
+  Controller,
+  HttpCode,
+  Post,
+  Req,
+} from "@nestjs/common";
 import type { Request } from "express";
 import type { IngestRequest, IngestResponse } from "@raku-rag/shared";
 import { internalAuthHeaders } from "../auth/internal-auth";
@@ -10,6 +18,9 @@ export class IngestController {
   @HttpCode(202)
   async ingest(@Req() req: Request, @Body() body: IngestRequest): Promise<IngestResponse> {
     const p = req.principal!;
+    if (!body?.ref && !body?.upload_id) {
+      throw new BadRequestException("ref or upload_id is required");
+    }
     assertDocumentRefOwnedByTenant(body?.ref, p.tenant_id);
     const base = process.env.ANSWER_SERVICE_URL ?? "http://127.0.0.1:8088";
     const payload = {
@@ -21,6 +32,9 @@ export class IngestController {
       source_id: body?.source_id,
       document_id: body?.document_id,
       document_ref: body?.ref,
+      // 0045: the answer-service resolves upload_id -> (bucket, key) from the registered
+      // provenance record and consumes it on success (one-time use).
+      upload_id: body?.upload_id,
       content_type: body?.content_type ?? "text/plain",
       // P1-1: forward optional manufacturing approval/safety metadata so the answer-service persists
       // it on the Document (the safety overlay resolves approval state from there).

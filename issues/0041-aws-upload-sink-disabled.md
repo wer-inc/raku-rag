@@ -1,6 +1,6 @@
 # 0041 — AWS Cognito deploy disables file upload sink (area = production / upload)
 
-> Priority: **P1/High** / Status: In Progress / Labels: `production`, `upload`, `aws-nextjs`, `ux`
+> Priority: **P1/High** / Status: **Resolved(repo-side; live 検証は cognito デプロイ時)** / Labels: `production`, `upload`, `aws-nextjs`, `ux`
 
 ## 背景(なぜ今)
 
@@ -101,3 +101,7 @@
 - 2026-06-29 local fix: split `RAKU_ENABLE_UPLOAD_PRESIGN` from the legacy inline
   `RAKU_ENABLE_UPLOAD_SINK`; Cognito/dev enable S3 presign, inline fallback remains dev-only.
   Pending deploy before the live sales URL changes behavior.
+
+- 2026-07-02: presign 有効化(cognito/dev)+inline fallback dev 限定は CDK/route に実装済みで
+  develop に載っている。0044/0045/0047 の provenance/署名/prefix 強化も同経路に統合。
+  live 検証手順は `docs/deploy/cognito-stg-runbook.md`(sales URL は廃止、stg で確認)。

@@ -102,6 +102,11 @@ from raku_rag.persistence.phone_models import (  # noqa: E402
     PostgresPhoneQualityRepository,
     PostgresPhoneScenarioRepository,
 )
+from raku_rag.persistence.uploads import (  # noqa: E402
+    InMemoryUploadRecordRepository,
+    PostgresUploadRecordRepository,
+    build_upload_record,
+)
 from raku_rag.phone import PhoneCallService, PhoneScenarioService  # noqa: E402
 from raku_rag.phone.quality import PhoneQualityService  # noqa: E402
 from raku_rag.phone.interfaces import CallableAnswerGateway  # noqa: E402
@@ -1018,7 +1023,9 @@ def _empty_datasource_document_counts() -> dict:
 
 def _safe_datasource_display_name(source: dict) -> str:
     config = source.get("config") if isinstance(source.get("config"), dict) else {}
-    display_name = config.get("display_name") or source.get("display_name") or source.get("source_id")
+    display_name = (
+        config.get("display_name") or source.get("display_name") or source.get("source_id")
+    )
     return str(display_name or "")
 
 
@@ -1038,7 +1045,9 @@ def _safe_datasource_credential_status(source: dict) -> str:
     return "missing"
 
 
-def _datasource_sync_overview(runs: IngestionRunStore, tenant_id: str, source_id: str) -> dict | None:
+def _datasource_sync_overview(
+    runs: IngestionRunStore, tenant_id: str, source_id: str
+) -> dict | None:
     state = runs.source_sync_state(tenant_id, source_id)
     if state is None:
         return None
@@ -1402,14 +1411,21 @@ def _tenant_upload_prefix(tenant_id: str) -> str:
 
 def _allowed_ingest_buckets() -> set[str]:
     raw: list[str] = []
-    for name in ("RAKU_ALLOWED_INGEST_BUCKETS", "RAKU_UPLOAD_BUCKET", "DOCUMENT_BUCKET", "S3_BUCKET"):
+    for name in (
+        "RAKU_ALLOWED_INGEST_BUCKETS",
+        "RAKU_UPLOAD_BUCKET",
+        "DOCUMENT_BUCKET",
+        "S3_BUCKET",
+    ):
         value = os.environ.get(name, "")
         raw.extend(part.strip() for part in value.split(",") if part.strip())
     return set(raw)
 
 
 def _max_upload_object_bytes() -> int:
-    raw = os.environ.get("RAKU_MAX_UPLOAD_OBJECT_BYTES") or os.environ.get("RAKU_MAX_DOCUMENT_BYTES")
+    raw = os.environ.get("RAKU_MAX_UPLOAD_OBJECT_BYTES") or os.environ.get(
+        "RAKU_MAX_DOCUMENT_BYTES"
+    )
     try:
         value = int(raw) if raw else _DEFAULT_MAX_UPLOAD_OBJECT_BYTES
     except ValueError:
@@ -1447,9 +1463,7 @@ def _verify_upload_s3_ref(connector, document_ref: str, tenant_id: str) -> None:
     if content_length > _max_upload_object_bytes():
         raise ValueError("S3 upload object exceeds maximum ingest size")
     metadata = {
-        str(k).lower(): str(v)
-        for k, v in dict(info.get("metadata") or {}).items()
-        if k is not None
+        str(k).lower(): str(v) for k, v in dict(info.get("metadata") or {}).items() if k is not None
     }
     tenant_marker = metadata.get("raku-tenant-id")
     if tenant_marker != quote(tenant_id, safe="")[:180]:
@@ -1551,6 +1565,22 @@ def _phone_quality_repository_for(system: ProductionSystem):
     if isinstance(system, ProductionSystem) and conn is not None:
         return PostgresPhoneQualityRepository(conn)
     return InMemoryPhoneQualityRepository()
+
+
+def _upload_record_repository_for(system: ProductionSystem):
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return PostgresUploadRecordRepository(conn)
+    return InMemoryUploadRecordRepository()
+
+
+def _upload_record_ttl_seconds() -> int:
+    raw = os.environ.get("RAKU_UPLOAD_RECORD_TTL_SECONDS") or ""
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 24 * 60 * 60
+    return value if value > 0 else 24 * 60 * 60
 
 
 def _source_sync_queue_from_env():
@@ -1703,6 +1733,8 @@ def make_handler(system: ProductionSystem):
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()
     investment_api = InvestmentApiService()
+    # 0045: server-issued S3 upload provenance — presign registers, ingest resolves + consumes.
+    upload_records = _upload_record_repository_for(system)
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, payload: dict) -> None:
@@ -1785,9 +1817,7 @@ def make_handler(system: ProductionSystem):
                     and parts[4] == "quality-evaluations"
                 ):
                     self._send_result(
-                        phone.list_quality_evaluations(
-                            _claims_from_headers(self.headers), parts[3]
-                        )
+                        phone.list_quality_evaluations(_claims_from_headers(self.headers), parts[3])
                     )
                 elif parts == ["internal", "phone", "metrics"]:
                     qs = parse_qs(parsed.query)
@@ -2283,13 +2313,9 @@ def make_handler(system: ProductionSystem):
                         chatbot.rollback_scenario(_claims_from_headers(self.headers), parts[3])
                     )
                 elif parts == ["internal", "phone", "calls", "simulate"]:
-                    self._send_result(
-                        phone.simulate_call(_claims_from_headers(self.headers), body)
-                    )
+                    self._send_result(phone.simulate_call(_claims_from_headers(self.headers), body))
                 elif parts == ["internal", "phone", "calls", "export"]:
-                    self._send_result(
-                        phone.export_calls(_claims_from_headers(self.headers), body)
-                    )
+                    self._send_result(phone.export_calls(_claims_from_headers(self.headers), body))
                 elif (
                     len(parts) == 5
                     and parts[:3] == ["internal", "phone", "calls"]
@@ -2554,11 +2580,89 @@ def make_handler(system: ProductionSystem):
                     collection_id = body.get("collection_id")
                     top_k = body.get("top_k")
                     self._send(200, _search_json(system, principal, query, collection_id, top_k))
-                elif path == "/internal/ingest":
-                    principal = _claims(body)
-                    for field in ("collection_id", "source_id", "document_id", "document_ref"):
+                elif path == "/internal/uploads":
+                    # 0045: register upload provenance BEFORE the browser gets a presigned PUT URL.
+                    # Identity comes from the signed headers; the record is the only thing ingest
+                    # will later trust for upload_id -> (bucket, key) resolution.
+                    principal = _claims_from_headers(self.headers)
+                    for field in ("upload_id", "bucket", "object_key"):
                         if not body.get(field):
                             raise KeyError(field)
+                    upload_id = str(body["upload_id"])
+                    if upload_records.get(principal.tenant_id, upload_id) is not None:
+                        self._send(409, {"error": "upload_id already registered"})
+                        return
+                    try:
+                        declared_length = (
+                            int(body["content_length"])
+                            if body.get("content_length") is not None
+                            else None
+                        )
+                    except (TypeError, ValueError):
+                        declared_length = None
+                    record = build_upload_record(
+                        tenant_id=principal.tenant_id,
+                        upload_id=upload_id,
+                        user_id=principal.user_id,
+                        bucket=str(body["bucket"]),
+                        object_key=str(body["object_key"]),
+                        content_type=str(body.get("content_type") or ""),
+                        content_length=declared_length,
+                        filename=str(body.get("filename") or ""),
+                        ttl_seconds=_upload_record_ttl_seconds(),
+                    )
+                    upload_records.save(record)
+                    self._send(201, {"tenant_id": principal.tenant_id, **record.public()})
+                elif path == "/internal/ingest":
+                    principal = _claims(body)
+                    for field in ("collection_id", "source_id", "document_id"):
+                        if not body.get(field):
+                            raise KeyError(field)
+                    # 0045: an upload_id resolves bucket/key from the server-issued provenance
+                    # record (one-time-use, expiring) instead of trusting the caller's raw ref.
+                    upload_record = None
+                    upload_id = str(body.get("upload_id") or "")
+                    if upload_id:
+                        upload_record = upload_records.get(principal.tenant_id, upload_id)
+                        if upload_record is None:
+                            self._send(
+                                200,
+                                _failed_ingest_response(body, "unknown upload_id for this tenant"),
+                            )
+                            return
+                        if upload_record.consumed_at:
+                            self._send(
+                                200,
+                                _failed_ingest_response(body, "upload already consumed"),
+                            )
+                            return
+                        if upload_record.is_expired():
+                            self._send(200, _failed_ingest_response(body, "upload record expired"))
+                            return
+                        record_ref = f"s3://{upload_record.bucket}/{upload_record.object_key}"
+                        if body.get("document_ref") and str(body["document_ref"]) != record_ref:
+                            self._send(
+                                200,
+                                _failed_ingest_response(
+                                    body, "document_ref does not match the upload record"
+                                ),
+                            )
+                            return
+                        body["document_ref"] = record_ref
+                    elif not body.get("document_ref"):
+                        raise KeyError("document_ref")
+                    elif os.environ.get("RAKU_REQUIRE_UPLOAD_RECORD") == "1" and str(
+                        body["document_ref"]
+                    ).startswith("s3://"):
+                        # Strict provenance mode: raw s3 refs without a registered record are
+                        # refused (flip after all upload clients send upload_id).
+                        self._send(
+                            200,
+                            _failed_ingest_response(
+                                body, "s3 ingest requires a registered upload_id"
+                            ),
+                        )
+                        return
                     original_ref = str(body["document_ref"])
                     content_type = str(body.get("content_type") or "text/plain")
                     try:
@@ -2566,9 +2670,7 @@ def make_handler(system: ProductionSystem):
                     except Exception as verify_exc:
                         self._send(
                             200,
-                            _failed_ingest_response(
-                                body, f"invalid s3 document_ref: {verify_exc}"
-                            ),
+                            _failed_ingest_response(body, f"invalid s3 document_ref: {verify_exc}"),
                         )
                         return
                     try:
@@ -2608,6 +2710,16 @@ def make_handler(system: ProductionSystem):
                         content_type=content_type,
                         manufacturing_metadata=mfg_meta,
                     )
+                    # 0045: one-time consumption — a leaked ref/upload_id cannot be replayed.
+                    # Failed jobs keep the record open so the same upload can be retried.
+                    if upload_record is not None and job.status in {
+                        "queued",
+                        "running",
+                        "succeeded",
+                    }:
+                        upload_records.mark_consumed(
+                            principal.tenant_id, upload_id, job.ingestion_run_id
+                        )
                     _enqueue_upload_ingest_if_needed(source_sync_queue, runs, job)
                     self._send(
                         202 if job.status in {"queued", "running", "succeeded"} else 200,
