@@ -6321,6 +6321,8 @@ interface UploadForIngestResult {
   content_type: string;
   size?: number;
   storage?: string;
+  /** 0045: server-issued provenance id — sent to /v1/ingest so the ref resolves from the record */
+  upload_id?: string;
 }
 
 function formatFileSize(bytes: number): string {
@@ -6446,6 +6448,7 @@ async function uploadForIngest(file: File, token: string): Promise<UploadForInge
       content_type: contentType,
       size: typeof presign.size === "number" ? presign.size : file.size,
       storage: "s3",
+      upload_id: typeof presign.upload_id === "string" ? presign.upload_id : undefined,
     };
   }
 
@@ -6883,6 +6886,7 @@ function FileBrowserBody() {
               source_id: fileSourceId(uploadTarget.id),
               document_id: docId,
               ref: up.ref,
+              upload_id: up.upload_id,
               content_type: up.content_type,
               manufacturing: {
                 approval_status: approvalStatus,
@@ -7637,6 +7641,7 @@ function AddSourceBody() {
               source_id: requestSourceId,
               document_id: docId,
               ref: up.ref,
+              upload_id: up.upload_id,
               content_type: up.content_type,
               manufacturing: {
                 approval_status: approvalStatus,

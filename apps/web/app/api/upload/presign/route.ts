@@ -159,6 +159,31 @@ export async function POST(req: Request) {
   };
   const uploadHeaders = { "content-type": contentType, ...metadataHeaders };
 
+  // 0045: register the provenance record BEFORE the browser gets a PUT URL (fail-closed). Ingest
+  // resolves upload_id -> (bucket, key) from this record and consumes it once.
+  const registerRes = await fetch(`${publicOrigin(req)}/v1/uploads`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: req.headers.get("authorization") || "",
+      ...(req.headers.get("x-user-token")
+        ? { "x-user-token": req.headers.get("x-user-token") as string }
+        : {}),
+    },
+    cache: "no-store",
+    body: JSON.stringify({
+      upload_id: uploadId,
+      bucket,
+      object_key: key,
+      content_type: contentType,
+      content_length: size,
+      filename,
+    }),
+  }).catch(() => null);
+  if (!registerRes || !registerRes.ok) {
+    return jsonError("could not register upload before presigning", 502);
+  }
+
   const client = new S3Client({ region });
   const command = new PutObjectCommand({
     Bucket: bucket,

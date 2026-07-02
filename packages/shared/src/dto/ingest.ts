@@ -29,11 +29,40 @@ export interface IngestRequest {
   collection_id: string;
   source_id: string;
   document_id: string;
-  /** object-storage ref. Production S3 uploads must use tenants/<tenant>/uploads/... refs. */
-  ref: string;
+  /**
+   * object-storage ref. Production S3 uploads must use tenants/<tenant>/uploads/... refs.
+   * Optional when `upload_id` is supplied — the server then resolves bucket/key from the
+   * registered upload record (0045) and, if ref is also present, requires them to match.
+   */
+  ref?: string;
+  /** server-issued upload provenance id from POST /v1/uploads (one-time-use, expiring) */
+  upload_id?: string;
   content_type?: string;
   /** optional manufacturing approval/safety metadata (drives the safety overlay) */
   manufacturing?: ManufacturingIngestMetadata;
+}
+
+/** 0045 — register S3 upload provenance before the browser receives the presigned PUT URL. */
+export interface UploadRegisterRequest {
+  upload_id: string;
+  bucket: string;
+  object_key: string;
+  content_type?: string;
+  content_length?: number;
+  filename?: string;
+}
+
+export interface UploadRegisterResponse {
+  tenant_id: string;
+  upload_id: string;
+  bucket: string;
+  object_key: string;
+  content_type: string;
+  content_length: number | null;
+  filename: string;
+  created_at: string;
+  expires_at: string;
+  consumed_at: string | null;
 }
 
 export type IngestionRunStatus =

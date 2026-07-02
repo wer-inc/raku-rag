@@ -5,6 +5,7 @@ import { AnswerController } from "./answer/answer.controller";
 import { ManufacturingController } from "./manufacturing/manufacturing.controller";
 import { SearchController } from "./search/search.controller";
 import { IngestController } from "./ingest/ingest.controller";
+import { UploadsController } from "./ingest/uploads.controller";
 import { AdminJobsController } from "./admin/jobs.controller";
 import { AdminSettingsController } from "./admin/settings.controller";
 import { ProviderPoliciesController } from "./admin/provider-policies.controller";
@@ -36,6 +37,7 @@ import { BedrockCohereRerankService } from "./rerank/bedrock-cohere-rerank.servi
     ManufacturingController,
     SearchController,
     IngestController,
+    UploadsController,
     AdminJobsController,
     AdminSettingsController,
     ProviderPoliciesController,
@@ -73,6 +75,7 @@ export class AppModule implements NestModule {
         ManufacturingController,
         SearchController,
         IngestController,
+        UploadsController,
         AdminJobsController,
         AdminSettingsController,
         ProviderPoliciesController,

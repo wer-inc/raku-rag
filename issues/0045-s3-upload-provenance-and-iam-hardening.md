@@ -1,6 +1,6 @@
 # 0045 — S3 upload provenance を upload_id record と IAM 制約でさらに強化する(系統 = security / ingestion / architecture)
 
-> Priority: **P2 / Medium** / Status: Open / Labels: `security`, `ingestion`, `s3`, `defense-in-depth`
+> Priority: **P2 / Medium** / Status: **In Progress(provenance record landed 2026-07-02; IAM 絞り込みが残)** / Labels: `security`, `ingestion`, `s3`, `defense-in-depth`
 
 ## 背景(なぜ今)
 
@@ -76,3 +76,16 @@
 - `apps/answer-service/server.py`
 - `src/raku_rag/providers/connectors.py`
 - `infra/cdk/lib/raku-rag-stack.ts`
+
+## 対応メモ(2026-07-02 — provenance record 実装)
+
+- migration `0020_upload_records.sql`(RLS-forced, one-time `consumed_at`, `expires_at`)。
+- `/api/upload/presign` は presign **前に** `POST /v1/uploads` で record を登録(fail-closed)。
+- `/v1/ingest` / `/internal/ingest` は `upload_id` を受け、record から bucket/key を解決。
+  未登録/期限切れ/消費済み/record と ref 不一致は failed。成功時に `consumed_at` を原子的に記録
+  (再実行は "upload already consumed")。失敗 job は record を残す(リトライ可)。
+- strict mode: `RAKU_REQUIRE_UPLOAD_RECORD=1` で生の `s3://` ref(upload_id なし)を拒否。
+  全クライアントが upload_id を送るようになってから有効化(runbook §5)。
+- テスト: `tests/unit/test_upload_records.py` / `tests/integration/test_ingest_upload_provenance.py`
+  / `tests/contract/test_upload_presign_route.py`。実PG(raku_parity)で RLS 分離・原子的一回消費を smoke 済み。
+- 残: ECS task role の tenant/upload prefix への IAM 絞り込み(document bucket の他用途との共用状況の調査が先)。
