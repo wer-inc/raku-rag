@@ -5610,6 +5610,33 @@ function editableConfigValue(value: unknown): string {
   return "";
 }
 
+// S2-1 (#0034): live判定 — mirrors raku_rag.services.sync_scheduler.parse_sync_schedule so the
+// admin sees WHETHER the entered schedule will actually auto-run (previously it silently did not).
+function describeSyncSchedule(value: string): { label: string; active: boolean } {
+  const text = value.trim();
+  if (!text) return { label: "自動同期: 無効(未設定 — 手動同期のみ)", active: false };
+  const lower = text.toLowerCase();
+  if (["hourly", "毎時", "毎時間", "1時間ごと"].includes(lower)) {
+    return { label: "自動同期: 有効(毎時)", active: true };
+  }
+  if (["weekly", "毎週"].includes(lower)) {
+    return { label: "自動同期: 有効(7日ごと)", active: true };
+  }
+  const daily = text.match(/^(?:毎日|daily)\s*(?:([01]?\d|2[0-3])[:時]([0-5]\d)?\s*(?:分)?)?$/i);
+  if (daily) {
+    const hour = (daily[1] ?? "3").padStart(2, "0");
+    const minute = daily[2] ?? "00";
+    return { label: `自動同期: 有効(毎日 ${hour}:${minute})`, active: true };
+  }
+  const interval = text.match(/^(\d+)\s*(m|min|分|h|hour|時間|d|day|日)(?:ごと|毎|おき)?$/i);
+  if (interval) {
+    const unit = interval[2].toLowerCase();
+    const unitLabel = ["m", "min", "分"].includes(unit) ? "分" : ["d", "day", "日"].includes(unit) ? "日" : "時間";
+    return { label: `自動同期: 有効(${interval[1]}${unitLabel}ごと)`, active: true };
+  }
+  return { label: "自動同期: この形式は認識されません(自動同期されません)", active: false };
+}
+
 function editableConnectionValues(source: AdminDataSource, selectedConfig: AddSourceConfig): Record<string, string> {
   const config = (source.config ?? {}) as Record<string, unknown>;
   return Object.fromEntries(
@@ -5827,6 +5854,11 @@ function SourceConnectionEditPanel({ sourceId, onSaved }: { sourceId: string; on
                   {credentialConfigured
                     ? "保存済みの認証情報は表示しません。空欄のまま保存すると既存値を維持します。"
                     : "同期に必要な認証情報を入力してください。"}
+                </small>
+              )}
+              {field.id === "sync_schedule" && (
+                <small className="connector-field-help" role="status">
+                  {describeSyncSchedule(configValues[field.id] ?? "").label}
                 </small>
               )}
             </label>
