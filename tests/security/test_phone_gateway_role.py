@@ -136,9 +136,9 @@ class TestAdapterMasksCallerNumber(unittest.TestCase):
         adapter._cached_did_map = {
             "+815055550100": {"tenant_id": "tenant_a", "user_id": "phone-gateway", "groups": []}
         }
-        event = json.loads(
-            (ROOT / "tests/fixtures/phone/connect_events.json").read_text("utf-8")
-        )["call_start"]
+        event = json.loads((ROOT / "tests/fixtures/phone/connect_events.json").read_text("utf-8"))[
+            "call_start"
+        ]
         result = adapter.lambda_handler(event)
         self.assertEqual(result["ok"], "true")
 
