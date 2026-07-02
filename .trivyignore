@@ -33,6 +33,18 @@
 # Mitigated meanwhile: this app exposes no file-upload controller, and the public API sits behind the
 # PR-011 WAF/rate-limits. Availability-only. FOLLOW-UP: upgrade @nestjs/platform-express once it depends
 # on multer >=2.2.0, or switch to a package-manager override that reifies 2.2.0 and is proven by CI.
+# ── sigstore 3.1.0 (npm-CLI-bundled) — CVE-2026-48815 — certificateOIDs constraints not enforced ──
+# HIGH, 0 CRITICAL. Found ONLY at usr/local/lib/node_modules/npm/node_modules/sigstore — the copy
+# vendored inside the npm CLI that ships with the node:22-slim BASE image, in both api and web
+# runtime images. It is not an app dependency (`npm ls sigstore` is empty in all workspaces) and the
+# api container runs `node dist/...` (npm never executes); web's `npm run start` only shells out to
+# `next start` and performs no registry/signature operations, which is the vulnerable surface
+# (sigstore verifies npm provenance attestations during install/audit — never done at runtime).
+# Fix arrives when the base image bumps npm to one bundling sigstore >= 4.1.1. FOLLOW-UP: strip the
+# npm/corepack/yarn CLIs from the runtime stages (api can today; web needs its CMD moved off
+# `npm run start` first) — then this entry can be dropped and the gate will fail if it reappears.
+CVE-2026-48815
+
 CVE-2026-33671
 CVE-2026-2359
 CVE-2026-3304

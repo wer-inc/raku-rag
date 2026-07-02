@@ -29,7 +29,11 @@ import type {
 } from "@raku-rag/shared";
 import {
   PHONE_CALL_READ_ROLES,
+  PHONE_DELETE_ROLES,
   PHONE_HANDOFF_READ_ROLES,
+  PHONE_LIFECYCLE_ROLES,
+  PHONE_METRICS_ROLES,
+  PHONE_QA_ROLES,
   PHONE_SCENARIO_APPROVE_ROLES,
   PHONE_SCENARIO_MANAGE_ROLES,
   PHONE_SCENARIO_READ_ROLES,
@@ -94,6 +98,69 @@ export class PhoneController {
       req,
       "GET",
       `/internal/phone/calls/${encodeURIComponent(callId)}`,
+    );
+  }
+
+  // --- US4/US5: quality reviews, metrics, retention/export/deletion ------------------------
+
+  @Post("calls/:callId/quality-evaluations")
+  @HttpCode(201)
+  async createQualityEvaluation(
+    @Req() req: Request,
+    @Param("callId") callId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    assertAnyRoleAllowed(req, PHONE_QA_ROLES);
+    return this.forwarding.forward(
+      req,
+      "POST",
+      `/internal/phone/calls/${encodeURIComponent(callId)}/quality-evaluations`,
+      body,
+    );
+  }
+
+  @Get("calls/:callId/quality-evaluations")
+  async listQualityEvaluations(@Req() req: Request, @Param("callId") callId: string) {
+    assertAnyRoleAllowed(req, PHONE_QA_ROLES);
+    return this.forwarding.forward(
+      req,
+      "GET",
+      `/internal/phone/calls/${encodeURIComponent(callId)}/quality-evaluations`,
+    );
+  }
+
+  @Get("metrics")
+  async metrics(@Req() req: Request, @Query() query: Record<string, string>) {
+    assertAnyRoleAllowed(req, PHONE_METRICS_ROLES);
+    return this.forwarding.forward(req, "GET", "/internal/phone/metrics", undefined, query);
+  }
+
+  @Get("retention-policy")
+  async retentionPolicy(@Req() req: Request) {
+    assertAnyRoleAllowed(req, PHONE_LIFECYCLE_ROLES);
+    return this.forwarding.forward(req, "GET", "/internal/phone/retention-policy");
+  }
+
+  @Post("calls/export")
+  @HttpCode(202)
+  async exportCalls(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    assertAnyRoleAllowed(req, PHONE_LIFECYCLE_ROLES);
+    return this.forwarding.forward(req, "POST", "/internal/phone/calls/export", body);
+  }
+
+  @Post("calls/:callId/delete-request")
+  @HttpCode(202)
+  async deleteCallRequest(
+    @Req() req: Request,
+    @Param("callId") callId: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    assertAnyRoleAllowed(req, PHONE_DELETE_ROLES);
+    return this.forwarding.forward(
+      req,
+      "POST",
+      `/internal/phone/calls/${encodeURIComponent(callId)}/delete-request`,
+      body,
     );
   }
 

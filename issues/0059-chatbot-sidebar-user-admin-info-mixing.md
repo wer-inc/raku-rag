@@ -1,6 +1,21 @@
 # 0059 — ChatBot右側パネルで利用者向け情報と運用KPIが混在する(系統 = chatbot / UX)
 
-> Priority: **P1/High** / Status: Open / Labels: `chatbot`, `ux`, `admin-info`, `demo-readiness`
+> Priority: **P1/High** / Status: **Resolved (verified 2026-07-02)** / Labels: `chatbot`, `ux`, `admin-info`, `demo-readiness`
+
+## 解決の検証(2026-07-02, Sprint2 S2-2)
+
+現行 `FullSaasScreen.tsx` で DoD を突き合わせて確認済み:
+
+- ✅ 一般ユーザーのデフォルト表示に `会話数` / `確認依頼率` / `session` / `state` は出ない —
+  すべて `showOpsInfo`(= `canViewChatbotOps`: admin/tenant_admin/platform_admin/ops_owner のみ)
+  ゲート内、かつ折りたたみ `<details>「運用情報」` の中に隔離。
+- ✅ 利用者パネルは安心情報のみ: 利用状態 /「参照範囲」/ ナレッジ件数 /「承認済みデータのみ使用」/
+  確認依頼状態(`chatbot-conversation-status` セクション)。
+- ✅ `外部接続へ` の導線は chatbot 画面から撤去済み。
+- △ 参照範囲セレクタは右パネルではなく **入力フォームのメタ行** に残置(参照範囲が単一なら実質固定)。
+  DoD の字義(パネル非表示)は満たすが、複数参照範囲の一般ユーザーには選択肢が見える。これは
+  仕様判断としてこのまま採用(質問前に範囲を意識できる方が安全)。
+- モバイル幅の重なりは未計測(残タスクとして #0060 系のポリッシュに委譲)。
 
 ## 背景(なぜ今)
 

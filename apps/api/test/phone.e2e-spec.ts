@@ -262,6 +262,192 @@ describe("phone facade (e2e)", () => {
           return;
         }
 
+        if (req.method === "GET" && url.pathname === "/internal/phone/calls") {
+          res.end(
+            JSON.stringify({
+              api_version: "v1",
+              tenant_id: tenant,
+              items: [
+                {
+                  call_id: "call_1",
+                  started_at: "2026-07-02T00:00:00Z",
+                  ended_at: null,
+                  caller_phone_number_masked: "+81******1234",
+                  customer_id: "cust_1",
+                  intent: "faq",
+                  state: "handoff_pending",
+                  resolution_status: null,
+                  handoff_required: true,
+                  handoff_reason: "customer_requested_human",
+                  scenario_id: null,
+                  scenario_version_id: null,
+                },
+              ],
+              next_cursor: null,
+              filters: { phone_number: url.searchParams.get("phone_number") },
+              correlation_id: "corr_calls",
+            }),
+          );
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/internal/phone/calls/call_1") {
+          res.end(
+            JSON.stringify({
+              api_version: "v1",
+              tenant_id: tenant,
+              call_id: "call_1",
+              state: "handoff_pending",
+              started_at: "2026-07-02T00:00:00Z",
+              ended_at: null,
+              caller_phone_number_masked: "+81******1234",
+              customer_id: "cust_1",
+              intent: "faq",
+              summary: "営業時間の問い合わせ",
+              resolution_status: null,
+              scenario_id: null,
+              scenario_version_id: null,
+              recording_enabled: false,
+              recording_disclosure_played: false,
+              transcript_redaction_status: "auto",
+              transcript: [
+                {
+                  turn_id: "turn_001",
+                  sequence_no: 1,
+                  speaker: "caller",
+                  event_type: "speech",
+                  redacted_text: "営業時間を教えてください",
+                  created_at: "2026-07-02T00:00:01Z",
+                },
+              ],
+              handoff: null,
+              correlation_id: "corr_call_detail",
+            }),
+          );
+          return;
+        }
+
+        if (
+          req.method === "POST" &&
+          url.pathname === "/internal/phone/calls/call_1/quality-evaluations"
+        ) {
+          res.statusCode = 201;
+          res.end(
+            JSON.stringify({
+              api_version: "v1",
+              tenant_id: tenant,
+              evaluation_id: "eval_1",
+              call_id: "call_1",
+              reviewer_id: req.headers["x-raku-user-id"],
+              reviewed_at: "2026-07-02T00:00:00Z",
+              answer_correctness: body.answer_correctness ?? null,
+              tone_score: body.tone_score ?? null,
+              handoff_appropriateness: null,
+              compliance_issue: false,
+              hallucination_detected: Boolean(body.hallucination_detected),
+              privacy_issue: false,
+              suggested_fix: body.suggested_fix ?? null,
+              knowledge_gap_topics: body.knowledge_gap_topics ?? [],
+              review_status: "completed",
+              improvement_item_id: body.hallucination_detected ? "imp_1" : null,
+              correlation_id: "corr_eval",
+            }),
+          );
+          return;
+        }
+
+        if (
+          req.method === "GET" &&
+          url.pathname === "/internal/phone/calls/call_1/quality-evaluations"
+        ) {
+          res.end(
+            JSON.stringify({
+              api_version: "v1",
+              tenant_id: tenant,
+              items: [{ evaluation_id: "eval_1", call_id: "call_1", review_status: "completed" }],
+              correlation_id: "corr_eval_list",
+            }),
+          );
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/internal/phone/metrics") {
+          res.end(
+            JSON.stringify({
+              api_version: "v1",
+              tenant_id: tenant,
+              summary: {
+                call_count: 4,
+                answered_count: 4,
+                answer_rate: 1.0,
+                ai_containment_rate: 0.5,
+                handoff_rate: 0.5,
+                unresolved_rate: 0,
+                terminal_count: 4,
+                average_handle_time_seconds: 42.5,
+                p95_total_turn_latency_ms: 180,
+                p95_rag_latency_ms: 90,
+              },
+              top_handoff_reasons: [{ key: "customer_requested_human", count: 2 }],
+              top_intents: [{ key: "faq", count: 3 }],
+              knowledge_gap_topics: [{ key: "返金条件", count: 1 }],
+              range: { from: url.searchParams.get("from"), to: url.searchParams.get("to") },
+              correlation_id: "corr_metrics",
+            }),
+          );
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/internal/phone/retention-policy") {
+          res.end(
+            JSON.stringify({
+              api_version: "v1",
+              tenant_id: tenant,
+              recording_enabled_default: false,
+              transcript_retention_days: 365,
+              audio_retention_days: null,
+              export_retention_days: 30,
+              export_enabled: false,
+              correlation_id: "corr_policy",
+            }),
+          );
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/internal/phone/calls/export") {
+          res.statusCode = 202;
+          res.end(
+            JSON.stringify({
+              api_version: "v1",
+              tenant_id: tenant,
+              export_job_id: "exp_1",
+              status: "queued",
+              redacted: true,
+              correlation_id: "corr_export",
+            }),
+          );
+          return;
+        }
+
+        if (
+          req.method === "POST" &&
+          url.pathname === "/internal/phone/calls/call_1/delete-request"
+        ) {
+          res.statusCode = 202;
+          res.end(
+            JSON.stringify({
+              api_version: "v1",
+              tenant_id: tenant,
+              call_id: "call_1",
+              deletion_request_id: "del_1",
+              mode: body.mode ?? "redact",
+              status: "completed",
+              correlation_id: "corr_delete",
+            }),
+          );
+          return;
+        }
+
         res.statusCode = 500;
         res.end(JSON.stringify({ error: "wrong upstream route" }));
       });
@@ -514,5 +700,124 @@ describe("phone facade (e2e)", () => {
       .set("Authorization", auth)
       .set("X-User-Token", token);
     expect(res.status).toBe(403);
+  });
+
+  it("lists and reads call history with filters forwarded (US4)", async () => {
+    const { auth, token } = authed(["qa_reviewer"]);
+    const listRes = await request(app.getHttpServer())
+      .get("/v1/phone/calls?phone_number=1234&state=handoff_pending")
+      .set("Authorization", auth)
+      .set("X-User-Token", token);
+    expect(listRes.status).toBe(200);
+    expect(listRes.body.items[0].call_id).toBe("call_1");
+    expect(listRes.body.filters.phone_number).toBe("1234");
+
+    const detailRes = await request(app.getHttpServer())
+      .get("/v1/phone/calls/call_1")
+      .set("Authorization", auth)
+      .set("X-User-Token", token);
+    expect(detailRes.status).toBe(200);
+    expect(detailRes.body.caller_phone_number_masked).toBe("+81******1234");
+    expect(detailRes.body.transcript[0].redacted_text).toBe("営業時間を教えてください");
+  });
+
+  it("QA evaluation requires a QA-tier role and forwards reviewer identity (US4)", async () => {
+    const denied = authed(["operator"]);
+    const deniedRes = await request(app.getHttpServer())
+      .post("/v1/phone/calls/call_1/quality-evaluations")
+      .set("Authorization", denied.auth)
+      .set("X-User-Token", denied.token)
+      .send({ answer_correctness: 4 });
+    expect(deniedRes.status).toBe(403);
+    expect(received).toHaveLength(0);
+
+    const qa = authed(["qa_reviewer"]);
+    const res = await request(app.getHttpServer())
+      .post("/v1/phone/calls/call_1/quality-evaluations")
+      .set("Authorization", qa.auth)
+      .set("X-User-Token", qa.token)
+      .send({ hallucination_detected: true, knowledge_gap_topics: ["返金条件"] });
+    expect(res.status).toBe(201);
+    expect(res.body.evaluation_id).toBe("eval_1");
+    expect(res.body.improvement_item_id).toBe("imp_1");
+    expect(received[0].path).toBe("/internal/phone/calls/call_1/quality-evaluations");
+    expect(received[0].headers["x-raku-user-id"]).toBe("alice");
+
+    const listRes = await request(app.getHttpServer())
+      .get("/v1/phone/calls/call_1/quality-evaluations")
+      .set("Authorization", qa.auth)
+      .set("X-User-Token", qa.token);
+    expect(listRes.status).toBe(200);
+    expect(listRes.body.items).toHaveLength(1);
+  });
+
+  it("metrics are ops/admin only and forward the date range (US5)", async () => {
+    const denied = authed(["qa_reviewer"]);
+    const deniedRes = await request(app.getHttpServer())
+      .get("/v1/phone/metrics")
+      .set("Authorization", denied.auth)
+      .set("X-User-Token", denied.token);
+    expect(deniedRes.status).toBe(403);
+
+    const ops = authed(["ops_owner"]);
+    const res = await request(app.getHttpServer())
+      .get("/v1/phone/metrics?from=2026-07-01&to=2026-07-02")
+      .set("Authorization", ops.auth)
+      .set("X-User-Token", ops.token);
+    expect(res.status).toBe(200);
+    expect(res.body.summary.handoff_rate).toBe(0.5);
+    expect(res.body.range.from).toBe("2026-07-01");
+    expect(res.body.knowledge_gap_topics[0].key).toBe("返金条件");
+  });
+
+  it("retention policy read allows audit_admin, denies qa_reviewer (US4)", async () => {
+    const denied = authed(["qa_reviewer"]);
+    const deniedRes = await request(app.getHttpServer())
+      .get("/v1/phone/retention-policy")
+      .set("Authorization", denied.auth)
+      .set("X-User-Token", denied.token);
+    expect(deniedRes.status).toBe(403);
+
+    const auditAdmin = authed(["audit_admin"]);
+    const res = await request(app.getHttpServer())
+      .get("/v1/phone/retention-policy")
+      .set("Authorization", auditAdmin.auth)
+      .set("X-User-Token", auditAdmin.token);
+    expect(res.status).toBe(200);
+    expect(res.body.transcript_retention_days).toBe(365);
+    expect(res.body.export_enabled).toBe(false);
+  });
+
+  it("export accepts for lifecycle roles (US4)", async () => {
+    const ops = authed(["ops_owner"]);
+    const res = await request(app.getHttpServer())
+      .post("/v1/phone/calls/export")
+      .set("Authorization", ops.auth)
+      .set("X-User-Token", ops.token)
+      .send({ from: "2026-07-01" });
+    expect(res.status).toBe(202);
+    expect(res.body.status).toBe("queued");
+    expect(res.body.redacted).toBe(true);
+  });
+
+  it("delete-request is tenant_admin/audit_admin only (US4)", async () => {
+    const denied = authed(["ops_owner"]);
+    const deniedRes = await request(app.getHttpServer())
+      .post("/v1/phone/calls/call_1/delete-request")
+      .set("Authorization", denied.auth)
+      .set("X-User-Token", denied.token)
+      .send({ mode: "redact" });
+    expect(deniedRes.status).toBe(403);
+    expect(received).toHaveLength(0);
+
+    const admin = authed(["tenant_admin"]);
+    const res = await request(app.getHttpServer())
+      .post("/v1/phone/calls/call_1/delete-request")
+      .set("Authorization", admin.auth)
+      .set("X-User-Token", admin.token)
+      .send({ mode: "redact", reason: "customer_privacy_request" });
+    expect(res.status).toBe(202);
+    expect(res.body.status).toBe("completed");
+    expect(res.body.deletion_request_id).toBe("del_1");
   });
 });

@@ -1681,6 +1681,148 @@ const OPENAPI_DOC = {
           correlation_id: { type: "string" },
         },
       },
+      PhoneQualityEvaluationRequest: {
+        type: "object",
+        properties: {
+          answer_correctness: { type: "integer", nullable: true, minimum: 1, maximum: 5 },
+          tone_score: { type: "integer", nullable: true, minimum: 1, maximum: 5 },
+          handoff_appropriateness: { type: "integer", nullable: true, minimum: 1, maximum: 5 },
+          compliance_issue: { type: "boolean" },
+          hallucination_detected: { type: "boolean" },
+          privacy_issue: { type: "boolean" },
+          suggested_fix: { type: "string" },
+          knowledge_gap_topics: { type: "array", items: { type: "string" } },
+        },
+      },
+      PhoneQualityEvaluation: {
+        type: "object",
+        required: ["evaluation_id", "call_id", "reviewer_id", "reviewed_at", "review_status"],
+        properties: {
+          evaluation_id: { type: "string" },
+          call_id: { type: "string" },
+          reviewer_id: { type: "string" },
+          reviewed_at: { type: "string" },
+          answer_correctness: { type: "integer", nullable: true },
+          tone_score: { type: "integer", nullable: true },
+          handoff_appropriateness: { type: "integer", nullable: true },
+          compliance_issue: { type: "boolean" },
+          hallucination_detected: { type: "boolean" },
+          privacy_issue: { type: "boolean" },
+          suggested_fix: { type: "string", nullable: true },
+          knowledge_gap_topics: { type: "array", items: { type: "string" } },
+          review_status: { type: "string" },
+          improvement_item_id: { type: "string", nullable: true },
+        },
+      },
+      PhoneQualityEvaluationResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "evaluation_id", "call_id", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          evaluation_id: { type: "string" },
+          call_id: { type: "string" },
+          reviewer_id: { type: "string" },
+          reviewed_at: { type: "string" },
+          answer_correctness: { type: "integer", nullable: true },
+          tone_score: { type: "integer", nullable: true },
+          handoff_appropriateness: { type: "integer", nullable: true },
+          compliance_issue: { type: "boolean" },
+          hallucination_detected: { type: "boolean" },
+          privacy_issue: { type: "boolean" },
+          suggested_fix: { type: "string", nullable: true },
+          knowledge_gap_topics: { type: "array", items: { type: "string" } },
+          review_status: { type: "string" },
+          improvement_item_id: { type: "string", nullable: true },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneQualityEvaluationListResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "items", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          items: { type: "array", items: { $ref: "#/components/schemas/PhoneQualityEvaluation" } },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneMetricsSummary: {
+        type: "object",
+        required: ["call_count", "answer_rate", "ai_containment_rate", "handoff_rate"],
+        properties: {
+          call_count: { type: "integer" },
+          answered_count: { type: "integer" },
+          answer_rate: { type: "number" },
+          ai_containment_rate: { type: "number" },
+          handoff_rate: { type: "number" },
+          unresolved_rate: { type: "number" },
+          terminal_count: { type: "integer" },
+          average_handle_time_seconds: { type: "number" },
+          p95_total_turn_latency_ms: { type: "number", nullable: true },
+          p95_rag_latency_ms: { type: "number", nullable: true },
+        },
+      },
+      PhoneMetricPair: {
+        type: "object",
+        required: ["key", "count"],
+        properties: {
+          key: { type: "string" },
+          count: { type: "integer" },
+        },
+      },
+      PhoneMetricsResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "summary", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          summary: { $ref: "#/components/schemas/PhoneMetricsSummary" },
+          top_handoff_reasons: { type: "array", items: { $ref: "#/components/schemas/PhoneMetricPair" } },
+          top_intents: { type: "array", items: { $ref: "#/components/schemas/PhoneMetricPair" } },
+          knowledge_gap_topics: { type: "array", items: { $ref: "#/components/schemas/PhoneMetricPair" } },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneRetentionPolicyResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "transcript_retention_days", "export_enabled", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          recording_enabled_default: { type: "boolean" },
+          transcript_retention_days: { type: "integer" },
+          audio_retention_days: { type: "integer", nullable: true },
+          export_retention_days: { type: "integer" },
+          export_enabled: { type: "boolean" },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneExportResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "export_job_id", "status", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          export_job_id: { type: "string" },
+          status: { type: "string" },
+          redacted: { type: "boolean" },
+          correlation_id: { type: "string" },
+        },
+      },
+      PhoneDeleteRequestResponse: {
+        type: "object",
+        required: ["api_version", "tenant_id", "call_id", "deletion_request_id", "status", "correlation_id"],
+        properties: {
+          api_version: { type: "string" },
+          tenant_id: { type: "string" },
+          call_id: { type: "string" },
+          deletion_request_id: { type: "string" },
+          mode: { type: "string" },
+          status: { type: "string" },
+          correlation_id: { type: "string" },
+        },
+      },
       PhoneHandoffPackage: {
         type: "object",
         required: ["handoff_package_id", "call_id", "status", "reason", "destination_type", "destination_id", "summary"],
@@ -3242,6 +3384,188 @@ const OPENAPI_DOC = {
           "401": { description: "Unauthorized", content: { "application/json": {} } },
           "404": { description: "Call not found or not visible", content: { "application/json": {} } },
           "409": { description: "Terminal call cannot receive turns (call_terminal)", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/calls/{call_id}/quality-evaluations": {
+      post: {
+        operationId: "createPhoneQualityEvaluation",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "call_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/PhoneQualityEvaluationRequest" } },
+          },
+        },
+        responses: {
+          "201": {
+            description: "QA review recorded (audited; flagged reviews feed the improvement queue)",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneQualityEvaluationResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: QA reviewer role required", content: { "application/json": {} } },
+          "404": { description: "Call not found or not visible", content: { "application/json": {} } },
+          "422": { description: "invalid_score / hallucination_requires_fix_or_topics", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+      get: {
+        operationId: "listPhoneQualityEvaluations",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "call_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "QA reviews recorded for the call",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneQualityEvaluationListResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: QA reviewer role required", content: { "application/json": {} } },
+          "404": { description: "Call not found or not visible", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/metrics": {
+      get: {
+        operationId: "getPhoneMetrics",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "from", in: "query", required: false, schema: { type: "string" } },
+          { name: "to", in: "query", required: false, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "Phone KPI aggregates: answer/containment/handoff rates, latency p95, knowledge gaps",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneMetricsResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: metrics role required", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/retention-policy": {
+      get: {
+        operationId: "getPhoneRetentionPolicy",
+        security: [{ bearerAuth: [], userToken: [] }],
+        responses: {
+          "200": {
+            description: "Effective phone data retention policy for the tenant",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneRetentionPolicyResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: lifecycle role required", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/calls/export": {
+      post: {
+        operationId: "exportPhoneCalls",
+        security: [{ bearerAuth: [], userToken: [] }],
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  from: { type: "string" },
+                  to: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description: "Redacted export job accepted (audited)",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneExportResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: lifecycle role required", content: { "application/json": {} } },
+          "409": { description: "export_not_enabled (tenant policy; the denial is audited)", content: { "application/json": {} } },
+          "502": { description: "Phone service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/phone/calls/{call_id}/delete-request": {
+      post: {
+        operationId: "requestPhoneCallDeletion",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "call_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  mode: { type: "string" },
+                  reason: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "202": {
+            description: "Deletion request accepted: transcript/summary/handoff content redacted, trace ids kept (audited)",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/PhoneDeleteRequestResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: tenant_admin / audit_admin required", content: { "application/json": {} } },
+          "404": { description: "Call not found or not visible", content: { "application/json": {} } },
           "502": { description: "Phone service unavailable", content: { "application/json": {} } },
         },
       },

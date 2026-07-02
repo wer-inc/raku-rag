@@ -144,7 +144,7 @@ def _normalize_answer_spacing(text: str) -> str:
     normalized = re.sub(rf"(?<=[{_CJK}])\s+(?=[{_CJK}])", "", normalized)
     normalized = re.sub(rf"(?<=[A-Z])\s+(?=[{_CJK}])", "", normalized)
     normalized = re.sub(
-        rf"(?<=[A-Za-z0-9%μΩ℃・.])\s+"
+        r"(?<=[A-Za-z0-9%μΩ℃・.])\s+"
         r"(?=(?:超|以上|以下|未満|以内|ごと|後|へ|で|を|に|は|と|が|も))",
         "",
         normalized,
@@ -222,7 +222,8 @@ class ExtractiveLLMProvider(LLMProvider):
             ]
             best_chunk_score = max((score for score, _idx in chunk_scores), default=0)
             best_chunk_index = next(
-                idx for score, idx in sorted(chunk_scores, key=lambda item: (-item[0], item[1]))
+                idx
+                for score, idx in sorted(chunk_scores, key=lambda item: (-item[0], item[1]))
                 if score == best_chunk_score
             )
             best_document_id = context[best_chunk_index].document_id

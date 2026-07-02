@@ -45,8 +45,10 @@ class TestTranscriptRedaction(unittest.TestCase):
         self.assertIn("internal_auth_header", result.classes)
 
     def test_bearer_token_is_redacted(self) -> None:
-        result = redact_text("認証は Bearer abcdef123456789 を使ってください")
-        self.assertNotIn("abcdef123456789", result.text)
+        # pragma comments must share the line with the fixture literal for detect-secrets.
+        token_line = "認証は Bearer abcdef123456789 を使ってください"  # pragma: allowlist secret
+        result = redact_text(token_line)
+        self.assertNotIn("abcdef123456789", result.text)  # pragma: allowlist secret
         self.assertIn("bearer_token", result.classes)
 
     def test_api_key_is_redacted(self) -> None:
