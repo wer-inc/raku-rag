@@ -1477,8 +1477,13 @@ def make_handler(system: ProductionSystem):
     eval_feedback = _EvalFeedbackStore(system)
     manufacturing_system = build_manufacturing_system_for_base(system)
     chatbot = ChatbotService(
-        lambda principal, query, collection_id: _manufacturing_answer_json(
-            manufacturing_system.answer(principal, query, collection_id)
+        # Accepts the optional keyword-only `intent_query` (the raw, un-enriched user query) that
+        # `L0DeterministicAnswerEngine` forwards when L2's coreference rewrite carried prior-turn
+        # context — see chatbot/coreference.py's Finding. The manufacturing chain binds its high-risk
+        # classification + approved-citation gate to that raw intent while retrieving with the
+        # enriched query. Omitted (None) on every non-rewriting turn => unchanged behavior.
+        lambda principal, query, collection_id, *, intent_query=None: _manufacturing_answer_json(
+            manufacturing_system.answer(principal, query, collection_id, intent_query=intent_query)
         ),
         source_policy_repository=_chatbot_source_policy_repository_for(system),
         # Reuse the same LLMProvider instance the manufacturing/base answer path already built
@@ -1499,12 +1504,13 @@ def make_handler(system: ProductionSystem):
         # default here, same as every other rung) — see chatbot/composition.py's module docstring.
         enable_demo_tenant_l3=os.environ.get("RAKU_CHATBOT_DEMO_TENANT_L3") == "1",
         demo_tenant_id=os.environ.get("DEMO_TENANT", "demo"),
-        # Safety fix (see chatbot/coreference.py's module docstring "Finding"): L2's coreference
-        # rewrite can corrupt the manufacturing safety gate's retrieval candidate pool for a query
-        # that is independently, concretely high-risk. Reuse the SAME classifier instance the real
-        # answer path's safety gate consults (never a second, drifting instance) as a retrieval-
-        # independent pre-check on whether it is safe to enrich a follow-up's outgoing query text.
-        # Also gates every hop of "L4" (P5, agentic control) below -- see chatbot/agent.py.
+        # Per-hop re-classification signal for "L4" (P5, agentic control): every query an agentic
+        # decision-maker proposes is re-checked before it runs — see chatbot/agent.py. Reuses the SAME
+        # classifier instance the real answer path's safety gate consults (never a second, drifting
+        # one). NOTE: L2's coreference rewrite no longer relies on this signal — its safety is now
+        # handled at the root cause (intent_query threading; see chatbot/coreference.py's Finding),
+        # so L2 enriches every referential follow-up and the manufacturing chain judges the high-risk
+        # decision on the raw intent regardless.
         high_risk_query_signal=manufacturing_system.is_high_risk_query_signal,
         # P5: "L4" is registered in ChatbotService._answer_engines (chatbot/agent.py) so the seam is
         # real and testable, but deliberately NOT dialable here yet -- no `agent_decision_maker` is

@@ -1,14 +1,43 @@
 # ChatBot Conversational Agent Roadmap (Full-A)
 
-Status: P0–P5 scaffolding complete, verified, committed (`a77b7e0`, 2026-07-01). All five authority
-rungs (L0–L4) are built and gate-green. L4 is structurally complete but deliberately inert — no real
-(Bedrock-backed) `AgentDecisionMaker`/generation exists anywhere in this codebase, matching every
-phase's consistent no-real-credentials-in-sandbox constraint. A real safety-classification bypass was
-found and fixed mid-build (see "Immediate next tasks" item 6) — read that before trusting any of this
-without your own review. Remaining work is entirely infra/human-gated (real Bedrock credentials,
-human-reviewed diff, human-approved promotion beyond this worktree) — see the roadmap's own Risks
-section and CLAUDE.md's "safety boundary is always human" rule.
-Date: 2026-07-01
+Status: P0–P5 scaffolding complete and gate-green; then hardened by an adversarial review that found
+and fixed TWO real defects (see "Correction (2026-07-02)" immediately below). All five authority
+rungs (L0–L4) are built. L4 is structurally complete but deliberately inert — no real (Bedrock-backed)
+`AgentDecisionMaker`/generation exists anywhere in this codebase, matching every phase's consistent
+no-real-credentials-in-sandbox constraint. Remaining work is entirely infra/human-gated (real Bedrock
+credentials, human-reviewed diff, human-approved promotion beyond this worktree) — see the roadmap's
+own Risks section and CLAUDE.md's "safety boundary is always human" rule.
+Date: 2026-07-01 (P0–P5); 2026-07-02 (review + root-cause fixes)
+
+## Correction (2026-07-02): review found — and fixed at the root cause — two real defects
+
+A multi-agent adversarial review of the P0–P5 branch (independently reproduced each finding) surfaced
+two HIGH-severity defects, both in code written during P2/P3, both invisible to the green gate. The
+user chose to fix the root cause (over the safe-but-feature-gutting alternatives). Both are fixed and
+independently re-verified; full gate green (1289 tests).
+
+- **Finding A — L2/L3 safety-gate bypass (was: keyword-only fix).** P3's first fix
+  (`high_risk_query_signal`, keyword/metadata-only) let a high-risk follow-up phrased with ordinary
+  equipment nouns (e.g. `その排出弁の開け方を教えて`, high-risk only via the "ambiguous" fail-safe)
+  evade the signal, get rewritten, and return `status="ok"` citing an unrelated APPROVED document.
+  **Root-cause fix**: L2 now carries the raw follow-up as `DialogueContext.intent_query`; the
+  manufacturing chain (`ManufacturingAnswerService.answer`) binds its high-risk CLASSIFICATION and its
+  approved-citation requirement to that raw intent — the enriched query is used for retrieval only,
+  and for a high-risk intent an approved citation counts only if it is RESPONSIVE to the raw intent
+  (`answer_ext.py::_enforce_intent_responsive_approved_citation` / `_lexically_responsive`). L2's
+  `high_risk_query_signal` gate is removed (superseded); L4 keeps its own per-hop use. This keeps P3's
+  coreference value working for high-risk follow-ups (the reason this path over "widen the signal" or
+  "defer L2/L3" was chosen). New tests: the no-keyword bypass now blocks; both bypass-reproduction
+  regression pins (un-threaded) still document the underlying retrieval leniency.
+- **Finding B — P2 per-claim check regressed the deterministic floor.** Wiring `claim_check` into the
+  shared `GroundednessGate.post_check` (run on EVERY live answer) flipped grounded extractive answers
+  to `insufficient_evidence` on WORD-SPACED Japanese in the real demo corpus (`500時間 運転`, `2.5 L`…):
+  the answer is space-normalized, the evidence is not, so the greedy numeric-span run over-captures the
+  glued noun. Invisible to the golden-corpus gate. **Fix**: `claim_check` is decoupled from
+  `post_check` (now OPT-IN; still called directly by the eval runner and L3 composition, where a false
+  positive is scored over the clean corpus or non-suppressing). Re-adding it to the live path requires
+  making it normalization-symmetric first (pinned by a KNOWN-limitation test).
+
 Owner: production-readiness / chatbot conversational UX
 
 ## Purpose

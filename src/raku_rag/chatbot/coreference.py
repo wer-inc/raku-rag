@@ -48,49 +48,52 @@ is real and shipped (P3), so this could not be resolved by "pass the query throu
 would silently drop this phase's actual fix); see `tests/unit/test_chatbot_service.py`'s
 `ChatbotL2CoreferenceHighRiskSafetyTest` for the reproduction and the fix proven below.
 
-**The fix**: an optional `high_risk_query_signal` callback, checked immediately before the rewrite
-branch (not the reuse-previous-citations branch — see below for why that one is untouched). When
-supplied and it returns `True` for the RAW, un-rewritten follow-up text, this engine skips the
-append/rewrite and passes the RAW query straight to `inner.answer(...)` instead — the same
-byte-identical passthrough a self-contained query already gets today. Worst case this is an honest
-`insufficient_evidence`/handoff (the retrieval-recall problem P3 exists to fix, reintroduced only for
-this one turn); it can never be a corrupted `status="ok"`, because retrieval never sees the
-poisoning terms in the first place. This engine takes NO position on what "high risk" means — the
-callback is a plain `Callable[[str], bool] | None`, injected by the composition root (in practice
-`ManufacturingSystem.is_high_risk_query_signal`, wired in `apps/answer-service/server.py`) exactly
-like `llm_provider` already is; a deployment with no such concept (or that simply doesn't wire one)
-gets `None`, and this engine's behavior is then BYTE-IDENTICAL to before this fix — no regression,
-no new manufacturing-specific import in this module.
+**The fix (root-cause)**: retrieval genuinely benefits from the enriched query (that recall boost is
+this whole phase's point), so this engine still rewrites — but it now carries the RAW follow-up as
+`context.intent_query` (see `chatbot/answer_engine.py::DialogueContext`).
+`L0DeterministicAnswerEngine` forwards that raw intent to any `RagAnswerer` that accepts
+`intent_query=` — in practice the manufacturing answer chain
+(`manufacturing/api/answer_ext.py::ManufacturingAnswerService.answer`), wired in
+`apps/answer-service/server.py`. That chain binds BOTH safety-critical decisions to the raw intent,
+never the enriched query:
 
-Why not gate the reuse-previous-citations branch (`answer_from_previous_turn`) the same way: that
-branch only ever fires when `has_own_topic(query)` is False — a bare "tell me more" naming nothing
-beyond the reference itself — so a high-risk-classified RAW follow-up (which by construction names a
-concrete hazard topic, e.g. "圧力"/pressure) can never reach it; the two conditions are mutually
-exclusive on the same message in practice, and if they somehow coincided, reusing turn 1's answer
-verbatim would be even less safe (it returns `status="ok"` unconditionally, with NO retrieval,
-classification, or safety-gate re-evaluation at all) than the rewrite branch this fix actually
-targets.
+1. the high-risk CLASSIFICATION runs on the raw intent, so appending prior-turn terms can no longer
+   push a terse hazard follow-up past the classifier's "ambiguous, too terse to rule danger out"
+   fail-safe and launder it into a non-high-risk query; and
+2. for a high-risk intent, an approved+effective citation may satisfy the gate ONLY if it is
+   RESPONSIVE to the raw intent (shares a lexical term with it) — so a document seated purely by the
+   carried prior-turn terms (the flat `LEXICAL_MATCH_BASE_SCORE` admits any one-term match) can never
+   supply the approval that unblocks the answer. If none is responsive, the chain blocks
+   APPROVED_CITATION_MISSING, exactly as if no approved citation existed at all.
 
-Why the callback is intentionally NARROWER than "the classifier says high_risk": a naive
-`RuleHighRiskClassifier.classify(query, ()).is_high_risk` would ALSO fire for nearly every short
-Japanese follow-up, including P3's own benign flagship case ("その締付トルクは?") — confirmed
-empirically, not assumed: Japanese text has no spaces, so `core.text.content_tokens` cannot
-word-segment it, collapsing a whole short sentence into one "token" and tripping the classifier's
-stage-3 "ambiguous, too terse to rule danger out" fail-safe regardless of actual content. That
-fail-safe is exactly correct for the FINAL "may this answer assert" decision (never assert on an
-ambiguous safety-relevant query without approved evidence) but is NOT itself a signal that THIS
-query's text is a concrete hazard statement — treating it as one here would starve the coreference
-rewrite of nearly every short Japanese follow-up with no safety benefit (the real classifier and gate
-still run for real, unaffected, on whatever text this decision lets through to `inner.answer(...)`).
-`ManufacturingAnswerService.classify_query_signal` — what
-`ManufacturingSystem.is_high_risk_query_signal` delegates to — encodes this distinction so this
-module does not have to know about `ClassificationSource`, or anything else manufacturing-specific,
-at all.
+Net effect: retrieval still gets the enriched query (so P3 resolves the reference and finds the RIGHT
+document even for a high-risk follow-up), while the safety gate is judged on what the user actually
+asked. When the rewrite adds nothing (`standalone_query` returns the query unchanged), no intent_query
+is set and the call is byte-identical to L0. A deployment whose `RagAnswerer` does not accept
+`intent_query=` (a non-manufacturing one, or a test stub) simply receives the enriched query with no
+intent split — the same behavior as before this module existed; this module itself takes NO position
+on what "high risk" means and imports nothing manufacturing-specific.
+
+This REPLACED an earlier, incomplete fix (an optional `high_risk_query_signal` callback that skipped
+enrichment for keyword-classified follow-ups). That guard was keyword-only: a high-risk follow-up
+phrased with ordinary equipment nouns instead of a listed hazard keyword classified via the
+"ambiguous" fail-safe, evaded the signal, and was still rewritten — reproducibly bypassing the gate
+(`status="ok"` citing an unrelated approved document). Widening that signal to treat every ambiguous
+classification as high-risk would instead have starved the rewrite of nearly every short Japanese
+follow-up (Japanese has no spaces, so `core.text.content_tokens` cannot segment a short sentence,
+tripping the fail-safe on benign cases like P3's flagship "その締付トルクは?"). The root-cause fix
+above keeps the rewrite working for those benign cases while making it safe for the dangerous ones.
+
+The reuse-previous-citations branch (`answer_from_previous_turn`) is untouched and needs no
+intent_query: it fires only when `has_own_topic(query)` is False — a bare "tell me more" naming
+nothing beyond the reference — so it never runs retrieval or the safety gate at all; it just returns
+the prior turn's already-gated answer.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Callable
 
 from raku_rag.chatbot.answer_engine import AnswerEngine, DialogueContext
@@ -266,13 +269,8 @@ class L2QueryUnderstandingAnswerEngine:
     whatever this engine returns exactly like it runs on any other engine's output.
     """
 
-    def __init__(
-        self,
-        inner: AnswerEngine,
-        high_risk_query_signal: HighRiskQuerySignal | None = None,
-    ) -> None:
+    def __init__(self, inner: AnswerEngine) -> None:
         self._inner = inner
-        self._high_risk_query_signal = high_risk_query_signal
 
     def answer(
         self,
@@ -289,14 +287,19 @@ class L2QueryUnderstandingAnswerEngine:
             if reused is not None:
                 return reused
 
-        # Module docstring's Finding: appending prior-turn context can corrupt retrieval's candidate
-        # pool for a query that is independently, concretely high-risk. When the caller has wired a
-        # signal (in practice `ManufacturingSystem.is_high_risk_query_signal`) and it fires on the
-        # RAW, un-rewritten text, skip the enrichment entirely and fall through to the same
-        # byte-identical passthrough a self-contained query already gets — never a rewritten query,
-        # even if that means an honest insufficient_evidence/handoff instead of a resolved answer.
-        if self._high_risk_query_signal is not None and self._high_risk_query_signal(query):
+        rewritten_query = standalone_query(query, context)
+        if rewritten_query == query:
+            # Nothing to carry (no new signal beyond what the query already names) — byte-identical
+            # passthrough, so there is no enriched/raw distinction to protect.
             return self._inner.answer(principal, query, collection_id, context)
 
-        rewritten_query = standalone_query(query, context)
-        return self._inner.answer(principal, rewritten_query, collection_id, context)
+        # Module docstring's Finding: retrieval benefits from the enriched query, but the RAW
+        # follow-up is what the manufacturing high-risk classification and approved-citation gate must
+        # judge — so carry it as `context.intent_query`. `L0DeterministicAnswerEngine` forwards it to
+        # a `RagAnswerer` that accepts `intent_query=` (in practice the manufacturing answer chain),
+        # which binds those safety decisions to the raw intent while retrieving with `rewritten_query`.
+        # This is the root-cause fix that replaced the earlier, incomplete `high_risk_query_signal`
+        # skip-enrichment guard (see the Finding for why keyword-only gating was insufficient).
+        return self._inner.answer(
+            principal, rewritten_query, collection_id, replace(context, intent_query=query)
+        )

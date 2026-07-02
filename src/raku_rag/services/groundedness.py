@@ -1,17 +1,20 @@
 """T030 — GroundednessGate (FR-014): 2-stage gate. Quality gate, NOT a security boundary (FR-014b).
 
 (a) pre-gate: enough authorized chunks at/above score_threshold and minimum_evidence_count?
-(b) post-generation evidence check: is the generated answer supported by the cited chunks? This is
-    TWO checks, both unconditional (no rung/profile can skip either — see `post_check`):
-    (b1) whole-answer bag-of-words overlap (cheap fast-path: "no term overlap at all").
-    (b2) per-claim span check (P2 of docs/production-readiness/chatbot-conversational-agent-roadmap.md):
-         (b1) alone is satisfied by sharing ONE term with ONE chunk anywhere in the answer, so a
-         genuinely generative provider could invent an unsupported number/identifier elsewhere in an
-         otherwise-plausible answer and still pass. (b2) instead requires every individual numeric/
-         identifier span in the answer to be traceable to the union of the evidence chunks' text.
-         Today's extractive provider copies sentences verbatim from evidence, so every span it emits
-         is trivially present in that same evidence — (b2) is a strict superset of (b1), never a new
-         false negative on extractive text (a bug if it were).
+(b) post-generation evidence check (`post_check`, on the LIVE answer path): the whole-answer
+    bag-of-words overlap — is the generated answer supported (shares ≥1 term with some cited chunk)?
+
+    There is ALSO a stricter, per-claim span check, `claim_check` (P2 of
+    docs/production-readiness/chatbot-conversational-agent-roadmap.md): every individual numeric/
+    identifier span in the answer must be traceable to the union of the evidence chunks' text. It
+    exists for a genuinely generative provider that could invent an unsupported number in an
+    otherwise-plausible answer (which the whole-answer overlap misses). It is deliberately NOT wired
+    into `post_check`: on the current EXTRACTIVE provider it false-positives on word-spaced Japanese
+    (answer text is space-normalized, evidence is not; the greedy numeric-span run then over-captures
+    the glued following word), which would flip correct grounded answers to `insufficient_evidence`
+    on the live path. So `claim_check` is OPT-IN, called directly only where a false positive is
+    harmless: the eval runner (scored over the clean golden corpus) and L3 composition
+    (defense-in-depth, non-suppressing). See `post_check`/`claim_check` for the full note.
 """
 
 from __future__ import annotations
@@ -83,13 +86,31 @@ class GroundednessGate:
         supported = any(ans_terms & _terms(c.text) for c in evidence)
         if not supported:
             return GateDecision(False, "insufficient_evidence: answer not supported by evidence")
-        return self.claim_check(answer_text, evidence)
+        # NB: `post_check` deliberately does NOT call `claim_check` here. `claim_check` is a STRICTER
+        # per-span check that is correct for a genuinely generative provider, but on the current
+        # EXTRACTIVE provider it false-positives on word-spaced Japanese evidence: the extractive
+        # answer is normalized (`providers/llms.py::_normalize_answer_spacing` collapses CJK-CJK
+        # spaces) while the evidence is not, so the greedy numeric-span run over-captures the glued
+        # following word and no longer matches the still-spaced evidence — flipping a correct,
+        # grounded answer to `insufficient_evidence`. That regression hit the real demo corpus while
+        # staying invisible to the golden-corpus gate. Since `post_check` runs on EVERY live answer
+        # (services/answer.py), coupling `claim_check` into it made the deterministic floor WORSE than
+        # before. `claim_check` therefore stays an OPT-IN check, called directly by callers that can
+        # tolerate/need it: the eval runner (scored, over the clean golden corpus) and L3 composition
+        # (defense-in-depth, non-suppressing). Restoring live per-claim gating for a real generative
+        # provider needs `claim_check` made normalization-symmetric first (separate, tested change).
+        return GateDecision(True, "ok")
 
     def claim_check(self, answer_text: str, evidence: Sequence[Chunk]) -> GateDecision:
-        """Per-claim/per-span grounding (b2 above): every numeric/identifier span in `answer_text`
-        must be traceable to the union of `evidence` chunks' text. An answer with no such spans (a
-        purely qualitative statement) passes vacuously — this does not require a citation for every
-        sentence, only for the numeric/identifier claims actually present.
+        """Per-claim/per-span grounding: every numeric/identifier span in `answer_text` must be
+        traceable to the union of `evidence` chunks' text. An answer with no such spans (a purely
+        qualitative statement) passes vacuously — this does not require a citation for every sentence,
+        only for the numeric/identifier claims actually present.
+
+        OPT-IN only (see `post_check`'s note): NOT run on the live answer path, because on the current
+        extractive provider it false-positives on word-spaced Japanese. Used by the eval runner and
+        L3 composition, where a false positive is either scored over the clean golden corpus or
+        non-suppressing.
         """
         claimed = _claim_spans(answer_text)
         if not claimed:

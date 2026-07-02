@@ -423,34 +423,28 @@ class ChatbotService:
         # dialed to "L1" (see `enable_demo_tenant_l1` below) is ever routed to it.
         self._llm_provider = llm_provider or llm_provider_from_settings(settings or Settings())
         l0_engine = L0DeterministicAnswerEngine(rag_answerer)
-        # `high_risk_query_signal` (in practice `ManufacturingSystem.is_high_risk_query_signal`,
-        # wired by the composition root — see coreference.py's module docstring "Finding") gates L2's
-        # OWN query-enrichment branch. It must be threaded into BOTH L2 instances below: L2 sits
-        # ABOVE L3 at the "L3" rung too (coreference resolution runs first, feeding L3, per the
-        # comment below), so a tenant dialed to "L3" is exposed to the exact same rewrite-corruption
-        # risk as one dialed to "L2" — L3 not enriching the query itself does not make this ordering
-        # safety-inert, since L2's enrichment still happens before L3 ever sees the query.
-        l2_coreference_engine = L2QueryUnderstandingAnswerEngine(
-            l0_engine, high_risk_query_signal=high_risk_query_signal
-        )
+        # L2's coreference rewrite is kept safe at the ROOT CAUSE, not by a pre-check here: it carries
+        # the raw follow-up as `context.intent_query`, which the manufacturing answer chain uses to
+        # bind its high-risk classification + approved-citation gate to the user's true intent while
+        # retrieval uses the enriched query (see coreference.py's Finding). So L2 no longer takes a
+        # `high_risk_query_signal`; it enriches every referential follow-up. This is why `high_risk_
+        # query_signal` is threaded ONLY into L4 below, not L2.
+        l2_coreference_engine = L2QueryUnderstandingAnswerEngine(l0_engine)
         # L3 sits BELOW L2 in the wrapping (coreference resolution runs first, feeding the same
         # deterministic L0 retrieval/answer L2 always has, then L3's defense-in-depth verification runs
         # over whatever came back), and L1's envelope wraps the outermost result — same cumulative "+"
         # shape as "L2" below, one rung further. L3 itself does NOT enrich the query (see
-        # composition.py's module docstring "Finding": that was tried and reverted as unsafe — it
-        # corrupted retrieval/the manufacturing safety gate's candidate pool) — but L2, which wraps it
-        # here, does, so `high_risk_query_signal` above is what actually keeps this ordering safe, not
-        # an absence of enrichment at this rung.
+        # composition.py's module docstring "Finding": that was tried and reverted as unsafe). L2,
+        # which wraps it here, does enrich — and the intent_query it sets flows through L3 (which
+        # passes the query through byte-identical) down to L0 and the manufacturing chain, so a "L3"
+        # tenant gets the same root-cause protection a "L2" tenant does.
         l3_composition_engine = L3CompositionAnswerEngine(l0_engine)
-        l2_over_l3_engine = L2QueryUnderstandingAnswerEngine(
-            l3_composition_engine, high_risk_query_signal=high_risk_query_signal
-        )
+        l2_over_l3_engine = L2QueryUnderstandingAnswerEngine(l3_composition_engine)
         # L4 (P5, agentic control) wraps L0 DIRECTLY, not L2/L3: the whole point of this rung is that
         # the decision-maker decides what to search for -- including resolving its own references --
         # so layering it on top of L2's own (differently-triggered) coreference rewrite would mean two
-        # independent query-rewriting mechanisms in the same call chain, each needing its own
-        # high_risk_query_signal reasoning, for no offsetting benefit. `high_risk_query_signal` is
-        # threaded in for the SAME reason it is threaded into both L2 instances above: see
+        # independent query-rewriting mechanisms in the same call chain, for no offsetting benefit.
+        # `high_risk_query_signal` is threaded into L4 (unlike L2, which no longer needs it): see
         # chatbot/agent.py's module docstring for the full mechanism (every hop's proposed query is
         # re-classified before it is allowed to run; a trip aborts the whole turn, never just the hop).
         # `agent_decision_maker` defaults to `None`, so with no decision-maker injected (true of every

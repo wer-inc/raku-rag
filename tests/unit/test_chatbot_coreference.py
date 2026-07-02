@@ -270,7 +270,9 @@ class L2QueryUnderstandingAnswerEngineTest(unittest.TestCase):
 
         self.assertEqual(len(inner.calls), 1)
 
-    def test_collection_id_and_context_are_forwarded_to_inner_unchanged_on_rewrite(self):
+    def test_collection_id_and_context_are_forwarded_to_inner_on_rewrite_only_setting_intent_query(self):
+        import dataclasses
+
         inner = SpyInnerEngine()
         engine = L2QueryUnderstandingAnswerEngine(inner)
         context = _context()
@@ -279,109 +281,75 @@ class L2QueryUnderstandingAnswerEngineTest(unittest.TestCase):
 
         self.assertEqual(inner.calls[0][0], self.principal)
         self.assertEqual(inner.calls[0][2], "manuals")
-        self.assertEqual(inner.calls[0][3], context)
+        # On the rewrite branch the context is forwarded UNCHANGED except that intent_query is now set
+        # to the raw follow-up (the root-cause safety carry); every other field is identical.
+        self.assertEqual(inner.calls[0][3].intent_query, "その締付トルクは?")
+        self.assertEqual(
+            dataclasses.replace(inner.calls[0][3], intent_query=None),
+            dataclasses.replace(context, intent_query=None),
+        )
 
 
-class HighRiskQuerySignalGateTest(unittest.TestCase):
-    """`high_risk_query_signal` (chatbot-conversational-agent-roadmap safety fix; see the module
-    docstring's "Finding"): gates the rewrite branch specifically, using a fake callback here (the
-    real one, in production, is `ManufacturingSystem.is_high_risk_query_signal` — proven end-to-end
-    against a real `ManufacturingSystem` in `tests/unit/test_chatbot_service.py`'s
-    `ChatbotL2CoreferenceHighRiskSafetyTest`). This file only pins the engine's OWN decision logic in
-    isolation, independent of any manufacturing-specific classifier.
+class IntentQueryOnRewriteTest(unittest.TestCase):
+    """Root-cause safety design (see the module docstring's Finding): on the REWRITE branch L2 sends
+    the ENRICHED query to retrieval but carries the RAW follow-up as `context.intent_query`, so the
+    manufacturing chain can bind its high-risk classification + approved-citation gate to the user's
+    actual intent. This pins the engine's OWN wiring in isolation; the end-to-end proof that a real
+    `ManufacturingSystem` blocks the bypass (including the no-keyword case the earlier keyword-only
+    fix missed) lives in `tests/unit/test_chatbot_service.py`'s `ChatbotL2CoreferenceHighRiskSafetyTest`.
     """
 
     def setUp(self):
         self.principal = _principal()
 
-    def _spy_signal(self, verdict: bool):
-        calls: list[str] = []
-
-        def signal(query: str) -> bool:
-            calls.append(query)
-            return verdict
-
-        return signal, calls
-
-    def test_default_with_no_signal_wired_is_unchanged_from_before_this_fix(self):
+    def test_rewrite_sends_enriched_query_but_carries_the_raw_intent(self):
         inner = SpyInnerEngine()
-        engine = L2QueryUnderstandingAnswerEngine(inner)  # no high_risk_query_signal at all
+        engine = L2QueryUnderstandingAnswerEngine(inner)
         context = _context()
 
         result = engine.answer(self.principal, "その締付トルクは?", "manuals", context)
 
-        called_query = inner.calls[0][1]
-        self.assertIn("その締付トルクは?", called_query)
-        self.assertIn("p-101", called_query)
-        self.assertEqual(result, inner._response)
-
-    def test_signal_returning_true_skips_the_rewrite_and_passes_the_raw_query_through(self):
-        inner = SpyInnerEngine()
-        signal, calls = self._spy_signal(True)
-        engine = L2QueryUnderstandingAnswerEngine(inner, high_risk_query_signal=signal)
-        context = _context()
-
-        result = engine.answer(self.principal, "その締付トルクは?", "manuals", context)
-
-        self.assertEqual(len(inner.calls), 1)
+        _, sent_query, _, sent_context = inner.calls[0]
+        self.assertIn("その締付トルクは?", sent_query)
+        self.assertIn("p-101", sent_query)  # enriched for retrieval recall
         self.assertEqual(
-            inner.calls[0][1],
+            sent_context.intent_query,
             "その締付トルクは?",
-            "must pass the RAW follow-up through byte-identical, never a rewritten/enriched query",
+            "the RAW follow-up must be carried as intent_query so the safety gate judges true intent",
         )
         self.assertEqual(result, inner._response)
 
-    def test_signal_returning_false_still_rewrites_exactly_as_before(self):
+    def test_self_contained_passthrough_sets_no_intent_query(self):
+        # The overwhelming majority of turns (no marker, or an identifier of their own) never reach
+        # the rewrite branch, so there is no enriched/raw split and intent_query stays None.
         inner = SpyInnerEngine()
-        signal, calls = self._spy_signal(False)
-        engine = L2QueryUnderstandingAnswerEngine(inner, high_risk_query_signal=signal)
-        context = _context()
+        engine = L2QueryUnderstandingAnswerEngine(inner)
 
-        engine.answer(self.principal, "その締付トルクは?", "manuals", context)
+        engine.answer(self.principal, "締付トルクの基準は?", "manuals", _context())
 
-        called_query = inner.calls[0][1]
-        self.assertIn("その締付トルクは?", called_query)
-        self.assertIn("p-101", called_query)
+        _, sent_query, _, sent_context = inner.calls[0]
+        self.assertEqual(sent_query, "締付トルクの基準は?")
+        self.assertIsNone(sent_context.intent_query)
 
-    def test_signal_is_invoked_with_the_raw_unrewritten_query_text(self):
-        inner = SpyInnerEngine()
-        signal, calls = self._spy_signal(False)
-        engine = L2QueryUnderstandingAnswerEngine(inner, high_risk_query_signal=signal)
-        context = _context()
-
-        engine.answer(self.principal, "その締付トルクは?", "manuals", context)
-
-        self.assertEqual(calls, ["その締付トルクは?"])
-
-    def test_signal_is_not_consulted_for_the_reuse_previous_turn_branch(self):
+    def test_reuse_previous_turn_branch_does_not_search_or_set_intent_query(self):
         # A bare "tell me more" (has_own_topic False) answers from previous citations without ever
-        # reaching the rewrite branch this signal gates -- confirms the two branches are mutually
-        # exclusive in practice (see the module docstring's "why not gate the reuse branch" note).
+        # reaching the rewrite branch, so it never runs retrieval and never needs an intent split.
         inner = SpyInnerEngine()
-        signal, calls = self._spy_signal(True)
-        engine = L2QueryUnderstandingAnswerEngine(inner, high_risk_query_signal=signal)
+        engine = L2QueryUnderstandingAnswerEngine(inner)
         context = _context()
 
         result = engine.answer(
             self.principal, "それについてもう少し詳しく教えてください", "manuals", context
         )
 
-        self.assertEqual(calls, [], "the signal must not be consulted on the reuse-only branch")
-        self.assertEqual(inner.calls, [])
+        self.assertEqual(inner.calls, [], "the reuse branch must not run a fresh search")
         self.assertEqual(result["citations"], list(context.previous_citations))
 
-    def test_signal_is_not_consulted_for_a_self_contained_passthrough_query(self):
-        # The overwhelming majority of turns (no marker, or an identifier of its own) never reach
-        # is_referential_followup's True branch at all, so the signal is never even called.
-        inner = SpyInnerEngine()
-        signal, calls = self._spy_signal(True)
-        engine = L2QueryUnderstandingAnswerEngine(inner, high_risk_query_signal=signal)
-        context = _context()
-
-        engine.answer(self.principal, "締付トルクの基準は?", "manuals", context)
-
-        self.assertEqual(calls, [])
-        self.assertEqual(inner.calls[0][1], "締付トルクの基準は?")
+    def test_engine_no_longer_accepts_the_removed_high_risk_query_signal_kwarg(self):
+        # The keyword-only signal gate was replaced by the root-cause intent_query threading; guard
+        # against it silently creeping back into L2's constructor.
+        with self.assertRaises(TypeError):
+            L2QueryUnderstandingAnswerEngine(SpyInnerEngine(), high_risk_query_signal=lambda q: True)
 
 
 if __name__ == "__main__":

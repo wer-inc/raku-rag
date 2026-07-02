@@ -1480,24 +1480,28 @@ class ChatbotManufacturingHighRiskCitationBlockAtL3Test(unittest.TestCase):
 
 
 class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
-    """Safety investigation (2026-07-01): does P3's `coreference.standalone_query` rewrite (already
-    shipped, `a585148`) have the SAME structural bug P4's own investigation found and reverted for
-    L3 (see `chatbot/composition.py`'s module docstring "Finding")? Answer: YES, reproduced below,
-    and fixed via `high_risk_query_signal` (see `chatbot/coreference.py`'s module docstring
-    "Finding" for the mechanism and why the fix is scoped the way it is).
+    """Safety investigation (2026-07-01, revised 2026-07-02): does P3's `coreference.standalone_query`
+    rewrite have the SAME structural bug P4's own investigation found and reverted for L3 (see
+    `chatbot/composition.py`'s module docstring "Finding")? Answer: YES — and the FIRST fix
+    (`high_risk_query_signal`, keyword-only) was later found INCOMPLETE by adversarial review: a
+    high-risk follow-up phrased with ordinary equipment nouns instead of a listed hazard keyword
+    (e.g. "その排出弁の開け方を教えて") classified high-risk only via the "ambiguous" fail-safe, evaded
+    the keyword-only signal, and was still rewritten — reproducibly bypassing the gate. It is now
+    fixed at the ROOT CAUSE: L2 carries the raw follow-up as `context.intent_query`, and the
+    manufacturing chain binds its high-risk classification + approved-citation gate to that raw intent
+    (see `chatbot/coreference.py`'s and `manufacturing/api/answer_ext.py`'s "Finding"/notes).
 
-    Turn 1 is an ordinary English query answered citing an APPROVED, unrelated document (mirrors
-    `ChatbotManufacturingHighRiskCitationBlockAtL3Test.CONTEXT_QUERY`/`_ingest_context_turn_doc`
-    exactly, including the deliberate English-language choice for the same tokenization reasons
-    documented there). Turn 2 is a SHORT, Japanese, referential-marker-bearing follow-up ("その" +
-    residual topic "圧力の抜き方") with NO identifier of its own -- so it takes L2's REWRITE branch,
-    not the reuse-previous-citations branch -- whose RAW text independently classifies `high_risk`
-    via `RuleHighRiskClassifier`'s KEYWORD stage ("pressure"/"圧力"), confirmed directly against the
-    classifier in `tests/manufacturing/test_safety_gate.py::TestHighRiskQuerySignal`. The REAL,
-    on-topic document is ingested `PENDING_REVIEW` (not approved), so the correct behavior is: block
-    / insufficient_evidence / approved_citation_missing -- same shape as
-    `ChatbotManufacturingHighRiskCitationBlockTest`/`...AtL3Test`'s own negative control, reached here
-    via the L2 coreference-rewrite path specifically.
+    Turn 1 is an ordinary English query answered citing an APPROVED, unrelated document. Turn 2 is a
+    SHORT, Japanese, referential-marker-bearing follow-up with NO identifier of its own — so it takes
+    L2's REWRITE branch — whose RAW text independently classifies `high_risk` (either the KEYWORD
+    stage for `FOLLOWUP_QUERY`'s "圧力", or the "ambiguous" fail-safe for the no-keyword variant). The
+    REAL, on-topic document is ingested `PENDING_REVIEW` (not approved), so the correct behavior is:
+    block / insufficient_evidence / approved_citation_missing, reached via the L2 rewrite path.
+
+    `_service_over(..., thread_intent=...)` mirrors the production seam: when `thread_intent=True`
+    (default, as `apps/answer-service/server.py` wires it) the rag_answerer forwards `intent_query` to
+    `ManufacturingSystem.answer`; when False it DROPS it, simulating the pre-fix chain — used by the
+    regression pins that prove the intent_query threading is load-bearing, not dead code.
     """
 
     TENANT = "tenant_mfg_chat_l2_coref_safety"
@@ -1520,10 +1524,18 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
         return IdentityClaims(tenant_id=self.TENANT, user_id="alice")
 
     def _service_over(
-        self, mfg_sys: ManufacturingSystem, *, authority: str, wire_fix: bool
+        self, mfg_sys: ManufacturingSystem, *, authority: str, thread_intent: bool = True
     ) -> ChatbotService:
-        def rag_answerer(principal, query, collection_id):
-            ans = mfg_sys.answer(principal, query, collection_id)
+        def rag_answerer(principal, query, collection_id, *, intent_query=None):
+            # Mirrors apps/answer-service/server.py's real wiring: forward intent_query so the
+            # manufacturing chain binds its safety decisions to the raw intent. thread_intent=False
+            # DROPS it, reproducing the pre-fix chain (the regression pins depend on this).
+            ans = mfg_sys.answer(
+                principal,
+                query,
+                collection_id,
+                intent_query=intent_query if thread_intent else None,
+            )
             return {
                 "status": ans.status,
                 "text": ans.text,
@@ -1533,15 +1545,9 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
                 "correlation_id": ans.correlation_id,
             }
 
-        kwargs = {}
-        if wire_fix:
-            # Mirrors apps/answer-service/server.py's real wiring: reuse the SAME classifier
-            # instance the safety gate itself consults, not a second, drifting one.
-            kwargs["high_risk_query_signal"] = mfg_sys.is_high_risk_query_signal
         service = ChatbotService(
             rag_answerer,
             authority_repository=InMemoryChatbotAuthorityRepository({self.TENANT: authority}),
-            **kwargs,
         )
         _enable_internal_chat_collection(
             service, _principal(tenant=self.TENANT, roles=("tenant_admin",))
@@ -1579,7 +1585,7 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
         )
         mfg_sys.grant(self.TENANT, ScopeType.COLLECTION, "manuals", SubjectType.USER, "alice")
 
-    def _two_turns(self, service: ChatbotService):
+    def _two_turns(self, service: ChatbotService, *, followup: str | None = None):
         _, created = service.create_session(self._mfg_principal(), {"channel": "web_chat"})
         _, first_turn = service.submit_message(
             self._mfg_principal(),
@@ -1593,7 +1599,7 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
         return service.submit_message(
             self._mfg_principal(),
             created["session_id"],
-            {"message": self.FOLLOWUP_QUERY, "collection_id": "manuals"},
+            {"message": followup or self.FOLLOWUP_QUERY, "collection_id": "manuals"},
         )
 
     def test_raw_followup_independently_classifies_high_risk_via_the_keyword_stage(self):
@@ -1603,34 +1609,52 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
         mfg_sys = ManufacturingSystem()
         self.assertTrue(mfg_sys.is_high_risk_query_signal(self.FOLLOWUP_QUERY))
 
-    def test_unmitigated_l2_rewrite_lets_a_high_risk_followup_incorrectly_answer_ok(self):
-        # Permanent regression pin for the vulnerability mechanism itself (proves the fix below is
-        # load-bearing, not dead code): with NO high_risk_query_signal wired -- i.e. ChatbotService's
-        # pre-fix default -- the coreference rewrite corrupts retrieval's candidate pool for turn 2
-        # exactly like composition.py's Finding describes for L3, flipping a query that must block
-        # into status="ok", citing turn 1's unrelated APPROVED document instead of the real (pending)
-        # one.
+    # A high-risk follow-up phrased with ordinary equipment nouns and NO listed hazard keyword: it
+    # classifies high_risk only via the "ambiguous" fail-safe, so the keyword-only first fix let it
+    # through (adversarial review 2026-07-02). This is the headline case the root-cause fix closes.
+    NO_KEYWORD_FOLLOWUP = "その排出弁の開け方を教えて"
+
+    def test_bypass_reproduces_when_intent_query_is_not_threaded(self):
+        # Regression pin (proves the intent_query threading is load-bearing, not dead code): with the
+        # raw intent DROPPED before it reaches the manufacturing chain -- i.e. the pre-fix behavior --
+        # L2's rewrite corrupts retrieval's candidate pool for turn 2 exactly like composition.py's
+        # Finding describes, flipping a query that must block into status="ok", citing turn 1's
+        # unrelated APPROVED document instead of the real (pending) one.
         mfg_sys = ManufacturingSystem()
         self._ingest_context_doc(mfg_sys)
         self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
-        service = self._service_over(mfg_sys, authority="L2", wire_fix=False)
+        service = self._service_over(mfg_sys, authority="L2", thread_intent=False)
 
         status, second_turn = self._two_turns(service)
 
         self.assertEqual(status, 200)
         self.assertTrue(
             second_turn["rag"]["answerable"],
-            "documents the bug: the corrupted rewrite incorrectly answers instead of blocking",
+            "documents the bug: the un-threaded chain answers instead of blocking",
         )
         self.assertEqual(second_turn["assistant_message"]["ai_action"], "answer_with_citations")
         cited = [c["document_id"] for c in second_turn["assistant_message"]["citations"]]
         self.assertEqual(cited, [self.CONTEXT_DOC_ID], "cites the WRONG, unrelated document")
 
-    def test_high_risk_query_signal_blocks_the_corrupted_rewrite_at_l2(self):
+    def test_no_keyword_bypass_reproduces_when_intent_query_is_not_threaded(self):
+        # The exact case the keyword-only FIRST fix MISSED, un-threaded: reproduces identically.
         mfg_sys = ManufacturingSystem()
         self._ingest_context_doc(mfg_sys)
         self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
-        service = self._service_over(mfg_sys, authority="L2", wire_fix=True)
+        service = self._service_over(mfg_sys, authority="L2", thread_intent=False)
+
+        status, second_turn = self._two_turns(service, followup=self.NO_KEYWORD_FOLLOWUP)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(second_turn["rag"]["answerable"], "documents the no-keyword bypass")
+        cited = [c["document_id"] for c in second_turn["assistant_message"]["citations"]]
+        self.assertEqual(cited, [self.CONTEXT_DOC_ID], "cites the WRONG, unrelated document")
+
+    def test_intent_query_threading_blocks_the_keyword_followup_at_l2(self):
+        mfg_sys = ManufacturingSystem()
+        self._ingest_context_doc(mfg_sys)
+        self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
+        service = self._service_over(mfg_sys, authority="L2")  # thread_intent=True (prod default)
 
         status, second_turn = self._two_turns(service)
 
@@ -1642,17 +1666,36 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
         self.assertNotIn("排出弁", second_turn["assistant_message"]["message"])
         self.assertEqual(second_turn["rag"]["status"], "insufficient_evidence")
 
-    def test_high_risk_query_signal_blocks_the_corrupted_rewrite_at_l3(self):
-        # L2 sits ABOVE L3 in ChatbotService's own wiring (coreference resolution runs first, feeding
-        # L3), so a tenant dialed all the way to "L3" is exposed to the identical rewrite-corruption
-        # risk -- confirms the fix must be (and is) threaded into BOTH L2 engine instances in
-        # service.py, not just the "L2"-authority one.
+    def test_intent_query_threading_blocks_the_no_keyword_followup_at_l2(self):
+        # THE headline fix: the query the keyword-only first fix let through now blocks, because
+        # classification runs on the raw intent (high_risk via the ambiguous fail-safe) and the
+        # wrongly-seated approved document is not RESPONSIVE to that intent.
         mfg_sys = ManufacturingSystem()
         self._ingest_context_doc(mfg_sys)
         self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
-        service = self._service_over(mfg_sys, authority="L3", wire_fix=True)
+        service = self._service_over(mfg_sys, authority="L2")
 
-        status, second_turn = self._two_turns(service)
+        status, second_turn = self._two_turns(service, followup=self.NO_KEYWORD_FOLLOWUP)
+
+        self.assertEqual(status, 200)
+        self.assertFalse(
+            second_turn["rag"]["answerable"], "the no-keyword high-risk follow-up must block"
+        )
+        self.assertEqual(second_turn["assistant_message"]["ai_action"], "handoff")
+        self.assertEqual(second_turn["assistant_message"]["citations"], [])
+        self.assertNotIn("排出弁", second_turn["assistant_message"]["message"])
+        self.assertEqual(second_turn["rag"]["status"], "insufficient_evidence")
+
+    def test_intent_query_threading_blocks_the_corrupted_rewrite_at_l3(self):
+        # L2 sits ABOVE L3 in ChatbotService's wiring; the intent_query it sets flows through L3
+        # (which passes the query byte-identical) down to the manufacturing chain, so a "L3" tenant
+        # gets the same root-cause protection a "L2" tenant does -- for the no-keyword case too.
+        mfg_sys = ManufacturingSystem()
+        self._ingest_context_doc(mfg_sys)
+        self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
+        service = self._service_over(mfg_sys, authority="L3")
+
+        status, second_turn = self._two_turns(service, followup=self.NO_KEYWORD_FOLLOWUP)
 
         self.assertEqual(status, 200)
         self.assertFalse(second_turn["rag"]["answerable"])
@@ -1667,7 +1710,7 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
         self._ingest_real_doc(
             mfg_sys, approval_status=ApprovalStatus.APPROVED, effective_date="2026-01-01"
         )
-        service = self._service_over(mfg_sys, authority="L2", wire_fix=True)
+        service = self._service_over(mfg_sys, authority="L2")
 
         status, second_turn = self._two_turns(service)
 
@@ -1696,7 +1739,7 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
             ),
         )
         mfg_sys.grant(self.TENANT, ScopeType.COLLECTION, "manuals", SubjectType.USER, "alice")
-        service = self._service_over(mfg_sys, authority="L2", wire_fix=True)
+        service = self._service_over(mfg_sys, authority="L2")
 
         _, created = service.create_session(self._mfg_principal(), {"channel": "web_chat"})
         service.submit_message(

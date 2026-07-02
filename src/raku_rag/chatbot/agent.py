@@ -25,14 +25,17 @@ docstrings' "Finding" sections) independently discovered and reproduced the SAME
 `LEXICAL_MATCH_BASE_SCORE` (0.70) baseline, so a query string that blends a hazardous topic with
 unrelated terms can seat an unrelated, APPROVED document as "evidence" for a question that should
 require its own, real (and possibly unapproved) document's approval. P4's enrichment attempt was
-reverted entirely; P3's was real and shipped, so it was fixed with `high_risk_query_signal` (a
-retrieval-independent, query-text-only pre-check — see `coreference.py`'s "Finding" for the full
-mechanism and why it is deliberately narrower than the classifier's own "ambiguous => high-risk"
-fail-safe).
+reverted entirely; P3's was real and shipped. (NOTE, 2026-07-02: P3's *own* fix was later moved to
+the root cause — `DialogueContext.intent_query`, which binds the manufacturing high-risk
+classification + approved-citation gate to the raw intent; see `coreference.py`'s "Finding". L4 does
+NOT rewrite queries the way P3 does, so it cannot use that same intent/enriched split; it keeps the
+`high_risk_query_signal` pre-check described below — a retrieval-independent, query-text-only check,
+deliberately narrower than the classifier's own "ambiguous => high-risk" fail-safe — as ITS mechanism.
+The two rungs now protect the same vulnerability by different, appropriate means.)
 
 Agentic control is this same vulnerability at its widest scope: a decision-maker can choose ARBITRARY
 query text, potentially more than once per turn, potentially informed by what an earlier hop returned.
-This module's structural answer, reusing the EXACT seam P3's fix built:
+This module's structural answer:
 
 1. **Every proposed retrieval query, on every hop, is re-classified before it is allowed to run**
    (`high_risk_query_signal`, in production `ManufacturingSystem.is_high_risk_query_signal` — the
