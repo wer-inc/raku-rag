@@ -62,7 +62,9 @@ def _service() -> PhoneCallService:
 
 def _seed_billing_scenario(service: PhoneCallService) -> None:
     scenarios = service._scenarios  # noqa: SLF001 — same-composition access in tests
-    scenarios.create(ADMIN, {"name": "請求問い合わせ", "intent": "billing", "scenario_id": "billing-basic"})
+    scenarios.create(
+        ADMIN, {"name": "請求問い合わせ", "intent": "billing", "scenario_id": "billing-basic"}
+    )
     scenarios.upsert_version(
         ADMIN,
         "billing-basic",

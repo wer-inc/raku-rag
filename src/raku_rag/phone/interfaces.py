@@ -118,9 +118,7 @@ class PhoneAnswerGateway(Protocol):
     used_chunks, correlation_id, manufacturing{...}}``.
     """
 
-    def answer(
-        self, principal: IdentityClaims, query: str, collection_id: str | None
-    ) -> dict: ...
+    def answer(self, principal: IdentityClaims, query: str, collection_id: str | None) -> dict: ...
 
 
 @dataclass

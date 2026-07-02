@@ -79,9 +79,7 @@ class ChatbotPersistenceTest(unittest.TestCase):
 
     def test_handoff_package_survives_restart(self) -> None:
         first = self._service()
-        _, created = first.create_session(
-            USER, {"initial_message": "担当者につないでください"}
-        )
+        _, created = first.create_session(USER, {"initial_message": "担当者につないでください"})
         handoff_id = created["handoff"]["handoff_package_id"]
 
         second = self._service()
@@ -141,7 +139,9 @@ class ChatbotPersistenceTest(unittest.TestCase):
         first = self._service()
         _, created = first.create_session(USER, {"initial_message": "営業時間を教えてください"})
         status, feedback = first.submit_feedback(
-            USER, created["session_id"], {"rating": 1, "issue_type": "rag_gap", "comment": "情報が古い"}
+            USER,
+            created["session_id"],
+            {"rating": 1, "issue_type": "rag_gap", "comment": "情報が古い"},
         )
         self.assertEqual(status, 201)
         stored = self.repos["feedback_repository"].list("tenant_a")

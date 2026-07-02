@@ -18,9 +18,7 @@ class DeterministicAsrProvider:
 
     def transcribe(self, event: TelephonyEvent) -> AsrResult:
         confidence = (
-            float(event.asr_confidence)
-            if event.asr_confidence is not None
-            else DEFAULT_CONFIDENCE
+            float(event.asr_confidence) if event.asr_confidence is not None else DEFAULT_CONFIDENCE
         )
         confidence = min(1.0, max(0.0, confidence))
         return AsrResult(text=event.text, confidence=confidence, provider=self.name)

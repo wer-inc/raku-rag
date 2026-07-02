@@ -162,7 +162,9 @@ class TestTurnMechanics(unittest.TestCase):
     def test_barge_in_is_recorded_and_caller_input_wins(self) -> None:
         service, gateway = _service()
         call_id = _start(service)["call_id"]
-        service.submit_turn(ADMIN, call_id, {"event_type": "speech", "text": "旧料金について教えて"})
+        service.submit_turn(
+            ADMIN, call_id, {"event_type": "speech", "text": "旧料金について教えて"}
+        )
         status, payload = service.submit_turn(
             ADMIN, call_id, {"event_type": "barge_in", "text": "営業時間を教えてください"}
         )

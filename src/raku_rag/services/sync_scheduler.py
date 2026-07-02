@@ -26,8 +26,9 @@ _INTERVAL_PATTERNS: tuple[tuple[re.Pattern, int], ...] = (
     (re.compile(r"^(\d+)\s*(?:d|day|日)(?:ごと|毎|おき)?$", re.IGNORECASE), 86400),
 )
 
-_DAILY_AT = re.compile(r"^(?:毎日|daily)\s*(?:([01]?\d|2[0-3])[:時]([0-5]\d)?\s*(?:分)?)?$",
-                       re.IGNORECASE)
+_DAILY_AT = re.compile(
+    r"^(?:毎日|daily)\s*(?:([01]?\d|2[0-3])[:時]([0-5]\d)?\s*(?:分)?)?$", re.IGNORECASE
+)
 
 _MIN_INTERVAL_SECONDS = 300  # guardrail: never hammer a source more often than every 5 minutes
 

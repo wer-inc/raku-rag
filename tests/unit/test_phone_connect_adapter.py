@@ -49,9 +49,7 @@ class ConnectAdapterUnitTest(unittest.TestCase):
     def test_resolve_did_exact_and_domestic_format(self) -> None:
         self.assertIsNotNone(self.adapter.resolve_did("+815055550100"))
         # Domestic-format key lookup for the same subscriber number.
-        os.environ["RAKU_PHONE_DID_MAP"] = json.dumps(
-            {"05055550100": DID_MAP["+815055550100"]}
-        )
+        os.environ["RAKU_PHONE_DID_MAP"] = json.dumps({"05055550100": DID_MAP["+815055550100"]})
         adapter = _load_adapter()
         self.assertIsNotNone(adapter.resolve_did("+815055550100"))
         self.assertIsNone(adapter.resolve_did("+815099999999"))

@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SEED = ROOT / "scripts" / "demo" / "demo_seed.py"
 

@@ -143,9 +143,7 @@ class TestPhoneCallFlow(unittest.TestCase):
         # The AI response does not refuse the request.
         self.assertIn("つなぎ", turn["ai_response_text"])
 
-        status, package = self.service.get_handoff(
-            OPERATOR, turn["handoff"]["handoff_package_id"]
-        )
+        status, package = self.service.get_handoff(OPERATOR, turn["handoff"]["handoff_package_id"])
         self.assertEqual(status, 200)
         self.assertTrue(package["summary"])
         self.assertTrue(package["transcript_excerpt_redacted"])
@@ -188,9 +186,7 @@ class TestPhoneCallFlow(unittest.TestCase):
         sequence = [t["sequence_no"] for t in detail["transcript"]]
         self.assertEqual(sequence, sorted(sequence))
         # The handoff package carries the citations from the earlier grounded answer (FR-028).
-        status, package = self.service.get_handoff(
-            OPERATOR, turn2["handoff"]["handoff_package_id"]
-        )
+        status, package = self.service.get_handoff(OPERATOR, turn2["handoff"]["handoff_package_id"])
         self.assertEqual(status, 200)
         self.assertTrue(package["citations"])
 

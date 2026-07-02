@@ -55,7 +55,9 @@ class TestRenderForVoice(unittest.TestCase):
     def test_single_overlong_sentence_is_hard_capped(self) -> None:
         text = "あ" * 500
         spoken = render_for_voice(text)
-        self.assertLessEqual(len(spoken), 200 + len("続きをお聞きになりたい場合は、そのままお申し付けください。"))
+        self.assertLessEqual(
+            len(spoken), 200 + len("続きをお聞きになりたい場合は、そのままお申し付けください。")
+        )
         self.assertTrue(spoken)
 
     def test_sentences_get_terminal_punctuation(self) -> None:

@@ -94,9 +94,7 @@ class TestDueLogic(unittest.TestCase):
 
 class TestSchedulerTick(unittest.TestCase):
     def setUp(self) -> None:
-        self.repo = InMemoryDataSourceRepository(
-            secret_store_from_settings(Settings())
-        )
+        self.repo = InMemoryDataSourceRepository(secret_store_from_settings(Settings()))
         self.fired: list[tuple[str, str, str]] = []
         self.pruned: list[tuple[str, str]] = []
         self.scheduler = AutoSyncScheduler(
