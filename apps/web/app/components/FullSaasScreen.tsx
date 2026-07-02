@@ -69,6 +69,7 @@ import {
   manufacturingKpi,
   manufacturingListDrafts,
   manufacturingImprovements,
+  manufacturingAuditEvidencePack,
   runManufacturingQualityEval,
   type QualityEvalResult,
   manufacturingRequestSourceSync,
@@ -5307,6 +5308,12 @@ function QualityBody() {
         />
       </Section>
       <QualityEvalSection />
+      <Section
+        title="監査エビデンスパック"
+        note="監査ハッシュチェーンから期間集計(質問数・根拠付き回答率・ブロック内訳・転送・QA・チェーン検証)を生成し、内部監査・安全衛生委員会にそのまま提出できる形で出力します。"
+      >
+        <EvidencePackSection />
+      </Section>
     </>
   );
 }
@@ -5328,6 +5335,75 @@ const QUALITY_EVAL_ITEMS = [
 
 function pct(value: number | undefined): string {
   return `${Math.round((value ?? 0) * 100)}%`;
+}
+
+function EvidencePackSection() {
+  const toast = useToast();
+  const [range, setRange] = useState({ from: "", to: "" });
+  const [pack, setPack] = useState<Record<string, unknown> | null>(null);
+  const [running, setRunning] = useState(false);
+
+  async function run(event: FormEvent) {
+    event.preventDefault();
+    if (running) return;
+    setRunning(true);
+    try {
+      const token = await getSessionToken();
+      setPack(await manufacturingAuditEvidencePack(token, range));
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "エビデンスパックの生成に失敗しました", "error");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  function download() {
+    if (!pack) return;
+    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audit-evidence-pack-${range.from || "all"}_${range.to || "now"}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const summary = (pack?.summary ?? null) as Record<string, number> | null;
+  const chain = (pack?.hash_chain ?? null) as Record<string, unknown> | null;
+  return (
+    <>
+      <form className="src-inline-form" onSubmit={run} aria-label="エビデンスパック期間">
+        <input type="date" value={range.from} onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))} aria-label="開始日" />
+        <input type="date" value={range.to} onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))} aria-label="終了日" />
+        <button type="submit" disabled={running}>{running ? "集計中…" : "生成"}</button>
+        {pack && (
+          <button type="button" onClick={download}>
+            JSONダウンロード
+          </button>
+        )}
+      </form>
+      {summary && chain && (
+        <FieldGrid
+          rows={[
+            ["質問件数", String(summary.question_count)],
+            [
+              "根拠付き回答率",
+              summary.grounded_answer_rate != null
+                ? `${Math.round((summary.grounded_answer_rate as number) * 100)}%`
+                : "-",
+            ],
+            ["ブロック件数", String(summary.blocked_count)],
+            ["人間への転送", String(summary.handoff_count)],
+            ["QAレビュー", String(summary.qa_review_count)],
+            [
+              "監査チェーン検証",
+              chain.verified ? `✓ 改ざんなし(${chain.total_entries}件)` : "✗ 検証失敗 — 要調査",
+            ],
+          ]}
+        />
+      )}
+    </>
+  );
 }
 
 function QualityEvalSection() {

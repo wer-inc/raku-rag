@@ -2776,6 +2776,30 @@ const OPENAPI_DOC = {
         },
       },
     },
+    "/manufacturing/audit/evidence-pack": {
+      get: {
+        operationId: "getAuditEvidencePack",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "from", in: "query", required: false, schema: { type: "string" } },
+          { name: "to", in: "query", required: false, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description:
+              "Compliance evidence pack aggregated from the tamper-evident audit chain (reference IDs only): question counts, grounded-answer rate, blocked-by-reason, handoffs, QA flags, access transparency, and the hash-chain verification verdict.",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: admin role required", content: { "application/json": {} } },
+        },
+      },
+    },
     "/manufacturing/audit/export": {
       get: {
         operationId: "getManufacturingAuditExport",
