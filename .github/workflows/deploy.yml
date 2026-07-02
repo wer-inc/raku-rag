@@ -76,6 +76,16 @@ on:
         description: Permit same provider family only when two distinct Bedrock models are explicitly attested
         type: boolean
         default: false
+      bedrock_guardrail_id:
+        description: Bedrock Guardrail id for the production output guardrail (answer path FAILS CLOSED under runtime_profile=production without it)
+        type: string
+        required: false
+        default: ""
+      bedrock_guardrail_version:
+        description: Bedrock Guardrail version (e.g. 1); required when bedrock_guardrail_id is set
+        type: string
+        required: false
+        default: ""
       dry_run:
         description: Synth/plan only (no AWS changes)
         type: boolean
@@ -106,6 +116,8 @@ jobs:
       VISUAL_EVIDENCE_PROMOTION: ${{ inputs.visual_evidence_promotion }}
       VISUAL_VERIFIER_MODELS: ${{ inputs.visual_verifier_models }}
       VISUAL_VERIFIER_SAME_FAMILY_ATTESTATION: ${{ inputs.visual_verifier_same_family_attestation }}
+      BEDROCK_GUARDRAIL_ID: ${{ inputs.bedrock_guardrail_id }}
+      BEDROCK_GUARDRAIL_VERSION: ${{ inputs.bedrock_guardrail_version }}
       # Textract is not available in every AWS region where the app can run (for example Tokyo).
       # Keep the app stack regional, but route Textract OCR/layout calls to a supported region by
       # default. Override with repo/environment Variable TEXTRACT_REGION if residency requires it.
@@ -139,6 +151,18 @@ jobs:
           fi
           if [ -n "${VISUAL_VERIFIER_MODELS}" ] && ! printf '%s\n' "${VISUAL_VERIFIER_MODELS}" | grep -qE '^[A-Za-z0-9._:/,-]+$'; then
             echo "::error::visual_verifier_models may contain only A-Za-z0-9._:/,-"
+            exit 1
+          fi
+          if [ -n "${BEDROCK_GUARDRAIL_ID}" ] && ! printf '%s\n' "${BEDROCK_GUARDRAIL_ID}" | grep -qE '^[a-z0-9]{1,64}$'; then
+            echo "::error::bedrock_guardrail_id must be the short lowercase alphanumeric guardrail id"
+            exit 1
+          fi
+          if [ -n "${BEDROCK_GUARDRAIL_VERSION}" ] && ! printf '%s\n' "${BEDROCK_GUARDRAIL_VERSION}" | grep -qE '^(DRAFT|[0-9]{1,6})$'; then
+            echo "::error::bedrock_guardrail_version must be DRAFT or a number"
+            exit 1
+          fi
+          if [ -n "${BEDROCK_GUARDRAIL_ID}" ] && [ -z "${BEDROCK_GUARDRAIL_VERSION}" ]; then
+            echo "::error::bedrock_guardrail_version is required when bedrock_guardrail_id is set"
             exit 1
           fi
           case "${VISUAL_PROVIDER_PROFILE}" in
@@ -176,6 +200,9 @@ jobs:
           if [ "${VISUAL_VERIFIER_SAME_FAMILY_ATTESTATION}" = "true" ]; then
             CTX="${CTX} --context visualVerifierAllowSameFamilyDistinctModels=true"
           fi
+          if [ -n "${BEDROCK_GUARDRAIL_ID}" ]; then
+            CTX="${CTX} --context bedrockGuardrailId=${BEDROCK_GUARDRAIL_ID} --context bedrockGuardrailVersion=${BEDROCK_GUARDRAIL_VERSION}"
+          fi
           npx cdk synth ${CTX} --quiet
 
       - name: Configure AWS credentials (OIDC)
@@ -210,6 +237,9 @@ jobs:
           fi
           if [ "${VISUAL_VERIFIER_SAME_FAMILY_ATTESTATION}" = "true" ]; then
             CTX="${CTX} --context visualVerifierAllowSameFamilyDistinctModels=true"
+          fi
+          if [ -n "${BEDROCK_GUARDRAIL_ID}" ]; then
+            CTX="${CTX} --context bedrockGuardrailId=${BEDROCK_GUARDRAIL_ID} --context bedrockGuardrailVersion=${BEDROCK_GUARDRAIL_VERSION}"
           fi
           npx cdk deploy --require-approval never ${CTX}
 

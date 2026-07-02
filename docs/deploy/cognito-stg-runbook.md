@@ -15,7 +15,10 @@ gh workflow run deploy.yml --ref develop \
 ```
 
 (実LLM点火と同時にやる場合は `embedding_provider=openai -f answer_llm=bedrock
--f visual_provider_profile=aws-textract-bedrock` に置き換え。)
+-f visual_provider_profile=aws-textract-bedrock` に置き換え。この構成は
+`runtime_profile=production` になり **Bedrock Guardrail が必須**(無いと全回答が
+fail-closed で temporarily_unavailable)。stg 用 Guardrail は作成済み:
+`-f bedrock_guardrail_id=uv9pc44guprp -f bedrock_guardrail_version=1` を必ず付ける。)
 
 切替で何が変わるか(CDK `raku-rag-stack.ts`):
 - `RAKU_ENABLE_DEV_TOKEN_ISSUER=0` — `/api/dev-token` が閉じる(外形確認の手段が変わる。下記 §3)
