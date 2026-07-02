@@ -436,6 +436,21 @@ export class ManufacturingController {
     );
   }
 
+  @Get("audit/evidence-pack")
+  async auditEvidencePack(
+    @Req() req: Request,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ): Promise<Record<string, unknown>> {
+    // Same sensitivity tier as audit/export: cross-user activity + the chain verdict — admin-only.
+    assertAdminMutationAllowed(req);
+    return this.requestCore(
+      req,
+      "GET",
+      queryPath("/internal/manufacturing/audit/evidence-pack", { from, to }),
+    );
+  }
+
   @Get("audit/export")
   async auditExport(
     @Req() req: Request,

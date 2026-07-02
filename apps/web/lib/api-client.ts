@@ -548,6 +548,19 @@ export async function runManufacturingQualityEval(
   );
 }
 
+export async function manufacturingAuditEvidencePack(
+  userToken: string,
+  range?: { from?: string; to?: string },
+): Promise<Record<string, unknown>> {
+  const qs = new URLSearchParams();
+  if (range?.from) qs.set("from", range.from);
+  if (range?.to) qs.set("to", range.to);
+  return mfgGet<Record<string, unknown>>(
+    `audit/evidence-pack${qs.toString() ? `?${qs}` : ""}`,
+    userToken,
+  );
+}
+
 export async function manufacturingGovernanceStatus(
   userToken: string,
 ): Promise<GovernanceStatus> {

@@ -1939,6 +1939,21 @@ def make_handler(system: ProductionSystem):
                     )
                 elif parts == ["internal", "manufacturing", "governance", "status"]:
                     self._send(200, manufacturing_system.governance_status(self._tenant_header()))
+                elif parts == ["internal", "manufacturing", "audit", "evidence-pack"]:
+                    # ★1: the audit hash chain rendered as a monthly compliance artifact
+                    # (reference IDs only; includes the chain verification verdict).
+                    from raku_rag.manufacturing.api.evidence_pack import build_evidence_pack
+
+                    qs = parse_qs(parsed.query)
+                    self._send(
+                        200,
+                        build_evidence_pack(
+                            manufacturing_system.audit,
+                            _claims_from_headers(self.headers),
+                            from_iso=(qs.get("from") or [""])[0],
+                            to_iso=(qs.get("to") or [""])[0],
+                        ),
+                    )
                 elif parts == ["internal", "manufacturing", "audit", "export"]:
                     qs = parse_qs(parsed.query)
                     fmt = (qs.get("fmt") or ["dict"])[0]
