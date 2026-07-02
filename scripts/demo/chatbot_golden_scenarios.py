@@ -489,6 +489,10 @@ def run_quick_reply_check(
             quick_reply_value=value,
         )
 
+    # A check may declare its own collection_id (e.g. a scope-carry adversarial follow-up that
+    # deliberately targets a DIFFERENT collection than the parent turn); default to the run's own
+    # collection_id so every existing dataset/check is unaffected.
+    turn_collection_id = str(check.get("collection_id") or collection_id)
     start = time.perf_counter()
     response = http_json(
         "POST",
@@ -496,7 +500,7 @@ def run_quick_reply_check(
         f"/chat/sessions/{quote(session_id, safe='')}/messages",
         token=token,
         api_key=api_key,
-        body={"message": value, "collection_id": collection_id, "stream": False},
+        body={"message": value, "collection_id": turn_collection_id, "stream": False},
         timeout=timeout,
     )
     latency_ms = int((time.perf_counter() - start) * 1000)

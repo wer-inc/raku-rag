@@ -1574,10 +1574,48 @@ def make_handler(system: ProductionSystem):
     eval_feedback = _EvalFeedbackStore(system)
     manufacturing_system = build_manufacturing_system_for_base(system)
     chatbot = ChatbotService(
-        lambda principal, query, collection_id: _manufacturing_answer_json(
-            manufacturing_system.answer(principal, query, collection_id)
+        # Accepts the optional keyword-only `intent_query` (the raw, un-enriched user query) that
+        # `L0DeterministicAnswerEngine` forwards when L2's coreference rewrite carried prior-turn
+        # context — see chatbot/coreference.py's Finding. The manufacturing chain binds its high-risk
+        # classification + approved-citation gate to that raw intent while retrieving with the
+        # enriched query. Omitted (None) on every non-rewriting turn => unchanged behavior.
+        lambda principal, query, collection_id, *, intent_query=None: _manufacturing_answer_json(
+            manufacturing_system.answer(principal, query, collection_id, intent_query=intent_query)
         ),
         source_policy_repository=_chatbot_source_policy_repository_for(system),
+        # Reuse the same LLMProvider instance the manufacturing/base answer path already built
+        # (system.llm) rather than constructing a second one — see providers/llms.py.
+        llm_provider=system.llm,
+        # Opt-in, default off (P1 of the conversational-agent roadmap): flips the demo tenant's
+        # chatbot_authority_level to "L1" (envelope phrasing). Offline-safe even when set, since
+        # RAKU_LLM_PROVIDER stays unset by default (system.llm is then the extractive no-op stub).
+        enable_demo_tenant_l1=os.environ.get("RAKU_CHATBOT_DEMO_TENANT_L1") == "1",
+        # Opt-in, default off (P3): flips the demo tenant to "L2" (coreference resolution, cumulative
+        # with L1's envelope) instead of "L1". Independent flag rather than replacing
+        # RAKU_CHATBOT_DEMO_TENANT_L1 outright, so an existing L1 pilot is never silently upgraded —
+        # a tenant needs its own explicit opt-in per rung, matching the roadmap's per-tenant dial.
+        enable_demo_tenant_l2=os.environ.get("RAKU_CHATBOT_DEMO_TENANT_L2") == "1",
+        # Opt-in, default off (P4): flips the demo tenant to "L3" (defense-in-depth verification over
+        # composed answers, cumulative with L2's coreference and L1's envelope). Whether real
+        # generation ever fires stays governed entirely by RAKU_LLM_PROVIDER/system.llm (unset by
+        # default here, same as every other rung) — see chatbot/composition.py's module docstring.
+        enable_demo_tenant_l3=os.environ.get("RAKU_CHATBOT_DEMO_TENANT_L3") == "1",
+        demo_tenant_id=os.environ.get("DEMO_TENANT", "demo"),
+        # Per-hop re-classification signal for "L4" (P5, agentic control): every query an agentic
+        # decision-maker proposes is re-checked before it runs — see chatbot/agent.py. Reuses the SAME
+        # classifier instance the real answer path's safety gate consults (never a second, drifting
+        # one). NOTE: L2's coreference rewrite no longer relies on this signal — its safety is now
+        # handled at the root cause (intent_query threading; see chatbot/coreference.py's Finding),
+        # so L2 enriches every referential follow-up and the manufacturing chain judges the high-risk
+        # decision on the raw intent regardless.
+        high_risk_query_signal=manufacturing_system.is_high_risk_query_signal,
+        # P5: "L4" is registered in ChatbotService._answer_engines (chatbot/agent.py) so the seam is
+        # real and testable, but deliberately NOT dialable here yet -- no `agent_decision_maker` is
+        # passed (stays None), and there is no `RAKU_CHATBOT_DEMO_TENANT_L4` flag, unlike L1/L2/L3
+        # above. No real (Bedrock-backed) AgentDecisionMaker implementation exists; building one needs
+        # credentials this environment does not have. Even a tenant explicitly dialed to "L4" via the
+        # authority repository gets the inert L0-passthrough behavior (see agent.py) until a real
+        # decision-maker is both built and consciously wired here.
     )
     industry_api = IndustryApiService()
     real_estate_api = RealEstateApiService()

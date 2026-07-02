@@ -6,7 +6,6 @@ from pathlib import Path
 import sys
 import unittest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / "scripts" / "demo" / "chatbot_golden_scenarios.py"
 DATASET = ROOT / "scripts" / "demo" / "chatbot_golden_scenarios.json"
@@ -524,7 +523,9 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
                         "ai_action": "answer_with_citations",
                         "message": "結論: M8 は 25 N.m です。\n\n根拠:\n- doc-a",
                         "citations": [{"document_id": "doc-a"}],
-                        "quick_replies": [{"label": "判断基準を表にする", "value": "criteria_table"}],
+                        "quick_replies": [
+                            {"label": "判断基準を表にする", "value": "criteria_table"}
+                        ],
                     },
                     "rag": {"answerable": True},
                 }
@@ -573,6 +574,68 @@ class TestChatbotGoldenScenarios(unittest.TestCase):
         self.assertEqual(results[1].parent_scenario_id, "complete")
         self.assertEqual(results[1].quick_reply_value, "criteria_table")
         self.assertEqual(calls[1][2]["message"], "criteria_table")
+
+    def test_quick_reply_check_can_target_a_different_collection_for_scope_carry_checks(
+        self,
+    ) -> None:
+        calls = []
+
+        def fake_http_json(method, _base_url, path, **kwargs):
+            calls.append((method, path, kwargs.get("body")))
+            if path == "/chat/sessions":
+                return {
+                    "session_id": "sess_1",
+                    "assistant_message": {
+                        "ai_action": "answer_with_citations",
+                        "message": "結論: M8 は 25 N.m です。\n\n根拠:\n- doc-a",
+                        "citations": [{"document_id": "doc-a"}],
+                    },
+                    "rag": {"answerable": True},
+                }
+            self.assertEqual(path, "/chat/sessions/sess_1/messages")
+            return {
+                "assistant_message": {
+                    "ai_action": "handoff",
+                    "message": "承認済みの根拠だけでは回答を確定できません。",
+                    "citations": [],
+                },
+                "rag": {"answerable": False, "no_answer_reason": "source_not_enabled_for_chatbot"},
+            }
+
+        self.runner.http_json = fake_http_json
+        scenario = {
+            "id": "coreference-scope-carry",
+            "category": "grounded_lookup",
+            "question": "M8 のトルクは？",
+            "expected_behavior": "answer",
+            "expected_document_ids": ["doc-a"],
+            "min_answer_chars": 10,
+            "quick_reply_checks": [
+                {
+                    # A free-text follow-up, not a canned quick-reply value -- require_offered=False
+                    # skips the "was this value offered as a button" check accordingly.
+                    "value": "その基準は？",
+                    "require_offered": False,
+                    "collection_id": "restricted",
+                    "expected_behavior": "handoff",
+                    "expected_no_answer_reasons": ["source_not_enabled_for_chatbot"],
+                }
+            ],
+        }
+
+        results = self.runner.run_scenario_results(
+            "http://api/v1",
+            "token",
+            "api-key",
+            scenario,
+            collection_id="manuals",
+            timeout=1,
+        )
+
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(result.passed for result in results), msg=results[1].failures)
+        self.assertEqual(calls[0][2]["collection_id"], "manuals")
+        self.assertEqual(calls[1][2]["collection_id"], "restricted")
 
     def test_run_scenario_results_can_attach_retrieval_diagnostics(self) -> None:
         calls = []

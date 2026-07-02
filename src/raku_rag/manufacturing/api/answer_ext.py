@@ -28,6 +28,7 @@ from datetime import date
 from typing import Callable, Sequence
 
 from raku_rag.core.errors import AnswerStatus
+from raku_rag.core.hybrid_retrieval import lexical_query_terms
 from raku_rag.domain.models import (
     Answer,
     BoundingBox,
@@ -39,6 +40,7 @@ from raku_rag.domain.models import (
 )
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus, ManufacturingDocumentMetadata
 from raku_rag.manufacturing.domain.safety import (
+    ClassificationSource,
     HighRiskClassification,
     SafetyBlockReason,
     SafetyDecision,
@@ -446,6 +448,19 @@ def _collapse_visual_page_citations(
     return tuple(collapsed)
 
 
+def _lexically_responsive(text: str, intent_terms: set[str]) -> bool:
+    """True when `text` shares at least one lexical retrieval term with the raw intent's terms.
+
+    Used to distinguish evidence genuinely on-topic for what the USER asked from evidence seated only
+    by prior-turn terms an upstream coreference rewrite carried (which `lexical_match_score`'s flat
+    base score admits on a single shared term). See `ManufacturingAnswerService.answer`'s handling of
+    `intent_query`. Empty intent terms => nothing is responsive (fail-safe: a query with no usable
+    signal cannot vouch for any carried-in document)."""
+    if not intent_terms:
+        return False
+    return bool(intent_terms & set(lexical_query_terms(text)))
+
+
 class ManufacturingAnswerService:
     """Overlay service composing 001 services with the manufacturing safety gate."""
 
@@ -475,6 +490,78 @@ class ManufacturingAnswerService:
         )
         self._today = today
 
+    def classify_query_signal(self, query: str) -> bool:
+        """Retrieval-independent, CONCRETE high-risk signal for raw query text alone.
+
+        Used by ``chatbot/coreference.py``'s pre-rewrite safety check (see that module's docstring
+        and ``ManufacturingSystem.is_high_risk_query_signal``): a chatbot-layer rung decides whether
+        it is safe to fold prior-turn context into a follow-up's outgoing query string BEFORE any
+        retrieval has run this turn, so this must be answerable from query text alone, with no
+        candidate evidence yet -- exactly what ``self._classifier.classify(query, ())`` (empty
+        candidate metadata) gives: only the METADATA stage (vacuous here, no candidates) and the
+        KEYWORD stage (a query text match against ``_INTENT_KEYWORDS``) can ever fire.
+
+        Deliberately NARROWER than plain ``classification.is_high_risk``: this excludes the
+        classifier's stage-3 "ambiguous" fail-safe (``classification_source`` RULE/LLM), which fires
+        on ANY short/terse query -- and empirically, on nearly every short Japanese sentence, since
+        ``core.text.content_tokens`` cannot word-segment CJK text (no spaces) below the classifier's
+        3-token floor, regardless of actual content (confirmed: "その締付トルクは?", P3's own benign
+        flagship follow-up, hits this fail-safe too). Treating that catch-all as a danger SIGNAL here
+        would make this check fire for nearly every short referential follow-up in the language this
+        product primarily serves, silently starving the coreference rewrite of its value with no
+        safety upside (the real classifier + safety gate still run for real, once, inside
+        ``inner.answer()`` regardless of this decision). "Ambiguous => assert nothing without
+        approved evidence" is the right fail-safe for the FINAL answer; it is not evidence that THIS
+        query text is the kind of concrete hazard statement that must not be diluted by appending
+        unrelated prior-turn terms to it. Only a METADATA/KEYWORD hit -- an explicit, concrete
+        signal -- counts here.
+        """
+        classification = self._classifier.classify(query, ())
+        return classification.is_high_risk and classification.classification_source in (
+            ClassificationSource.METADATA,
+            ClassificationSource.KEYWORD,
+        )
+
+    def _enforce_intent_responsive_approved_citation(
+        self,
+        decision: SafetyDecision,
+        classification: HighRiskClassification,
+        evidence: Sequence[ScoredChunk],
+        *,
+        query: str,
+        effective_intent: str,
+    ) -> SafetyDecision:
+        """Root-cause fix for the L2/L3 coreference bypass (chatbot/coreference.py's Finding).
+
+        No-op unless the outgoing query was REWRITTEN (``effective_intent != query``) for a HIGH-RISK
+        intent the base gate did NOT already block. In that window the enriched ``query`` may have
+        seated an unrelated APPROVED document as evidence (``lexical_match_score`` gives any document
+        sharing even one query term a flat base score), which would wrongly satisfy the high-risk
+        approved-citation requirement. Require instead that at least one approved+effective evidence
+        chunk be RESPONSIVE to the raw intent — sharing a lexical term with it — else block
+        APPROVED_CITATION_MISSING, the SAME fail-safe the gate already produces when no approved
+        citation exists at all. Purely additive: it can only turn an allow into a block.
+        """
+        if effective_intent == query or not classification.is_high_risk or decision.blocked:
+            return decision
+        intent_terms = set(lexical_query_terms(effective_intent))
+        responsive_approved = any(
+            _lexically_responsive(s.chunk.text, intent_terms)
+            and is_approved_effective(
+                self._get_mfg_meta(s.chunk.tenant_id, s.chunk.document_id), today=self._today
+            )
+            for s in evidence
+        )
+        if responsive_approved:
+            return decision
+        return replace(
+            decision,
+            blocked=True,
+            safety_block_reason=SafetyBlockReason.APPROVED_CITATION_MISSING,
+            requires_onsite_confirmation=True,
+            approval_status_at_use=None,
+        )
+
     def answer(
         self,
         principal: IdentityClaims,
@@ -483,9 +570,22 @@ class ManufacturingAnswerService:
         *,
         intent_hint: str | None = None,
         manufacturing_filters: dict | None = None,
+        intent_query: str | None = None,
     ) -> tuple[ManufacturingAnswer, HighRiskClassification, SafetyDecision, tuple[str, ...]]:
-        """Return (answer, classification, safety_decision, candidate_document_ids) for audit."""
+        """Return (answer, classification, safety_decision, candidate_document_ids) for audit.
+
+        ``query`` drives RETRIEVAL and generation. ``intent_query`` (keyword-only; default None => the
+        raw intent IS ``query``) is the UN-enriched user query when an upstream chatbot rung rewrote
+        ``query`` to carry prior-turn context (see chatbot/coreference.py's Finding). The high-risk
+        CLASSIFICATION and the high-risk approved-citation requirement are bound to this raw intent,
+        NOT the enriched query, so appending prior-turn terms can never (a) launder a high-risk query
+        into a non-high-risk one nor (b) let a document seated purely by carried terms satisfy the
+        approved-citation gate. Omitted for every non-rewriting caller => byte-identical to before.
+        """
         tenant = principal.tenant_id
+        # The query whose OWN text/intent the safety decisions must reflect (not the recall-enriched
+        # one). ``or`` handles both None and an empty string defensively.
+        effective_intent = intent_query or query
 
         # (1)+(2) retrieve + 001 metadata filter (ACL pre-filter already applied inside retrieval).
         scored: list[ScoredChunk] = list(self._retrieval.retrieve(principal, query, profile))
@@ -518,13 +618,31 @@ class ManufacturingAnswerService:
                 candidate_meta.append(m)
 
         candidate_citations = [self._candidate_citation(s) for s in evidence]
-        missing_identifiers = _missing_query_identifiers(query, evidence, candidate_meta)
+        # Use the RAW intent, not the enriched query: the "does the evidence cover the identifiers
+        # the query named?" check must judge the identifiers the USER named, never a document id an
+        # upstream coreference rewrite carried in (which would otherwise demand that carried id be
+        # present in evidence). Identical to `query` for every non-rewriting caller.
+        missing_identifiers = _missing_query_identifiers(effective_intent, evidence, candidate_meta)
 
-        # (4) high-risk classification over query + candidate metadata.
-        classification = self._classifier.classify(query, candidate_meta, intent_hint=intent_hint)
+        # (4) high-risk classification over the RAW intent + candidate metadata. Using
+        # `effective_intent` (not the enriched `query`) is what keeps a rewritten high-risk follow-up
+        # classified high-risk: the enriched query is longer and can slip below the classifier's
+        # "ambiguous, too terse to rule danger out" fail-safe, silently downgrading it.
+        classification = self._classifier.classify(
+            effective_intent, candidate_meta, intent_hint=intent_hint
+        )
 
         # (5) safety gate over candidate citations + metadata.
         decision = self._safety_gate.evaluate(classification, candidate_citations, candidate_meta)
+        # (5b) intent-responsiveness override (root-cause fix for the L2/L3 coreference bypass — see
+        # chatbot/coreference.py's Finding). Only bites when an upstream rung actually rewrote the
+        # query: for a HIGH-RISK intent, an approved+effective citation may satisfy the gate ONLY if
+        # it is genuinely responsive to the raw intent, never one seated purely by carried prior-turn
+        # terms via lexical_match_score's flat base score. Additive — it can only turn an allow into
+        # a block, never the reverse — so it cannot weaken the gate for any existing caller.
+        decision = self._enforce_intent_responsive_approved_citation(
+            decision, classification, evidence, query=query, effective_intent=effective_intent
+        )
         deferred_visual_promotion = _should_defer_visual_promotion(
             decision,
             candidate_citations,
@@ -580,6 +698,7 @@ class ManufacturingAnswerService:
             intent_hint=intent_hint,
             classification=classification,
             evidence=evidence,
+            effective_intent=effective_intent,
         )
         if approved_lookup_evidence:
             approved_lookup_meta = [
@@ -587,7 +706,9 @@ class ManufacturingAnswerService:
                 for s in approved_lookup_evidence
                 if (m := self._get_mfg_meta(principal.tenant_id, s.chunk.document_id)) is not None
             ]
-            if _missing_query_identifiers(query, approved_lookup_evidence, approved_lookup_meta):
+            if _missing_query_identifiers(
+                effective_intent, approved_lookup_evidence, approved_lookup_meta
+            ):
                 block_reason = (
                     SafetyBlockReason.APPROVED_CITATION_MISSING
                     if classification.is_high_risk
@@ -749,6 +870,7 @@ class ManufacturingAnswerService:
         intent_hint: str | None,
         classification: HighRiskClassification,
         evidence: Sequence[ScoredChunk],
+        effective_intent: str | None = None,
     ) -> tuple[AnswerService, tuple[ScoredChunk, ...]]:
         if not _should_answer_from_approved_lookup_evidence(
             query, intent_hint, classification=classification
@@ -768,6 +890,19 @@ class ManufacturingAnswerService:
                 else _is_approved(self._get_mfg_meta(principal.tenant_id, s.chunk.document_id))
             )
         ]
+        # When an upstream rung rewrote the outgoing query (effective_intent != query), the enriched
+        # query may have seated a document responsive ONLY to the carried prior-turn terms. Prefer the
+        # approved evidence genuinely responsive to the raw intent so generation cites the on-topic
+        # document, not the carried-in one — but only when such responsive evidence EXISTS, so a
+        # legitimate same-topic follow-up whose target is found solely via the carried identifier still
+        # keeps its recall. (The high-risk gate already blocked the case where none is responsive.)
+        if effective_intent is not None and effective_intent != query:
+            intent_terms = set(lexical_query_terms(effective_intent))
+            responsive = [
+                s for s in approved_lookup if _lexically_responsive(s.chunk.text, intent_terms)
+            ]
+            if responsive:
+                approved_lookup = responsive
         if not approved_lookup:
             if classification.is_high_risk:
                 return self._answer_service_for_preselected(())

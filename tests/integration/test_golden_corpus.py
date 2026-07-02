@@ -130,7 +130,7 @@ class TestGoldenCorpusBaseline(unittest.TestCase):
 
     def test_seeded_metric_regression_fails_for_each_quality_metric(self) -> None:
         run = EvaluationRunner(self.sys).run(self.eval_set, principal=self.principal)
-        for metric in ("precision_at_k", "mrr", "faithfulness"):
+        for metric in ("precision_at_k", "mrr", "faithfulness", "claim_groundedness"):
             with self.subTest(metric=metric):
                 floor = self.baseline.min_metrics[metric]
                 degraded = replace(run, metrics={**run.metrics, metric: floor - 0.1})

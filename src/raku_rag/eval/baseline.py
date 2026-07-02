@@ -29,6 +29,11 @@ DEFAULT_MIN_METRICS: dict[str, float] = {
     "recall_at_k": 1.0,
     "citation_accuracy": 1.0,
     "groundedness": 1.0,
+    # P2 (chatbot-conversational-agent-roadmap): per-claim grounding (GroundednessGate.claim_check) —
+    # every numeric/identifier span in an "ok" answer must trace to its cited evidence. Strictly
+    # stronger than `groundedness` above (a structural citations/used_chunks check), so this is the
+    # metric a genuinely generative provider that invents an unsupported number would fail first.
+    "claim_groundedness": 1.0,
     "visual_recall_at_k": 1.0,
     "visual_citation_accuracy": 1.0,
     "bbox_iou": 0.95,

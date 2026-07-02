@@ -13,16 +13,27 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable
 from urllib.parse import urlparse
 
+from raku_rag.chatbot.agent import AgentDecisionMaker, L4AgenticAnswerEngine
+from raku_rag.chatbot.answer_engine import AnswerEngine, L0DeterministicAnswerEngine, RagAnswerer
+from raku_rag.chatbot.authority import (
+    DEFAULT_CHATBOT_AUTHORITY_LEVEL,
+    ChatbotAuthorityRepository,
+    InMemoryChatbotAuthorityRepository,
+)
+from raku_rag.chatbot.composition import L3CompositionAnswerEngine
+from raku_rag.chatbot.coreference import HighRiskQuerySignal, L2QueryUnderstandingAnswerEngine
+from raku_rag.chatbot.dialogue_manager import DialogueManager
+from raku_rag.chatbot.envelope import L1EnvelopeAnswerEngine
+from raku_rag.core.config import Settings
 from raku_rag.domain.models import IdentityClaims
+from raku_rag.interfaces.base import LLMProvider
 from raku_rag.persistence.chatbot import (
     ChatbotSourcePolicyRepository,
     InMemoryChatbotSourcePolicyRepository,
 )
-
-RagAnswerer = Callable[[IdentityClaims, str, str | None], dict]
+from raku_rag.providers.llms import llm_provider_from_settings
 
 SESSION_ADMIN_ROLES = {"ops_owner", "tenant_admin", "reviewer"}
 HANDOFF_READ_ROLES = {"operator", "ops_owner", "tenant_admin"}
@@ -31,6 +42,11 @@ SOURCE_POLICY_ROLES = {"tenant_admin", "scenario_admin", "data_admin"}
 SCENARIO_MANAGE_ROLES = {"tenant_admin", "scenario_admin"}
 SCENARIO_APPROVE_ROLES = {"tenant_admin", "scenario_approver"}
 EXPORT_DELETE_ROLES = {"tenant_admin", "audit_admin"}
+
+# Matches the `DEMO_TENANT` env var / "demo" literal used throughout scripts/demo/ and the legacy
+# apps/answer-service/server.py `seed()` helper — the one demo tenant id this whole codebase
+# agrees on.
+DEFAULT_DEMO_TENANT_ID = "demo"
 
 
 def _now() -> str:
@@ -381,17 +397,103 @@ class ChatbotService:
         self,
         rag_answerer: RagAnswerer,
         source_policy_repository: ChatbotSourcePolicyRepository | None = None,
+        authority_repository: ChatbotAuthorityRepository | None = None,
+        llm_provider: LLMProvider | None = None,
+        settings: Settings | None = None,
+        enable_demo_tenant_l1: bool = False,
+        enable_demo_tenant_l2: bool = False,
+        enable_demo_tenant_l3: bool = False,
+        demo_tenant_id: str = DEFAULT_DEMO_TENANT_ID,
+        high_risk_query_signal: HighRiskQuerySignal | None = None,
+        agent_decision_maker: AgentDecisionMaker | None = None,
     ) -> None:
-        self._rag_answerer = rag_answerer
         self._sessions: dict[tuple[str, str], ChatSession] = {}
         self._handoffs: dict[tuple[str, str], dict] = {}
         self._feedback: dict[tuple[str, str], dict] = {}
         self._source_policies: dict[tuple[str, str], dict] = {}
-        self._source_policy_repo = source_policy_repository or InMemoryChatbotSourcePolicyRepository(
-            self._source_policies
+        self._source_policy_repo = (
+            source_policy_repository or InMemoryChatbotSourcePolicyRepository(self._source_policies)
         )
         self._scenarios: dict[tuple[str, str], ChatScenario] = {}
+        self._dialogue_manager = DialogueManager()
+        self._authority_repo = authority_repository or InMemoryChatbotAuthorityRepository()
+        # L1 authority is safe to register unconditionally: it is a pure envelope wrapper around L0
+        # (see envelope.py) that falls back to L0's own output verbatim whenever no real LLM is
+        # configured, the provider errors, or the mechanical guard trips. Only a tenant explicitly
+        # dialed to "L1" (see `enable_demo_tenant_l1` below) is ever routed to it.
+        self._llm_provider = llm_provider or llm_provider_from_settings(settings or Settings())
+        l0_engine = L0DeterministicAnswerEngine(rag_answerer)
+        # L2's coreference rewrite is kept safe at the ROOT CAUSE, not by a pre-check here: it carries
+        # the raw follow-up as `context.intent_query`, which the manufacturing answer chain uses to
+        # bind its high-risk classification + approved-citation gate to the user's true intent while
+        # retrieval uses the enriched query (see coreference.py's Finding). So L2 no longer takes a
+        # `high_risk_query_signal`; it enriches every referential follow-up. This is why `high_risk_
+        # query_signal` is threaded ONLY into L4 below, not L2.
+        l2_coreference_engine = L2QueryUnderstandingAnswerEngine(l0_engine)
+        # L3 sits BELOW L2 in the wrapping (coreference resolution runs first, feeding the same
+        # deterministic L0 retrieval/answer L2 always has, then L3's defense-in-depth verification runs
+        # over whatever came back), and L1's envelope wraps the outermost result — same cumulative "+"
+        # shape as "L2" below, one rung further. L3 itself does NOT enrich the query (see
+        # composition.py's module docstring "Finding": that was tried and reverted as unsafe). L2,
+        # which wraps it here, does enrich — and the intent_query it sets flows through L3 (which
+        # passes the query through byte-identical) down to L0 and the manufacturing chain, so a "L3"
+        # tenant gets the same root-cause protection a "L2" tenant does.
+        l3_composition_engine = L3CompositionAnswerEngine(l0_engine)
+        l2_over_l3_engine = L2QueryUnderstandingAnswerEngine(l3_composition_engine)
+        # L4 (P5, agentic control) wraps L0 DIRECTLY, not L2/L3: the whole point of this rung is that
+        # the decision-maker decides what to search for -- including resolving its own references --
+        # so layering it on top of L2's own (differently-triggered) coreference rewrite would mean two
+        # independent query-rewriting mechanisms in the same call chain, for no offsetting benefit.
+        # `high_risk_query_signal` is threaded into L4 (unlike L2, which no longer needs it): see
+        # chatbot/agent.py's module docstring for the full mechanism (every hop's proposed query is
+        # re-classified before it is allowed to run; a trip aborts the whole turn, never just the hop).
+        # `agent_decision_maker` defaults to `None`, so with no decision-maker injected (true of every
+        # deployment today -- no real one exists yet, see chatbot/agent.py), "L4" is a byte-identical,
+        # zero-call passthrough to L0, exactly as offline-safe as "L1"/"L2"/"L3" are with no LLM
+        # configured.
+        l4_agentic_engine = L4AgenticAnswerEngine(
+            l0_engine,
+            decision_maker=agent_decision_maker,
+            high_risk_query_signal=high_risk_query_signal,
+        )
+        self._answer_engines: dict[str, AnswerEngine] = {
+            DEFAULT_CHATBOT_AUTHORITY_LEVEL: l0_engine,
+            "L1": L1EnvelopeAnswerEngine(l0_engine, self._llm_provider),
+            # L2 is cumulative, per the authority ladder's "+" framing: coreference resolution runs
+            # first (feeding the same deterministic L0 retrieval/answer), then L1's envelope wraps
+            # whichever — possibly rewritten, possibly reused-from-citations — answer resulted. With
+            # no LLM configured this reduces to exactly L2's deterministic behavior (L1's part is a
+            # provable no-op passthrough, see envelope.py), so "L2" is just as offline-safe as "L1".
+            "L2": L1EnvelopeAnswerEngine(l2_coreference_engine, self._llm_provider),
+            # L3 is L2 + composition: coreference resolution still runs first, then L3 runs its own
+            # defense-in-depth verification pass over whatever `l0_engine` returned (see
+            # composition.py), then L1's envelope wraps the result exactly as it does for every other
+            # rung. With no LLM configured (this sandbox's default), L1's wrap is a provable no-op and
+            # L3's own verification never suppresses an inner "ok" answer (see composition.py), so "L3"
+            # is exactly as offline-safe as "L1"/"L2".
+            "L3": L1EnvelopeAnswerEngine(l2_over_l3_engine, self._llm_provider),
+            # L4 (P5): registered so the seam/interface exists and is independently testable, but with
+            # NO way to actually dial a real tenant to a functioning agentic loop today -- there is no
+            # `enable_demo_tenant_l4` flag (see below) and no production wiring of a real
+            # `agent_decision_maker` in apps/answer-service/server.py. Even a tenant explicitly set to
+            # "L4" via the authority repository gets the inert L0-passthrough behavior described above,
+            # because `agent_decision_maker` is `None` unless a caller (in practice, only a test)
+            # injects one.
+            "L4": L1EnvelopeAnswerEngine(l4_agentic_engine, self._llm_provider),
+        }
+        if enable_demo_tenant_l1:
+            self._authority_repo.set(demo_tenant_id, "L1")
+        if enable_demo_tenant_l2:
+            self._authority_repo.set(demo_tenant_id, "L2")
+        if enable_demo_tenant_l3:
+            self._authority_repo.set(demo_tenant_id, "L3")
         self._seed_scenarios()
+
+    def _resolve_answer_engine(self, tenant_id: str) -> AnswerEngine:
+        level = self._authority_repo.get(tenant_id)
+        return self._answer_engines.get(
+            level, self._answer_engines[DEFAULT_CHATBOT_AUTHORITY_LEVEL]
+        )
 
     # --- sessions and turns -------------------------------------------------
 
@@ -1058,7 +1160,11 @@ class ChatbotService:
             )
             return assistant, rag, handoff
 
-        rag_response = self._rag_answerer(principal, text, collection_id)
+        engine = self._resolve_answer_engine(session.tenant_id)
+        context = self._dialogue_manager.build_context(
+            session, self._quick_reply_action, collection_id, pre_rag_policy_ids
+        )
+        rag_response = engine.answer(principal, text, collection_id, context)
         latency_ms = int((time.perf_counter() - started) * 1000)
         raw_citations = [dict(c) for c in (rag_response.get("citations") or [])]
         citations, policy_ids = self._filter_chatbot_citations(
@@ -1357,7 +1463,7 @@ class ChatbotService:
                     self._bullet_lines(self._uncertainty_lines()),
                 ),
                 ("根拠", self._bullet_lines(evidence_lines or ["引用情報を確認できません。"])),
-        ]
+            ]
         return "\n\n".join(f"{title}:\n{body}" for title, body in sections)
 
     def _answer_template_intent(self, question: str, answer: str) -> str:
@@ -1521,45 +1627,7 @@ class ChatbotService:
         return any(term.lower() in lower for term in terms)
 
     def _last_answer_context(self, session: ChatSession) -> dict | None:
-        answer_index = -1
-        answer_message: StoredMessage | None = None
-        for index in range(len(session.messages) - 1, -1, -1):
-            message = session.messages[index]
-            if (
-                message.role == "assistant"
-                and message.ai_action == "answer_with_citations"
-                and message.citations
-            ):
-                answer_index = index
-                answer_message = message
-                break
-        if answer_message is None:
-            return None
-
-        metadata = dict(answer_message.metadata or {})
-        previous_question = ""
-        for message in reversed(session.messages[:answer_index]):
-            if message.role == "user" and not self._quick_reply_action(message.content_redacted):
-                previous_question = message.content_redacted
-                break
-        if not previous_question:
-            previous_question = str(metadata.get("source_question") or "")
-
-        document_ids = [
-            str(citation.get("document_id") or "")
-            for citation in answer_message.citations
-            if citation.get("document_id")
-        ]
-        return {
-            "question": previous_question,
-            "answer": answer_message.content_redacted,
-            "source_answer_text": str(
-                metadata.get("source_answer_text") or answer_message.content_redacted
-            ),
-            "source_question": str(metadata.get("source_question") or previous_question),
-            "citations": [dict(citation) for citation in answer_message.citations],
-            "document_ids": list(dict.fromkeys(document_ids)),
-        }
+        return self._dialogue_manager.last_answer_context(session, self._quick_reply_action)
 
     def _previous_reformat_turn(
         self, session: ChatSession, action: str, collection_id: str | None
@@ -1796,8 +1864,10 @@ class ChatbotService:
         if channels and session.channel not in channels:
             return False
         intents = set(str(x) for x in (policy.get("allowed_intents") or []))
-        if intents and session.current_intent and not self._policy_intent_allows_rag_turn(
-            intents, session.current_intent
+        if (
+            intents
+            and session.current_intent
+            and not self._policy_intent_allows_rag_turn(intents, session.current_intent)
         ):
             return False
         scenarios = set(str(x) for x in (policy.get("allowed_scenario_ids") or []))
@@ -1805,7 +1875,9 @@ class ChatbotService:
             return False
         return True
 
-    def _policy_intent_allows_rag_turn(self, allowed_intents: set[str], current_intent: str) -> bool:
+    def _policy_intent_allows_rag_turn(
+        self, allowed_intents: set[str], current_intent: str
+    ) -> bool:
         if current_intent in allowed_intents:
             return True
         non_rag_intents = {"cancel_subscription", "confirm", "human_handoff", "high_risk"}
@@ -1858,6 +1930,29 @@ class ChatbotService:
             return True
         if "policy" in normalized and "無視" in text:
             return True
+        # P5 (chatbot-conversational-agent-roadmap, agentic control): the structural loop cap/
+        # per-hop safety recheck in chatbot/agent.py cannot itself be talked out of existing, but an
+        # incoming message that tries to instruct a FUTURE real decision-maker to ignore its own
+        # bounds is worth refusing at this earliest, pre-retrieval layer too -- same additive,
+        # deterministic-denylist style as every clause above, not a new mechanism.
+        if any(
+            term in normalized
+            for term in (
+                "ignore the retrieval limit",
+                "ignore your retrieval limit",
+                "ignore the hop limit",
+                "retrieve without limit",
+                "retrieve without restriction",
+                "skip the safety classification",
+                "skip the safety check",
+            )
+        ):
+            return True
+        if any(
+            term in text
+            for term in ("検索回数の制限を無視", "ホップ数の制限を無視", "安全分類を無視して検索")
+        ):
+            return True
         return False
 
     def _needs_clarification(self, text: str) -> bool:
@@ -1866,7 +1961,9 @@ class ChatbotService:
             return True
         if "ボルト" in text and "トルク" in text and not self._has_specific_target(text):
             return True
-        if "薬液濃度" in text and any(word in text for word in ("どれくらい", "どのくらい", "足せ")):
+        if "薬液濃度" in text and any(
+            word in text for word in ("どれくらい", "どのくらい", "足せ")
+        ):
             return True
         if "scc" in normalized and "ピンホール" in text and "作業指示" in text:
             return True

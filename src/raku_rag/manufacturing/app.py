@@ -826,7 +826,15 @@ class ManufacturingSystem:
         intent_hint: str | None = None,
         manufacturing_filters: dict | None = None,
         factory_id: str | None = None,
+        *,
+        intent_query: str | None = None,
     ) -> ManufacturingAnswer:
+        # `intent_query` (keyword-only, default None => the raw intent IS `query`): the UN-enriched
+        # user query when a chatbot rung rewrote the outgoing retrieval `query` (see
+        # chatbot/coreference.py's Finding). Forwarded to ManufacturingAnswerService.answer, which
+        # binds the high-risk CLASSIFICATION and the approved-citation gate to it while RETRIEVAL
+        # still uses the enriched `query`. Omitted everywhere except that one rewrite path, so this is
+        # inert for every existing caller.
         profile = self._mvp.profiles.resolve(collection_id)
         # T061 — ACL-denial auditing: a query that matches within-tenant documents the principal has
         # NO grant to is silently dropped by the 001 deny-by-default PRE-filter; surface that denial
@@ -839,6 +847,7 @@ class ManufacturingSystem:
             profile,
             intent_hint=intent_hint,
             manufacturing_filters=manufacturing_filters,
+            intent_query=intent_query,
         )
         # T020/T061 — audit the high-risk + safety decision + citation access (reference IDs only).
         citation_ids = tuple(
@@ -880,6 +889,20 @@ class ManufacturingSystem:
                 document_ids=tuple(candidate_doc_ids),
             )
         return ans
+
+    def is_high_risk_query_signal(self, query: str) -> bool:
+        """Retrieval-independent, concrete high-risk SIGNAL for raw query text alone (no audit, no
+        ACL check, no retrieval -- a pure classification read, unlike ``answer``).
+
+        This exists for a chatbot-layer conversational rung (``chatbot/coreference.py``'s standalone-
+        query rewrite; see that module's docstring) that must decide, BEFORE running retrieval this
+        turn, whether it is safe to fold prior-turn context into a follow-up's outgoing query string.
+        Delegates to ``ManufacturingAnswerService.classify_query_signal`` so the chatbot layer always
+        consults the SAME classifier instance (with whatever optional semantic/LLM tie-break this
+        deployment has configured) the real answer path's safety gate uses -- never a second, drifting
+        instance -- while never reaching into that service's private state directly.
+        """
+        return self._answer.classify_query_signal(query)
 
     def _audit_citation_access(
         self,
