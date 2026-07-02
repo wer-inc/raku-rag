@@ -130,6 +130,8 @@ class ManufacturingSystem:
         # tenant-scoped manufacturing metadata store (mirrors DocumentRegistry; in-memory).
         self._mfg_meta: dict[tuple[str, str], ManufacturingDocumentMetadata] = {}
         self.audit = audit or InMemoryAuditLogWriter()
+        # ★V2 tenant_lexicon (optional): per-tenant vocabulary extensions; None => built-in defaults.
+        self.lexicon = None
 
         # --- Phase 9 governance overlay (no-train / retention / policy / export) ------------------
         # Reuse the Phase-2 DataUsePolicyStore (per-tenant GQ1/GQ2 defaults + opt-in invariant +

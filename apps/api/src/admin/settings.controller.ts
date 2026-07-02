@@ -120,6 +120,31 @@ export class AdminSettingsController {
     return this.requestCore(req, "PUT", `/internal/admin/datasources/${encodeURIComponent(sourceId)}`, body);
   }
 
+  @Get("lexicon/:namespace")
+  async lexiconNamespace(
+    @Req() req: Request,
+    @Param("namespace") namespace: string,
+  ): Promise<Record<string, unknown>> {
+    assertAdminMutationAllowed(req);
+    return this.requestCore(req, "GET", `/internal/admin/lexicon/${encodeURIComponent(namespace)}`);
+  }
+
+  @Put("lexicon/:namespace/:key")
+  async lexiconUpsert(
+    @Req() req: Request,
+    @Param("namespace") namespace: string,
+    @Param("key") key: string,
+    @Body() body: { values?: string[] },
+  ): Promise<Record<string, unknown>> {
+    assertAdminMutationAllowed(req);
+    return this.requestCore(
+      req,
+      "PUT",
+      `/internal/admin/lexicon/${encodeURIComponent(namespace)}/${encodeURIComponent(key)}`,
+      body,
+    );
+  }
+
   @Get("query-profiles")
   async queryProfiles(
     @Req() req: Request,

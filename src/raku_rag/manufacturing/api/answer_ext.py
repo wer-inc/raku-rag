@@ -522,6 +522,22 @@ class ManufacturingAnswerService:
             ClassificationSource.KEYWORD,
         )
 
+    def _safety_lexicon_extras(self, tenant_id: str) -> dict:
+        """★V2 tenant_lexicon: per-tenant ADDITIVE extensions to the danger keyword sets.
+
+        Resolution starts from the built-in defaults inside the classifier; entries here can only
+        widen detection (union), never narrow it. No lexicon service wired -> pure defaults.
+        """
+        lexicon = getattr(self, "lexicon", None)
+        if lexicon is None:
+            return {}
+        try:
+            return lexicon.entries(tenant_id, "safety.high_risk_keywords")
+        except (
+            Exception
+        ):  # noqa: BLE001 — a lexicon outage must not break answering (defaults apply)
+            return {}
+
     def _enforce_intent_responsive_approved_citation(
         self,
         decision: SafetyDecision,
@@ -629,7 +645,10 @@ class ManufacturingAnswerService:
         # classified high-risk: the enriched query is longer and can slip below the classifier's
         # "ambiguous, too terse to rule danger out" fail-safe, silently downgrading it.
         classification = self._classifier.classify(
-            effective_intent, candidate_meta, intent_hint=intent_hint
+            effective_intent,
+            candidate_meta,
+            intent_hint=intent_hint,
+            extra_keywords=self._safety_lexicon_extras(principal.tenant_id),
         )
 
         # (5) safety gate over candidate citations + metadata.
