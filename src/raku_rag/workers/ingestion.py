@@ -526,6 +526,36 @@ class VisualIngestionOptions:
     content_type: str = "image/png"
 
 
+def _ocr_quality_review_threshold() -> float:
+    import os
+
+    raw = os.environ.get("RAKU_OCR_CONFIDENCE_REVIEW_THRESHOLD") or ""
+    try:
+        value = float(raw)
+    except ValueError:
+        value = 90.0
+    return value if 0 < value <= 100 else 90.0
+
+
+def _ocr_quality_metadata(results: tuple["VisualIngestionResult", ...]) -> dict:
+    confidences = [
+        float(region.transcription_confidence)
+        for result in results
+        for region in result.regions
+        if region.transcription_confidence is not None and not region.metadata.get("page_aggregate")
+    ]
+    if not confidences:
+        return {}
+    threshold = _ocr_quality_review_threshold()
+    minimum = min(confidences)
+    return {
+        "ocr_confidence_mean": round(sum(confidences) / len(confidences), 2),
+        "ocr_confidence_min": round(minimum, 2),
+        "ocr_quality_review_required": minimum < threshold,
+        "ocr_quality_review_threshold": threshold,
+    }
+
+
 @dataclass(frozen=True)
 class VisualIngestionResult:
     asset: VisualAsset
@@ -1644,6 +1674,10 @@ class IngestionExecutor:
                 "visual_asset_storage_uri": first_asset.storage_uri if first_asset else "",
                 "visual_asset_content_type": first_asset.content_type if first_asset else "",
                 "caption_status": ",".join(result.caption_status for result in results),
+                # ★V1 取込品質ゲート: aggregate the per-region Textract confidences the pipeline
+                # already captures into a document-level verdict, so "ingested but unreadable"
+                # scans are FLAGGED instead of silently answering from garbage OCR.
+                **_ocr_quality_metadata(results),
                 "async_provider": async_provider,
                 "async_job_id": async_job_id,
                 "async_job_status": async_job_status,
