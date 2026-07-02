@@ -59,7 +59,15 @@ from raku_rag.industry import (  # noqa: E402
 )
 from raku_rag.persistence.provider_config_audit import ProviderConfigAuditRepository  # noqa: E402
 from raku_rag.persistence.chatbot import (  # noqa: E402
+    InMemoryChatFeedbackRepository,
+    InMemoryChatHandoffRepository,
+    InMemoryChatScenarioRepository,
+    InMemoryChatSessionRepository,
     InMemoryChatbotSourcePolicyRepository,
+    PostgresChatFeedbackRepository,
+    PostgresChatHandoffRepository,
+    PostgresChatScenarioRepository,
+    PostgresChatSessionRepository,
     PostgresChatbotSourcePolicyRepository,
 )
 from raku_rag.production import (  # noqa: E402
@@ -1502,6 +1510,25 @@ def _chatbot_source_policy_repository_for(system: ProductionSystem):
     return InMemoryChatbotSourcePolicyRepository()
 
 
+def _chatbot_state_repositories_for(system: ProductionSystem) -> dict:
+    """S1-3: sessions/handoffs/feedback/scenarios persist to Postgres over a real DB
+    (0018_chatbot_persistence, RLS-forced) so conversations survive answer-service restarts."""
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return {
+            "session_repository": PostgresChatSessionRepository(conn),
+            "handoff_repository": PostgresChatHandoffRepository(conn),
+            "feedback_repository": PostgresChatFeedbackRepository(conn),
+            "scenario_repository": PostgresChatScenarioRepository(conn),
+        }
+    return {
+        "session_repository": InMemoryChatSessionRepository(),
+        "handoff_repository": InMemoryChatHandoffRepository(),
+        "feedback_repository": InMemoryChatFeedbackRepository(),
+        "scenario_repository": InMemoryChatScenarioRepository(),
+    }
+
+
 def _phone_call_repository_for(system: ProductionSystem):
     conn = getattr(system, "_conn", None)
     if isinstance(system, ProductionSystem) and conn is not None:
@@ -1641,6 +1668,7 @@ def make_handler(system: ProductionSystem):
         # credentials this environment does not have. Even a tenant explicitly dialed to "L4" via the
         # authority repository gets the inert L0-passthrough behavior (see agent.py) until a real
         # decision-maker is both built and consciously wired here.
+        **_chatbot_state_repositories_for(system),
     )
     # 022-ai-phone-rag: the phone layer reuses the SAME audited manufacturing answer path as the
     # chatbot (FR-009) — no separate retrieval/citation path for the phone channel.
