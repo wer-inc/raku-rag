@@ -24,7 +24,9 @@ _BEARER = re.compile(r"(?i)(?<![A-Za-z0-9])bearer\s+[A-Za-z0-9._~+/=-]{8,}")
 # word characters — so「カードは4111 1111 1111 1111」or「鍵はsk-...」never hit a \b boundary and
 # slip through. Phone transcripts are Japanese-first: use alnum lookarounds instead of \b.
 _CARD = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
-_API_KEY = re.compile(r"(?i)(?<![A-Za-z0-9])(?:sk|api|key|secret)[-_][A-Za-z0-9]{8,}(?![A-Za-z0-9])")
+_API_KEY = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(?:sk|api|key|secret)[-_][A-Za-z0-9]{8,}(?![A-Za-z0-9])"
+)
 
 
 @dataclass(frozen=True)
@@ -66,7 +68,9 @@ def redact_text(text: str | None) -> RedactionResult:
         out = _E164.sub(lambda m: mask_phone_number(m.group(0)) or "[REDACTED:phone]", out)
     if _JP_PHONE_PLAIN.search(out):
         classes.append("phone_number")
-        out = _JP_PHONE_PLAIN.sub(lambda m: mask_phone_number(m.group(0)) or "[REDACTED:phone]", out)
+        out = _JP_PHONE_PLAIN.sub(
+            lambda m: mask_phone_number(m.group(0)) or "[REDACTED:phone]", out
+        )
     if _CARD.search(out):
         classes.append("credit_card")
         out = _CARD.sub("[REDACTED:credit_card]", out)

@@ -4,7 +4,6 @@ import importlib.util
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 _SERVER = ROOT / "apps/answer-service/server.py"
 

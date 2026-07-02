@@ -131,19 +131,42 @@ class PhoneScenarioService:
             scenario_version_id=version_id,
             version_number=existing.version_number if existing else scenario.next_version_number(),
             status=existing.status if existing else "draft",
-            entry_conditions=[dict(c) for c in body.get("entry_conditions") or (existing.entry_conditions if existing else [])],
+            entry_conditions=[
+                dict(c)
+                for c in body.get("entry_conditions")
+                or (existing.entry_conditions if existing else [])
+            ],
             steps=[dict(s) for s in body.get("steps") or (existing.steps if existing else [])],
-            required_slots=[dict(s) for s in body.get("required_slots") or (existing.required_slots if existing else [])],
-            branch_conditions=[dict(c) for c in body.get("branch_conditions") or (existing.branch_conditions if existing else [])],
-            allowed_actions=[str(a) for a in body.get("allowed_actions") or (existing.allowed_actions if existing else [])],
+            required_slots=[
+                dict(s)
+                for s in body.get("required_slots") or (existing.required_slots if existing else [])
+            ],
+            branch_conditions=[
+                dict(c)
+                for c in body.get("branch_conditions")
+                or (existing.branch_conditions if existing else [])
+            ],
+            allowed_actions=[
+                str(a)
+                for a in body.get("allowed_actions")
+                or (existing.allowed_actions if existing else [])
+            ],
             handoff_conditions=_ensure_mandatory_handoff_conditions(
-                [dict(c) for c in body.get("handoff_conditions") or (existing.handoff_conditions if existing else [])]
+                [
+                    dict(c)
+                    for c in body.get("handoff_conditions")
+                    or (existing.handoff_conditions if existing else [])
+                ]
             ),
             fallback_message=str(
                 body.get("fallback_message")
                 or (existing.fallback_message if existing else "確認して担当者におつなぎします。")
             ),
-            response_templates=[dict(t) for t in body.get("response_templates") or (existing.response_templates if existing else [])],
+            response_templates=[
+                dict(t)
+                for t in body.get("response_templates")
+                or (existing.response_templates if existing else [])
+            ],
             approved_by=existing.approved_by if existing else None,
             approved_at=existing.approved_at if existing else None,
             created_by=existing.created_by if existing else principal.user_id,

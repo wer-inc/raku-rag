@@ -153,9 +153,9 @@ class SchemaLockMigrationSqlTest(unittest.TestCase):
         policy_sql = (MIGRATIONS / "0016_chatbot_source_exposure_policies.sql").read_text(
             encoding="utf-8"
         )
-        policy_down = (
-            MIGRATIONS / "0016_chatbot_source_exposure_policies.down.sql"
-        ).read_text(encoding="utf-8")
+        policy_down = (MIGRATIONS / "0016_chatbot_source_exposure_policies.down.sql").read_text(
+            encoding="utf-8"
+        )
 
         for token in (
             "CREATE TABLE IF NOT EXISTS chatbot_source_exposure_policies",

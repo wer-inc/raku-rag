@@ -197,8 +197,7 @@ class HandoffService:
             confirmed_slots=dict(call.collected_slots),
             citations=citations,
             sentiment=sentiment,
-            recommended_next_action=recommended_next_action
-            or self._default_next_action(reason),
+            recommended_next_action=recommended_next_action or self._default_next_action(reason),
         )
         dispatch = self.dispatch(package)
         package.status = dispatch.status

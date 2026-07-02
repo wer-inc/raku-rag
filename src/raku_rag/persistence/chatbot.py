@@ -16,9 +16,7 @@ from typing import Mapping, Protocol
 class ChatbotSourcePolicyRepository(Protocol):
     def list(self, tenant_id: str) -> list[dict]: ...
 
-    def upsert(
-        self, tenant_id: str, policy_id: str, policy: Mapping[str, object]
-    ) -> dict: ...
+    def upsert(self, tenant_id: str, policy_id: str, policy: Mapping[str, object]) -> dict: ...
 
 
 @dataclass
@@ -33,9 +31,7 @@ class InMemoryChatbotSourcePolicyRepository:
         ]
         return sorted(policies, key=lambda policy: str(policy.get("policy_id") or ""))
 
-    def upsert(
-        self, tenant_id: str, policy_id: str, policy: Mapping[str, object]
-    ) -> dict:
+    def upsert(self, tenant_id: str, policy_id: str, policy: Mapping[str, object]) -> dict:
         saved = dict(policy)
         saved["tenant_id"] = tenant_id
         saved["policy_id"] = policy_id
@@ -81,9 +77,7 @@ class PostgresChatbotSourcePolicyRepository:
             )
             return [self._row_to_policy(row) for row in cur.fetchall()]
 
-    def upsert(
-        self, tenant_id: str, policy_id: str, policy: Mapping[str, object]
-    ) -> dict:
+    def upsert(self, tenant_id: str, policy_id: str, policy: Mapping[str, object]) -> dict:
         from raku_rag.persistence.postgres import _use_tenant
 
         _use_tenant(self._conn, tenant_id)
@@ -309,8 +303,7 @@ class PostgresChatSessionRepository:
         _use_tenant(self._conn, tenant_id)
         with self._conn.cursor() as cur:
             cur.execute(
-                "SELECT payload FROM chatbot_sessions "
-                "WHERE tenant_id = %s AND session_id = %s",
+                "SELECT payload FROM chatbot_sessions " "WHERE tenant_id = %s AND session_id = %s",
                 (tenant_id, session_id),
             )
             row = cur.fetchone()
@@ -365,8 +358,7 @@ class PostgresChatHandoffRepository:
         _use_tenant(self._conn, tenant_id)
         with self._conn.cursor() as cur:
             cur.execute(
-                "SELECT payload FROM chatbot_handoffs "
-                "WHERE tenant_id = %s AND handoff_id = %s",
+                "SELECT payload FROM chatbot_handoffs " "WHERE tenant_id = %s AND handoff_id = %s",
                 (tenant_id, handoff_id),
             )
             row = cur.fetchone()

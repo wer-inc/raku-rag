@@ -220,8 +220,7 @@ class PostgresDataSourceRepository:
                 )
             else:
                 cur.execute(
-                    "DELETE FROM sync_schedule_registry "
-                    "WHERE tenant_id = %s AND source_id = %s",
+                    "DELETE FROM sync_schedule_registry " "WHERE tenant_id = %s AND source_id = %s",
                     (tenant_id, source_id),
                 )
         saved = self.get(tenant_id, source_id)
@@ -240,9 +239,7 @@ class PostgresDataSourceRepository:
                 rows = cur.fetchall()
             finally:
                 cur.execute("SELECT set_config('app.sync_scheduler', '', false)")
-        return [
-            {"tenant_id": row[0], "source_id": row[1], "sync_schedule": row[2]} for row in rows
-        ]
+        return [{"tenant_id": row[0], "source_id": row[1], "sync_schedule": row[2]} for row in rows]
 
     def remove_schedule(self, tenant_id: str, source_id: str) -> None:
         """Prune a stale registry row (datasource no longer resolves)."""

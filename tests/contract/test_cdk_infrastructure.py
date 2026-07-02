@@ -17,9 +17,9 @@ class CdkInfrastructureContractTest(unittest.TestCase):
         self.inline_upload_route = (ROOT / "apps/web/app/api/upload/route.ts").read_text(
             encoding="utf-8"
         )
-        self.full_saas = (
-            ROOT / "apps/web/app/components/FullSaasScreen.tsx"
-        ).read_text(encoding="utf-8")
+        self.full_saas = (ROOT / "apps/web/app/components/FullSaasScreen.tsx").read_text(
+            encoding="utf-8"
+        )
 
     def test_required_aws_resources_are_declared(self) -> None:
         for token in (
@@ -269,7 +269,9 @@ class CdkInfrastructureContractTest(unittest.TestCase):
             self.presign_route,
         )
         self.assertIn("signableHeaders: new Set(Object.keys(uploadHeaders))", self.presign_route)
-        self.assertIn("unhoistableHeaders: new Set(Object.keys(metadataHeaders))", self.presign_route)
+        self.assertIn(
+            "unhoistableHeaders: new Set(Object.keys(metadataHeaders))", self.presign_route
+        )
         self.assertNotIn("RAKU_ENABLE_UPLOAD_PRESIGN", self.inline_upload_route)
         self.assertIn("presignRes.status === 501", self.full_saas)
         self.assertIn("この環境ではファイルアップロードが無効です", self.full_saas)

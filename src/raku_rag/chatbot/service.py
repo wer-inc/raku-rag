@@ -521,9 +521,7 @@ class ChatScenario:
             intents=[str(i) for i in data.get("intents") or []],
             status=str(data.get("status") or "draft"),
             active_version_id=data.get("active_version_id"),
-            versions={
-                str(vid): ScenarioVersion.from_payload(v) for vid, v in versions_raw.items()
-            },
+            versions={str(vid): ScenarioVersion.from_payload(v) for vid, v in versions_raw.items()},
         )
 
 
@@ -1025,9 +1023,7 @@ class ChatbotService:
     def list_scenarios(self, principal: IdentityClaims) -> tuple[int, dict]:
         if not self._has_any_role(principal, SCENARIO_MANAGE_ROLES | SCENARIO_APPROVE_ROLES):
             return 403, {"error": "chat_role_required"}
-        stored = {
-            s.scenario_id: s for s in self._iter_scenarios(principal.tenant_id)
-        }
+        stored = {s.scenario_id: s for s in self._iter_scenarios(principal.tenant_id)}
         # Seed defaults show up until a tenant copy overrides them (previous "*"-row behavior).
         combined = list(stored.values()) + [
             seed for sid, seed in self._seed_defaults.items() if sid not in stored

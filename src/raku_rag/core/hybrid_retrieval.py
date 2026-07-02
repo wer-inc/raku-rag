@@ -97,11 +97,7 @@ def metadata_identifier_matches(
 
 def lexical_query_terms(query: str) -> tuple[str, ...]:
     """Content terms used by the lexical retrieval leg."""
-    terms = {
-        term.casefold()
-        for term in retrieval_tokens(query)
-        if _lexical_term_is_signal(term)
-    }
+    terms = {term.casefold() for term in retrieval_tokens(query) if _lexical_term_is_signal(term)}
     return tuple(sorted(terms))
 
 

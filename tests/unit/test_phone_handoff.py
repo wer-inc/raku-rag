@@ -33,7 +33,12 @@ def _call(**kwargs) -> CallSession:
 
 class TestTriggerDetection(unittest.TestCase):
     def test_customer_requested_human_variants(self) -> None:
-        for text in ("人につないでください", "オペレーターに代わって", "担当者お願いします", "human please"):
+        for text in (
+            "人につないでください",
+            "オペレーターに代わって",
+            "担当者お願いします",
+            "human please",
+        ):
             with self.subTest(text=text):
                 self.assertTrue(detect_human_request(text))
         self.assertFalse(detect_human_request("営業時間を教えて"))
@@ -80,9 +85,7 @@ class TestPreRagRules(unittest.TestCase):
         call.low_confidence_count = 1
         self.assertIsNone(self.rules.pre_rag_reason(call, "えー", 0.2, set()))
         call.low_confidence_count = 2
-        self.assertEqual(
-            self.rules.pre_rag_reason(call, "えー", 0.2, set()), "low_asr_confidence"
-        )
+        self.assertEqual(self.rules.pre_rag_reason(call, "えー", 0.2, set()), "low_asr_confidence")
 
     def test_repeated_misunderstanding(self) -> None:
         call = _call()
@@ -99,7 +102,9 @@ class TestDestinationAndPriority(unittest.TestCase):
         self.assertEqual(priority_for("customer_requested_human"), "normal")
 
     def test_destination_by_intent(self) -> None:
-        self.assertEqual(destination_for("insufficient_evidence", "refund_cancellation")[1], "billing-support")
+        self.assertEqual(
+            destination_for("insufficient_evidence", "refund_cancellation")[1], "billing-support"
+        )
         self.assertEqual(destination_for("insufficient_evidence", "complaint")[1], "escalation")
         self.assertEqual(destination_for("insufficient_evidence", None)[1], "general-support")
 
@@ -109,9 +114,7 @@ class TestPackageCreation(unittest.TestCase):
         call = _call(intent="pricing_plan")
         call.collected_slots["contract_id"] = "C-123"
         service = HandoffService()
-        citations = (
-            PhoneCitationRef(source_id="faq", document_id="FAQ-PRICING", chunk_id="c1"),
-        )
+        citations = (PhoneCitationRef(source_id="faq", document_id="FAQ-PRICING", chunk_id="c1"),)
         package = service.create_package(
             call, reason="insufficient_evidence", sentiment="neutral", citations=citations
         )
