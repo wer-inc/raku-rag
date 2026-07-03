@@ -66,3 +66,8 @@ export function setImprovementStatus(id: string, status: ImprovementItem["status
 export function clearImprovementItems(): void {
   if (typeof window !== "undefined") window.localStorage.removeItem(KEY);
 }
+
+/** U14: bulk-remove only the rows the user already marked 対応済み (open rows are kept). */
+export function clearResolvedImprovementItems(): void {
+  save(loadImprovementItems().filter((i) => i.status !== "resolved"));
+}

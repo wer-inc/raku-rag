@@ -5664,7 +5664,8 @@ button,
   font-weight: 600;
 }
 
-.source-name-field input {
+.source-name-field input,
+.source-name-field select {
   padding: 9px 11px;
   border: 1px solid var(--line, #ececec);
   border-radius: 8px;
@@ -5676,6 +5677,22 @@ button,
   color: #71717a;
   font-size: 12px;
   line-height: 1.45;
+}
+
+/* U15: inline required-field validation on the add-source connector form. */
+.req-mark {
+  color: var(--danger, #c0392b);
+}
+
+.field-error {
+  color: var(--danger, #c0392b);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.connector-form-grid input[aria-invalid="true"],
+.source-name-field input[aria-invalid="true"] {
+  border-color: var(--danger, #c0392b);
 }
 
 .upload-fields {
@@ -5786,6 +5803,107 @@ button,
 .draft-create-form button:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* U11: document multi-select on the draft-create form (fallback = raw-ID 詳細指定 toggle). */
+.draft-doc-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.draft-doc-picker > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #71717a;
+}
+
+.draft-doc-options {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--line, #ececec);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.draft-create-form .draft-doc-option {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line, #ececec);
+  cursor: pointer;
+}
+
+.draft-doc-options .draft-doc-option:last-child {
+  border-bottom: none;
+}
+
+.draft-create-form .draft-doc-option input[type="checkbox"] {
+  padding: 0;
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.draft-doc-option-label {
+  font-size: 13px;
+  color: #18181b;
+  word-break: break-all;
+}
+
+.draft-doc-option-meta {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: #71717a;
+  white-space: nowrap;
+}
+
+/* High specificity on purpose: the shared `.draft-create-form button` control rules (incl. the
+   primary background on :not(:disabled)/:hover) must not turn this inline toggle into a CTA. */
+.draft-create-form button.draft-doc-mode-toggle,
+.draft-create-form button.draft-doc-mode-toggle:not(:disabled),
+.draft-create-form button.draft-doc-mode-toggle:hover:not(:disabled) {
+  align-self: flex-start;
+  display: inline-flex;
+  min-inline-size: 0;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent, #5b5bd6);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* U18: per-status counts in the review queue head. */
+.review-queue-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #71717a;
+}
+
+/* U14: merged improvement queue — origin chips + filter bar. */
+.improve-queue-controls {
+  margin-bottom: 12px;
+}
+
+.improve-row-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.citation-chip.improve-origin {
+  background: #f4f4f5;
+  color: #52525b;
 }
 
 .review-detail-head {

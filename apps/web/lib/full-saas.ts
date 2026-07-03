@@ -36,11 +36,6 @@ export const WORKSPACE_IDENTITY = {
 export const APPROVAL_WORKFLOW_ENABLED =
   (process.env.NEXT_PUBLIC_RAKU_APPROVAL_WORKFLOW ?? "on").trim().toLowerCase() !== "off";
 
-// Count shown on the AIドラフトレビュー nav badge (pending review drafts).
-// Matches the workspace default; replace with a live count once
-// `GET /v1/manufacturing/drafts` exists (see specs/full-saas/gaps.md).
-export const REVIEW_BADGE_COUNT = APPROVAL_WORKFLOW_ENABLED ? 2 : 0;
-
 export type NavIconName =
   | "home" | "answers" | "chatbot" | "phone" | "history" | "sources" | "documents" | "search"
   | "ingestion" | "reviewqueue" | "approvalsettings" | "operations" | "safety"
