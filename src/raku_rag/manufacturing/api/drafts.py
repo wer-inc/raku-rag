@@ -28,10 +28,16 @@ from raku_rag.manufacturing.api.draft_store import (
     copy_artifact,
 )
 from raku_rag.manufacturing.domain.audit import AuditLogEntry
-from raku_rag.manufacturing.domain.draft import DraftArtifact, DraftType
-from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
+from raku_rag.manufacturing.domain.draft import DraftArtifact, DraftStatus, DraftType
+from raku_rag.manufacturing.domain.metadata import (
+    ApprovalSource,
+    ApprovalStatus,
+    DocumentKind,
+    ManufacturingDocumentMetadata,
+)
 from raku_rag.manufacturing.drafts.generator import DraftGenerator, coerce_kind
-from raku_rag.manufacturing.drafts.review import ReviewWorkflow
+from raku_rag.manufacturing.drafts.render import render_draft_markdown
+from raku_rag.manufacturing.drafts.review import InvalidTransitionError, ReviewWorkflow
 from raku_rag.manufacturing.interfaces import AuditLogWriter
 
 from typing import Callable
@@ -41,6 +47,21 @@ GetMfgMeta = Callable[[str, str], ManufacturingDocumentMetadata | None]
 # NOT tombstoned AND is ACL-readable, OR resolves to no 001 Document at all (a never-ingested id
 # references nothing and therefore cannot leak -> keep it). SC-MFG-008 / data-model.md:86,146-147.
 CanUseSource = Callable[[IdentityClaims, str], bool]
+# Publish-time ingestion seam (issue 0019): called as
+#   ingest(collection_id=..., document_id=..., text=..., metadata=...)
+# ManufacturingSystem supplies its REUSED manufacturing ingestion path (001 parse->chunk->embed->index
+# + metadata attach) here, so DraftService never grows a parallel ingest mechanism.
+IngestPublishedDraft = Callable[..., object]
+
+# Draft kind -> published DocumentKind (data-model §B). FAQ has no DocumentKind (the 0006 CHECK
+# enumerates 8 kinds without faq) — its kind rides in metadata.extra["draft_kind"] instead.
+_PUBLISH_DOCUMENT_KIND: dict[DraftType, DocumentKind | None] = {
+    DraftType.CHECKLIST: DocumentKind.INSPECTION,
+    DraftType.TROUBLE_REPORT: DocumentKind.TROUBLE_REPORT,
+    DraftType.QUALITY_REPORT: DocumentKind.QUALITY_REPORT,
+    DraftType.TRAINING: DocumentKind.TRAINING,
+    DraftType.FAQ: None,
+}
 
 
 def _now() -> str:
@@ -61,6 +82,7 @@ class DraftService:
     ) -> None:
         self._audit = audit
         self._can_use_source = can_use_source
+        self._today = today  # injected clock for deterministic effective_date in tests
         self._generator = DraftGenerator(get_mfg_meta=get_mfg_meta, today=today)
         self._review = ReviewWorkflow()
         # The canonical DraftArtifact lives behind the DraftStore seam (in-memory for unit tests /
@@ -190,6 +212,88 @@ class DraftService:
         )
         return copy_artifact(artifact)
 
+    # --- POST .../publish (issue 0019) --------------------------------------------------------------
+    def publish(
+        self,
+        *,
+        tenant_id: str,
+        artifact_id: str,
+        actor: IdentityClaims | None,
+        ingest: IngestPublishedDraft,
+    ) -> DraftArtifact:
+        """Publish an APPROVED draft into the knowledge base as an approved 001 Document.
+
+        Publish is a SEPARATE, attributable HUMAN action after approval (Hard Rule 1 stays intact:
+        the reviewer approval alone never publishes, and AI can neither approve nor publish):
+          - ``actor`` must be an attributable human principal (no user_id -> PermissionError; the
+            actor always comes from the signed principal, never the request body);
+          - only ``status=approved`` drafts publish; draft/in_review/rejected/archived raise
+            ``InvalidTransitionError`` (the server maps it to 409);
+          - idempotency: an already-published draft raises ``InvalidTransitionError`` (409/no-op —
+            a second publish can never mint a second document);
+          - the draft content is rendered deterministically (drafts/render.py) and ingested via the
+            INJECTED manufacturing ingestion seam with approved+effective metadata and full
+            provenance (source draft, source citations/documents) in ``metadata.extra``;
+          - the transition is recorded in the hash-chain audit (``draft.published``: actor,
+            draft_id, new document_id) and on the artifact (published_document_id/by/at).
+        """
+        if actor is None or not getattr(actor, "user_id", None):
+            # Unattributable/AI publish attempt — reject; the stored artifact is untouched.
+            raise PermissionError(
+                "publish requires an explicit human actor (AI cannot publish, Hard Rule 1)"
+            )
+        artifact = self._require(tenant_id, artifact_id)
+        if artifact.published_document_id:
+            raise InvalidTransitionError(
+                f"draft {artifact_id} is already published as "
+                f"document {artifact.published_document_id}"
+            )
+        if artifact.status != DraftStatus.APPROVED:
+            raise InvalidTransitionError(
+                f"cannot publish from status={artifact.status.value!r} "
+                f"(publish requires a reviewer-approved draft, issue 0019)"
+            )
+
+        document_id = f"pub_{artifact.artifact_id}"
+        today = (self._today or datetime.now(timezone.utc).date()).isoformat()
+        metadata = ManufacturingDocumentMetadata(
+            tenant_id=tenant_id,
+            document_id=document_id,
+            document_kind=_PUBLISH_DOCUMENT_KIND.get(artifact.type),
+            # Approved + effective TODAY: the published knowledge is immediately citable, including
+            # by the high-risk approved+effective evidence gate (FR-MFG-005).
+            approval_status=ApprovalStatus.APPROVED,
+            approval_source=ApprovalSource.WORKFLOW,
+            effective_date=today,
+            approved_by=artifact.reviewer_id or actor.user_id,
+            approved_at=artifact.reviewed_at,
+            extra={
+                # Provenance: which draft this document came from and what grounded it. The 0006
+                # CHECK pins approval_source to imported|workflow, so the finer-grained publish
+                # origin is carried here instead of as a new ApprovalSource value.
+                "approval_source_detail": "draft_publish",
+                "published_from_draft_id": artifact.artifact_id,
+                "draft_kind": artifact.type.value,
+                "source_document_ids": list(artifact.source_document_ids),
+                "source_citations": list(artifact.source_citations),
+            },
+        )
+        # Ingest FIRST; only a successful ingest marks the artifact published (a failed ingest
+        # leaves the draft publishable again — no phantom published_document_id).
+        ingest(
+            collection_id=artifact.collection_id,
+            document_id=document_id,
+            text=render_draft_markdown(artifact),
+            metadata=metadata,
+        )
+
+        artifact.published_document_id = document_id
+        artifact.published_by = actor.user_id
+        artifact.published_at = _now()
+        self._store.save(artifact)
+        self._audit_publish(artifact, actor_id=actor.user_id)
+        return copy_artifact(artifact)
+
     # --- internals ---------------------------------------------------------------------------------
     def _require(self, tenant_id: str, artifact_id: str) -> DraftArtifact:
         artifact = self._store.get(tenant_id, artifact_id)
@@ -222,6 +326,32 @@ class DraftService:
             )
         )
         return log_id
+
+    def _audit_publish(self, artifact: DraftArtifact, *, actor_id: str) -> None:
+        """Audit the publish action into the hash chain (FR-MFG-021): actor / draft / new doc."""
+        ts = artifact.published_at or _now()
+        self._audit.record(
+            AuditLogEntry(
+                tenant_id=artifact.tenant_id,
+                log_id=f"draft.published:{artifact.artifact_id}:{ts}",
+                timestamp=ts,
+                actor_id=actor_id,
+                action="draft.published",
+                resource_type="draft_artifact",
+                resource_id=artifact.artifact_id,
+                decision="published",
+                reason=artifact.type.value,
+                # Reference IDs only: the new document + the grounding sources it inherited.
+                document_ids_used=(
+                    artifact.published_document_id,
+                    *artifact.source_document_ids,
+                ),
+                client_metadata={
+                    "published_document_id": artifact.published_document_id,
+                    "reviewer_id": artifact.reviewer_id,
+                },
+            )
+        )
 
     def _audit_transition(
         self, artifact: DraftArtifact, *, action: str, actor_id: str | None, decision: str | None

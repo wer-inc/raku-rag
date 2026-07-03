@@ -794,6 +794,18 @@ export async function manufacturingReviewDraft(
   );
 }
 
+/** issue 0019 — publish an APPROVED draft as approved knowledge (explicit human action). */
+export async function manufacturingPublishDraft(
+  artifactId: string,
+  userToken: string,
+): Promise<DraftArtifact> {
+  return mfgPost<DraftArtifact>(
+    `drafts/${encodeURIComponent(artifactId)}/publish`,
+    {},
+    userToken,
+  );
+}
+
 export async function manufacturingDocumentApproval(
   documentId: string,
   req: DocumentApprovalRequest,

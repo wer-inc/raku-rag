@@ -259,6 +259,10 @@ export interface DraftArtifact {
   review_comment: string | null;
   approval_decision: "approve" | "reject" | string | null;
   review_status: string | null;
+  /** issue 0019 publish fields — set only when a human published the approved draft as knowledge. */
+  published_document_id?: string | null;
+  published_by?: string | null;
+  published_at?: string | null;
   content: Record<string, unknown>;
 }
 

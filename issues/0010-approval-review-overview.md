@@ -44,7 +44,7 @@
 | [0014](0014-approval-rules-settings-non-functional.md) | ③ | 「承認ルール」画面が編集不能＋GET/PUT エンドポイント未実装 | P2 / Medium |
 | [0015](0015-review-detail-ux-state-machine-mismatch.md) | ①② | レビュー詳細の操作が状態機械とズレ／重複・確認/二重送信なし | P2 / Medium |
 | [0013](0013-review-badge-and-list-staleness.md) | ① | レビューバッジ/一覧の陳腐化・トリアージ/ページング無し | P2 / Medium |
-| [0019](0019-no-publish-path-after-approval.md) | ① | 承認後の公開経路が無い(「公開できます」は誇大) | P3 / Medium |
+| [0019](0019-no-publish-path-after-approval.md) | ① | 承認後の公開経路が無い(「公開できます」は誇大) — **Resolved 2026-07-03**(publish エンドポイント+UI+監査で知識化) | P3 / Medium |
 | [0018](0018-approval-audit-trail-gaps.md) | ①② | 承認の監査証跡ギャップ(理由未記録/actor 誤記/citations 未配線) | P3 / Medium |
 | [0016](0016-document-approval-skip-and-workflow-authz.md) | ② | 文書承認 skip-ahead + 内部境界でロール未検証 + reject/archive の actor 欠落 | P3 / Low–Medium |
 

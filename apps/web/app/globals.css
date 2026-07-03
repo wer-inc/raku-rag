@@ -3294,6 +3294,15 @@ button:disabled {
   gap: 10px;
 }
 
+/* issue 0019 — approved-but-unpublished CTA (publish-as-knowledge) on the review detail screen */
+.review-publish-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0;
+}
+
 .btn-approve {
   background: var(--accent);
 }

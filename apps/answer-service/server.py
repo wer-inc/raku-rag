@@ -2734,6 +2734,19 @@ def make_handler(system: ProductionSystem):
                         comment=body.get("comment"),
                     )
                     self._send(200, _jsonable(draft))
+                elif (
+                    len(parts) == 5
+                    and parts[:3] == ["internal", "manufacturing", "drafts"]
+                    and parts[4] == "publish"
+                ):
+                    # issue 0019 — publish the APPROVED draft as approved knowledge. The actor comes
+                    # from the SIGNED principal headers only (same identity source as .../review);
+                    # non-approved / already-published drafts surface as 409 (InvalidTransitionError).
+                    draft = manufacturing_system.publish_draft(
+                        principal=_claims_from_headers(self.headers),
+                        artifact_id=parts[3],
+                    )
+                    self._send(200, _jsonable(draft))
                 elif path == "/internal/search":
                     principal = _claims(body)
                     query = str(body.get("query") or "")

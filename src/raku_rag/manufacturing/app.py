@@ -1068,6 +1068,38 @@ class ManufacturingSystem:
             comment=comment,
         )
 
+    def publish_draft(self, *, principal: IdentityClaims, artifact_id: str) -> DraftArtifact:
+        """POST .../publish — ingest the APPROVED draft back as approved knowledge (issue 0019).
+
+        A separate, attributable HUMAN action after the reviewer approval (Hard Rule 1 untouched:
+        approval alone never publishes; AI cannot publish). The draft body is rendered
+        deterministically and ingested via the REUSED ``ingest_manufacturing`` path (001
+        parse->chunk->embed->index + metadata attach + ingest audit) into the draft's collection,
+        as an approved+effective document with draft provenance — so the published knowledge is
+        immediately retrievable/citable through the SAME 001 ACL/tombstone-guarded retrieval as
+        every other document. The transition itself is audited as ``draft.published``.
+        """
+        tenant_id = principal.tenant_id
+
+        def _ingest(*, collection_id, document_id, text, metadata):
+            return self.ingest_manufacturing(
+                tenant_id=tenant_id,
+                # A draft generated without a collection publishes into the default KB collection
+                # (same fallback the trouble-case ingest route uses).
+                collection_id=collection_id or "manuals",
+                document_id=document_id,
+                text=text,
+                metadata=metadata,
+                source_id="draft_publish",
+            )
+
+        return self._drafts.publish(
+            tenant_id=tenant_id,
+            artifact_id=artifact_id,
+            actor=principal,
+            ingest=_ingest,
+        )
+
     # --- trouble cases (US3: register + search; contracts §C; FR-MFG-008/009) ---------------------
     def register_trouble_case(
         self,

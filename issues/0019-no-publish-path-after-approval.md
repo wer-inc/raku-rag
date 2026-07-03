@@ -1,6 +1,37 @@
 # 0019 — 承認後の公開経路が無い(「公開できます」は誇大)(系統 ①)
 
-> Priority: **P3 / Medium** / Status: Open / Labels: `manufacturing`, `review`, `product-gap`, `ux`
+> Priority: **P3 / Medium** / Status: **Resolved (2026-07-03)** / Labels: `manufacturing`, `review`, `product-gap`, `ux`
+
+## 解決サマリ(2026-07-03)
+
+**意図 = 知識化する(推奨案)を採用し、承認後の publish ステップを実装した。**
+
+- **サービス層** `DraftService.publish`(`src/raku_rag/manufacturing/api/drafts.py`)+
+  `ManufacturingSystem.publish_draft`(`manufacturing/app.py`): `status=approved` のドラフトのみ、
+  決定論レンダラ(`manufacturing/drafts/render.py`、未確定項目は 【未確定・要確認】 マーカー保持)で
+  markdown 化し、**再利用した** `ingest_manufacturing`(001 parse→chunk→embed→index + メタデータ付与)で
+  ドラフトの collection(未指定時 manuals)へ `pub_<artifact_id>` として ingest。メタデータは
+  `approval_status=approved` + `effective_date=today` + `approved_by=承認レビューア` +
+  `extra.approval_source_detail="draft_publish"` + 生成元 provenance(`published_from_draft_id` /
+  `source_document_ids` / `source_citations`)。公開は承認とは**別の、帰属可能な人間の操作**
+  (principal 由来 actor 必須、無帰属/AI は `PermissionError`)。ハッシュチェーン監査に
+  `draft.published`(actor / draft / 新 document_id)を記録し、ドラフトへ
+  `published_document_id` / `published_by` / `published_at` をスタンプ(Postgres store は payload
+  jsonb 搬送 — スキーママイグレーション不要)。二重 publish はサーバ側 409。
+- **エンドポイント**: answer-service `POST /internal/manufacturing/drafts/{id}/publish`
+  (identity は署名済み principal ヘッダのみ)+ API façade `POST /v1/manufacturing/drafts/{id}/publish`
+  (`assertReviewApprovalAllowed` — review/approve と同じ reviewer/admin ゲート)。
+- **UI**(`ReviewDetailBody`): 誇大だった「正式に公開できます」静的文言を、承認済み・未公開時の
+  「ナレッジとして公開」ボタン(ConfirmDialog: 公開すると回答の根拠として利用可能になります)に置換。
+  公開後は published_at + 公開文書リンク付きの「公開済み」表示。承認ボタン文言「承認・公開」→「承認」。
+- **テスト**: `tests/manufacturing/test_draft_publish.py`(approved のみ publish 可 / 無帰属 actor 拒否 /
+  冪等 409 / 監査記録+チェーン健全 / **公開 FAQ が answer 経路で approved 引用として回答に使われる** /
+  承認だけでは知識化されない対照)+ `tests/postgres/test_draft_store_realpg.py` に publish フィールドの
+  payload round-trip + `apps/api/test/manufacturing.e2e-spec.ts` に publish のロールゲート(reviewer 200 /
+  field_user 403)。
+
+**残り(スコープ外のまま)**: 埋め込み「根拠文書レビュー」フォームの source_document_ids バインドは
+[0015](0015-review-detail-ux-state-machine-mismatch.md) の未対応スライスとして継続。
 
 ## 背景(なぜ今)
 
@@ -44,9 +75,12 @@ AI ドラフトのレビュー画面は「AI 出力は人手レビューで**承
 
 ## 受け入れ条件(DoD)
 
-- [ ] (知識化採用時)承認 → publish で承認済みドラフト内容が検索/回答に approved 根拠として反映、監査が残る。
-- [ ] (非採用時)UI 文言が実体と一致し、「公開できます」が誤解を生まない。
+- [x] (知識化採用時)承認 → publish で承認済みドラフト内容が検索/回答に approved 根拠として反映、監査が残る。
+      → `tests/manufacturing/test_draft_publish.py::TestPublishedKnowledgeIsCitable`
+- [x] (非採用時)UI 文言が実体と一致し、「公開できます」が誤解を生まない。
+      → 知識化を採用。UI は「未公開(公開ボタン)」/「公開済み(文書リンク)」を実体どおり表示。
 - [ ] 埋め込み文書承認フォームが、ドラフトの実根拠と整合(自由入力 document_id の取り違えが無い)。
+      → [0015](0015-review-detail-ux-state-machine-mismatch.md) の未対応スライスとして継続(本 issue のスコープ外)。
 
 ## スコープ外
 
