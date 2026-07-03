@@ -2776,6 +2776,12 @@ button:disabled {
   line-height: 1.65;
 }
 
+/* U1: plain-text fallbacks keep their line breaks; .answer-markdown (rendered
+   markdown) resets this on the container so block-level output is not double-spaced. */
+.answer-text {
+  white-space: pre-wrap;
+}
+
 .empty-answer {
   color: var(--muted);
 }
@@ -4765,6 +4771,190 @@ button,
   color: #71717a;
 }
 
+/* --- U1: markdown answer body (answers thread) -------------------------------------------------
+   Scoped to .answer-markdown so it matches the answer card typography (18px/1.65 via
+   .answer-text) without importing the chat bubble visuals. Container is white-space:normal
+   (inter-block newline text nodes must collapse); paragraphs are pre-wrap so plain-text
+   soft line breaks survive — same interaction the chatbot uses. */
+.answer-markdown {
+  min-width: 0;
+  white-space: normal;
+}
+
+.answer-markdown > * + * {
+  margin-top: 12px;
+}
+
+.answer-markdown p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.answer-markdown h1,
+.answer-markdown h2,
+.answer-markdown h3,
+.answer-markdown h4,
+.answer-markdown h5,
+.answer-markdown h6 {
+  margin: 0;
+  color: #18181b;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.answer-markdown h1 {
+  font-size: 20px;
+}
+
+.answer-markdown h2 {
+  font-size: 19px;
+}
+
+.answer-markdown h3,
+.answer-markdown h4,
+.answer-markdown h5,
+.answer-markdown h6 {
+  font-size: 18px;
+}
+
+.answer-markdown > * + h1,
+.answer-markdown > * + h2,
+.answer-markdown > * + h3,
+.answer-markdown > * + h4 {
+  margin-top: 20px;
+}
+
+.answer-markdown ul,
+.answer-markdown ol {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.answer-markdown li + li {
+  margin-top: 6px;
+}
+
+.answer-markdown blockquote {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--line, #ececec);
+  background: var(--surface-muted, #f4f4f5);
+  color: var(--muted, #52525b);
+}
+
+.answer-markdown code {
+  padding: 2px 5px;
+  border-radius: 6px;
+  background: var(--surface-muted, #f4f4f5);
+  font-size: 0.88em;
+}
+
+.answer-markdown pre {
+  overflow-x: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #ececec);
+  border-radius: 8px;
+  background: var(--surface-muted, #f4f4f5);
+}
+
+.answer-markdown pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.answer-markdown hr {
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--line, #ececec);
+}
+
+.answer-markdown-table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid var(--line, #ececec);
+  border-radius: 8px;
+}
+
+.answer-markdown table {
+  width: 100%;
+  min-width: 480px;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.answer-markdown th,
+.answer-markdown td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line, #ececec);
+  vertical-align: top;
+  text-align: left;
+}
+
+.answer-markdown th {
+  background: var(--surface-muted, #f4f4f5);
+  font-weight: 700;
+}
+
+.answer-markdown tr:last-child td {
+  border-bottom: 0;
+}
+
+/* --- U2: generating-answer card (staged labels + dots; keyframes shared with chat) ------------ */
+.answer-thinking-card {
+  gap: 10px;
+  border-color: color-mix(in srgb, var(--accent, #5b5bd6) 22%, var(--line, #ececec));
+}
+
+.answer-thinking-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.answer-thinking-copy strong {
+  color: var(--text, #18181b);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.answer-thinking-copy span {
+  color: var(--muted, #71717a);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.answer-thinking-dots {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.answer-thinking-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent, #5b5bd6);
+  opacity: 0.35;
+  animation: chat-thinking-dot 1.05s ease-in-out infinite;
+}
+
+.answer-thinking-dots span:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.answer-thinking-dots span:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+/* --- U12: raw error detail sub-line inside the humanized error panel --------------------------- */
+.error-panel .error-detail {
+  margin: 0;
+  color: var(--muted, #71717a);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
 .answer-next-actions {
   display: grid;
   gap: 8px;
@@ -5934,7 +6124,8 @@ button,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .chat-thinking-dots span {
+  .chat-thinking-dots span,
+  .answer-thinking-dots span {
     animation: none;
     opacity: 0.6;
   }

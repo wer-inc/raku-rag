@@ -72,7 +72,9 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = typeof body?.message === "string" ? body.message : `HTTP ${res.status}`;
-    throw new Error(msg);
+    const error = new Error(msg) as Error & { status?: number };
+    error.status = res.status;
+    throw error;
   }
   return body as T;
 }
@@ -163,11 +165,13 @@ export async function answer(req: AnswerRequest, userToken: string): Promise<Ans
 export async function manufacturingAnswer(
   req: ManufacturingAnswerRequest,
   userToken: string,
+  signal?: AbortSignal,
 ): Promise<ManufacturingAnswerResponse> {
   const res = await fetch(`${API_BASE}/manufacturing/answer`, {
     method: "POST",
     headers: authHeaders(userToken),
     body: JSON.stringify(req),
+    signal,
   });
   return jsonOrThrow<ManufacturingAnswerResponse>(res);
 }
