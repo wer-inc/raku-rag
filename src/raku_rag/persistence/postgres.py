@@ -38,6 +38,7 @@ from raku_rag.core.hybrid_retrieval import (
     HOT_IDENTIFIER_FIELDS,
     lexical_match_score,
     lexical_query_terms,
+    matched_identifier_compacts,
     METADATA_EXACT_MATCH_SCORE,
     NESTED_METADATA_KEYS,
     query_identifiers,
@@ -564,7 +565,10 @@ class PostgresVectorStore(VectorStore):
 
         ACL remains the same Python ``visible`` predicate used by vector search. The SQL leg only
         narrows to tenant/RLS-live chunks whose chunk or document metadata names an exact business
-        identifier from the query.
+        identifier from the query. As in the in-memory store, the leg is RANKED by identifier
+        match multiplicity (distinct query identifiers matched, over chunk AND document metadata —
+        the same sources the SQL predicate checks) with position/chunk_id as the deterministic
+        tie-break, while the score stays the flat ``METADATA_EXACT_MATCH_SCORE``.
         """
         identifiers = query_identifiers(query)
         if not identifiers or top_k <= 0:
@@ -575,7 +579,7 @@ class PostgresVectorStore(VectorStore):
             cur.execute(
                 "SELECT c.chunk_id, c.tenant_id, c.document_id, c.collection_id, c.modality, "
                 "c.text, c.token_count, c.position, c.heading_path, c.offset_mapping, "
-                "c.metadata, c.embedding_model_version, c.tombstone "
+                "c.metadata, c.embedding_model_version, c.tombstone, d.metadata "
                 "FROM chunks c JOIN documents d "
                 "ON d.document_id = c.document_id AND d.tenant_id = c.tenant_id "
                 "WHERE c.tenant_id = %s AND c.tombstone = false AND d.tombstone = false "
@@ -583,13 +587,21 @@ class PostgresVectorStore(VectorStore):
                 (tenant_id, *[list(identifiers) for _ in range(parameter_count)]),
             )
             rows = cur.fetchall()
-        candidates: list[ScoredChunk] = []
+        candidates: list[tuple[int, ScoredChunk]] = []
         for row in rows:
-            chunk = _row_to_chunk(row)
+            chunk = _row_to_chunk(row[:13])
             if not visible(chunk):
                 continue
-            candidates.append(ScoredChunk(chunk=chunk, retrieval_score=METADATA_EXACT_MATCH_SCORE))
-        return candidates[:top_k]
+            document_metadata = _load_jsonish(row[13]) or {}
+            match_count = len(
+                matched_identifier_compacts(chunk.metadata, identifiers)
+                | matched_identifier_compacts(document_metadata, identifiers)
+            )
+            candidates.append(
+                (match_count, ScoredChunk(chunk=chunk, retrieval_score=METADATA_EXACT_MATCH_SCORE))
+            )
+        candidates.sort(key=lambda item: (-item[0], item[1].chunk.position, item[1].chunk.chunk_id))
+        return [scored for _count, scored in candidates[:top_k]]
 
     def lexical_matches(
         self,
