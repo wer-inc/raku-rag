@@ -103,7 +103,18 @@ metadata+引用UI は A。残るギャップは4クラスタに集中する:
 ## 実装状況
 
 - [x] 本棚卸しドキュメント
-- [ ] ★G1 trace永続化(着手)
+- [x] ★G1 trace永続化(#61 — 0022 query_traces + cost_records/rerank_traces writer、fail-openシンク)
+- [x] ★G2 評価ゲート補強 — high_risk_recall を metrics として emit(常時0バグ解消)、
+      EvaluationItem に answerability/category/risk_level、refusal 指標
+      (over_refusal_rate / unanswerable_answer_rate / refusal_accuracy)+ risk_weighted_score、
+      golden corpus に回答不能7問(refuse 5 はハードゲート、in-domain 2 は**ratchet**:
+      「ドメイン内の不在情報質問に根拠付き無関係文が ok で返る」既知ギャップの悪化を
+      unanswerable_answer_rate ≤0.29 / risk_weighted_score ≥0.86 で封じ、改善時に締める)。
+      QueryProfile.min_question_coverage(質問カバレッジ no-answer knob)は **opt-in デフォルト0**
+      — 短い日本語追い質問(正解文書でも0.17)と無関係英語(0.14〜0.38)が分離不能なため。
+      根治は検索関連度/クエリ展開側(★G4以降)。矛盾/最新版選択カテゴリはコーパスハーネスが
+      base層(ライフサイクル無し)のため ★G4 で追加。
+- [x] ★G3a フィードバック永続化(#66 — 0023 answer_feedback + GET /v1/feedback + 改善キューのサーバ駆動化)
 - [x] ★G4 文書鮮度 — `owner` / `review_cycle_days` / `last_verified_at` を
   ManufacturingDocumentMetadata + migration 0024 に追加。`review_overdue`
   (= last_verified_at + review_cycle_days < today、両方設定時のみ)は
@@ -112,4 +123,4 @@ metadata+引用UI は A。残るギャップは4クラスタに集中する:
   last_verified_at/期限)、品質・KPI画面に stat+一覧、引用ビューアに 最終確認日 +
   要再確認バッジを表示。ingest metadata / PUT documents/{id}/metadata の両経路で設定可。
   **最新版選択(canonical)・兄弟文書間の版比較は未実装(deferred)**
-- [ ] ★G2 / ★G3 / ★G5
+- [ ] ★G3b+★G5実測(#68 スタックPR)/ ★G5残: キャッシュ+モデルルーティング

@@ -50,6 +50,13 @@ tenant_lexicon(tenant_id, namespace, key, values jsonb)
 
 - [x] 提案テーブル + 解決シーム(#59: migration 0021 + LexiconService — ①safety語彙
       ②chat転送トリガ/phone意図まで配線済み。admin API + 監査 + live-PG RLS smoke付き)
-- [ ] ③文言: `messages.chat` / `messages.phone` は編集可能(EDITABLE_NAMESPACES)だが
-      **読む側が未配線** — 転送アナウンス・免責等は固定文言のまま(★G 棚卸しの小粒項目)
+- [x] ③文言: `messages.chat` / `messages.phone` の**読む側を配線済み**。chat は
+      `handoff_announce`(担当者への確認依頼アナウンス)、phone は `handoff_announce` /
+      `closing` / `hold_notice` / `resume_notice` / `recording_disclosure`。キーワード系
+      (追加のみ)と違い文言はテナント上書きが既定を**置換**(values リスト先頭の非空文字列)。
+      未設定テナント・lexicon 障害時は現行のハードコード文言に fail-open(後方互換)。
+      **安全側文言は対象外のまま固定**: 高リスク/根拠不足の拒否・転送文言(chat の
+      security_refusal / high_risk / insufficient_evidence、phone の `_INSUFFICIENT_NOTICE`)
+      は lexicon を経由しない(phone の根拠不足は従来どおり承認付きシナリオ
+      fallback_message のみ差替え可)。
 - [x] 本監査ドキュメント

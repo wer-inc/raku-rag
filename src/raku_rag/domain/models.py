@@ -126,6 +126,13 @@ class QueryProfile:
     max_synchronous_llm_calls: int = 1
     self_eval_enabled: bool = True
     llm_model: str = "extractive-mvp"
+    # ★G2 no-answer gate knob: minimum fraction of the question's content-terms that the USED
+    # evidence must contain, else the answer is refused as insufficient_evidence. OFF by default
+    # (0.0): measured coverage does NOT separate relevant from irrelevant for short Japanese
+    # queries (legit "その圧力の抜き方" vs its correct doc scores 0.17 — below irrelevant English
+    # cases) because particles/inflection dilute the CJK-bigram terms. Tenant-tunable opt-in via
+    # the retrieval profiles API for corpora where query/document vocabulary is aligned.
+    min_question_coverage: float = 0.0
 
 
 @dataclass(frozen=True)

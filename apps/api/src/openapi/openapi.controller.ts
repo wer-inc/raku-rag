@@ -2295,6 +2295,8 @@ const OPENAPI_DOC = {
           subject: { type: "string", enum: ["user", "eval_job"] },
           rating: { type: "number" },
           comment: { type: "string" },
+          reason_code: { type: "string" },
+          citation_id: { type: "string" },
         },
       },
       FeedbackResponse: {
@@ -2303,6 +2305,31 @@ const OPENAPI_DOC = {
         properties: {
           feedback_id: { type: "string" },
           status: { type: "string", enum: ["accepted"] },
+        },
+      },
+      FeedbackRecord: {
+        type: "object",
+        required: ["feedback_id", "tenant_id", "subject", "rating", "score", "created_at"],
+        properties: {
+          feedback_id: { type: "string" },
+          tenant_id: { type: "string" },
+          answer_id: { type: "string" },
+          evaluation_run_id: { type: "string" },
+          subject: { type: "string", enum: ["user", "eval_job"] },
+          rating: { type: "string", enum: ["up", "down", "neutral"] },
+          score: { type: "number" },
+          reason_code: { type: "string" },
+          comment: { type: "string" },
+          actor_id: { type: "string" },
+          citation_id: { type: "string", nullable: true },
+          created_at: { type: "string" },
+        },
+      },
+      FeedbackListResponse: {
+        type: "object",
+        required: ["items"],
+        properties: {
+          items: { type: "array", items: { $ref: "#/components/schemas/FeedbackRecord" } },
         },
       },
       IndustryListResponse: {
@@ -5114,6 +5141,36 @@ const OPENAPI_DOC = {
             },
           },
           "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "502": { description: "Feedback service unavailable", content: { "application/json": {} } },
+        },
+      },
+      get: {
+        operationId: "listFeedback",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "limit", in: "query", required: false, schema: { type: "integer" } },
+          { name: "offset", in: "query", required: false, schema: { type: "integer" } },
+          {
+            name: "rating",
+            in: "query",
+            required: false,
+            schema: { type: "string", enum: ["up", "down", "neutral"] },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Persisted feedback rows (reviewer/admin; tenant-scoped from the principal)",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/FeedbackListResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Reviewer or admin role required", content: { "application/json": {} } },
           "502": { description: "Feedback service unavailable", content: { "application/json": {} } },
         },
       },

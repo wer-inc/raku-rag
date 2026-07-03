@@ -15,6 +15,7 @@ import type {
   DataSourceMappingProfile,
   DataSourceProfileType,
   DataSourcePreviewResponse,
+  FeedbackRecord,
   GovernanceStatus,
   KnowledgeOpsDashboard,
   ManufacturingAnswerResponse,
@@ -92,6 +93,7 @@ import {
   phoneSimulateCall,
   phoneSubmitTurn,
   phoneUpsertScenarioVersion,
+  listFeedback,
   submitFeedback,
 } from "../../lib/api-client";
 import {
@@ -656,7 +658,13 @@ function AnswerFeedback({ question, answerId }: { question: string; answerId: st
     try {
       const token = await getSessionToken();
       await submitFeedback(
-        { subject: "user", rating: 2, answer_id: answerId || undefined, comment: `answer:needs_improvement reason:${reasonCode}` },
+        {
+          subject: "user",
+          rating: 2,
+          answer_id: answerId || undefined,
+          comment: `answer:needs_improvement reason:${reasonCode}`,
+          reason_code: reasonCode,
+        },
         token,
       );
       recordImprovementItem({ answer_id: answerId, question, reason: reasonCode });
@@ -5530,6 +5538,9 @@ function ImprovementQueueBody() {
   const [serverItems, setServerItems] = useState<
     Array<{ id: string; kind: string; answer_id: string | null; reason: string | null; created_at: string }>
   >([]);
+  // ★G3a: persisted feedback rows (answer_feedback via GET /v1/feedback). null = endpoint
+  // unavailable (offline / non-reviewer) → fall back to the browser-local queue only.
+  const [feedbackRows, setFeedbackRows] = useState<FeedbackRecord[] | null>(null);
 
   useEffect(() => {
     setItems(loadImprovementItems());
@@ -5548,6 +5559,15 @@ function ImprovementQueueBody() {
         );
       } catch {
         setServerItems([]);
+      }
+    })();
+    void (async () => {
+      try {
+        const token = await getSessionToken();
+        const res = await listFeedback(token, 100);
+        setFeedbackRows(res.items);
+      } catch {
+        setFeedbackRows(null);
       }
     })();
   }, []);
@@ -5578,8 +5598,42 @@ function ImprovementQueueBody() {
   return (
     <>
       <p className="src-warning">
-        監査ログ由来の改善候補と、ブラウザ内フィードバックを合わせて表示します。
+        サーバに保存されたフィードバック・監査ログ由来の改善候補・ブラウザ内フィードバックを合わせて表示します。
       </p>
+      {feedbackRows !== null && (
+        <Section title="保存済みフィードバック" note={`${feedbackRows.length} 件（全ユーザー・再起動後も保持）`}>
+          {feedbackRows.length === 0 ? (
+            <p className="ops-empty">まだ保存されたフィードバックはありません。</p>
+          ) : (
+            <div className="improve-list">
+              {feedbackRows.map((row) => (
+                <article className="improve-row" key={row.feedback_id}>
+                  <div className="improve-row-titles">
+                    <span
+                      className={`citation-chip ${row.rating === "up" ? "approval-approved" : "approval-obsolete"}`}
+                    >
+                      {row.rating === "up" ? "👍 有用" : row.rating === "down" ? "👎 要改善" : "中立"}
+                    </span>
+                    <strong>{row.answer_id || row.citation_id || row.feedback_id}</strong>
+                    <span>
+                      {row.reason_code ? `理由: ${reasonLabel(row.reason_code)} · ` : ""}
+                      {row.actor_id} · {new Date(row.created_at).toLocaleString("ja-JP")}
+                    </span>
+                  </div>
+                  <div className="improve-row-actions">
+                    <Link className="button-link secondary" href="/sources/new">
+                      文書を追加
+                    </Link>
+                    <Link className="button-link secondary" href="/admin/retrieval/debug">
+                      再評価
+                    </Link>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </Section>
+      )}
       {serverItems.length > 0 && (
         <Section title="監査由来の改善候補" note={`${serverItems.length} 件`}>
           <div className="improve-list">

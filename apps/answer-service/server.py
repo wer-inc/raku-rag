@@ -106,6 +106,10 @@ from raku_rag.persistence.lexicon import (  # noqa: E402
     InMemoryLexiconRepository,
     PostgresLexiconRepository,
 )
+from raku_rag.persistence.feedback import (  # noqa: E402
+    InMemoryFeedbackRepository,
+    PostgresFeedbackRepository,
+)
 from raku_rag.services.lexicon import LexiconError, LexiconService  # noqa: E402
 from raku_rag.persistence.uploads import (  # noqa: E402
     InMemoryUploadRecordRepository,
@@ -634,15 +638,21 @@ class _AdminSettingsStore:
 
 
 class _EvalFeedbackStore:
-    def __init__(self, system: ProductionSystem, run_repository=None) -> None:
+    def __init__(
+        self, system: ProductionSystem, run_repository=None, feedback_repository=None
+    ) -> None:
         self._system = system
         self._sets: dict[tuple[str, str], EvaluationSet] = {}
         self._runs: dict[tuple[str, str], dict] = {}
-        self._feedback: dict[tuple[str, str], dict] = {}
         # P2-9: eval runs are persisted via a repository so results are trendable across releases.
         # Default in-memory; production wires PostgresEvaluationRunRepository(system._conn) once
         # migration 0007 is applied (the durable, RLS-scoped evaluation_runs table).
         self._runs_repo = run_repository or InMemoryEvaluationRunRepository()
+        # ★G3a: user 👍/👎 feedback persists via a repository so the admin improvement queue is
+        # server-driven and survives restarts. Default in-memory; production wires
+        # PostgresFeedbackRepository(system._conn) once migration 0023 is applied (the durable,
+        # RLS-scoped answer_feedback table).
+        self._feedback_repo = feedback_repository or InMemoryFeedbackRepository()
 
     def create_set(self, tenant_id: str, body: dict) -> dict:
         eval_set = EvaluationSet.register(tenant_id=tenant_id, items=body.get("items") or ())
@@ -680,22 +690,25 @@ class _EvalFeedbackStore:
         return [run.to_dict() for run in self._runs_repo.list_runs(tenant_id, eval_set_id)]
 
     def create_feedback(self, tenant_id: str, body: dict, actor: str) -> dict:
-        digest = hashlib.sha256(
-            f"{tenant_id}:{actor}:{body.get('answer_id')}:{body.get('evaluation_run_id')}:{len(self._feedback)}".encode()
-        ).hexdigest()[:12]
-        feedback_id = f"fb_{digest}"
-        self._feedback[(tenant_id, feedback_id)] = {
-            "feedback_id": feedback_id,
-            "tenant_id": tenant_id,
-            "actor": actor,
-            "answer_id": body.get("answer_id") or "",
-            "evaluation_run_id": body.get("evaluation_run_id") or "",
-            "subject": body.get("subject") or "user",
-            "rating": int(body.get("rating") or 0),
-            "comment": str(body.get("comment") or ""),
-            "created_at": _now(),
-        }
-        return {"feedback_id": feedback_id, "status": "accepted"}
+        record = self._feedback_repo.create(
+            tenant_id,
+            actor_id=actor,
+            answer_id=str(body.get("answer_id") or ""),
+            evaluation_run_id=str(body.get("evaluation_run_id") or ""),
+            subject=str(body.get("subject") or "user"),
+            score=int(body.get("rating") or 0),
+            comment=str(body.get("comment") or ""),
+            reason_code=str(body.get("reason_code") or ""),
+            citation_id=str(body.get("citation_id") or "") or None,
+        )
+        return {"feedback_id": record["feedback_id"], "status": "accepted"}
+
+    def list_feedback(
+        self, tenant_id: str, *, limit: int = 100, offset: int = 0, rating: str = ""
+    ) -> list[dict]:
+        return self._feedback_repo.list(
+            tenant_id, limit=limit, offset=offset, rating_filter=rating or None
+        )
 
 
 def seed(system: ProductionSystem) -> None:
@@ -777,6 +790,13 @@ def _query_time_range(qs: dict[str, list[str]]) -> tuple[str, str] | None:
     start = (qs.get("from") or [""])[0]
     end = (qs.get("to") or [""])[0]
     return (start, end) if start and end else None
+
+
+def _qs_int(qs: dict[str, list[str]], key: str, default: int) -> int:
+    try:
+        return max(0, int((qs.get(key) or [str(default)])[0]))
+    except ValueError:
+        return default
 
 
 def _citation_json(c, *, include_approval: bool = False) -> dict:
@@ -1582,6 +1602,13 @@ def _lexicon_repository_for(system: ProductionSystem):
     return InMemoryLexiconRepository()
 
 
+def _feedback_repository_for(system: ProductionSystem):
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return PostgresFeedbackRepository(conn)
+    return InMemoryFeedbackRepository()
+
+
 def _upload_record_repository_for(system: ProductionSystem):
     conn = getattr(system, "_conn", None)
     if isinstance(system, ProductionSystem) and conn is not None:
@@ -1678,7 +1705,7 @@ def make_handler(system: ProductionSystem):
         oauth_secret_store=secret_store,
     )
     admin_settings = _AdminSettingsStore(system, datasource_repo=datasource_repo)
-    eval_feedback = _EvalFeedbackStore(system)
+    eval_feedback = _EvalFeedbackStore(system, feedback_repository=_feedback_repository_for(system))
     manufacturing_system = build_manufacturing_system_for_base(system)
     chatbot = ChatbotService(
         # Accepts the optional keyword-only `intent_query` (the raw, un-enriched user query) that
@@ -2208,6 +2235,22 @@ def make_handler(system: ProductionSystem):
                         self._send(200, run)
                     else:
                         self._send(404, {"error": "not found"})
+                elif parts == ["internal", "feedback"]:
+                    # ★G3a: the persisted feedback list behind the admin improvement queue.
+                    # Tenant comes from the authenticated principal headers, NEVER a query param.
+                    principal = _claims_from_headers(self.headers)
+                    qs = parse_qs(parsed.query)
+                    self._send(
+                        200,
+                        {
+                            "items": eval_feedback.list_feedback(
+                                principal.tenant_id,
+                                limit=_qs_int(qs, "limit", 100),
+                                offset=_qs_int(qs, "offset", 0),
+                                rating=(qs.get("rating") or [""])[0],
+                            )
+                        },
+                    )
                 elif len(parts) >= 3 and parts[:2] == ["internal", "admin"]:
                     resource = parts[2]
                     qs = parse_qs(parsed.query)

@@ -81,6 +81,15 @@ class EvaluationRunner:
         gradeable = 0
         faithful_sum = 0.0
         faithful_gradeable = 0
+        # ★G2 (goal.md §2-2): refusal behavior + risk weighting. Unanswerable items MUST refuse;
+        # answerable items must not be over-refused; high-risk items count 3x in the weighted score.
+        answerable_count = 0
+        unanswerable_count = 0
+        over_refusals = 0
+        unanswerable_answers = 0
+        behavior_correct = 0
+        risk_weight_sum = 0.0
+        risk_weighted_pass_sum = 0.0
         visual_recall_hits = 0
         visual_citation_hits = 0
         visual_grounded_hits = 0
@@ -123,13 +132,40 @@ class EvaluationRunner:
                     c.region_id for c in answer.citations if c.kind == "visual" and c.region_id
                 )
             )
+            answerable = item.is_answerable
+            answered = answer.status == "ok"
+            if answerable:
+                answerable_count += 1
+                if not answered:
+                    over_refusals += 1
+                else:
+                    behavior_correct += 1
+            else:
+                unanswerable_count += 1
+                if answered:
+                    unanswerable_answers += 1
+                else:
+                    behavior_correct += 1
+            # risk-weighted pass: an answerable item passes when it answers AND (if gold evidence
+            # exists) cites it; an unanswerable item passes only by refusing. High-risk items are
+            # up-weighted so a safety-relevant miss moves the score 3x as far as a benign one.
+            weight = 3.0 if item.risk_level == "high" else 1.0
+            if answerable:
+                item_pass = answered and (
+                    not expected_docs or bool(expected_docs.intersection(cited_docs))
+                )
+            else:
+                item_pass = not answered
+            risk_weight_sum += weight
+            if item_pass:
+                risk_weighted_pass_sum += weight
             if expected_docs and expected_docs.intersection(retrieved_docs):
                 recall_hits += 1
             if expected_docs and expected_docs.intersection(cited_docs):
                 citation_hits += 1
-            if answer.status == "ok" and answer.citations and answer.used_chunks:
+            if answerable and answer.status == "ok" and answer.citations and answer.used_chunks:
                 grounded_hits += 1
-            if answer.status == "ok" and answer.text and answer.used_chunks:
+            if answerable and answer.status == "ok" and answer.text and answer.used_chunks:
                 used_ids = set(answer.used_chunks)
                 used_chunks = [
                     result.chunk for result in retrieved if result.chunk.chunk_id in used_ids
@@ -210,13 +246,32 @@ class EvaluationRunner:
         )
         latencies = [example.latency_ms for example in examples]
         metrics = {
-            "recall_at_k": recall_hits / count,
+            # ★G2: retrieval/citation grade over items that CARRY gold evidence and grounding
+            # grades over ANSWERABLE items, so unanswerable (must-refuse) items in a corpus no
+            # longer dilute them. For pre-★G2 corpora (all answerable, all with evidence) every
+            # value is unchanged.
+            "recall_at_k": recall_hits / gradeable if gradeable else 0.0,
             "precision_at_k": precision_sum / gradeable if gradeable else 0.0,
             "mrr": rr_sum / gradeable if gradeable else 0.0,
-            "citation_accuracy": citation_hits / count,
-            "groundedness": grounded_hits / count,
-            "claim_groundedness": claim_grounded_hits / count,
+            "citation_accuracy": citation_hits / gradeable if gradeable else 0.0,
+            "groundedness": grounded_hits / answerable_count if answerable_count else 0.0,
+            "claim_groundedness": (
+                claim_grounded_hits / answerable_count if answerable_count else 0.0
+            ),
             "faithfulness": faithful_sum / faithful_gradeable if faithful_gradeable else 0.0,
+            # ★G2 refusal behavior (goal.md §2-2 refusal accuracy) + risk weighting (§2-4).
+            "over_refusal_rate": over_refusals / answerable_count if answerable_count else 0.0,
+            "unanswerable_answer_rate": (
+                unanswerable_answers / unanswerable_count if unanswerable_count else 0.0
+            ),
+            "refusal_accuracy": behavior_correct / count,
+            "risk_weighted_score": (
+                risk_weighted_pass_sum / risk_weight_sum if risk_weight_sum else 0.0
+            ),
+            # ★G2: the deterministic high-risk classifier recall as a REAL metric — the scorecard
+            # and 品質・KPI screen read metrics.high_risk_recall, which was never emitted before
+            # (always displayed 0). The security check of the same name still hard-gates leaks.
+            "high_risk_recall": _high_risk_recall_rate(),
             "p95_latency_ms": _p95(latencies),
             "query_cost": total_cost,
             "visual_recall_at_k": visual_recall_hits / visual_count,
@@ -272,6 +327,24 @@ class EvaluationRunner:
         if self.run_repository is not None:
             self.run_repository.save(run_record)
         return run_record
+
+
+def _high_risk_recall_rate() -> float:
+    """★G2: real recall rate of the deterministic high-risk classifier over its red-team corpus.
+
+    The probe of the same name hard-gates on leakage COUNTS; this emits the RATE the scorecard and
+    品質・KPI screen have always read from ``metrics.high_risk_recall`` (previously never populated,
+    so the headline showed 0). Fail-closed: any error reports 0.0, never a silent pass.
+    """
+    try:
+        from raku_rag.eval.high_risk_recall import evaluate_high_risk_recall
+
+        report = evaluate_high_risk_recall()
+        if report.dangerous_total <= 0:
+            return 0.0
+        return (report.dangerous_total - len(report.missed_dangerous)) / report.dangerous_total
+    except Exception:
+        return 0.0
 
 
 def _term_support(answer_text: str | None, evidence_text: str) -> float:
