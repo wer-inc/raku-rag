@@ -72,6 +72,7 @@ import {
   manufacturingListDrafts,
   manufacturingImprovements,
   manufacturingAuditEvidencePack,
+  latestManufacturingQualityEval,
   runManufacturingQualityEval,
   type QualityEvalResult,
   manufacturingRequestSourceSync,
@@ -5834,7 +5835,33 @@ function EvidencePackSection() {
 function QualityEvalSection() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<QualityEvalResult | null>(null);
+  // U10: "latest" = the persisted previous run shown by default; "run" = a run started here.
+  const [resultSource, setResultSource] = useState<"latest" | "run" | null>(null);
+  const [latestChecked, setLatestChecked] = useState(false);
   const toast = useToast();
+
+  // U10: show the last persisted evaluation run (evaluation_runs) on mount instead of a blank
+  // section. A run started from the button always wins over the late-arriving latest fetch.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const token = await getSessionToken();
+        const latest = await latestManufacturingQualityEval(token);
+        if (active && latest) {
+          setResult((current) => current ?? latest);
+          setResultSource((current) => current ?? "latest");
+        }
+      } catch {
+        // No persisted run / endpoint unavailable — keep the run-it-yourself empty state.
+      } finally {
+        if (active) setLatestChecked(true);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function run() {
     if (running) return;
@@ -5842,6 +5869,7 @@ function QualityEvalSection() {
     try {
       const token = await getSessionToken();
       setResult(await runManufacturingQualityEval(QUALITY_EVAL_ITEMS, token));
+      setResultSource("run");
     } catch (err) {
       toast(err instanceof Error ? err.message : "評価の実行に失敗しました", "error");
     } finally {
@@ -5861,11 +5889,19 @@ function QualityEvalSection() {
     >
       <div className="screen-actions">
         <button type="button" onClick={() => void run()} disabled={running}>
-          {running ? "評価を実行中…" : "品質評価を実行"}
+          {running ? "評価を実行中…" : result ? "再実行" : "品質評価を実行"}
         </button>
       </div>
+      {!result && latestChecked && !running && (
+        <p className="ops-empty">まだ評価結果がありません。「品質評価を実行」で最初のスコアカードを作成します。</p>
+      )}
       {result && (
         <>
+          {resultSource === "latest" && (
+            <p className="ops-note" role="status">
+              前回の評価結果を表示しています（実行日時: {fmtTime(result.created_at)}）。最新の状態を測るには「再実行」してください。
+            </p>
+          )}
           <div className="metric-grid">
             <Stat label="検索再現率 (recall@k)" value={pct(result.metrics.recall_at_k)} />
             <Stat label="根拠率 (groundedness)" value={pct(result.metrics.groundedness)} />
@@ -5880,6 +5916,7 @@ function QualityEvalSection() {
                   ? `全${securityEntries.length}項目パス`
                   : `失敗: ${securityFailed.map(([k]) => k).join(", ")}`,
               ],
+              ["実行日時", fmtTime(result.created_at)],
             ]}
           />
         </>
@@ -6188,13 +6225,25 @@ export default function FullSaasScreen({ pathname, screen }: { pathname: string;
       {screen.id === "knowledge-improvement-queue" && <ImprovementQueueBody />}
       {screen.id === "audit-log" && <AuditLogBody />}
       {screen.id === "compliance-export" && <ComplianceExportBody />}
-      {screen.id === "users" && <MockAdminScreen title="ユーザー" rows={MOCK_USERS} />}
+      {screen.id === "users" && (
+        <MockAdminScreen
+          title="ユーザー"
+          rows={MOCK_USERS}
+          sampleNote="表示中のユーザー一覧はサンプルです。ユーザー管理（IdP 連携・招待）は準備中です。"
+        />
+      )}
       {screen.id === "roles-groups-acl" && <RolesAclBody />}
       {screen.id === "provider-policy" && <ProviderPolicyBody />}
       {screen.id === "retrieval-settings" && <RetrievalBody />}
       {screen.id === "retrieval-debug" && <RetrievalDebugBody />}
       {screen.id === "logging-privacy" && <LoggingPrivacyBody />}
-      {screen.id === "integrations" && <MockAdminScreen title="連携" rows={MOCK_SOURCES} />}
+      {screen.id === "integrations" && (
+        <MockAdminScreen
+          title="連携"
+          rows={MOCK_SOURCES}
+          sampleNote="表示中の連携一覧はサンプルです。実際の接続状況は「外部接続」で確認できます。"
+        />
+      )}
       {screen.id === "api-keys-webhooks" && <ApiKeysBody />}
       {screen.id === "usage-billing" && <BillingBody />}
       {screen.id === "support" && <SupportBody />}
@@ -6268,11 +6317,14 @@ const ADD_SOURCE_TYPES: AddSourceType[] = [
     readiness: "ready",
   },
   {
+    // U9: the Google OAuth connector (authorize → callback → server-side refresh token → sync) is
+    // fully implemented — surface it as selectable. Live use needs GOOGLE_OAUTH_CLIENT_ID (+ the
+    // GoogleOAuthConfigSecretName secret on the deploy); when absent, 接続 shows the not-configured error.
     id: "googledrive",
     name: "Google Drive",
     desc: "共有ドライブ・フォルダの文書を同期",
     mono: "GD",
-    readiness: "three_days",
+    readiness: "ready",
   },
   {
     id: "sharepoint",
@@ -6463,10 +6515,11 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   },
 };
 
+/** U9: readiness badge copy — non-ready connectors surface as 対応予定 (near-term / roadmap). */
 function sourceReadinessLabel(readiness: AddSourceType["readiness"]): string {
   if (readiness === "ready") return "利用可";
-  if (readiness === "three_days") return "3日候補";
-  return "要追加設計";
+  if (readiness === "three_days") return "近日対応";
+  return "ロードマップ";
 }
 
 function todayIso(): string {
@@ -8256,25 +8309,32 @@ function AddSourceBody() {
     <>
       {step === "select" && (
         <Section title="ソース種別" note="取り込むソースの種別を選択してください。">
+          {/* U9: show the full connector lineup — ready ones selectable, the rest disabled with a
+              対応予定 badge — so coverage is visible without creating dead configuration paths. */}
           <div className="source-type-grid">
-            {ADD_SOURCE_TYPES.filter((source) => source.readiness === "ready").map((source) => (
-              <button
-                key={source.id}
-                type="button"
-                className={`source-type-card ${selectedSource === source.id ? "active" : ""}`}
-                aria-pressed={selectedSource === source.id}
-                onClick={() => onSelectSource(source.id)}
-              >
-                <span className="source-type-mark">{source.mono}</span>
-                <span className="source-type-body">
-                  <strong>{source.name}</strong>
-                  <span>{source.desc}</span>
-                </span>
-                <span className={`source-type-status ${source.readiness}`}>
-                  {sourceReadinessLabel(source.readiness)}
-                </span>
-              </button>
-            ))}
+            {ADD_SOURCE_TYPES.map((source) => {
+              const selectable = source.readiness === "ready";
+              return (
+                <button
+                  key={source.id}
+                  type="button"
+                  className={`source-type-card ${selectedSource === source.id ? "active" : ""}`}
+                  aria-pressed={selectable ? selectedSource === source.id : undefined}
+                  disabled={!selectable}
+                  title={selectable ? undefined : `${source.name} は対応予定です`}
+                  onClick={() => onSelectSource(source.id)}
+                >
+                  <span className="source-type-mark">{source.mono}</span>
+                  <span className="source-type-body">
+                    <strong>{source.name}</strong>
+                    <span>{source.desc}</span>
+                  </span>
+                  <span className={`source-type-status ${source.readiness}`}>
+                    {sourceReadinessLabel(source.readiness)}
+                  </span>
+                </button>
+              );
+            })}
           </div>
           <p className="source-config-note">{selectedConfig.note}</p>
           <div className="screen-actions add-source-actions">
@@ -9900,9 +9960,20 @@ function ApiKeysBody() {
   );
 }
 
+/** U6: honest-mock banner — marks screens whose rows are sample data, without alarming styling. */
+function SampleDataNotice({ note }: { note: string }) {
+  return (
+    <p className="sample-data-notice" role="note">
+      <span className="sample-data-badge">サンプルデータ</span>
+      {note}
+    </p>
+  );
+}
+
 function BillingBody() {
   return (
     <>
+      <SampleDataNotice note="表示中のプラン・請求書はサンプルです。課金連携（実際の利用量・請求データの取得）は準備中です。" />
       <Section title="利用状況 / 請求" note="利用状況と予算の概要を表示します。">
         <FieldGrid rows={[["プラン", MOCK_BILLING.plan], ["利用状況", MOCK_BILLING.usage]]} />
       </Section>
@@ -9917,14 +9988,17 @@ function BillingBody() {
   );
 }
 
-function MockAdminScreen({ title, rows }: { title: string; rows: AdminListRow[] }) {
+function MockAdminScreen({ title, rows, sampleNote }: { title: string; rows: AdminListRow[]; sampleNote: string }) {
   return (
-    <Section title={title}>
-      <DataTable
-        columns={[title, "メタデータ", "状態"]}
-        rows={rows.map((row) => [row.label, row.meta ?? "—", row.status ?? "—"])}
-        empty={`${title} の設定はまだありません。`}
-      />
-    </Section>
+    <>
+      <SampleDataNotice note={sampleNote} />
+      <Section title={title}>
+        <DataTable
+          columns={[title, "メタデータ", "状態"]}
+          rows={rows.map((row) => [row.label, row.meta ?? "—", row.status ?? "—"])}
+          empty={`${title} の設定はまだありません。`}
+        />
+      </Section>
+    </>
   );
 }

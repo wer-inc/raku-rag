@@ -3090,6 +3090,33 @@ button:disabled {
   font-weight: 700;
 }
 
+/* U6: honest-mock banner — neutral (not alarming) marker for sample-data screens. */
+.sample-data-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  background: #fafafa;
+  color: #52525b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sample-data-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e4e4e7;
+  color: #3f3f46;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .src-bucket {
   margin-top: 8px;
   text-transform: uppercase;
@@ -4194,9 +4221,16 @@ button,
   padding: 8px 14px;
   border: 1px solid #e4e4e7;
   border-radius: 999px;
+  background: #ffffff;
   color: #52525b;
+  font-family: inherit;
   font-size: 13px;
   font-weight: 500;
+  cursor: pointer;
+}
+
+.auth-chip:hover {
+  border-color: #a1a1aa;
 }
 
 .auth-chip.active {
@@ -4394,6 +4428,41 @@ button,
   font-weight: 600;
   letter-spacing: 0.04em;
   color: #a1a1aa;
+}
+
+/* U8: collapsible group header (運用/管理). Same visual weight as the static label. */
+.sidebar-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-group-toggle:hover .sidebar-group-label {
+  color: #71717a;
+}
+
+.sidebar-group-chevron {
+  flex: none;
+  margin: 7px 10px 0 0;
+  color: #a1a1aa;
+  transition: transform 0.15s ease;
+}
+
+.sidebar-group-chevron.open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-group-chevron {
+    transition: none;
+  }
 }
 
 .sidebar-nav-item {
@@ -5297,6 +5366,15 @@ button,
 .source-type-card.active {
   border-color: var(--accent, #5b5bd6);
   background: var(--accent-weak, #f7f7fd);
+}
+
+/* U9: 対応予定 connectors — visible for coverage, but clearly not selectable. */
+.source-type-card:disabled {
+  border-color: var(--line, #ececec);
+  background: #fafafa;
+  color: #71717a;
+  cursor: not-allowed;
+  opacity: 0.75;
 }
 
 .source-type-mark {

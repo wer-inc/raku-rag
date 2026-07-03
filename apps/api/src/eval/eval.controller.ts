@@ -84,4 +84,11 @@ export class EvalController {
   async runStatus(@Req() req: Request, @Param("run_id") runId: string): Promise<EvaluationRunStatusResponse> {
     return this.getFromCore(req, `/internal/evaluations/runs/${encodeURIComponent(runId)}`);
   }
+
+  // U10: latest persisted evaluation run for the principal's tenant (404 when none exists yet).
+  // Tenant comes from the signed principal headers only — never from the query.
+  @Get("latest")
+  async latestRun(@Req() req: Request): Promise<EvaluationRunStatusResponse> {
+    return this.getFromCore(req, "/internal/evaluations/latest");
+  }
 }

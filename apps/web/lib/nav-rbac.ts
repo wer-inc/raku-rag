@@ -32,6 +32,8 @@ const REVIEWER_HREFS = new Set([
   ...(APPROVAL_WORKFLOW_ENABLED ? ["/reviews", "/reviews/documents"] : []),
   // NOTE: /reviews/settings is tenant_admin-only (screens.manifest.json approval-workflow-settings
   // rbac=[tenant_admin]; see issue 0011 DoD#4 / 0014). It is intentionally NOT granted to reviewer.
+  // screens.manifest.json knowledge-improvement-queue rbac=[reviewer, ops_owner, tenant_admin].
+  "/operations/improvements",
 ]);
 
 // Paths only tenant_admin/platform_admin may see, even when a less-privileged role holds the parent
@@ -61,6 +63,8 @@ const OPS_OWNER_HREFS = new Set([
   "/operations/quality",
   "/operations/improvements",
   "/operations/impact-report",
+  // screens.manifest.json audit-log rbac=[ops_owner, tenant_admin, auditor] (U8 nav item).
+  "/audit",
   "/admin/retrieval/debug",
 ]);
 
