@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, NamedTuple
 
 from raku_rag.core.text import retrieval_tokens
 
@@ -55,6 +55,82 @@ LEXICAL_RECENCY_BOOST_MAX = 0.02
 # while the LEXICAL_MATCH_MAX_SCORE cap keeps the leg strictly below METADATA_EXACT_MATCH_SCORE
 # (a metadata exact match stays the strongest signal).
 LEXICAL_IDENTIFIER_MATCH_WEIGHT = 0.18
+# Wave 1c (docs/product/scale-bench.md): coverage weight of a query term satisfied only through a
+# tenant-approved synonym (``retrieval.synonyms`` lexicon namespace, expanded by
+# services/retrieval.py for the LEXICAL leg only). Strictly < 1.0 — the ranking contract is that an
+# expanded-term hit never outranks a direct-term hit at equal term coverage: a synonym-covered term
+# contributes 0.9 of a direct term's coverage and contributes NOTHING to the frequency/density
+# component, so at every equal coverage set the direct match scores strictly higher.
+SYNONYM_COVERAGE_WEIGHT = 0.9
+
+
+class SynonymExpansion(NamedTuple):
+    """One tenant-approved synonym group as it applies to a specific query.
+
+    ``source_terms``: the ORIGINAL query's lexical terms (``lexical_query_terms`` output — CJK
+    bigrams / ASCII tokens) accounted for by the group member(s) found in the query. These are the
+    terms a text may satisfy through a synonym.
+    ``alternatives``: the group's OTHER members (casefolded phrases, e.g. the canonical document
+    surface form) whose presence in a chunk text counts the source terms as synonym-covered.
+    """
+
+    source_terms: tuple[str, ...]
+    alternatives: tuple[str, ...]
+
+
+def synonym_expansions(
+    query: str, groups: Mapping[str, Iterable[str]]
+) -> tuple[SynonymExpansion, ...]:
+    """Derive the lexical-leg synonym expansions of ``query`` from tenant lexicon ``groups``.
+
+    ``groups`` is the ``retrieval.synonyms`` namespace: key = canonical term, values = synonyms.
+    Matching is SYMMETRIC over the group ({key} ∪ values): whichever member the query used, the
+    remaining members become alternatives — so a tenant may key the entry by the canonical
+    document term (有給休暇: [年休]) and a query saying 年休 still expands to 有給休暇.
+
+    Query-side membership: CJK members match as a substring of the casefolded query (Japanese has
+    no word boundaries); ASCII members match on whole retrieval tokens (so "pto" never matches
+    inside "laptop"). Deterministic output order (sorted group keys). Groups where no member — or
+    every member — appears in the query contribute nothing.
+    """
+    query_cf = str(query or "").casefold()
+    if not query_cf.strip() or not groups:
+        return ()
+    query_terms = lexical_query_terms(query)
+    if not query_terms:
+        return ()
+    query_token_set = set(retrieval_tokens(query))
+    expansions: list[SynonymExpansion] = []
+    for key in sorted(str(k) for k in groups):
+        raw_members = (key, *(str(v) for v in groups.get(key, ())))
+        members = tuple(dict.fromkeys(m.strip().casefold() for m in raw_members if m and m.strip()))
+        if len(members) < 2:
+            continue
+        matched = tuple(m for m in members if _phrase_present(m, query_cf, query_token_set))
+        if not matched or len(matched) == len(members):
+            continue
+        source_terms = tuple(
+            sorted({term for term in query_terms if any(term in m for m in matched)})
+        )
+        if not source_terms:
+            continue
+        alternatives = tuple(m for m in members if m not in matched)
+        expansions.append(SynonymExpansion(source_terms=source_terms, alternatives=alternatives))
+    return tuple(expansions)
+
+
+def _phrase_present(phrase: str, haystack_cf: str, haystack_token_set: set[str]) -> bool:
+    """Is ``phrase`` present in the casefolded haystack text / its retrieval-token set?
+
+    CJK phrases: substring of the raw casefolded text (bigram tokenization cannot express phrase
+    boundaries). ASCII phrases: every retrieval token of the phrase must be a whole haystack token
+    (substring matching would false-positive, e.g. "pto" inside "laptop").
+    """
+    if _contains_cjk(phrase):
+        return phrase in haystack_cf
+    tokens = retrieval_tokens(phrase)
+    return bool(tokens) and all(token in haystack_token_set for token in tokens)
+
 
 _IDENTIFIER_RE = re.compile(
     r"(?<![A-Za-z0-9])"
@@ -162,7 +238,11 @@ def lexical_query_terms(query: str) -> tuple[str, ...]:
 
 
 def lexical_match_score(
-    query: str, text: str, metadata: Mapping[str, Any] | object = None
+    query: str,
+    text: str,
+    metadata: Mapping[str, Any] | object = None,
+    *,
+    expansions: tuple[SynonymExpansion, ...] = (),
 ) -> float:
     """Small BM25-like lexical score for keyword-dominant queries.
 
@@ -175,6 +255,13 @@ def lexical_match_score(
     ``LEXICAL_IDENTIFIER_MATCH_WEIGHT`` per DISTINCT matched identifier: extraction is symmetric
     (``query_identifiers`` on both sides, compact-form comparison), so "INS-0435" in the question
     matches "INS-0435。" in the text regardless of separators.
+
+    ``expansions`` (Wave 1c, tenant-approved ``retrieval.synonyms`` only — see
+    ``synonym_expansions``): a query term absent from the text still counts toward coverage when
+    the text contains an alternative member of its synonym group, at ``SYNONYM_COVERAGE_WEIGHT``
+    (< 1.0) and with NO frequency/density contribution — an expanded-term hit therefore never
+    outranks a direct-term hit at equal term coverage. Empty ``expansions`` (every caller without
+    a tenant lexicon) is byte-identical to the pre-1c score.
     """
     query_terms = lexical_query_terms(query)
     if not query_terms:
@@ -184,9 +271,22 @@ def lexical_match_score(
         return 0.0
     text_term_set = set(text_terms)
     matched = [term for term in query_terms if term in text_term_set]
-    if not matched:
+    synonym_covered: set[str] = set()
+    if expansions:
+        unmatched = {term for term in query_terms if term not in text_term_set}
+        if unmatched:
+            text_cf = str(text).casefold()
+            for expansion in expansions:
+                coverable = unmatched.intersection(expansion.source_terms) - synonym_covered
+                if not coverable:
+                    continue
+                if any(
+                    _phrase_present(alt, text_cf, text_term_set) for alt in expansion.alternatives
+                ):
+                    synonym_covered |= coverable
+    if not matched and not synonym_covered:
         return 0.0
-    coverage = len(matched) / len(query_terms)
+    coverage = (len(matched) + SYNONYM_COVERAGE_WEIGHT * len(synonym_covered)) / len(query_terms)
     frequency = sum(min(text_terms.count(term), 3) for term in matched)
     density = min(1.0, frequency / max(1, len(text_terms)))
     score = LEXICAL_MATCH_BASE_SCORE + (0.35 * coverage) + (0.06 * density)

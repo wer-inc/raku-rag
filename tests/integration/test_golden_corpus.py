@@ -50,7 +50,7 @@ def _committed_baseline() -> EvaluationBaseline:
     )
 
 
-def _build_system_and_set(corpus):
+def _build_system_and_set(corpus, *, seed_lexicon: bool = True):
     from raku_rag.app import MvpSystem
 
     tenant = corpus["tenant_id"]
@@ -72,6 +72,20 @@ def _build_system_and_set(corpus):
             items.append(item)
             # ★G2: unanswerable items carry no gold evidence by design.
             expected_doc_ids.extend(e["document_id"] for e in item.get("expected_evidence") or ())
+    # Wave 1c: seed the corpus's tenant lexicon (retrieval.synonyms) and attach it to retrieval —
+    # the same post-construction wiring the deployed answer-service uses. `seed_lexicon=False`
+    # builds the pre-1c system so the synonym slice can be shown to actually measure expansion.
+    if seed_lexicon:
+        from raku_rag.persistence.lexicon import InMemoryLexiconRepository
+        from raku_rag.services.lexicon import LexiconService
+
+        lexicon = LexiconService(InMemoryLexiconRepository())
+        for namespace, entries in (corpus.get("lexicon") or {}).items():
+            if namespace.startswith("_"):
+                continue
+            for key, values in entries.items():
+                lexicon.update(tenant, namespace, key, list(values), actor_id="golden-harness")
+        sys.retrieval._lexicon = lexicon
     eval_set = EvaluationSet.register(tenant_id=tenant, items=items)
     principal = IdentityClaims(tenant_id=tenant, user_id=user)
     return sys, eval_set, principal, tenant, expected_doc_ids
@@ -180,6 +194,28 @@ class TestGoldenCorpusBaseline(unittest.TestCase):
                 result = evaluate_baseline_gate(degraded, self.baseline)
                 self.assertFalse(result.passed)
                 self.assertTrue(any(metric in f for f in result.failures), msg=str(result.failures))
+
+    def test_synonym_slice_is_represented(self) -> None:
+        # Wave 1c (goal-gap-audit 「同義語スライスが評価に無い」): the corpus must carry items
+        # whose question uses a tenant-approved synonym of the document's surface form, with the
+        # lexicon entries committed alongside (seeded by the harness).
+        synonym_items = [i for i in self.eval_set.items if i.category == "synonym"]
+        self.assertGreaterEqual(len(synonym_items), 3)
+        self.assertTrue((self.corpus.get("lexicon") or {}).get("retrieval.synonyms"))
+
+    def test_synonym_slice_actually_measures_expansion(self) -> None:
+        # The gate teeth: WITHOUT the tenant lexicon the synonym items' distractor documents
+        # deterministically outrank the gold, so MRR drops below the committed 1.0 floor and the
+        # baseline gate fails. If this stops failing, the slice no longer measures expansion
+        # (e.g. the docs leaked the synonym surface form) and must be redesigned.
+        sys_no_lex, eval_set, principal, _tenant, _expected = _build_system_and_set(
+            self.corpus, seed_lexicon=False
+        )
+        run = EvaluationRunner(sys_no_lex).run(eval_set, principal=principal)
+        self.assertLess(run.metrics["mrr"], 1.0)
+        result = evaluate_baseline_gate(run, self.baseline)
+        self.assertFalse(result.passed)
+        self.assertTrue(any("mrr" in f for f in result.failures), msg=str(result.failures))
 
     def test_no_self_derived_baseline_loophole(self) -> None:
         # The loophole: the default/self-derived gating floors (DEFAULT_MIN_METRICS) do NOT include the

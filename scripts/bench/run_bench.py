@@ -36,6 +36,7 @@ import subprocess
 import sys
 import threading
 import urllib.request
+from urllib.parse import quote as urlquote
 from concurrent.futures import ThreadPoolExecutor
 from math import log2
 from pathlib import Path
@@ -192,6 +193,29 @@ def _chunking_metadata(doc: dict) -> dict:
     return meta
 
 
+def _bench_synonym_lexicon_entries() -> dict[str, list[str]]:
+    """The tenant lexicon a real customer would configure for this corpus's vocabulary.
+
+    Key = canonical document surface form, values = the query-side synonyms (exactly the
+    ``SYMPTOM_SYNONYMS`` pairs the synonym eval slice substitutes). Wave 1c expands these for the
+    lexical retrieval leg (``retrieval.synonyms`` namespace); seeding them is part of the measured
+    condition — pass ``--no-synonyms`` to measure the pre-1c behavior.
+    """
+    return {
+        doc_form: [query_form] for doc_form, query_form in generate_corpus.SYMPTOM_SYNONYMS.items()
+    }
+
+
+def local_seed_synonyms(system) -> None:
+    """Idempotent upsert of the bench tenant's retrieval.synonyms lexicon (Wave 1c)."""
+    from raku_rag.persistence.lexicon import PostgresLexiconRepository
+    from raku_rag.services.lexicon import LexiconService
+
+    lexicon = LexiconService(PostgresLexiconRepository(system._conn))
+    for key, values in _bench_synonym_lexicon_entries().items():
+        lexicon.update(BENCH_TENANT, "retrieval.synonyms", key, values, actor_id=BENCH_USER)
+
+
 def local_ingest(dsn: str, settings, documents: list[dict]) -> dict:
     from raku_rag.domain.models import ScopeType, SubjectType
     from raku_rag.production import ProductionSystem
@@ -237,13 +261,23 @@ def local_ingest(dsn: str, settings, documents: list[dict]) -> dict:
         system.close()
 
 
-def local_search_fns(dsn: str, settings, concurrency: int):
+def local_search_fns(dsn: str, settings, concurrency: int, *, synonyms: bool = True):
     """One ProductionSystem (own Postgres connection) per concurrent client."""
     from raku_rag.domain.models import IdentityClaims
     from raku_rag.production import ProductionSystem
 
     principal = IdentityClaims(tenant_id=BENCH_TENANT, user_id=BENCH_USER)
     systems = [ProductionSystem(dsn, settings=settings) for _ in range(concurrency)]
+    if synonyms:
+        # Wave 1c measured condition: tenant lexicon rows exist (idempotent, works with
+        # --skip-ingest) and each client's retrieval reads them — same post-construction
+        # attachment the deployed answer-service uses (apps/answer-service/server.py).
+        from raku_rag.persistence.lexicon import PostgresLexiconRepository
+        from raku_rag.services.lexicon import LexiconService
+
+        local_seed_synonyms(systems[0])
+        for system in systems:
+            system.retrieval._lexicon = LexiconService(PostgresLexiconRepository(system._conn))
 
     def make(system):
         def search(question: str) -> tuple[list[str], float]:
@@ -322,6 +356,26 @@ class StgClient:
             method="PUT",
         )
         urllib.request.urlopen(req, timeout=30).read()
+
+    def seed_synonyms(self) -> None:
+        """Seed the bench tenant's retrieval.synonyms lexicon via the audited admin API (1c)."""
+        headers = {
+            "content-type": "application/json",
+            "x-raku-tenant-id": BENCH_TENANT,
+            "x-raku-user-id": BENCH_USER,
+            "x-raku-groups": "[]",
+            "x-raku-roles": json.dumps(["tenant_admin"]),
+        }
+        if self.internal_auth:
+            headers["X-Internal-Auth"] = self.internal_auth
+        for key, values in _bench_synonym_lexicon_entries().items():
+            req = urllib.request.Request(
+                self.base + "/internal/admin/lexicon/retrieval.synonyms/" + urlquote(key),
+                data=json.dumps({"values": values}).encode("utf-8"),
+                headers=headers,
+                method="PUT",
+            )
+            urllib.request.urlopen(req, timeout=30).read()
 
     def ingest(self, doc: dict) -> tuple[str, int]:
         content_b64 = base64.b64encode(doc["content"].encode("utf-8")).decode("ascii")
@@ -438,6 +492,11 @@ def main() -> None:
         help="reuse the previously ingested corpus (must match --n-docs/--seed)",
     )
     parser.add_argument("--top-k", type=int, default=20, help="search profile top_k (>=10)")
+    parser.add_argument(
+        "--no-synonyms",
+        action="store_true",
+        help="do NOT seed/attach the retrieval.synonyms tenant lexicon (measure pre-1c behavior)",
+    )
     parser.add_argument("--out", default="", help="write the JSON report here")
     parser.add_argument(
         "--yes-costs-money",
@@ -455,6 +514,7 @@ def main() -> None:
         "n_queries": len(queries),
         "seed": args.seed,
         "top_k": args.top_k,
+        "synonyms": not args.no_synonyms,
     }
 
     if args.mode == "stg":
@@ -467,6 +527,9 @@ def main() -> None:
         client = StgClient()
         if not args.skip_ingest:
             report["ingest"] = stg_ingest(client, documents)
+        if not args.no_synonyms:
+            # Server-side expansion: the deployed answer-service reads the tenant_lexicon rows.
+            client.seed_synonyms()
         search_fns = [client.search for _ in range(max(concurrency_levels))]
 
         def close() -> None:
@@ -479,7 +542,9 @@ def main() -> None:
         settings = Settings(default_top_k=max(10, args.top_k))
         if not args.skip_ingest:
             report["ingest"] = local_ingest(args.dsn, settings, documents)
-        search_fns, close = local_search_fns(args.dsn, settings, max(concurrency_levels))
+        search_fns, close = local_search_fns(
+            args.dsn, settings, max(concurrency_levels), synonyms=not args.no_synonyms
+        )
 
     try:
         # Warmup (per-connection plans/caches), excluded from measurements.

@@ -12,6 +12,12 @@ from typing import Mapping
 
 # Namespaces a tenant_admin may edit through the public API. Anything else is rejected so the
 # lexicon cannot become a general-purpose config backdoor.
+#
+# retrieval.synonyms (Wave 1c): key = canonical term, values = its synonyms/abbreviations. Each
+# entry defines one synonym GROUP ({key} ∪ values); retrieval expands a query's terms with the
+# other group members for the LEXICAL leg only (services/retrieval.py). Tenant-config only — there
+# are no built-in defaults, because a synonym equivalence is a tenant-approved vocabulary claim
+# (entered through this audited admin API), never platform vocabulary.
 EDITABLE_NAMESPACES: frozenset[str] = frozenset(
     {
         "safety.high_risk_keywords",
@@ -19,6 +25,7 @@ EDITABLE_NAMESPACES: frozenset[str] = frozenset(
         "phone.intents",
         "messages.chat",
         "messages.phone",
+        "retrieval.synonyms",
     }
 )
 _MAX_VALUES_PER_KEY = 200

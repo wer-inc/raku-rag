@@ -1812,6 +1812,10 @@ def make_handler(system: ProductionSystem):
     manufacturing_system.lexicon = lexicon
     chatbot._lexicon = lexicon
     phone._lexicon = lexicon
+    # Wave 1c: retrieval-time synonym expansion reads the SAME tenant lexicon
+    # (retrieval.synonyms namespace, lexical leg only — services/retrieval.py). Attached
+    # post-construction like the chatbot/phone consumers so all channels share one instance.
+    system.retrieval._lexicon = lexicon
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, payload: dict) -> None:

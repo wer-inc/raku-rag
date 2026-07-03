@@ -265,6 +265,90 @@ committed baseline `tests/fixtures/eval/golden_baseline.json` は実測値不変
   ノイズ)ため見送り — 実埋め込み(stg)では vector レグの寄与が変わるので、stg 実測後に
   融合重みを再検討する価値がある。
 
+## Wave 1c 実施後の再実測(tenant_lexicon 同義語クエリ展開)— 2026-07-03
+
+Wave 1c(branch `feat/synonym-expansion`)で `retrieval.synonyms` 名前空間の同義語展開を
+lexical レグに接続し、同一ハーネス・同一シード(20260703)で再実測した。before は上の
+Wave 1b after(コミット済み数値。`--no-synonyms` での再実行が両スケールとも再現することを
+確認済み — 差分は展開のみに帰属する)。
+
+### 展開の契約(どこに効き、どこに効かないか)
+
+1. **テナント承認語彙のみ**: `EDITABLE_NAMESPACES` に追加した `retrieval.synonyms`
+   (key=正式表記、values=同義語/略語)。既存の監査付き admin API(`PUT
+   /internal/admin/lexicon/...`)で設定するテナント設定であり、**ビルトインのデフォルト辞書は
+   無い** — 同義語等価はテナントが承認した語彙主張であって、プラットフォーム語彙ではない。
+   グループ照合は対称({key}∪values のどれをクエリが使っても残りが代替語になる)。
+2. **lexical レグのみ展開**(`services/retrieval.py` → 両ストアの `lexical_matches(...,
+   expansions=)` → 共有 `lexical_match_score`。in-memory / Postgres の同一挙動は
+   `tests/postgres/test_lexical_synonym_parity.py` で担保)。embedding レグ・識別子メタデータ
+   レグ・query plan・`intent_query`(高リスク分類)・salient-coverage ゲートは **RAW クエリの
+   まま**(#78/#80 不変条件。`tests/unit/test_synonym_expansion_safety.py` で固定)。
+3. **順位規則**: 同義語経由でカバーされた語は直接一致の 0.9 倍のカバレッジ寄与
+   (`SYNONYM_COVERAGE_WEIGHT`)+ frequency/density 寄与ゼロ — **同一カバレッジなら展開ヒットは
+   直接ヒットを絶対に上回らない**。スコアは従来どおり lexical バンド上限 1.20 でキャップ
+   (識別子メタデータ一致 1.25 が最強のまま)。
+4. **no-answer ゲートとの関係(最重要の設計判断)**: salient-coverage ゲートは **元クエリを
+   判定し続け、同義語展開で拾った証拠もそれを通過しなければならない**。展開語が証拠に
+   一致することは「質問に応答的」とは見なさない — クエリの salient 語が実質すべて同義語側に
+   ある質問は、検索では文書が見つかっても回答は refuse する(fail-safe 方向。golden corpus の
+   同義語項目は、salient 語の過半が直接カバーされる現実的な混合クエリとして設計)。ゲート側で
+   「テナント承認同義語ならカバー扱い」に広げる案は、refuse 分離の再実測を伴う別チケット。
+5. **fail-open**: lexicon 障害時は展開なしで検索続行(chatbot/phone と同じガードパターン)。
+   参照は1リクエスト1回の namespace 読みで、`retrieval_synonym_expansion_count` メトリクス+
+   span 属性で観測可能。
+
+### 検索品質 before → after(concurrency=1、200問、doc-level)
+
+#### N=3,000
+
+| スライス | recall@5 | recall@10 | MRR@10 | nDCG@10 |
+|---|---|---|---|---|
+| **overall** | 0.794 → **0.847** | 0.888 → **0.929** | 0.750 → **0.831** | 0.782 → **0.854** |
+| identifier | 1.000 → 1.000 | 1.000 → 1.000 | 0.981 → 0.981 | 0.986 → 0.986 |
+| paraphrase | 0.640 → 0.640 | 0.800 → 0.800 | 0.625 → 0.625 | 0.665 → 0.665 |
+| synonym | 0.433 → **0.733** | 0.700 → **0.933** | 0.244 → **0.706** | 0.350 → **0.758** |
+| multi_doc | 1.000 → 1.000 | 1.000 → 1.000 | 1.000 → 1.000 | 1.000 → 1.000 |
+
+#### N=10,000
+
+| スライス | recall@5 | recall@10 | MRR@10 | nDCG@10 |
+|---|---|---|---|---|
+| **overall** | 0.706 → **0.824** | 0.794 → **0.888** | 0.675 → **0.795** | 0.701 → **0.816** |
+| identifier | 1.000 → 1.000 | 1.000 → 1.000 | 0.992 → 0.992 | 0.994 → 0.994 |
+| paraphrase | 0.540 → 0.540 | 0.740 → 0.740 | 0.463 → 0.463 | 0.526 → 0.526 |
+| synonym | 0.100 → **0.767** | 0.267 → **0.800** | 0.067 → **0.747** | 0.111 → **0.760** |
+| multi_doc | 1.000 → 1.000 | 1.000 → 1.000 | 1.000 → 1.000 | 1.000 → 1.000 |
+
+ヘッドライン: **synonym recall@5 は 0.433→0.733@3k / 0.100→0.767@10k(MRR 0.067→0.747@10k)**
+— 1b 後も「ほぼ全滅」だったスライスがスケール非依存の水準まで回復し、スケールで落ちる
+スライスは paraphrase(共有語彙の混雑、実埋め込み=stg 実測待ち)だけになった。identifier /
+paraphrase / multi_doc は全指標不変(展開は同義語グループがクエリに現れたときだけ動く
+加算的な仕組みで、他スライスのクエリはグループ非該当)。回答不能スライスのスコア分離も
+不変(mean/max 0.730/0.881@3k、0.789/0.876@10k — 展開対象語彙が unanswerable 質問に
+現れないため)。
+
+### レイテンシ(concurrency=1; 展開は lexicon 1読み+文字列走査のみ)
+
+| N docs | p50 (ms) | p95 (ms) |
+|---|---|---|
+| 3,000 | 591 → 595 | 735 → 749 |
+| 10,000 | 2,122 → 2,145 | 2,538 → 2,666 |
+
+O(N) 全件転送というレイテンシの構造課題(結果2)は 1c と独立のまま(別チケット)。
+
+### golden corpus / CI ゲート
+
+- `tests/fixtures/uat/golden_corpus.json` に **同義語カテゴリ3問**(クエリ=同義語表記、
+  文書=正式表記、`lexicon` ブロックをハーネスが seed)+ ディストラクタ文書を追加。
+  lexicon なしではディストラクタが決定的に gold を上回り MRR floor(1.0)が割れる —
+  `test_synonym_slice_actually_measures_expansion` がこの「歯」を固定。
+- 項目追加により dataset_version / registry_version / query_cost(18→21)を再測定し
+  `tests/fixtures/eval/golden_baseline.json` を #80 と同じ手順で更新(floor 値は全て実測)。
+- ベンチ側: `run_bench.py` はデフォルトで bench テナントに `SYMPTOM_SYNONYMS` 対応の
+  lexicon を seed(local=直接 upsert / stg=admin API 経由)。`--no-synonyms` で 1c 前の
+  挙動を測定できる(A/B 用)。
+
 ## stg モード(実埋め込み・実スタック)runbook — 未実行
 
 stg 実測は **課金が発生**(文書3,000件 × チャンク毎の OpenAI 埋め込み + クエリ毎の埋め込み)

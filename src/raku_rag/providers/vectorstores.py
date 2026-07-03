@@ -14,6 +14,7 @@ from raku_rag.core.hybrid_retrieval import (
     METADATA_EXACT_MATCH_SCORE,
     metadata_identifier_match_count,
     query_identifiers,
+    SynonymExpansion,
 )
 from raku_rag.domain.models import Chunk, Modality, ScoredChunk
 from raku_rag.interfaces.base import VectorStore, Vector, VisibilityPredicate
@@ -105,8 +106,15 @@ class InMemoryVectorStore(VectorStore):
         *,
         visible: VisibilityPredicate,
         top_k: int,
+        expansions: tuple[SynonymExpansion, ...] = (),
     ) -> list[ScoredChunk]:
-        """Return ACL-visible chunks with direct lexical term overlap."""
+        """Return ACL-visible chunks with direct lexical term overlap.
+
+        ``expansions`` (Wave 1c): tenant-approved synonym groups from ``retrieval.synonyms``
+        (see ``core.hybrid_retrieval.synonym_expansions``) — forwarded verbatim to the shared
+        scorer so the in-memory and Postgres stores stay behaviorally aligned. Default () is
+        byte-identical to the pre-1c leg.
+        """
         if top_k <= 0:
             return []
         matches: list[ScoredChunk] = []
@@ -117,7 +125,7 @@ class InMemoryVectorStore(VectorStore):
                 continue
             if not visible(chunk):
                 continue
-            score = lexical_match_score(query, chunk.text, chunk.metadata)
+            score = lexical_match_score(query, chunk.text, chunk.metadata, expansions=expansions)
             if score <= 0:
                 continue
             matches.append(ScoredChunk(chunk=chunk, retrieval_score=score))
