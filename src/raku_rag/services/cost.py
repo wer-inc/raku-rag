@@ -47,6 +47,10 @@ class CostService:
     # tenant_id -> budget (None = unlimited)
     _budgets: dict[str, float] = field(default_factory=dict)
     _records: list[CostRecord] = field(default_factory=list)
+    # ★G1: optional durable write-through sink (cost_records table). Fail-open: a sink outage
+    # keeps the in-memory record/budget behavior intact and never breaks the calling path.
+    sink: object | None = field(default=None, repr=False)
+    _sink_failures: int = 0
 
     def set_budget(self, tenant_id: str, budget: float | None) -> None:
         if budget is None:
@@ -93,7 +97,16 @@ class CostService:
             metadata=dict(metadata or {}),
         )
         self._records.append(record)
+        if self.sink is not None:
+            try:
+                self.sink.record(record)
+            except Exception:
+                self._sink_failures += 1
         return {"kind": kind, "amount": amount, "tenant_total": self._spent.get(tenant_id, 0.0)}
+
+    @property
+    def sink_failures(self) -> int:
+        return self._sink_failures
 
     def record_tokens(
         self,

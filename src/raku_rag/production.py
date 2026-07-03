@@ -33,6 +33,11 @@ from raku_rag.persistence.postgres import (
     PostgresVectorStore,
     connect,
 )
+from raku_rag.persistence.telemetry import (
+    PostgresCostRecordSink,
+    PostgresQueryTraceSink,
+    PostgresRerankTraceSink,
+)
 from raku_rag.providers.chunkers import SentenceChunker
 from raku_rag.providers.embeddings import embedding_provider_from_settings
 from raku_rag.providers.guardrails import guardrail_from_settings
@@ -148,11 +153,16 @@ class ProductionSystem(MvpSystem):
             AsyncDocumentAnalyzerPolicyRouter,
             self.provider_policies,
         )
-        self.cost = CostService()
+        # ★G1: durable per-query telemetry (goal.md §2-5). Reference-only rows — no raw
+        # query/answer text — and every sink is fail-open so answering never depends on them.
+        self.cost = CostService(sink=PostgresCostRecordSink(self._conn))
         self.telemetry_exporter = exporter_from_settings(
             self.settings, langfuse_client=build_langfuse_client(self.settings)
         )
-        self.metrics = MetricsRecorder(exporter=self.telemetry_exporter)
+        self.metrics = MetricsRecorder(
+            exporter=self.telemetry_exporter,
+            hot_path_sink=PostgresQueryTraceSink(self._conn),
+        )
         self.tracer = InMemoryTracer(exporter=self.telemetry_exporter)
         self.audit = PostgresAuditSink(self._conn)
         self.cache = CacheService()
@@ -179,6 +189,7 @@ class ProductionSystem(MvpSystem):
             self.cost,
             self.metrics,
             self.tracer,
+            rerank_trace_sink=PostgresRerankTraceSink(self._conn),
         )
         self.gate = GroundednessGate()
         self.structured_tool = TableManifestStructuredTool(self.registry, self.acl)

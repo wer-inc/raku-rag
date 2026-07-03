@@ -292,6 +292,8 @@ class BedrockClaudeLLMProvider(LLMProvider):
     system must never silently fall back to a deterministic stub (that is the deterministic profile's job).
     """
 
+    prompt_version = GROUNDED_PROMPT_VERSION
+
     def __init__(
         self,
         *,
@@ -332,6 +334,8 @@ class OpenAIChatLLMProvider(LLMProvider):
     """Grounded generator over the OpenAI Chat Completions REST API (stdlib HTTP, same seam shape
     as BedrockClaudeLLMProvider). Sees ONLY the pre-filtered context chunks; the provider swap
     changes nothing about retrieval/ACL/groundedness/guardrail, which all live outside."""
+
+    prompt_version = GROUNDED_PROMPT_VERSION
 
     def __init__(
         self,
@@ -378,6 +382,8 @@ class OpenAIChatLLMProvider(LLMProvider):
 
 class GeminiLLMProvider(LLMProvider):
     """Grounded generator over the Google Gemini generateContent REST API (stdlib HTTP)."""
+
+    prompt_version = GROUNDED_PROMPT_VERSION
 
     def __init__(
         self,
