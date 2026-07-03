@@ -5562,7 +5562,14 @@ function ReviewQueueBody() {
             </label>
             <label>
               <span>コレクション</span>
-              <select value={collection} onChange={(e) => setCollection(e.target.value)}>
+              <select
+                value={collection}
+                onChange={(e) => {
+                  setCollection(e.target.value);
+                  // Selected documents belong to the previous collection — reset the picker.
+                  setSelectedDocIds([]);
+                }}
+              >
                 {(collections.includes(collection) ? collections : [collection, ...collections]).map((id) => (
                   <option key={id} value={id}>
                     {collectionDisplayName(id)}
