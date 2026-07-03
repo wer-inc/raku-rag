@@ -110,6 +110,12 @@ class Chunk:
     tombstone: bool = False  # propagated from document
 
 
+# ★G5: the QueryProfile.llm_model default. Profiles carrying this value (or "") have expressed NO
+# explicit model preference — AnswerService then uses its wired default provider without treating
+# it as a routing fallback. Only an explicitly-set, different model name participates in routing.
+DEFAULT_LLM_MODEL = "extractive-mvp"
+
+
 @dataclass(frozen=True)
 class QueryProfile:
     """Search/answer behaviour, configurable per collection/query (FR-014a)."""
@@ -125,7 +131,11 @@ class QueryProfile:
     max_context_chunks: int = 8
     max_synchronous_llm_calls: int = 1
     self_eval_enabled: bool = True
-    llm_model: str = "extractive-mvp"
+    # ★G5 model routing knob (tenant-tunable via the admin retrieval-profiles/query-profiles API):
+    # when AnswerService is constructed with an ``llm_by_model`` registry and this names one of its
+    # keys, generation uses that provider; unknown names fall back to the default (fail-open,
+    # logged). The dataclass default means "no preference" (see DEFAULT_LLM_MODEL).
+    llm_model: str = DEFAULT_LLM_MODEL
     # ★G2 no-answer gate knob: minimum fraction of the question's content-terms that the USED
     # evidence must contain, else the answer is refused as insufficient_evidence. OFF by default
     # (0.0): measured coverage does NOT separate relevant from irrelevant for short Japanese

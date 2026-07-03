@@ -190,6 +190,9 @@ class ProductionSystem(MvpSystem):
             self.metrics,
             self.tracer,
             rerank_trace_sink=PostgresRerankTraceSink(self._conn),
+            # ★G5: query-embedding cache — repeats of the same query skip the (paid) embedding
+            # call. Tenant/model-version-scoped keys; LRU-capped per tenant inside CacheService.
+            cache=self.cache,
         )
         self.gate = GroundednessGate()
         self.structured_tool = TableManifestStructuredTool(self.registry, self.acl)
@@ -230,6 +233,15 @@ class ProductionSystem(MvpSystem):
             structured_tool=self.structured_tool,
             visual_verifiers=visual_verifiers_from_settings(self.settings),
             settings=self.settings,
+            # ★G5 model-routing seam: register the default provider under its model name so
+            # QueryProfile.llm_model routing is exercisable via the tenant-tunable query-profiles
+            # API today, and additional (e.g. small/cheap) providers can be registered here later
+            # without touching AnswerService.
+            llm_by_model=(
+                {getattr(self.llm, "model", ""): self.llm}
+                if getattr(self.llm, "model", "")
+                else None
+            ),
         )
         self.deletion = DeletionService(
             self.store, self.registry, self.cache, crop_store=self.crops.store

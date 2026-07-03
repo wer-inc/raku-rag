@@ -18,6 +18,7 @@ from raku_rag.core.config import Settings
 from raku_rag.core.errors import AnswerStatus, ProviderUnavailable
 from raku_rag.core.text import content_terms as _terms
 from raku_rag.domain.models import (
+    DEFAULT_LLM_MODEL,
     Answer,
     BoundingBox,
     Chunk,
@@ -100,9 +101,17 @@ class AnswerService:
         structured_tool: object | None = None,
         settings: Settings | None = None,
         visual_verifiers: Sequence[VisualEvidenceVerifier] = (),
+        llm_by_model: dict[str, LLMProvider] | None = None,
     ) -> None:
         self._retrieval = retrieval
         self._llm = llm
+        # ★G5 model-routing seam (default None = behaviour unchanged): when a registry is supplied
+        # and QueryProfile.llm_model names one of its keys, generation uses that provider — so a
+        # cheap/small model can serve low-risk profiles and a large model high-risk ones via the
+        # existing tenant-tunable query-profiles API, without a redeploy. Unknown names fall back
+        # to the wired default provider (fail-open, logged + metered). The profile's dataclass
+        # default (DEFAULT_LLM_MODEL) means "no preference" and never counts as a fallback.
+        self._llm_by_model = dict(llm_by_model or {})
         self._gate = gate
         self._cost = cost
         self._get_document = get_document
@@ -333,6 +342,25 @@ class AnswerService:
                 and not self._settings.visual_evidence_promotion
             )
 
+            # ★G5 model routing: resolve the generation provider from the profile (fail-open).
+            llm, llm_routing = self._resolve_llm(profile)
+            if llm_routing == "fallback":
+                log(
+                    "answer.llm_model_fallback",
+                    correlation_id=cid,
+                    requested=profile.llm_model,
+                    model=getattr(self._llm, "model", ""),
+                )
+                if self._metrics:
+                    self._metrics.increment(
+                        "answer_llm_model_fallback_total",
+                        labels={
+                            "tenant_id": principal.tenant_id,
+                            "profile_id": profile.profile_id,
+                            "requested_model": profile.llm_model,
+                        },
+                    )
+
             generation_started = time.perf_counter()
             generation_cm = (
                 self._tracer.span(
@@ -340,7 +368,7 @@ class AnswerService:
                     correlation_id=cid,
                     tenant_id=principal.tenant_id,
                     profile_id=profile.profile_id,
-                    model=getattr(self._vlm if use_vlm else self._llm, "model", ""),
+                    model=getattr(self._vlm if use_vlm else llm, "model", ""),
                     modality="visual" if use_vlm else "text",
                 )
                 if self._tracer
@@ -360,7 +388,7 @@ class AnswerService:
                         else:
                             text = self._vlm.generate(query, visual_regions=visual_regions)
                     else:
-                        text = self._llm.generate(query, context)
+                        text = llm.generate(query, context)
                     if hasattr(generation_span, "finish"):
                         generation_span.finish(
                             "ok",
@@ -408,7 +436,7 @@ class AnswerService:
                 tokens=prompt_tokens,
                 trace_id=cid,
                 query_id=profile.profile_id,
-                metadata={"model": getattr(self._llm, "model", "")},
+                metadata={"model": getattr(llm, "model", "")},
             )
             self._cost.record_tokens(
                 principal.tenant_id,
@@ -416,7 +444,7 @@ class AnswerService:
                 tokens=completion_tokens,
                 trace_id=cid,
                 query_id=profile.profile_id,
-                metadata={"model": getattr(self._llm, "model", "")},
+                metadata={"model": getattr(llm, "model", "")},
             )
             if use_vlm:
                 self._cost.record_visual_cost(
@@ -1065,6 +1093,25 @@ class AnswerService:
             value = getattr(value, "value")
         return value.strip().lower() if isinstance(value, str) else ""
 
+    def _resolve_llm(self, profile: QueryProfile) -> "tuple[LLMProvider, str]":
+        """★G5: pick the generation provider for a profile.
+
+        Returns ``(provider, routing)`` with routing one of:
+        - ``"default"``  — no registry, no explicit preference, or the preference IS the default;
+        - ``"routed"``   — profile.llm_model matched a registry key;
+        - ``"fallback"`` — an explicitly requested model is unknown → default provider (fail-open;
+          the caller logs/meters this so a misconfigured profile is visible, never a hard failure).
+        """
+        requested = (profile.llm_model or "").strip()
+        if not self._llm_by_model or not requested or requested == DEFAULT_LLM_MODEL:
+            return self._llm, "default"
+        provider = self._llm_by_model.get(requested)
+        if provider is not None:
+            return provider, ("default" if provider is self._llm else "routed")
+        if requested == getattr(self._llm, "model", ""):
+            return self._llm, "default"
+        return self._llm, "fallback"
+
     def _record_hot_path(
         self,
         principal: IdentityClaims,
@@ -1085,6 +1132,9 @@ class AnswerService:
             return
         attrs = self._retrieval_span_attrs(correlation_id)
         total_ms = (time.perf_counter() - total_started) * 1000
+        # ★G5: cache_hit reflects the query-embedding cache (threaded from the retrieval span the
+        # same way retrieval_ms is) until a broader answer cache exists.
+        llm = self._resolve_llm(profile)[0]
         self._metrics.record_rag_hot_path(
             request_id=correlation_id,
             tenant_id=principal.tenant_id,
@@ -1103,9 +1153,9 @@ class AnswerService:
             context_tokens=context_tokens,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            cache_hit=cache_hit,
-            model=getattr(self._llm, "model", ""),
-            prompt_version=getattr(self._llm, "prompt_version", ""),
+            cache_hit=cache_hit or bool(attrs.get("embed_cache_hit")),
+            model=getattr(llm, "model", ""),
+            prompt_version=getattr(llm, "prompt_version", ""),
         )
 
     def _retrieval_span_attrs(self, correlation_id: str) -> dict:
