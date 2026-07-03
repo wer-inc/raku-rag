@@ -110,6 +110,10 @@ class PhoneDataLifecycleTest(unittest.TestCase):
         # real CI run produced handoff_2805678742c34251. Strip long hex runs so the assertion
         # checks CONTENT fields only; a leak of "5678" in any transcript/summary text still fails.
         scrubbed = re.sub(r"[0-9a-f]{12,}", "", blob.replace("+81******1234", ""))
+        # ISO timestamps also survive redaction by design and their microseconds can
+        # coincidentally contain the spoken digits (a real CI run produced
+        # "...11:08:52.855678Z"). Strip time-of-day+fraction runs the same way.
+        scrubbed = re.sub(r"\d{2}:\d{2}:\d{2}\.\d+", "", scrubbed)
         self.assertNotIn("5678", scrubbed)  # spoken number gone
         self.assertEqual(detail["summary"], "")
         self.assertEqual(detail["transcript_redaction_status"], "redacted")
