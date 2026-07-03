@@ -22,13 +22,14 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from raku_rag.domain.models import IdentityClaims
 
 # Audit-derivation primitives (action labels + entry filters) — the SINGLE source of truth shared by
 # the writers (api/audit.py) and the KPI report (kpi/poc_metrics.py), so the labels cannot drift.
 from raku_rag.manufacturing.api import audit as audit_derive
+from raku_rag.manufacturing.domain.freshness import review_overdue_entries
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus
 from raku_rag.manufacturing.interfaces import AuditLogWriter
 from raku_rag.manufacturing.telemetry.safety_metrics import SafetyTelemetry, SOURCE_AUDIT_LOG
@@ -48,6 +49,10 @@ class KnowledgeOpsDashboard:
     frequently_referenced_documents: tuple = ()
     obsolete_document_candidates: tuple = ()
     knowledge_gap_areas: tuple = ()
+    # ★G4 freshness: docs whose review window lapsed (derived; {document_id, owner,
+    # last_verified_at, review_due_date} reference rows only — additive fields).
+    review_overdue_document_count: int = 0
+    review_overdue_documents: tuple = ()
     correlation_id: str = ""
 
 
@@ -88,6 +93,7 @@ class DashboardService:
         all_mfg_meta,
         retention=None,
         materialized_kpi_store=None,
+        today: date | None = None,
     ) -> None:
         self._audit = audit
         self._get_mfg_meta = get_mfg_meta
@@ -96,6 +102,8 @@ class DashboardService:
         self._telemetry = SafetyTelemetry(audit)
         self._retention = retention  # DataUsePolicy-backed retention (audit window) — optional
         self._materialized_kpi_store = materialized_kpi_store
+        # ★G4: injectable clock for the derived review-overdue computation (None => today()).
+        self._today = today
 
     # --- GET /v1/manufacturing/safety-telemetry (T048; FR-MFG-030, SC-MFG-013) --------------------
     def safety_telemetry(
@@ -187,15 +195,21 @@ class DashboardService:
         freq_docs = tuple(did for did, _n in doc_hits.most_common())
 
         # obsolete_document_candidates: from the approval metadata (obsolete / superseded docs).
+        all_meta = [meta for _key, meta in self._iter_meta(principal.tenant_id)]
         obsolete = tuple(
             sorted(
                 meta.document_id
-                for (t, _did), meta in self._iter_meta(principal.tenant_id)
+                for meta in all_meta
                 if meta.approval_status == ApprovalStatus.OBSOLETE
                 or meta.obsolete_at is not None
                 or meta.superseded_by is not None
             )
         )
+
+        # ★G4 review_overdue: docs whose freshness window lapsed (last_verified_at +
+        # review_cycle_days < today, both set). Same metadata source as obsolete candidates;
+        # reference rows only (document_id/owner/dates — no content).
+        overdue = review_overdue_entries(all_meta, today=self._today or date.today())
 
         # knowledge_gap_areas: topics with repeated unanswered / no-approved-evidence answers —
         # derived from the reason codes of the blocked answers (reference labels only).
@@ -215,6 +229,8 @@ class DashboardService:
             frequently_referenced_documents=freq_docs,
             obsolete_document_candidates=obsolete,
             knowledge_gap_areas=knowledge_gaps,
+            review_overdue_document_count=len(overdue),
+            review_overdue_documents=overdue,
             correlation_id=f"dashboard:{_now()}",
         )
 
@@ -255,6 +271,7 @@ class DashboardService:
             iter_meta=lambda: self._iter_meta(principal.tenant_id),
             collection_id=collection_id,
             time_range=time_range,
+            today=self._today,
         )
         if format == "csv":
             return report.to_csv()

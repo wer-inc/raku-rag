@@ -5311,9 +5311,20 @@ function QualityBody() {
             ["回答 p95", kpi.average_time_to_answer.p95],
             ["頻出文書", kpi.frequently_referenced_documents.length],
             ["旧版候補", kpi.obsolete_document_candidates.length],
+            ["要再確認（確認期限超過）", kpi.review_overdue_document_count ?? 0],
             ["集計時刻", kpi.materialized_at],
           ]}
         />
+        {(kpi.review_overdue_documents?.length ?? 0) > 0 && (
+          <ul className="ops-list">
+            {(kpi.review_overdue_documents ?? []).slice(0, 5).map((d) => (
+              <li key={d.document_id}>
+                {d.document_id} — 最終確認 {d.last_verified_at || "—"} / 期限 {d.review_due_date}
+                {d.owner ? `（担当: ${d.owner}）` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
       </Section>
       <QualityEvalSection />
       <Section

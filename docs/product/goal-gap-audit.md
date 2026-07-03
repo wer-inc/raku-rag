@@ -114,4 +114,13 @@ metadata+引用UI は A。残るギャップは4クラスタに集中する:
       — 短い日本語追い質問(正解文書でも0.17)と無関係英語(0.14〜0.38)が分離不能なため。
       根治は検索関連度/クエリ展開側(★G4以降)。矛盾/最新版選択カテゴリはコーパスハーネスが
       base層(ライフサイクル無し)のため ★G4 で追加。
-- [ ] ★G3〜★G5(進行中: ★G3a フィードバック永続化、★V2③文言=#64)
+- [x] ★G3a フィードバック永続化(#66 — 0023 answer_feedback + GET /v1/feedback + 改善キューのサーバ駆動化)
+- [x] ★G4 文書鮮度 — `owner` / `review_cycle_days` / `last_verified_at` を
+  ManufacturingDocumentMetadata + migration 0024 に追加。`review_overdue`
+  (= last_verified_at + review_cycle_days < today、両方設定時のみ)は
+  `manufacturing/domain/freshness.py` で導出し、KPI/ダッシュボードに
+  `review_overdue_document_count` + 期限超過ドキュメント一覧(document_id/owner/
+  last_verified_at/期限)、品質・KPI画面に stat+一覧、引用ビューアに 最終確認日 +
+  要再確認バッジを表示。ingest metadata / PUT documents/{id}/metadata の両経路で設定可。
+  **最新版選択(canonical)・兄弟文書間の版比較は未実装(deferred)**
+- [ ] ★G3b+★G5実測(#68 スタックPR)/ ★G5残: キャッシュ+モデルルーティング

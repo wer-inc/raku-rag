@@ -169,6 +169,11 @@ export default function CitationViewer({
 
         <div className="cv-badges">
           <span className={`citation-chip ${ap.cls}`}>{ap.label}</span>
+          {citation.review_overdue && (
+            <span className="citation-chip approval-draft" title="定期確認の期限を過ぎています">
+              要再確認
+            </span>
+          )}
           <span className="citation-chip">{citation.kind === "visual" ? "ビジュアル" : "テキスト"}</span>
           <span className="citation-chip">スコア {citation.retrieval_score.toFixed(3)}</span>
         </div>
@@ -194,6 +199,15 @@ export default function CitationViewer({
             <dt>有効期限 / 発効</dt>
             <dd>{citation.effective_date ?? "—"}</dd>
           </div>
+          {citation.last_verified_at && (
+            <div>
+              <dt>最終確認日</dt>
+              <dd>
+                {citation.last_verified_at}
+                {citation.review_overdue ? "（要再確認）" : ""}
+              </dd>
+            </div>
+          )}
         </dl>
 
         {preview?.kind === "spreadsheet" && (

@@ -7,6 +7,14 @@
 import type { Citation } from "./answer.js";
 import type { BoundingBoxDto } from "./assets.js";
 
+/** ★G4 — a document whose review window lapsed (reference IDs/dates only, never content). */
+export interface ReviewOverdueDocument {
+  document_id: string;
+  owner: string;
+  last_verified_at: string;
+  review_due_date: string;
+}
+
 /** GET /v1/manufacturing/dashboard — KnowledgeOpsDashboard (FR-MFG-012). */
 export interface KnowledgeOpsDashboard {
   unanswered_question_count: number;
@@ -15,6 +23,9 @@ export interface KnowledgeOpsDashboard {
   frequently_referenced_documents: string[];
   obsolete_document_candidates: string[];
   knowledge_gap_areas: string[];
+  /** ★G4 freshness (additive): derived review-overdue docs. */
+  review_overdue_document_count?: number;
+  review_overdue_documents?: ReviewOverdueDocument[];
   correlation_id: string;
 }
 
@@ -45,6 +56,9 @@ export interface ManufacturingKpi {
   expert_interruption_reduction: number;
   high_risk_query_count: number;
   safety_gate_block_count: number;
+  /** ★G4 freshness (additive): derived review-overdue docs. */
+  review_overdue_document_count?: number;
+  review_overdue_documents?: ReviewOverdueDocument[];
   materialized_at: string;
   source?: string;
   source_ingestion_run_id?: string;

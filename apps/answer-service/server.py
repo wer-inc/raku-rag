@@ -834,6 +834,9 @@ def _citation_json(c, *, include_approval: bool = False) -> dict:
                 "approval_status": getattr(c, "approval_status", None),
                 "effective_date": getattr(c, "effective_date", None),
                 "approval_source": getattr(c, "approval_source", None),
+                # ★G4 freshness trust signal (display-only; derived by the overlay, never a gate).
+                "last_verified_at": getattr(c, "last_verified_at", None) or None,
+                "review_overdue": bool(getattr(c, "review_overdue", False)),
             }
         )
     return item
