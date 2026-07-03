@@ -75,4 +75,6 @@ RBAC nav・:focus-visible・reduced-motion・mock/実測の正直な出し分け
 ## 実装状況
 
 - [x] 本監査ドキュメント
-- [ ] P1〜P5
+- [x] P1 回答体験(U1+U2+U12)
+- [x] P2 電話ショーピース(U3+U4+U5+U16) — `.screen-tabs` タブ選択状態 / `.phone-transcript-*` 吹き出しトランスクリプト / `PHONE_LABELS` enum日本語化(生値はtitle属性に退避) / 公開・ロールバック・転送受理の ConfirmDialog
+- [ ] P3〜P5

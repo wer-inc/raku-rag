@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type {
   AdminDataSource,
@@ -2055,7 +2055,7 @@ function SourceSearchBody() {
 
 // --- 022-ai-phone-rag: 電話AI対応 (T038 simulator / T049 handoff queue / T061 scenarios) --------
 
-type PhoneChatLine = { caller: string | null; turn: PhoneTurnResponse };
+type PhoneChatLine = { caller: string | null; turn: PhoneTurnResponse; at: string };
 
 // 024 L030 — browser voice mode (Web Speech API): zero-cost voice UX on the existing
 // simulate/turn API. Recognition/synthesis stay entirely in the browser (FR-L09).
@@ -2096,13 +2096,91 @@ function phoneActionLabel(action: string | null | undefined): string {
   return action ? labels[action] ?? action : "-";
 }
 
+// U5: single label registry for every enum the phone flow exposes. Value sets mirror the
+// backend contracts (packages/shared/src/dto/phone.ts + src/raku_rag/phone/domain.py
+// HANDOFF_REASONS / handoff.py destination_for). Unknown values fall through raw so new
+// backend codes stay visible instead of silently mislabeled.
+const PHONE_LABELS: Record<string, Record<string, string>> = {
+  callState: {
+    ringing: "着信中",
+    active: "対応中",
+    on_hold: "保留中",
+    handoff_pending: "転送待ち",
+    transferred: "転送済み",
+    completed: "完了",
+    abandoned: "放棄",
+    failed: "失敗",
+  },
+  handoffReason: {
+    customer_requested_human: "お客様が人間対応を希望",
+    insufficient_evidence: "根拠不足",
+    low_asr_confidence: "音声認識の信頼度不足",
+    repeated_misunderstanding: "聞き取り不成立の繰り返し",
+    negative_sentiment: "ネガティブな感情",
+    high_risk_intent: "高リスクな問い合わせ",
+    identity_required: "本人確認が必要",
+    provider_failure: "外部サービス障害",
+    ai_capability_boundary: "AI対応範囲外",
+  },
+  handoffStatus: {
+    created: "作成済み",
+    queued: "キュー投入済み",
+    accepted: "受理済み",
+    failed: "失敗",
+    unavailable: "対応者不在",
+    abandoned: "放棄",
+    callback_requested: "折り返し希望",
+  },
+  resolutionStatus: {
+    resolved: "解決",
+    transferred: "転送済み",
+    abandoned: "放棄",
+    failed: "失敗",
+    unresolved: "未解決",
+  },
+  scenarioStatus: {
+    draft: "下書き",
+    in_review: "レビュー中",
+    approved: "承認済み",
+    scheduled: "公開予約",
+    published: "公開中",
+    archived: "アーカイブ",
+  },
+  destinationType: {
+    queue: "キュー",
+  },
+  destinationQueue: {
+    "general-support": "総合サポート",
+    "billing-support": "請求サポート",
+    escalation: "エスカレーション",
+    "order-support": "注文サポート",
+  },
+  priority: {
+    low: "低",
+    normal: "通常",
+    high: "高",
+    urgent: "緊急",
+  },
+};
+
+function phoneLabel(kind: keyof typeof PHONE_LABELS, value: string | null | undefined): string {
+  if (!value) return "-";
+  return PHONE_LABELS[kind][value] ?? value;
+}
+
+/** HH:MM stamp captured client-side when a simulator turn is exchanged (the live turn
+ *  payload carries no created_at — only the stored transcript does). */
+function phoneTurnTime(): string {
+  return new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+}
+
 function PhoneBody() {
   const [tab, setTab] = useState<"simulator" | "handoffs" | "calls" | "kpi" | "scenarios">(
     "simulator",
   );
   return (
     <>
-      <div className="screen-actions" role="tablist" aria-label="電話AIの機能">
+      <div className="screen-tabs" role="tablist" aria-label="電話AIの機能">
         <button
           type="button"
           role="tab"
@@ -2275,7 +2353,9 @@ function PhoneSimulatorSection() {
         );
         setCallId(response.call_id);
         setCallState(response.status);
-        setLines(response.turns.map((turn) => ({ caller: text, turn })));
+        const at = phoneTurnTime();
+        // The caller utterance opened the call once — attach it to the first AI turn only.
+        setLines(response.turns.map((turn, index) => ({ caller: index === 0 ? text : null, turn, at })));
         speakTurn(response.turns[response.turns.length - 1]);
       } else {
         const turn = await phoneSubmitTurn(
@@ -2284,7 +2364,10 @@ function PhoneSimulatorSection() {
           token,
         );
         setCallState(turn.call_state);
-        setLines((current) => [...current, { caller: eventType === "speech" ? text : null, turn }]);
+        setLines((current) => [
+          ...current,
+          { caller: eventType === "speech" ? text : null, turn, at: phoneTurnTime() },
+        ]);
         speakTurn(turn);
       }
       setInput("");
@@ -2320,7 +2403,10 @@ function PhoneSimulatorSection() {
               ))}
             </select>
           </label>
-          <span>通話状態: {callId ? `${callState}（${callId}）` : "未開始"}</span>
+          <span title={callId ? `${callState}（${callId}）` : "idle"}>
+            通話状態: <strong>{callId ? phoneLabel("callState", callState) : "未開始"}</strong>
+            {callId && <small className="phone-call-id">{callId}</small>}
+          </span>
           {callId && (
             <button type="button" onClick={reset}>
               新しい通話
@@ -2394,34 +2480,70 @@ function PhoneSimulatorSection() {
       </Section>
       <Section title="会話ログ">
         {lines.length === 0 && <p className="ops-empty">まだ通話がありません。発話を送信してください。</p>}
-        {lines.map(({ caller, turn }) => (
-          <div key={turn.turn_id} className="screen-section" style={{ marginBottom: "0.75rem" }}>
-            {caller && <p>顧客: {caller}</p>}
-            <p>
-              <strong>AI（{phoneActionLabel(turn.ai_action)}）:</strong> {turn.ai_response_text}
-            </p>
-            {turn.citations.length > 0 && (
-              <DataTable
-                columns={["根拠文書", "チャンク", "スコア", "承認状態"]}
-                rows={turn.citations.map((citation) => [
-                  citation.document_id,
-                  citation.chunk_id,
-                  citation.retrieval_score.toFixed(2),
-                  citation.approval_status ?? "-",
-                ])}
-                empty="引用はありません。"
-              />
-            )}
-            {turn.handoff && (
-              <p role="status">
-                転送先キュー {turn.handoff.destination_id}（理由: {turn.handoff.reason} / 状態: {turn.handoff.status}）
-              </p>
-            )}
-            {!turn.safety.answered_with_evidence && turn.safety.blocked_reason && (
-              <p className="screen-note">根拠判定: {turn.safety.blocked_reason}</p>
-            )}
+        {lines.length > 0 && (
+          <div className="phone-transcript" role="log" aria-label="通話トランスクリプト">
+            {lines.map(({ caller, turn, at }) => (
+              <Fragment key={turn.turn_id}>
+                {caller && (
+                  <div className="phone-transcript-row phone-transcript-row-caller">
+                    <div className="phone-transcript-bubble phone-transcript-caller">
+                      <div className="phone-transcript-meta">
+                        <span className="phone-transcript-chip">顧客</span>
+                        <span className="phone-transcript-time">{at}</span>
+                      </div>
+                      <p>{caller}</p>
+                    </div>
+                  </div>
+                )}
+                <div className="phone-transcript-row phone-transcript-row-ai">
+                  <div className="phone-transcript-bubble phone-transcript-ai">
+                    <div className="phone-transcript-meta">
+                      <span className="phone-transcript-chip">AI</span>
+                      <span className="chat-answer-badge chat-badge-neutral">
+                        {phoneActionLabel(turn.ai_action)}
+                      </span>
+                      <span className="phone-transcript-time">{at}</span>
+                    </div>
+                    <p>{turn.ai_response_text}</p>
+                    {turn.citations.length > 0 && (
+                      <div className="phone-transcript-citations" aria-label="回答の根拠">
+                        <span className="phone-transcript-citations-label">根拠</span>
+                        {turn.citations.map((citation) => {
+                          const approval = citeApproval(citation.approval_status);
+                          return (
+                            <span
+                              key={`${citation.document_id}-${citation.chunk_id}`}
+                              className="phone-transcript-citation"
+                              title={`チャンク: ${citation.chunk_id} / 検索スコア: ${citation.retrieval_score.toFixed(2)}`}
+                            >
+                              {citation.document_id}
+                              <span className={`chat-evidence-state ${approval.cls}`}>{approval.label}</span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {turn.handoff && (
+                      <p
+                        className="phone-transcript-note"
+                        role="status"
+                        title={`${turn.handoff.destination_id} / ${turn.handoff.reason} / ${turn.handoff.status}`}
+                      >
+                        「{phoneLabel("handoffReason", turn.handoff.reason)}」のため
+                        {phoneLabel("destinationQueue", turn.handoff.destination_id)}
+                        {phoneLabel("destinationType", turn.handoff.destination_type)}へ転送
+                        （{phoneLabel("handoffStatus", turn.handoff.status)}）
+                      </p>
+                    )}
+                    {!turn.safety.answered_with_evidence && turn.safety.blocked_reason && (
+                      <p className="phone-transcript-note">根拠判定: {turn.safety.blocked_reason}</p>
+                    )}
+                  </div>
+                </div>
+              </Fragment>
+            ))}
           </div>
-        ))}
+        )}
       </Section>
     </>
   );
@@ -2430,6 +2552,8 @@ function PhoneSimulatorSection() {
 function PhoneHandoffSection() {
   const toast = useToast();
   const [selected, setSelected] = useState<PhoneHandoffPackage | null>(null);
+  const [confirmAccept, setConfirmAccept] = useState<PhoneHandoffPackage | null>(null);
+  const [accepting, setAccepting] = useState(false);
   const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
     const calls = await phoneListCalls(token);
@@ -2447,6 +2571,7 @@ function PhoneHandoffSection() {
   }
 
   async function accept(handoff: PhoneHandoffPackage) {
+    setAccepting(true);
     try {
       const token = await getSessionToken();
       const result = await phoneAcceptHandoff(
@@ -2459,6 +2584,9 @@ function PhoneHandoffSection() {
       reload();
     } catch (err) {
       toast(err instanceof Error ? err.message : "転送の受理に失敗しました", "error");
+    } finally {
+      setAccepting(false);
+      setConfirmAccept(null);
     }
   }
 
@@ -2472,8 +2600,12 @@ function PhoneHandoffSection() {
           rows={state.data.map((item) => [
             item.call_id,
             item.intent ?? "-",
-            item.handoff_reason ?? "-",
-            item.state,
+            <span key={`reason-${item.call_id}`} title={item.handoff_reason ?? undefined}>
+              {phoneLabel("handoffReason", item.handoff_reason)}
+            </span>,
+            <span key={`state-${item.call_id}`} title={item.state}>
+              {phoneLabel("callState", item.state)}
+            </span>,
             <button key={item.call_id} type="button" onClick={() => void open(item)}>
               引き継ぎを見る
             </button>,
@@ -2485,10 +2617,16 @@ function PhoneHandoffSection() {
         <Section title={`引き継ぎパッケージ ${selected.handoff_package_id}`}>
           <FieldGrid
             rows={[
-              ["状態", selected.status],
-              ["理由", selected.reason],
-              ["優先度", selected.priority],
-              ["転送先", `${selected.destination_type}: ${selected.destination_id}`],
+              ["状態", <span key="status" title={selected.status}>{phoneLabel("handoffStatus", selected.status)}</span>],
+              ["理由", <span key="reason" title={selected.reason}>{phoneLabel("handoffReason", selected.reason)}</span>],
+              ["優先度", <span key="priority" title={selected.priority}>{phoneLabel("priority", selected.priority)}</span>],
+              [
+                "転送先",
+                <span key="destination" title={`${selected.destination_type}: ${selected.destination_id}`}>
+                  {phoneLabel("destinationQueue", selected.destination_id)}
+                  {phoneLabel("destinationType", selected.destination_type)}
+                </span>,
+              ],
               ["顧客", `${selected.customer.customer_id ?? "-"} / ${selected.customer.phone_number_masked ?? "-"}`],
               ["感情", selected.sentiment ?? "-"],
               ["要約", selected.summary],
@@ -2504,7 +2642,9 @@ function PhoneHandoffSection() {
               rows={selected.citations.map((citation) => [
                 citation.document_id,
                 citation.chunk_id,
-                citation.approval_status ?? "-",
+                <span key={`${citation.document_id}-${citation.chunk_id}`} title={citation.approval_status ?? undefined}>
+                  {citeApproval(citation.approval_status).label}
+                </span>,
               ])}
               empty="引用はありません。"
             />
@@ -2512,13 +2652,23 @@ function PhoneHandoffSection() {
           <div className="screen-actions">
             <button
               type="button"
-              onClick={() => void accept(selected)}
-              disabled={selected.status === "accepted"}
+              onClick={() => setConfirmAccept(selected)}
+              disabled={selected.status === "accepted" || accepting}
             >
               {selected.status === "accepted" ? "受理済み" : "この転送を受理する"}
             </button>
           </div>
         </Section>
+      )}
+      {confirmAccept && (
+        <ConfirmDialog
+          title="この転送を受理しますか？"
+          body="受理すると担当（workspace-operator）が割り当てられ、以降の対応はその担当が引き継ぎます。"
+          confirmLabel="受理する"
+          busy={accepting}
+          onCancel={() => setConfirmAccept(null)}
+          onConfirm={() => void accept(confirmAccept)}
+        />
       )}
     </>
   );
@@ -2626,8 +2776,12 @@ function PhoneCallHistorySection() {
             item.call_id,
             item.caller_phone_number_masked ?? "-",
             item.intent ?? "-",
-            item.state,
-            item.resolution_status ?? "-",
+            <span key={`state-${item.call_id}`} title={item.state}>
+              {phoneLabel("callState", item.state)}
+            </span>,
+            <span key={`resolution-${item.call_id}`} title={item.resolution_status ?? undefined}>
+              {phoneLabel("resolutionStatus", item.resolution_status)}
+            </span>,
             <button key={item.call_id} type="button" onClick={() => void open(item)}>
               詳細
             </button>,
@@ -2640,13 +2794,18 @@ function PhoneCallHistorySection() {
           <Section title={`通話 ${detail.call_id}`}>
             <FieldGrid
               rows={[
-                ["状態", detail.state],
+                ["状態", <span key="state" title={detail.state}>{phoneLabel("callState", detail.state)}</span>],
                 ["開始", detail.started_at],
                 ["終了", detail.ended_at ?? "-"],
                 ["発信者", detail.caller_phone_number_masked ?? "-"],
                 ["意図", detail.intent ?? "-"],
                 ["要約", detail.summary || "-"],
-                ["解決状態", detail.resolution_status ?? "-"],
+                [
+                  "解決状態",
+                  <span key="resolution" title={detail.resolution_status ?? undefined}>
+                    {phoneLabel("resolutionStatus", detail.resolution_status)}
+                  </span>,
+                ],
                 ["録音", detail.recording_enabled ? "有効" : "無効"],
                 ["マスキング", detail.transcript_redaction_status],
               ]}
@@ -2926,6 +3085,13 @@ function PhoneKpiSection() {
   );
 }
 
+const PHONE_SCENARIO_ACTION_LABEL: Record<string, string> = {
+  "submit-review": "レビュー依頼",
+  approve: "承認",
+  publish: "公開",
+  archive: "アーカイブ",
+};
+
 function PhoneScenarioSection() {
   const toast = useToast();
   const [name, setName] = useState("");
@@ -2933,6 +3099,12 @@ function PhoneScenarioSection() {
   const [versionId, setVersionId] = useState("scv_1");
   const [previewText, setPreviewText] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
+  // U16: publish/rollback change what live callers hear — both go through ConfirmDialog.
+  const [confirmAction, setConfirmAction] = useState<{
+    kind: "publish" | "rollback";
+    scenario: PhoneScenarioSummary;
+  } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [state, reload] = useLoad(async () => {
     const token = await getSessionToken();
     return (await phoneListScenarios(token)).items;
@@ -2964,7 +3136,7 @@ function PhoneScenarioSection() {
     await run(async () => {
       const token = await getSessionToken();
       await phoneScenarioAction(scenarioId, versionId, action, {}, token);
-    }, `${action} を実行しました`);
+    }, `${PHONE_SCENARIO_ACTION_LABEL[action] ?? action}を実行しました`);
   }
 
   async function rollback(scenarioId: string) {
@@ -2972,6 +3144,21 @@ function PhoneScenarioSection() {
       const token = await getSessionToken();
       await phoneRollbackScenario(scenarioId, versionId, token);
     }, "ロールバックを実行しました");
+  }
+
+  async function runConfirmedAction() {
+    if (!confirmAction) return;
+    setConfirmBusy(true);
+    try {
+      if (confirmAction.kind === "publish") {
+        await lifecycle(confirmAction.scenario.scenario_id, "publish");
+      } else {
+        await rollback(confirmAction.scenario.scenario_id);
+      }
+    } finally {
+      setConfirmBusy(false);
+      setConfirmAction(null);
+    }
   }
 
   async function ensureDefaults(scenarioId: string) {
@@ -3054,7 +3241,9 @@ function PhoneScenarioSection() {
           rows={state.data.map((scenario) => [
             scenario.name,
             scenario.intent,
-            scenario.status,
+            <span key={`status-${scenario.scenario_id}`} title={scenario.status}>
+              {phoneLabel("scenarioStatus", scenario.status)}
+            </span>,
             scenario.active_version_id ?? "-",
             <span key={scenario.scenario_id} className="screen-actions">
               <button type="button" onClick={() => void ensureDefaults(scenario.scenario_id)}>
@@ -3066,10 +3255,10 @@ function PhoneScenarioSection() {
               <button type="button" onClick={() => void lifecycle(scenario.scenario_id, "approve")}>
                 承認
               </button>
-              <button type="button" onClick={() => void lifecycle(scenario.scenario_id, "publish")}>
+              <button type="button" onClick={() => setConfirmAction({ kind: "publish", scenario })}>
                 公開
               </button>
-              <button type="button" onClick={() => void rollback(scenario.scenario_id)}>
+              <button type="button" onClick={() => setConfirmAction({ kind: "rollback", scenario })}>
                 ロールバック
               </button>
               <button type="button" onClick={() => void runPreview(scenario.scenario_id)}>
@@ -3090,6 +3279,25 @@ function PhoneScenarioSection() {
         </div>
         {preview && <p role="status">プレビュー結果 — {preview}</p>}
       </Section>
+      {confirmAction && (
+        <ConfirmDialog
+          title={
+            confirmAction.kind === "publish"
+              ? `シナリオ「${confirmAction.scenario.name}」を公開しますか？`
+              : `シナリオ「${confirmAction.scenario.name}」をロールバックしますか？`
+          }
+          body={
+            confirmAction.kind === "publish"
+              ? `公開すると対象版（${versionId}）が実際の着信応答に反映されます。`
+              : `対象版（${versionId}）を参照する新しい版を作成して公開し、現在公開中の版を差し替えます。`
+          }
+          confirmLabel={confirmAction.kind === "publish" ? "公開する" : "ロールバックする"}
+          danger={confirmAction.kind === "rollback"}
+          busy={confirmBusy}
+          onCancel={() => setConfirmAction(null)}
+          onConfirm={() => void runConfirmedAction()}
+        />
+      )}
     </>
   );
 }
