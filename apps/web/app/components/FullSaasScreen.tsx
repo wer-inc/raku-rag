@@ -997,12 +997,26 @@ function AnswersBody() {
   const [turns, setTurns] = useState<AnswerTurn[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewer, setViewer] = useState<CitationViewTarget | null>(null);
+  // 再質問 auto-submit guard (survives StrictMode double-effect; one auto-submit per mount).
+  const autoSubmittedRef = useRef(false);
 
   useEffect(() => {
-    setCollectionId(loadAnswerCollection());
+    const savedCollection = loadAnswerCollection();
+    setCollectionId(savedCollection);
     if (typeof window !== "undefined") {
-      const initialQuestion = new URLSearchParams(window.location.search).get("q");
-      if (initialQuestion) setQuery(initialQuestion);
+      const params = new URLSearchParams(window.location.search);
+      const initialQuestion = params.get("q");
+      if (initialQuestion) {
+        if (params.get("submit") === "1" && !autoSubmittedRef.current) {
+          // History 再質問: submit immediately instead of only pre-filling the composer.
+          autoSubmittedRef.current = true;
+          // Drop the params so a reload does not re-submit the same question.
+          window.history.replaceState(null, "", window.location.pathname);
+          void submitQuestion(initialQuestion, savedCollection);
+        } else {
+          setQuery(initialQuestion);
+        }
+      }
     }
     void getSessionToken()
       .then((token) => adminDataSources(token))
@@ -1020,10 +1034,10 @@ function AnswersBody() {
     saveAnswerCollection(value);
   }
 
-  async function submitQuestion(question: string) {
+  async function submitQuestion(question: string, collectionOverride?: string) {
     const trimmed = question.trim();
     if (!trimmed || loading) return;
-    const targetCollection = collectionId.trim() || DEMO_COLLECTION;
+    const targetCollection = (collectionOverride ?? collectionId).trim() || DEMO_COLLECTION;
 
     const turnId = `${Date.now().toString(36)}-${turns.length}`;
     setTurns((prev) => [...prev, { kind: "user", id: `${turnId}-q`, text: trimmed }]);
@@ -1138,7 +1152,7 @@ function AnswersBody() {
             >
               {collections.map((id) => (
                 <option key={id} value={id}>
-                  {id}
+                  {collectionDisplayName(id)}
                 </option>
               ))}
             </select>
@@ -1995,7 +2009,7 @@ function SourceSearchBody() {
             aria-label="Symptom"
             value={symptom}
             onChange={(e) => setSymptom(e.target.value)}
-            placeholder="製造手順・規格・トラブル対応を質問する…"
+            placeholder="症状・キーワードで検索する（例: 主軸の異音、圧力低下）…"
             rows={3}
           />
           <div className="composer-row">
@@ -2019,12 +2033,14 @@ function SourceSearchBody() {
               <article className="result-panel" key={match.trouble_case_id}>
                 <div className="result-head">
                   <span className="status-badge">{match.symptom || match.trouble_case_id}</span>
-                  <output>{match.relevance_score.toFixed(3)}</output>
+                  {typeof match.relevance_score === "number" && (
+                    <output title="関連度スコア（運用診断用）">{match.relevance_score.toFixed(3)}</output>
+                  )}
                 </div>
                 <div className="ops-flags">
-                  {match.equipment_id && <span className="citation-chip">equip {match.equipment_id}</span>}
-                  {match.process_id && <span className="citation-chip">process {match.process_id}</span>}
-                  <span className="citation-chip">case {match.trouble_case_id}</span>
+                  {match.equipment_id && <span className="citation-chip">設備 {match.equipment_id}</span>}
+                  {match.process_id && <span className="citation-chip">工程 {match.process_id}</span>}
+                  <span className="citation-chip">事例 {match.trouble_case_id}</span>
                 </div>
                 {match.failure_mode && (
                   <div>
@@ -2046,30 +2062,33 @@ function SourceSearchBody() {
       </div>
 
       <aside className="sources-side">
-        <section className="ops-panel">
+        <details className="source-ops-details">
+          <summary>運用診断（上級者向け）</summary>
+          <section className="ops-panel">
             <h3>ソース状態</h3>
-          <form className="src-inline-form" onSubmit={onSync}>
-            <input
-              value={sourceId}
-              onChange={(e) => setSourceId(e.target.value)}
-              placeholder="source_id"
-              aria-label="ソース ID"
-              autoComplete="off"
-            />
-            <button type="submit">確認</button>
-          </form>
-          {syncError && <p className="ops-note">{syncError}</p>}
-          {sync && <FieldGrid rows={[["状態", sync.status], ["コレクション", sync.collection_id ?? "—"], ["相関 ID", sync.correlation_id ?? "—"]]} />}
-        </section>
-        <section className="ops-panel">
-          <h3>取込履歴</h3>
-          <form className="src-inline-form" onSubmit={onRun}>
-            <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="run_id" aria-label="実行 ID" autoComplete="off" />
-            <button type="submit">確認</button>
-          </form>
-          {runError && <p className="ops-note">{runError}</p>}
-          {run && <FieldGrid rows={[["実行 ID", run.ingestion_run_id], ["状態", run.status], ["ソース", run.source_id ?? "—"]]} />}
-        </section>
+            <form className="src-inline-form" onSubmit={onSync}>
+              <input
+                value={sourceId}
+                onChange={(e) => setSourceId(e.target.value)}
+                placeholder="source_id"
+                aria-label="ソース ID"
+                autoComplete="off"
+              />
+              <button type="submit">確認</button>
+            </form>
+            {syncError && <p className="ops-note">{syncError}</p>}
+            {sync && <FieldGrid rows={[["状態", sync.status], ["コレクション", sync.collection_id ?? "—"], ["相関 ID", sync.correlation_id ?? "—"]]} />}
+          </section>
+          <section className="ops-panel">
+            <h3>取込履歴</h3>
+            <form className="src-inline-form" onSubmit={onRun}>
+              <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="run_id" aria-label="実行 ID" autoComplete="off" />
+              <button type="submit">確認</button>
+            </form>
+            {runError && <p className="ops-note">{runError}</p>}
+            {run && <FieldGrid rows={[["実行 ID", run.ingestion_run_id], ["状態", run.status], ["ソース", run.source_id ?? "—"]]} />}
+          </section>
+        </details>
       </aside>
     </div>
   );
@@ -2490,7 +2509,15 @@ function PhoneSimulatorSection() {
               onClick={() => (listening ? stopVoice() : startListening())}
               disabled={loading || terminal}
             >
-              {listening ? "聞き取り中…(停止)" : "🎤 マイクで話す"}
+              {listening ? (
+                "聞き取り中…(停止)"
+              ) : (
+                <>
+                  {/* No mic glyph exists in the app's ad-hoc inline-SVG set; the emoji stays as the
+                      visual, hidden from screen readers (the label text carries the meaning). */}
+                  <span aria-hidden="true">🎤</span> マイクで話す
+                </>
+              )}
             </button>
           )}
           {voiceMode && (
@@ -3377,12 +3404,22 @@ function AddSourceCta({ className }: { className?: string }) {
   );
 }
 
+/** Detail-ish screens get a lightweight back affordance (list ↔ detail navigation). */
+const BACK_AFFORDANCE_SCREEN_IDS = new Set(["source-detail", "document-detail", "review-detail"]);
+
 function ScreenShell({ screen, children }: { screen: ManifestScreen; children: ReactNode }) {
+  const router = useRouter();
   const title = screenTitle(screen);
+  const showBack = BACK_AFFORDANCE_SCREEN_IDS.has(screen.id);
   return (
     <section className="workspace full-saas-workspace" aria-label={title}>
       <header className="topbar">
         <div>
+          {showBack && (
+            <button type="button" className="topbar-back" onClick={() => router.back()}>
+              ← 戻る
+            </button>
+          )}
           <h2>{title}</h2>
         </div>
       </header>
@@ -4525,7 +4562,10 @@ function AnswerHistoryBody() {
                   <footer>
                     <span>引用 {entry.citation_count}件</span>
                     {entry.collection_id && <span>参照範囲 {collectionDisplayName(entry.collection_id)}</span>}
-                    <Link className="citation-open" href={`/?q=${encodeURIComponent(entry.question)}`}>
+                    <Link
+                      className="citation-open"
+                      href={`/?q=${encodeURIComponent(entry.question)}&submit=1`}
+                    >
                       再質問
                     </Link>
                   </footer>

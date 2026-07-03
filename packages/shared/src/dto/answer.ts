@@ -42,6 +42,8 @@ export interface Citation {
   visual_verifier_verdicts?: Array<Record<string, unknown>>;
   approval_status?: "draft" | "pending_review" | "approved" | "obsolete" | string;
   effective_date?: string | null;
+  /** 0017-A: optional exclusive expiry of the approval window (ISO date). Rendered only when present. */
+  valid_until?: string | null;
   approval_source?: string | null;
   /** ★G4 freshness: ISO date of the last human "still correct" verification (最終確認日). */
   last_verified_at?: string | null;

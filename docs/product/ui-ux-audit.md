@@ -89,4 +89,13 @@ RBAC nav・:focus-visible・reduced-motion・mock/実測の正直な出し分け
   - U17: 用語統一 — screenTitle: source-list「ソース」→「外部接続」/ source-detail→「外部接続の詳細」/ add-source→「外部接続を追加」/ source-search→「検索」/ ingestion-runs「取り込み実行」→「取込履歴」。CTA「ソースを追加」→「外部接続を追加」(AddSourceCta・空状態リンク・ホームカード)、AddSource 見出し「ソース種別」→「外部接続の種別」、取込ラン/取り込み実行の表記→「取込履歴」(ボタン・メトリクス・検索診断パネル)。「ファイル」アップロードは従来どおり別概念。コード識別子・route は不変更(ラベルのみ)
   - U18: `REVIEW_BADGE_COUNT`(固定 2)を削除し、Sidebar が既存 `GET drafts`(manufacturingListDrafts)から pending(status=draft/in_review)件数を取得(マウント時+ /reviews への route 遷移時のみ、ポーリング無し、エラー時はバッジ非表示)。ReviewQueueBody は全件カウントをやめ、未対応バブル+ステータス別内訳(下書き/レビュー中/承認済み/却下)を表示
   - U11: ドラフト生成フォームの生 ID 入力(`m1` 既定)を廃止し、実ドキュメント一覧(manufacturingDocuments + ローカルアップロードの filename で表示名を補完)からのチェックボックス複数選択に置換。「詳細指定(ID を直接入力)」トグルでフリーテキスト入力へフォールバック可。コレクションは select 化(既定 manuals)
-- [ ] P5
+- [x] P5 衛生(CSSコントラスト+重複解消+磨き群)
+  - コントラスト(AA): 小さめ二次テキストの `color: #a1a1aa`(白地で2.6:1、AA不合格)20箇所を既存トークン `var(--muted)`(#666b78、5.3:1)へ置換。**据え置き(意図的)**: disabled ボタン文字の #a1a1aa×1 / #8b90a0×2(WCAG 1.4.3 は非活性UIを適用除外、無効状態の見た目の区別を維持)、`background`/`border-color` の #a1a1aa 各1(テキストでない)。他のAA不合格テキスト色は残存なし(#ffffff は着色背景上のみ)
+  - CSS重複解消(保守的パス): 完全に上書きされていた先行の死にルール15件を削除(`body`/`.sidebar`/`.nav-item:hover`/`.error-panel` 等 — 同一セレクタの後続宣言がプロパティ上位集合のため計算スタイル不変)。3つの `:root` トークンブロックを先頭の1つに統合(和集合・後勝ち、37トークン。値の衝突は無し)。プロパティが分散する残り25組の重複セレクタは**削除せず** `/* NOTE: extended in ... section below */` コメントを先頭出現箇所に付与(完全統合はリスクありとして見送り)。検証: tsc / next build(PostCSSパース)クリーン
+  - 磨き1: CitationViewer の生スコアチップを廃止し、種別チップの `title` 属性に退避(運用診断用)。回答画面の引用カードは既に `診断情報` details 内のため変更なし。Answers の参照範囲セレクタが生IDだった箇所に `collectionDisplayName` を適用
+  - 磨き2: 「有効期限 / 発効」→「発効日」に是正(回答パスの citation ペイロードは valid_until を未搬送)。Citation DTO に optional `valid_until` を追加し、値が来た場合のみ「有効期限」行を表示(型のみの前方互換、バックエンド変更なし)
+  - 磨き3: PDF プレビュー iframe 280px→480px、blob URL があるとき「新しいタブで開く」リンクを追加
+  - 磨き4: 検索画面の ops 診断(source_id/run_id 照会)を折りたたみ `<details>`「運用診断(上級者向け)」へ移動。プレースホルダを回答画面と差別化(「症状・キーワードで検索する…」)。生トークンを日本語化(equip→設備 / process→工程 / case→事例)。relevance_score は number 型ガード付きで表示
+  - 磨き5: ScreenShell に「← 戻る」(router.back())を追加 — source-detail / document-detail / review-detail の詳細系3画面のみ表示
+  - 磨き6: 履歴「再質問」が `/?q=…&submit=1` で自動送信(保存済み参照範囲で送信、送信後は URL パラメータを除去しリロード再送信を防止)。`submit=1` なしの `?q=` は従来どおりプリフィルのみ
+  - 磨き7: 🎤 絵文字は**維持**(アプリにアイコンシステムは無くアドホックなインラインSVGのみ、マイク字形も既存に無し)。絵文字を `aria-hidden` 化しスクリーンリーダーにはテキストのみ読ませるよう改善
