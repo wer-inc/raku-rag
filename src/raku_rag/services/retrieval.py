@@ -10,6 +10,7 @@ import hashlib
 import time
 from collections.abc import Mapping
 
+from raku_rag.core.hybrid_retrieval import SynonymExpansion, synonym_expansions
 from raku_rag.core.query_planner import plan_query
 from raku_rag.core.security.acl import AclPolicy
 from raku_rag.domain.models import Chunk, IdentityClaims, QueryProfile, ScoredChunk
@@ -151,6 +152,7 @@ class RetrievalService:
         tracer: InMemoryTracer | None = None,
         rerank_trace_sink: object | None = None,
         cache: CacheService | None = None,
+        lexicon: object | None = None,
     ) -> None:
         self._store = store
         self._embedder = embedder
@@ -170,6 +172,14 @@ class RetrievalService:
         # filtered by the tenant/ACL/tombstone PRE-filter on every search.
         self._cache = cache
         self._embed_cache_identity = _embedder_cache_identity(embedder) if cache else ""
+        # Wave 1c tenant synonym expansion (retrieval.synonyms lexicon namespace). Optional and
+        # fail-open (a lexicon outage means "no expansion", same guarded pattern as the chatbot/
+        # phone lexicon consumers). Expansion feeds the LEXICAL leg ONLY: the embedding and
+        # metadata-exact legs, the query plan, and everything downstream (intent_query, high-risk
+        # classification, the salient-coverage no-answer gate) keep seeing the RAW query — a
+        # tenant vocabulary entry can widen lexical recall but can never launder what the user
+        # asked (#78/#80 invariant).
+        self._lexicon = lexicon
 
     def retrieve(
         self,
@@ -227,14 +237,47 @@ class RetrievalService:
                     top_k=search_top_k,
                 )
             lexical_matches: list[ScoredChunk] = []
+            lexical_expansions: tuple[SynonymExpansion, ...] = ()
             lexical_matcher = getattr(self._store, "lexical_matches", None)
             if callable(lexical_matcher):
-                lexical_matches = lexical_matcher(
-                    principal.tenant_id,
-                    query,
-                    visible=visible,
-                    top_k=search_top_k,
+                # Wave 1c: tenant-approved synonym expansion, LEXICAL leg only (see __init__).
+                lexical_expansions = self._lexical_synonym_expansions(
+                    principal.tenant_id, query, metric_labels, correlation_id
                 )
+                if lexical_expansions:
+                    try:
+                        lexical_matches = lexical_matcher(
+                            principal.tenant_id,
+                            query,
+                            visible=visible,
+                            top_k=search_top_k,
+                            expansions=lexical_expansions,
+                        )
+                    except TypeError:
+                        # A store predating the ``expansions`` parameter: expansion is an
+                        # enhancement, never a reason to fail retrieval — fall back to the
+                        # un-expanded leg. (A TypeError raised INSIDE such a store re-raises on
+                        # the retry, so real bugs stay visible.)
+                        lexical_expansions = ()
+                        log(
+                            "retrieval.synonym_expansion_unsupported_store",
+                            correlation_id=correlation_id,
+                            tenant=principal.tenant_id,
+                            store=type(self._store).__name__,
+                        )
+                        lexical_matches = lexical_matcher(
+                            principal.tenant_id,
+                            query,
+                            visible=visible,
+                            top_k=search_top_k,
+                        )
+                else:
+                    lexical_matches = lexical_matcher(
+                        principal.tenant_id,
+                        query,
+                        visible=visible,
+                        top_k=search_top_k,
+                    )
             hybrid_ranks: _HybridRanks | None = None
             if metadata_exact_matches or lexical_matches:
                 scored, hybrid_ranks = _merge_hybrid_results(
@@ -327,6 +370,11 @@ class RetrievalService:
                     len(lexical_matches),
                     labels=metric_labels,
                 )
+                self._metrics.observe(
+                    "retrieval_synonym_expansion_count",
+                    len(lexical_expansions),
+                    labels=metric_labels,
+                )
                 self._metrics.observe("retrieval_rerank_ms", rerank_ms, labels=metric_labels)
                 if prefiltered_count is not None:
                     self._metrics.observe(
@@ -358,6 +406,7 @@ class RetrievalService:
                     query_rewrite_hint_count=len(query_plan.rewrite_hints),
                     query_filter_hints=sorted(query_plan.filter_hints),
                     embed_cache_hit=embed_cache_hit,
+                    synonym_expansion_count=len(lexical_expansions),
                 )
             if self._metrics:
                 self._metrics.record_stage(
@@ -424,6 +473,41 @@ class RetrievalService:
             if self._metrics:
                 self._metrics.increment("embedding_cache_errors_total", labels=metric_labels)
         return query_vec, False
+
+    def _lexical_synonym_expansions(
+        self,
+        tenant_id: str,
+        query: str,
+        metric_labels: dict[str, str],
+        correlation_id: str,
+    ) -> tuple[SynonymExpansion, ...]:
+        """Tenant-approved synonym expansions of ``query`` for the lexical leg (Wave 1c).
+
+        Reads the tenant's ``retrieval.synonyms`` lexicon entries (``LexiconService.entries`` —
+        tenant-stored config only, no built-in defaults: a synonym equivalence is a tenant-approved
+        vocabulary claim, entered through the audited admin API). FAIL-OPEN: a lexicon outage is
+        logged/metered and retrieval proceeds without expansion — never a request failure. One
+        repository read per request; the derivation itself is cheap (string scans over the query).
+        """
+        if self._lexicon is None:
+            return ()
+        try:
+            groups = self._lexicon.entries(tenant_id, "retrieval.synonyms")
+        except Exception as exc:  # noqa: BLE001 — lexicon outage must not break retrieval
+            log(
+                "retrieval.synonym_lexicon_error",
+                correlation_id=correlation_id,
+                tenant=tenant_id,
+                error=type(exc).__name__,
+            )
+            if self._metrics:
+                self._metrics.increment(
+                    "retrieval_synonym_lexicon_errors_total", labels=metric_labels
+                )
+            return ()
+        if not groups:
+            return ()
+        return synonym_expansions(query, groups)
 
     def is_visible(self, principal: IdentityClaims, chunk: Chunk) -> bool:
         """Re-check current ACL/tenant/tombstone visibility for already-retrieved evidence.

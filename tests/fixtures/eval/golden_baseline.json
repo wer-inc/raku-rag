@@ -1,5 +1,5 @@
 {
-  "_doc": "012/P1-5 COMMITTED deterministic baseline for tests/fixtures/uat/golden_corpus.json. These are measured, fixed values (NOT self-derived via baseline_from_run) so cross-commit quality drift is detectable. min_metrics are release-blocking floors; max_metrics are ceilings. p95_latency_ms is intentionally a generous ceiling only (latency is environment-dependent, not deterministic). precision_at_k=0.2 reflects precision@k with top_k=5 and one relevant doc per item (structural max 1/5); recall/mrr/citation/groundedness/claim_groundedness/faithfulness are 1.0 because each query's unique-token target is retrieved at rank 1 and the extractive answer is faithful by construction. claim_groundedness (P2, chatbot-conversational-agent-roadmap) is the per-claim/per-span strengthening of groundedness: every numeric/identifier span in an answer must trace to its cited evidence, not just share one term with it. ★G2: refusal behavior joins the gate. All 7 unanswerable items (out-of-scope, safety, AND the 2 unanswerable_in_domain ones) now REFUSE: the former in-domain ratchet (unanswerable_answer_rate <=0.29 / risk_weighted_score >=0.86, which held the 'grounded-but-irrelevant extraction answers a question about absent in-domain content' gap) was CLOSED by the default-ON salient-term coverage gate (GroundednessGate.salient_coverage_check, QueryProfile.salient_coverage_enabled) and the ceilings/floors are tightened to the new measured values: unanswerable_answer_rate 0.0, refusal_accuracy 1.0, risk_weighted_score 1.0, query_cost 18.0 (the 2 flipped items no longer bill a completed answer). high_risk_recall is the deterministic classifier recall over the red-team corpus (12/12), also emitted as a metric for the 品質・KPI scorecard.",
+  "_doc": "012/P1-5 COMMITTED deterministic baseline for tests/fixtures/uat/golden_corpus.json. These are measured, fixed values (NOT self-derived via baseline_from_run) so cross-commit quality drift is detectable. min_metrics are release-blocking floors; max_metrics are ceilings. p95_latency_ms is intentionally a generous ceiling only (latency is environment-dependent, not deterministic). precision_at_k=0.2 reflects precision@k with top_k=5 and one relevant doc per item (structural max 1/5); recall/mrr/citation/groundedness/claim_groundedness/faithfulness are 1.0 because each query's unique-token target is retrieved at rank 1 and the extractive answer is faithful by construction. claim_groundedness (P2, chatbot-conversational-agent-roadmap) is the per-claim/per-span strengthening of groundedness: every numeric/identifier span in an answer must trace to its cited evidence, not just share one term with it. ★G2: refusal behavior joins the gate. All 7 unanswerable items (out-of-scope, safety, AND the 2 unanswerable_in_domain ones) now REFUSE: the former in-domain ratchet (unanswerable_answer_rate <=0.29 / risk_weighted_score >=0.86, which held the 'grounded-but-irrelevant extraction answers a question about absent in-domain content' gap) was CLOSED by the default-ON salient-term coverage gate (GroundednessGate.salient_coverage_check, QueryProfile.salient_coverage_enabled) and the ceilings/floors are tightened to the new measured values: unanswerable_answer_rate 0.0, refusal_accuracy 1.0, risk_weighted_score 1.0, query_cost 18.0 (the 2 flipped items no longer bill a completed answer). high_risk_recall is the deterministic classifier recall over the red-team corpus (12/12), also emitted as a metric for the 品質・KPI scorecard. Wave 1c: 3 synonym-slice items (category=synonym; question uses a tenant-approved synonym, document carries the canonical term, tenant lexicon seeded by the harness) join the corpus — dataset_version/registry_version regenerated and query_cost re-measured (18.0 -> 21.0: 3 more answered items). All floors stay at the measured 1.0/0.2/0.0 values; the slice's teeth are proven by test_synonym_slice_actually_measures_expansion (without the lexicon the distractor outranks the gold and the mrr floor fails).",
   "metrics": {
     "recall_at_k": 1.0,
     "precision_at_k": 0.2,
@@ -8,7 +8,7 @@
     "groundedness": 1.0,
     "claim_groundedness": 1.0,
     "faithfulness": 1.0,
-    "query_cost": 18.0,
+    "query_cost": 21.0,
     "over_refusal_rate": 0.0,
     "unanswerable_answer_rate": 0.0,
     "refusal_accuracy": 1.0,
@@ -28,14 +28,14 @@
     "high_risk_recall": 1.0
   },
   "max_metrics": {
-    "query_cost": 18.0,
+    "query_cost": 21.0,
     "p95_latency_ms": 5000.0,
     "over_refusal_rate": 0.0,
     "unanswerable_answer_rate": 0.0
   },
   "security_checks": [],
   "version_registry": {
-    "dataset_version": "dataset_45751f76a9a1c7ea",
+    "dataset_version": "dataset_f617d4ca8fb26457",
     "embedding_provider": "local",
     "embedding_model_version": "hashing-bow-v2",
     "embedding_dimension": 256,
@@ -44,6 +44,6 @@
     "prompt_template_version": "answer-grounded-contract-v1",
     "injection_guard_version": "prompt-injection-guard-v1",
     "extra": {},
-    "registry_version": "eval_registry_1aaf63e0001a63e7"
+    "registry_version": "eval_registry_ceccee705b608986"
   }
 }

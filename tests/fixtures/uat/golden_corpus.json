@@ -1,5 +1,5 @@
 {
-  "_doc": "012/P1-5 golden eval corpus. Synthetic, deterministic, text-only (runs on MvpSystem). No real PII/tenant/fund data. Each question carries a unique identifier token present only in its target document so deterministic retrieval is stable. Used by tests/integration/test_golden_corpus.py against the committed baseline tests/fixtures/eval/golden_baseline.json. ★G2 adds an unanswerable slice (answerability=unanswerable): ALL categories now REFUSE and are hard-gated (unanswerable_answer_rate ceiling 0.0). category unanswerable_in_domain (a question about ABSENT in-domain content) formerly answered via a grounded-but-irrelevant extraction and was held by a ratchet; that gap is CLOSED by the default-ON salient-term coverage gate (GroundednessGate.salient_coverage_check — all question identifiers plus >=50% of its salient lexical terms must appear in the used evidence).",
+  "_doc": "012/P1-5 golden eval corpus. Synthetic, deterministic, text-only (runs on MvpSystem). No real PII/tenant/fund data. Each question carries a unique identifier token present only in its target document so deterministic retrieval is stable. Used by tests/integration/test_golden_corpus.py against the committed baseline tests/fixtures/eval/golden_baseline.json. ★G2 adds an unanswerable slice (answerability=unanswerable): ALL categories now REFUSE and are hard-gated (unanswerable_answer_rate ceiling 0.0). category unanswerable_in_domain (a question about ABSENT in-domain content) formerly answered via a grounded-but-irrelevant extraction and was held by a ratchet; that gap is CLOSED by the default-ON salient-term coverage gate (GroundednessGate.salient_coverage_check — all question identifiers plus >=50% of its salient lexical terms must appear in the used evidence). Wave 1c adds a synonym slice (category=synonym, manufacturing): the question names a tenant-approved synonym (retrieval.synonyms lexicon, seeded from the top-level `lexicon` block by the harness) while the target document carries the canonical surface form, next to a distractor document sharing the family/component vocabulary. Without query expansion the distractor deterministically outranks the gold (MRR floor fails); with the tenant lexicon the gold ranks first. Coverage-gate contract: the salient-coverage no-answer gate keeps judging the ORIGINAL query, so these questions carry enough directly-covered salient terms to pass it — a question responsive ONLY through a synonym still refuses by design.",
   "tenant_id": "tenant_golden",
   "principal_user": "evaluator",
   "industries": {
@@ -29,6 +29,30 @@
         {
           "document_id": "m_gearbox_maint",
           "text": "The gearbox maintenance procedure requires draining the lubricating oil before removing the inspection cover."
+        },
+        {
+          "document_id": "m_syn_overheat",
+          "text": "射出成形機の油圧ユニットで温度上昇が発生した時の対処手順: 冷却ファンとオイルクーラを点検し、目詰まりがあれば分解清掃を行う。"
+        },
+        {
+          "document_id": "m_syn_overheat_alt",
+          "text": "射出成形機の油圧ユニットで圧力変動が発生した場合の対処手順: 電磁弁の作動状態と配管の締結状態を点検する。"
+        },
+        {
+          "document_id": "m_syn_oilleak",
+          "text": "搬送コンベアの減速機で油漏れが発生した時の点検手順: シールパッキンの劣化を確認し、必要なら新品に交換する。"
+        },
+        {
+          "document_id": "m_syn_oilleak_alt",
+          "text": "搬送コンベアの減速機で異常振動が発生した場合の点検手順: 取付ボルトの緩みと駆動チェーンの張りを確認する。"
+        },
+        {
+          "document_id": "m_syn_noise",
+          "text": "CNC旋盤の主軸ベアリングで異音が発生した時の対応手順: グリスを補給し、改善しなければベアリングを交換する。"
+        },
+        {
+          "document_id": "m_syn_noise_alt",
+          "text": "CNC旋盤の主軸ベアリングで発熱が発生した場合の対応手順: 潤滑ユニットの吐出量と冷却水の流量を確認する。"
         }
       ],
       "items": [
@@ -101,6 +125,33 @@
           "answerability": "unanswerable",
           "category": "unanswerable_in_domain",
           "risk_level": "high"
+        },
+        {
+          "question": "射出成形機の油圧ユニットでオーバーヒートが起きた場合の対処を教えてください。",
+          "category": "synonym",
+          "expected_evidence": [
+            {
+              "document_id": "m_syn_overheat"
+            }
+          ]
+        },
+        {
+          "question": "搬送コンベアの減速機でオイルリークが起きた場合の点検を教えてください。",
+          "category": "synonym",
+          "expected_evidence": [
+            {
+              "document_id": "m_syn_oilleak"
+            }
+          ]
+        },
+        {
+          "question": "CNC旋盤の主軸ベアリングでうなり音が発生した場合の対応を教えてください。",
+          "category": "synonym",
+          "expected_evidence": [
+            {
+              "document_id": "m_syn_noise"
+            }
+          ]
         }
       ]
     },
@@ -275,6 +326,20 @@
           "answerability": "unanswerable",
           "category": "unanswerable_out_of_scope"
         }
+      ]
+    }
+  },
+  "lexicon": {
+    "_doc": "Per-namespace tenant lexicon entries the harness seeds via LexiconService.update (actor_id=golden-harness) and attaches to RetrievalService — the same wiring the deployed answer-service uses. retrieval.synonyms: key = canonical document term, values = query-side synonyms (symmetric group expansion).",
+    "retrieval.synonyms": {
+      "温度上昇": [
+        "オーバーヒート"
+      ],
+      "油漏れ": [
+        "オイルリーク"
+      ],
+      "異音": [
+        "うなり音"
       ]
     }
   }

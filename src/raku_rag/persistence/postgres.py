@@ -42,6 +42,7 @@ from raku_rag.core.hybrid_retrieval import (
     METADATA_EXACT_MATCH_SCORE,
     NESTED_METADATA_KEYS,
     query_identifiers,
+    SynonymExpansion,
 )
 from raku_rag.domain.models import (
     ACLGrant,
@@ -610,6 +611,7 @@ class PostgresVectorStore(VectorStore):
         *,
         visible: VisibilityPredicate,
         top_k: int,
+        expansions: tuple[SynonymExpansion, ...] = (),
     ) -> list[ScoredChunk]:
         """Lexical keyword leg for deployed hybrid retrieval.
 
@@ -617,6 +619,10 @@ class PostgresVectorStore(VectorStore):
         aligned, including Japanese-aware tokenization. SQL only applies tenant/RLS/live narrowing
         here; a simple tsvector predicate misses CJK bigram matches and can silently remove the exact
         manual before the shared scorer sees it.
+
+        ``expansions`` (Wave 1c): tenant-approved synonym groups from ``retrieval.synonyms`` —
+        forwarded verbatim to the shared scorer (in-memory-store parity; default () is
+        byte-identical to the pre-1c leg).
         """
         terms = lexical_query_terms(query)
         if not terms or top_k <= 0:
@@ -641,7 +647,7 @@ class PostgresVectorStore(VectorStore):
                 continue
             document_metadata = _load_jsonish(row[13]) or {}
             combined_metadata = {**document_metadata, **chunk.metadata}
-            score = lexical_match_score(query, chunk.text, combined_metadata)
+            score = lexical_match_score(query, chunk.text, combined_metadata, expansions=expansions)
             if score <= 0:
                 continue
             candidates.append(ScoredChunk(chunk=chunk, retrieval_score=score))
