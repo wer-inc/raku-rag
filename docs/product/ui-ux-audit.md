@@ -77,4 +77,10 @@ RBAC nav・:focus-visible・reduced-motion・mock/実測の正直な出し分け
 - [x] 本監査ドキュメント
 - [x] P1 回答体験(U1+U2+U12)
 - [x] P2 電話ショーピース(U3+U4+U5+U16) — `.screen-tabs` タブ選択状態 / `.phone-transcript-*` 吹き出しトランスクリプト / `PHONE_LABELS` enum日本語化(生値はtitle属性に退避) / 公開・ロールバック・転送受理の ConfirmDialog
-- [ ] P3〜P5
+- [x] P3 見せ場の解放(U8+U13+U6+U9+U10)
+  - U8: NAV_GROUPS に「運用」(運用ダッシュボード/品質・KPI/改善キュー/安全テレメトリ/導入効果レポート/監査ログ)と「管理」(ロール・権限/プロバイダポリシー/ユーザー/連携/請求/検索設定/ログポリシー)を追加。RBAC は manifest 準拠(nav-rbac: ops_owner に /audit、reviewer に /operations/improvements を追加付与)。両グループは `defaultCollapsed` でサイドバー折りたたみ(アクティブルート内包時は自動展開)
+  - U13: `APPROVAL_WORKFLOW_ENABLED` 既定 ON(`NEXT_PUBLIC_RAKU_APPROVAL_WORKFLOW=off` で無効化)。レビュー nav / 承認待ち列 / DocumentApprovalQueue / ApprovalWorkflow が既定表示(いずれも実エンドポイント + 空状態確認済み)
+  - U6: 請求(BillingBody)・ユーザー・連携(MockAdminScreen)に「サンプルデータ」バッジ+準備中の説明(`.sample-data-notice`)。onboarding はステップ詐称を廃止し単一ステップ「利用目的を選ぶ(任意)」に変更、チップは実選択(localStorage `raku.onboarding.preferences` に保存)
+  - U9: Add Source のコネクタグリッドが全13種を表示(ready のみ選択可、three_days/later は disabled +「近日対応/ロードマップ」バッジ)。Google Drive は readiness=ready に昇格(実装済み OAuth フローが到達可能に。未設定時は authorize が not-configured エラーを返し UI が接続エラー表示)
+  - U10: 品質評価セクションがマウント時に前回の永続化 run を既定表示(タイムスタンプ+ゲート判定、「再実行」ボタン)。API に `GET /v1/evaluations/latest`、answer-service に `GET /internal/evaluations/latest` を追加し、evaluation_runs リポジトリを Postgres 永続化に配線(再起動を跨いで表示されることを実PGで確認)
+- [ ] P4〜P5

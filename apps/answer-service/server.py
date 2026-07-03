@@ -46,6 +46,7 @@ from raku_rag.eval import EvaluationRunner, EvaluationSet  # noqa: E402
 from raku_rag.manufacturing.drafts.review import InvalidTransitionError  # noqa: E402
 from raku_rag.persistence.evaluation_runs import (  # noqa: E402
     InMemoryEvaluationRunRepository,
+    PostgresEvaluationRunRepository,
 )
 from raku_rag.persistence.datasources import (  # noqa: E402
     InMemoryDataSourceRepository,
@@ -1613,6 +1614,15 @@ def _feedback_repository_for(system: ProductionSystem):
     return InMemoryFeedbackRepository()
 
 
+def _evaluation_run_repository_for(system: ProductionSystem):
+    """U10: durable evaluation runs (evaluation_runs, migration 0007) so the 品質・KPI screen can
+    show the latest persisted run across restarts. In-memory fallback for the offline profile."""
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return PostgresEvaluationRunRepository(conn)
+    return InMemoryEvaluationRunRepository()
+
+
 def _query_trace_reader_for(system: ProductionSystem):
     """★G3b/★G5: 実測運用メトリクス reader — Postgres query_traces, else in-memory metrics."""
     conn = getattr(system, "_conn", None)
@@ -1717,7 +1727,11 @@ def make_handler(system: ProductionSystem):
         oauth_secret_store=secret_store,
     )
     admin_settings = _AdminSettingsStore(system, datasource_repo=datasource_repo)
-    eval_feedback = _EvalFeedbackStore(system, feedback_repository=_feedback_repository_for(system))
+    eval_feedback = _EvalFeedbackStore(
+        system,
+        run_repository=_evaluation_run_repository_for(system),
+        feedback_repository=_feedback_repository_for(system),
+    )
     # ★G3b/★G5: real operational metrics for the 品質・KPI screen (query_traces-backed).
     quality_reader = _query_trace_reader_for(system)
     manufacturing_system = build_manufacturing_system_for_base(system)
@@ -2247,6 +2261,14 @@ def make_handler(system: ProductionSystem):
                     run = eval_feedback.get_run(self._tenant_header(), parts[3])
                     if run:
                         self._send(200, run)
+                    else:
+                        self._send(404, {"error": "not found"})
+                elif parts == ["internal", "evaluations", "latest"]:
+                    # U10: latest persisted evaluation run for the tenant (list_runs is
+                    # chronological). Tenant comes from the principal headers, never a query param.
+                    latest_runs = eval_feedback.list_runs(self._tenant_header())
+                    if latest_runs:
+                        self._send(200, latest_runs[-1])
                     else:
                         self._send(404, {"error": "not found"})
                 elif parts == ["internal", "feedback"]:

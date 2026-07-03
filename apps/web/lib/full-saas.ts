@@ -29,11 +29,12 @@ export const WORKSPACE_IDENTITY = {
   userInitial: "田",
 } as const;
 
-// Temporarily keep the document approval workflow out of the main E2E path.
-// Server-side safety gates and AI draft review rules still apply; this only changes product
-// navigation/default ingest policy. Set NEXT_PUBLIC_RAKU_APPROVAL_WORKFLOW=on to restore the queue.
+// Document approval workflow is ON by default (U13): the governance UI (レビュー nav group,
+// document approval queue, 承認待ち columns) is part of the product's main path. Server-side safety
+// gates and AI draft review rules apply regardless; this only changes product navigation/default
+// ingest policy. Set NEXT_PUBLIC_RAKU_APPROVAL_WORKFLOW=off to take the queue out of the E2E path.
 export const APPROVAL_WORKFLOW_ENABLED =
-  (process.env.NEXT_PUBLIC_RAKU_APPROVAL_WORKFLOW ?? "off").trim().toLowerCase() === "on";
+  (process.env.NEXT_PUBLIC_RAKU_APPROVAL_WORKFLOW ?? "on").trim().toLowerCase() !== "off";
 
 // Count shown on the AIドラフトレビュー nav badge (pending review drafts).
 // Matches the workspace default; replace with a live count once
@@ -56,6 +57,9 @@ export interface NavItem {
 export interface NavGroup {
   label: string;
   items: NavItem[];
+  /** U8: render this group collapsed until opened (or until it holds the active route),
+   *  so the added 運用/管理 groups don't overwhelm the sidebar. */
+  defaultCollapsed?: boolean;
 }
 
 // Single top-level item rendered above the grouped nav (standalone parity).
@@ -70,8 +74,41 @@ const REVIEW_NAV_GROUP: NavGroup = {
   ],
 };
 
+// U8: 運用 — the operations screens that prove "運用できるRAG" (all routes render real,
+// API-backed content in FullSaasScreen). RBAC mirrors screens.manifest.json: /operations/*
+// = ops_owner+tenant_admin (improvements also reviewer), /audit = ops_owner+tenant_admin+auditor.
+const OPERATIONS_NAV_GROUP: NavGroup = {
+  label: "運用",
+  defaultCollapsed: true,
+  items: [
+    { href: "/operations", label: "運用ダッシュボード", icon: "operations" },
+    { href: "/operations/quality", label: "品質・KPI", icon: "quality" },
+    { href: "/operations/improvements", label: "改善キュー", icon: "improvements" },
+    { href: "/operations/safety", label: "安全テレメトリ", icon: "safety" },
+    { href: "/operations/impact-report", label: "導入効果レポート", icon: "compliance" },
+    { href: "/audit", label: "監査ログ", icon: "audit" },
+  ],
+};
+
+// U8: 管理 — tenant_admin screens (screens.manifest.json admin-saas rbac=[tenant_admin]).
+// navAllowed only ever grants these to tenant_admin/platform_admin, so members never see them.
+const ADMIN_NAV_GROUP: NavGroup = {
+  label: "管理",
+  defaultCollapsed: true,
+  items: [
+    { href: "/admin/access", label: "ロール・権限", icon: "roles" },
+    { href: "/admin/provider-policy", label: "プロバイダポリシー", icon: "provider" },
+    { href: "/admin/users", label: "ユーザー", icon: "users" },
+    { href: "/admin/integrations", label: "連携", icon: "integrations" },
+    { href: "/admin/billing", label: "請求", icon: "billing" },
+    { href: "/admin/retrieval", label: "検索設定", icon: "retrieval" },
+    { href: "/admin/logging-privacy", label: "ログポリシー", icon: "logging" },
+  ],
+};
+
 // Grouped navigation — order, labels, icons, and grouping mirror the
 // standalone sidebar. Each href targets an existing workspace route.
+// Group order (U8): 回答 / データ / レビュー / 運用 / 管理.
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: "回答",
@@ -88,6 +125,8 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   ...(APPROVAL_WORKFLOW_ENABLED ? [REVIEW_NAV_GROUP] : []),
+  OPERATIONS_NAV_GROUP,
+  ADMIN_NAV_GROUP,
 ];
 
 // All nav hrefs, used by the sidebar to resolve the single active item by

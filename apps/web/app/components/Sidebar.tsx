@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import {
   activeNavHref,
   HOME_NAV,
+  type NavGroup,
   type NavIconName,
   type NavItem,
   REVIEW_BADGE_COUNT,
@@ -62,6 +63,57 @@ function NavIcon({ name, size = 18 }: { name: keyof typeof ICON_PATHS; size?: nu
       aria-hidden="true"
       dangerouslySetInnerHTML={{ __html: ICON_PATHS[name] }}
     />
+  );
+}
+
+// U8: a nav group. Groups marked defaultCollapsed (運用/管理) start closed so the sidebar stays
+// scannable, and auto-open whenever the active route lives inside them (deep links included).
+function NavGroupSection({ group, active }: { group: NavGroup; active: string | null }) {
+  const containsActive = group.items.some((item) => item.href === active);
+  const [open, setOpen] = useState(!group.defaultCollapsed || containsActive);
+
+  useEffect(() => {
+    if (containsActive) setOpen(true);
+  }, [containsActive]);
+
+  if (!group.defaultCollapsed) {
+    return (
+      <div className="sidebar-group">
+        <p className="sidebar-group-label">{group.label}</p>
+        {group.items.map((item) => (
+          <NavLink key={item.href} item={item} active={active === item.href} />
+        ))}
+      </div>
+    );
+  }
+
+  const sectionId = `sidebar-group-${group.label}`;
+  return (
+    <div className="sidebar-group">
+      <button
+        type="button"
+        className="sidebar-group-toggle"
+        aria-expanded={open}
+        aria-controls={sectionId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="sidebar-group-label">{group.label}</span>
+        <svg
+          className={`sidebar-group-chevron${open ? " open" : ""}`}
+          viewBox="0 0 24 24"
+          width={12}
+          height={12}
+          aria-hidden="true"
+        >
+          <path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <div id={sectionId} hidden={!open}>
+        {group.items.map((item) => (
+          <NavLink key={item.href} item={item} active={active === item.href} />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -141,12 +193,7 @@ export default function Sidebar() {
       <nav className="sidebar-nav" aria-label="Primary">
         {showHome && <NavLink item={HOME_NAV} active={active === HOME_NAV.href} />}
         {groups.map((group) => (
-          <div key={group.label} className="sidebar-group">
-            <p className="sidebar-group-label">{group.label}</p>
-            {group.items.map((item) => (
-              <NavLink key={item.href} item={item} active={active === item.href} />
-            ))}
-          </div>
+          <NavGroupSection key={group.label} group={group} active={active} />
         ))}
       </nav>
 

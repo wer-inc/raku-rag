@@ -555,6 +555,7 @@ export interface QualityEvalResult {
   status: string;
   metrics: { recall_at_k?: number; groundedness?: number; high_risk_recall?: number };
   security_checks: Record<string, { passed: boolean; count: number }>;
+  created_at?: string;
 }
 
 /** Register a quality eval set and run it against the live answer path, returning the scorecard
@@ -573,6 +574,19 @@ export async function runManufacturingQualityEval(
     `/evaluations/runs/${encodeURIComponent(run.run_id)}`,
     userToken,
   );
+}
+
+/** U10: latest persisted evaluation run for the tenant (evaluation_runs, migration 0007).
+ *  Returns null when no run has been recorded yet (404). */
+export async function latestManufacturingQualityEval(
+  userToken: string,
+): Promise<QualityEvalResult | null> {
+  try {
+    return await apiGetJson<QualityEvalResult>("/evaluations/latest", userToken);
+  } catch (err) {
+    if ((err as { status?: number } | null)?.status === 404) return null;
+    throw err;
+  }
 }
 
 export async function manufacturingAuditEvidencePack(
