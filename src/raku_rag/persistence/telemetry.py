@@ -9,7 +9,7 @@ Telemetry persistence is fail-OPEN by contract: callers guard every ``record`` c
 outage degrades to in-memory-only metrics and never breaks answering (unlike the audit sink,
 which is part of the safety posture). Reference-only stance: identities stay hashed and no raw
 query/answer/context text is ever written here. ★G3b adds ONE carefully-scoped exception: the
-question text lands in ``query_traces.query_redacted`` (0024) because 未回答分析 needs to show
+question text lands in ``query_traces.query_redacted`` (0025) because 未回答分析 needs to show
 WHICH questions failed — but only after the observability Redactor masked PII (services/answer.py
 redacts before the metric is even recorded, same stance as chatbot session transcripts).
 

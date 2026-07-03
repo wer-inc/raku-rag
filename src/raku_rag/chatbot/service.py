@@ -745,7 +745,14 @@ class ChatbotService:
             )
             assistant = self._assistant(
                 session,
-                "確認依頼を受け付けました。担当者が会話内容と確認済み情報を確認します。",
+                # ★V2 tenant_lexicon messages.chat: brand-tone transfer announcement only —
+                # the safety wording above/below (security refusal, high-risk, insufficient
+                # evidence) deliberately stays hardcoded.
+                self._lexicon_message(
+                    "handoff_announce",
+                    session.tenant_id,
+                    "確認依頼を受け付けました。担当者が会話内容と確認済み情報を確認します。",
+                ),
                 "handoff",
                 quick_replies=[],
             )
@@ -2049,6 +2056,24 @@ class ChatbotService:
         except Exception:  # noqa: BLE001 — lexicon outage must not break chat
             return ()
         return tuple(w for values in entries.values() for w in values)
+
+    def _lexicon_message(self, key: str, tenant_id: str, default: str) -> str:
+        """★V2 tenant_lexicon `messages.chat`: a tenant override REPLACES the default wording
+        (brand tone), unlike the additive keyword namespaces. Unset tenant / lexicon outage
+        falls back to the hardcoded default (byte-identical to pre-lexicon behavior). Safety
+        wording (refusals, high-risk, insufficient-evidence) is never routed through here."""
+        lexicon = getattr(self, "_lexicon", None)
+        if lexicon is None or not tenant_id:
+            return default
+        try:
+            entries = lexicon.entries(tenant_id, "messages.chat")
+        except Exception:  # noqa: BLE001 — lexicon outage must not break chat
+            return default
+        for value in entries.get(key, ()):
+            text = str(value).strip()
+            if text:
+                return text
+        return default
 
     def _classify_intent(self, text: str, current: str | None, tenant_id: str = "") -> str:
         normalized = text.lower()

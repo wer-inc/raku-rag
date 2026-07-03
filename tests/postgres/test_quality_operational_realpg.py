@@ -1,6 +1,6 @@
-"""★G3b/★G5 Tier B — 実測運用メトリクス over real Postgres (query_traces.query_redacted, 0024).
+"""★G3b/★G5 Tier B — 実測運用メトリクス over real Postgres (query_traces.query_redacted, 0025).
 
-Skipped unless a Postgres with the 0024 migration applied is reachable (same conditional-skip
+Skipped unless a Postgres with the 0025 migration applied is reachable (same conditional-skip
 posture as test_query_trace_realpg). Verifies the answer path persists the PII-REDACTED question
 text, that PostgresQueryTraceReader.operational_summary aggregates real latency/status data, and
 that the summary is RLS-isolated per tenant (tenant B sees zero of tenant A).
@@ -31,7 +31,7 @@ def _query_redacted_available() -> bool:
 
 @unittest.skipUnless(
     _query_redacted_available(),
-    "Postgres with 0024_query_trace_query_redacted not reachable (Tier B / local-only)",
+    "Postgres with 0025_query_trace_query_redacted not reachable (Tier B / local-only)",
 )
 class TestQualityOperationalRealPg(unittest.TestCase):
     def setUp(self) -> None:

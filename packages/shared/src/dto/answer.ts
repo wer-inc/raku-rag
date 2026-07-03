@@ -43,6 +43,10 @@ export interface Citation {
   approval_status?: "draft" | "pending_review" | "approved" | "obsolete" | string;
   effective_date?: string | null;
   approval_source?: string | null;
+  /** ★G4 freshness: ISO date of the last human "still correct" verification (最終確認日). */
+  last_verified_at?: string | null;
+  /** ★G4 freshness: derived — last_verified_at + review_cycle_days < today (要再確認). */
+  review_overdue?: boolean;
 }
 
 export interface UsedChunk {

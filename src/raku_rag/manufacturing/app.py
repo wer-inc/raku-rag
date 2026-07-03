@@ -235,6 +235,7 @@ class ManufacturingSystem:
             all_mfg_meta=lambda: list(self._mfg_meta.items()),
             retention=self.retention,
             materialized_kpi_store=self.kpi_materializations,
+            today=today,
         )
         self._improvements = ImprovementQueueService(audit=self.audit)
         self._sync_status = ManufacturingSyncStatusService(self.control_plane)

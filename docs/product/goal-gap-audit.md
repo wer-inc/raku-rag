@@ -103,12 +103,29 @@ metadata+引用UI は A。残るギャップは4クラスタに集中する:
 ## 実装状況
 
 - [x] 本棚卸しドキュメント
-- [x] ★G1 trace永続化(query_traces 0022 + cost_records/rerank_traces writer — PR #61)
-- [x] ★G3a フィードバック永続化(answer_feedback 0023 + `GET /v1/feedback` — PR #66)
-- [x] ★G3b 未回答ドリルダウン(query_traces.query_redacted 0024 — 質問文はRedactorでPIIマスク後に
+- [x] ★G1 trace永続化(#61 — 0022 query_traces + cost_records/rerank_traces writer、fail-openシンク)
+- [x] ★G2 評価ゲート補強 — high_risk_recall を metrics として emit(常時0バグ解消)、
+      EvaluationItem に answerability/category/risk_level、refusal 指標
+      (over_refusal_rate / unanswerable_answer_rate / refusal_accuracy)+ risk_weighted_score、
+      golden corpus に回答不能7問(refuse 5 はハードゲート、in-domain 2 は**ratchet**:
+      「ドメイン内の不在情報質問に根拠付き無関係文が ok で返る」既知ギャップの悪化を
+      unanswerable_answer_rate ≤0.29 / risk_weighted_score ≥0.86 で封じ、改善時に締める)。
+      QueryProfile.min_question_coverage(質問カバレッジ no-answer knob)は **opt-in デフォルト0**
+      — 短い日本語追い質問(正解文書でも0.17)と無関係英語(0.14〜0.38)が分離不能なため。
+      根治は検索関連度/クエリ展開側(★G4以降)。矛盾/最新版選択カテゴリはコーパスハーネスが
+      base層(ライフサイクル無し)のため ★G4 で追加。
+- [x] ★G3a フィードバック永続化(#66 — 0023 answer_feedback + GET /v1/feedback + 改善キューのサーバ駆動化)
+- [x] ★G3b 未回答ドリルダウン(#68 — query_traces.query_redacted 0025 — 質問文はRedactorでPIIマスク後に
       保存 — + `GET /v1/quality/operational` + 品質・KPI画面「実測運用メトリクス」カード/未回答クエリ一覧)
-- [x] ★G5(実測メトリクス部分)実測 p50/p95(ms)・status別件数・未回答率・低評価件数を query_traces/
-      answer_feedback から集計して品質・KPI画面へ(KPI p95 の evidence-count 代理値は実測があれば置換、
-      無ければ「代理値」明記)
+- [x] ★G4 文書鮮度(#67)— `owner` / `review_cycle_days` / `last_verified_at` を
+  ManufacturingDocumentMetadata + migration 0024 に追加。`review_overdue`
+  (= last_verified_at + review_cycle_days < today、両方設定時のみ)は
+  `manufacturing/domain/freshness.py` で導出し、KPI/ダッシュボードに
+  `review_overdue_document_count` + 期限超過ドキュメント一覧(document_id/owner/
+  last_verified_at/期限)、品質・KPI画面に stat+一覧、引用ビューアに 最終確認日 +
+  要再確認バッジを表示。ingest metadata / PUT documents/{id}/metadata の両経路で設定可。
+  **最新版選択(canonical)・兄弟文書間の版比較は未実装(deferred)**
+- [x] ★G5(実測メトリクス部分、#68)実測 p50/p95(ms)・status別件数・未回答率・低評価件数を
+      query_traces/answer_feedback から集計して品質・KPI画面へ(KPI p95 の evidence-count 代理値は
+      実測があれば置換、無ければ「代理値」明記)
 - [ ] ★G5(残り)キャッシュ格納側+モデルルーティング(小型rewrite/高リスク大型の分岐)は未着手
-- [ ] ★G2 / ★G4
