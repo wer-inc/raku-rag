@@ -4802,6 +4802,14 @@ button,
   font-weight: 600;
 }
 
+/* U19: subtle chip shown when the server carried thread context into a follow-up (rewritten
+   retrieval query is exposed via the title attribute for transparency). */
+.answer-context-chip {
+  background: #eef2ff;
+  color: #4338ca;
+  cursor: help;
+}
+
 .answer-confidence {
   font-size: 12px;
   font-weight: 600;

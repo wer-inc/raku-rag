@@ -70,9 +70,17 @@ export interface AnswerRequest {
   collection_id?: string;
 }
 
+/** U19: one prior thread turn, sent so a referential follow-up can be resolved server-side. */
+export interface AnswerHistoryTurn {
+  question: string;
+  cited_document_ids?: string[];
+}
+
 export interface ManufacturingAnswerRequest extends AnswerRequest {
   intent_hint?: string;
   manufacturing_filters?: Record<string, unknown>;
+  /** U19: prior turns (most recent last, send ≤5). Optional — omitted keeps today's behavior. */
+  history?: AnswerHistoryTurn[];
 }
 
 export interface ManufacturingSafetyExtension {
@@ -99,4 +107,8 @@ export interface AnswerResponse {
 
 export interface ManufacturingAnswerResponse extends AnswerResponse {
   manufacturing: ManufacturingSafetyExtension;
+  /** U19: true when the server rewrote a referential follow-up using the supplied history. */
+  context_carried?: boolean;
+  /** U19: the standalone query retrieval actually used when context_carried is true. */
+  retrieval_query?: string;
 }

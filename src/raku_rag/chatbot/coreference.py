@@ -88,16 +88,27 @@ The reuse-previous-citations branch (`answer_from_previous_turn`) is untouched a
 intent_query: it fires only when `has_own_topic(query)` is False — a bare "tell me more" naming
 nothing beyond the reference — so it never runs retrieval or the safety gate at all; it just returns
 the prior turn's already-gated answer.
+
+NOTE (U19): the pure text primitives (referential-marker detection, residual-topic stripping, the
+standalone-query rewrite) now live in `raku_rag.core.coreference` so the manufacturing ANSWER
+endpoint (`/internal/manufacturing/answer` `history` support — 追い質問の文脈維持 on the Answers
+screen) can reuse them without importing this chatbot module. The functions below delegate there,
+adapting `DialogueContext` to the shared context-free signatures — behavior is byte-identical
+(pinned by tests/unit/test_chatbot_coreference.py and test_chatbot_service.py, unmodified).
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import replace
 from typing import Callable
 
 from raku_rag.chatbot.answer_engine import AnswerEngine, DialogueContext
-from raku_rag.core.query_planner import AMBIGUOUS_REFERENTS, plan_query
+from raku_rag.core import coreference as _shared
+from raku_rag.core.coreference import (  # noqa: F401 — re-exported public API (see NOTE above)
+    REFERENTIAL_MARKERS,
+    has_own_topic,
+    residual_topic,
+)
 from raku_rag.domain.models import IdentityClaims
 
 # A domain-agnostic seam (this module has zero manufacturing-specific knowledge, by design — see the
@@ -105,139 +116,24 @@ from raku_rag.domain.models import IdentityClaims
 # preserves this engine's original, pre-fix behavior exactly.
 HighRiskQuerySignal = Callable[[str], bool]
 
-# `query_planner.AMBIGUOUS_REFERENTS` only covers pronominal forms ("それ"/"これ"/"あれ"). Japanese
-# follow-ups just as often use adnominal/anaphoric forms that name a noun directly — "その締付トルク
-# は?" — rather than standing alone — "それは?". Both need the prior turn's identifier merged in, so
-# this list is a superset built ON the shared one (reusing its pronoun list), not a rival list.
-_ADDITIONAL_REFERENTIAL_MARKERS = (
-    "その",
-    "この",
-    "あの",
-    "上記",
-    "同じ",
-    "先程",
-    "先ほど",
-    "前述",
-    "そちら",
-    "こちら",
-)
-REFERENTIAL_MARKERS = tuple(dict.fromkeys(AMBIGUOUS_REFERENTS + _ADDITIONAL_REFERENTIAL_MARKERS))
-
-# A follow-up longer than this is treated as its own self-contained question even if it happens to
-# contain a referential marker somewhere (e.g. a troubleshooting narrative that uses "それ" to refer
-# to something named earlier in the SAME sentence, not in a prior turn). Rewriting a long, otherwise
-# independent question with a stale prior-turn identifier would do real harm, so length is a
-# deliberate, conservative gate, not an incidental one.
-_MAX_REFERENTIAL_FOLLOWUP_LENGTH = 40
-
-# Generic elaboration/politeness glue that carries no topic of its own ("それについてもう少し詳しく
-# 教えてください" == "tell me more about that"). Stripping these (and the referential markers above)
-# is how the engine decides whether the follow-up asks for a NEW fact (needs a fresh search) or
-# nothing beyond what was already answered (reuse it) — see `has_own_topic`.
-_GENERIC_FOLLOWUP_GLUE = (
-    "もう少し",
-    "詳しく",
-    "教えて",
-    "ください",
-    "下さい",
-    "について",
-    "お願いします",
-    "でしょうか",
-    "ですか",
-    "説明して",
-    "続けて",
-    "もっと",
-    "他には",
-    "ほかには",
-)
-_TRAILING_PUNCTUATION_RE = re.compile(r"[\s。、！?？!,.:：]+$")
-_TRAILING_PARTICLE_RE = re.compile(r"(?:は|を|が|の|に|で|も|と|へ|や)+$")
-_LEADING_PARTICLE_RE = re.compile(r"^(?:は|を|が|の|に|で|も|と|へ|や)+")
-
-
-def _normalize(text: str) -> str:
-    return " ".join(str(text or "").strip().split())
-
 
 def is_referential_followup(query: str, context: DialogueContext) -> bool:
     """The detector: a short message with a demonstrative/anaphoric reference and no identifier of
-    its own, asked when there is a prior turn to resolve it against.
-
-    Reuses `query_planner.plan_query`'s identifier extraction rather than a second implementation —
-    a message that already names its own identifier (e.g. "P-101の締付トルクは?") is self-contained
-    and must never be rewritten, even if it also happens to contain a referential marker.
+    its own, asked when there is a prior turn to resolve it against. Delegates to the shared
+    `core.coreference.is_referential_followup` (see the module docstring NOTE).
     """
-    if not context.previous_question:
-        return False
-    normalized = _normalize(query)
-    if not normalized or len(normalized) > _MAX_REFERENTIAL_FOLLOWUP_LENGTH:
-        return False
-    if not any(marker in normalized for marker in REFERENTIAL_MARKERS):
-        return False
-    return not plan_query(query).identifiers
-
-
-def residual_topic(query: str) -> str:
-    """What remains of `query` after stripping referential markers and generic elaboration glue.
-
-    Deliberately NOT a text-overlap comparison against the previous answer: the CJK-bigram retrieval
-    tokenizer (`hybrid_retrieval.lexical_query_terms`) makes a robust "is this already covered by the
-    old answer" check impractical for short queries (marker/particle boundary bigrams rarely match
-    verbatim evidence text either way, in both false directions). An empty residual means the
-    follow-up names nothing beyond the reference itself, so reusing the prior answer is both safe and
-    the only sensible option; any residual content names something the prior answer is not known to
-    cover, so a fresh, properly-scoped search is the conservative, always-safe choice.
-    """
-    residual = query
-    for marker in REFERENTIAL_MARKERS:
-        residual = residual.replace(marker, "")
-    for glue in _GENERIC_FOLLOWUP_GLUE:
-        residual = residual.replace(glue, "")
-    while True:
-        stripped = _TRAILING_PUNCTUATION_RE.sub("", residual)
-        stripped = _TRAILING_PARTICLE_RE.sub("", stripped)
-        stripped = _LEADING_PARTICLE_RE.sub("", stripped)
-        if stripped == residual:
-            return residual.strip()
-        residual = stripped
-
-
-def has_own_topic(query: str) -> bool:
-    return len(residual_topic(query)) >= 2
-
-
-def _previous_query_signal(context: DialogueContext) -> tuple[str, ...]:
-    """Identifiers/key terms to carry over from the prior turn: prefer what the prior QUESTION named
-    explicitly, then the prior turn's own cited document ids (which still anchor retrieval even when
-    the question itself never spelled out a code), then generic content terms as a last resort so a
-    rewrite is still attempted even for a vague prior question.
-    """
-    plan = plan_query(context.previous_question or "")
-    if plan.identifiers:
-        return plan.identifiers
-    if context.previous_document_ids:
-        return context.previous_document_ids
-    return plan.lexical_terms[:4]
+    return _shared.is_referential_followup(query, previous_question=context.previous_question)
 
 
 def standalone_query(query: str, context: DialogueContext) -> str:
-    """Merge the prior turn's identifiers/key terms into `query`, deterministically. No LLM
-    involved: plain string concatenation is enough to restore the missing signal for retrieval's own
-    identifier/lexical matching (see `core/hybrid_retrieval.py`) to pick back up.
+    """Merge the prior turn's identifiers/key terms into `query`, deterministically. Delegates to
+    the shared `core.coreference.standalone_query` (see the module docstring NOTE).
     """
-    lowered = query.casefold()
-    # `plan_query` returns identifiers in both a hyphenated and a separator-less compact form (e.g.
-    # "p-101" and "p101"); compare on the compact form too so carrying one form never duplicates the
-    # other when the query already spells out the identifier in a different, but equivalent, shape.
-    compact_lowered = lowered.replace("-", "").replace("_", "")
-    carry = [
-        term
-        for term in _previous_query_signal(context)
-        if term not in lowered and term.replace("-", "").replace("_", "") not in compact_lowered
-    ]
-    if not carry:
-        return query
-    return f"{query} {' '.join(carry)}"
+    return _shared.standalone_query(
+        query,
+        previous_question=context.previous_question,
+        previous_document_ids=context.previous_document_ids,
+    )
 
 
 def answer_from_previous_turn(context: DialogueContext) -> dict | None:

@@ -133,6 +133,9 @@ export class ManufacturingController {
       collection_id: body?.collection_id,
       intent_hint: body?.intent_hint,
       manufacturing_filters: body?.manufacturing_filters,
+      // U19: optional prior thread turns for referential follow-up resolution. Pass-through only —
+      // the answer-service validates/caps it; tenant + identity still come from the principal above.
+      history: body?.history,
     };
     return this.requestCore<ManufacturingAnswerResponse>(
       req,
