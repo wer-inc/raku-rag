@@ -106,6 +106,14 @@ RAKU_PROD_SMOKE_APPROVED=yes \
 `domain_name=demo.example.com` で再実行 → ACM(DNS検証)＋HTTPS＋80→443リダイレクトが入る。デプロイ中に
 ACMのDNS検証レコードを足し、`demo.example.com` を ALB の DNS 名へ向ける（Route53 Alias か CNAME）。
 
+## ドメインなしでHTTPSにするとき（ブラウザマイク等）
+Web Speech API のマイク（/phone 通話シミュレータ）などブラウザの secure context が必要な機能は
+`http://<ALB>` では動かない。ドメインを持っていない場合は **`https_front=cloudfront`** で再実行すると
+公開ALBの前に CloudFront が入り、`https://xxx.cloudfront.net` で使える（ドメイン/ACM不要。
+`domain_name` とは排他）。URL はスタック出力 **HttpsFrontUrl**（deploy の Summary にも出る）。
+Cognito のコールバック/ログアウトURLには CloudFront ドメインが既存URLに追加で自動登録される。
+既存の `http://<ALB>` 直アクセスは開いたまま（CloudFront 経由に絞るのは今後の課題）。
+
 ## つまずいたら
 各ステップのログ（特に `cdk deploy` / `migrate-seed`）を貼ってください。よくある詰まり: OIDCロールのsub条件
 （`repo:wer-inc/raku-rag:*`）不一致、bootstrap未実行（ワークフローが自動実行）、ヘルスチェック猶予。

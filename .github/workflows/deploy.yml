@@ -96,6 +96,11 @@ on:
         type: string
         required: false
         default: ""
+      https_front:
+        description: HTTPS entry point without a custom domain (cloudfront = CloudFront in front of the public ALB; browser mic etc. need a secure context)
+        type: choice
+        options: [none, cloudfront]
+        default: none
       dry_run:
         description: Synth/plan only (no AWS changes)
         type: boolean
@@ -130,6 +135,7 @@ jobs:
       BEDROCK_GUARDRAIL_VERSION: ${{ inputs.bedrock_guardrail_version }}
       PHONE_TELEPHONY: ${{ inputs.phone_telephony }}
       CONNECT_INSTANCE_ARN: ${{ inputs.connect_instance_arn }}
+      HTTPS_FRONT: ${{ inputs.https_front }}
       # Textract is not available in every AWS region where the app can run (for example Tokyo).
       # Keep the app stack regional, but route Textract OCR/layout calls to a supported region by
       # default. Override with repo/environment Variable TEXTRACT_REGION if residency requires it.
@@ -192,7 +198,22 @@ jobs:
               exit 1
               ;;
           esac
-          echo "stage=${STAGE} frontend=${FRONTEND} auth=${AUTH_MODE} visual=${VISUAL_PROVIDER_PROFILE} domain='${DOMAIN_NAME}' region=${AWS_REGION}"
+          case "${HTTPS_FRONT}" in
+            none|cloudfront) ;;
+            *)
+              echo "::error::https_front must be none or cloudfront."
+              exit 1
+              ;;
+          esac
+          if [ "${HTTPS_FRONT}" = "cloudfront" ] && [ -n "${DOMAIN_NAME}" ]; then
+            echo "::error::https_front=cloudfront is for the no-domain case; domain_name already provides HTTPS (ACM at the ALB)."
+            exit 1
+          fi
+          if [ "${HTTPS_FRONT}" = "cloudfront" ] && [ "${FRONTEND}" != "aws-nextjs" ]; then
+            echo "::error::https_front=cloudfront requires frontend=aws-nextjs (the web-owned public ALB is the origin)."
+            exit 1
+          fi
+          echo "stage=${STAGE} frontend=${FRONTEND} auth=${AUTH_MODE} visual=${VISUAL_PROVIDER_PROFILE} domain='${DOMAIN_NAME}' https_front=${HTTPS_FRONT} region=${AWS_REGION}"
 
       - name: Install + build CDK app
         working-directory: infra/cdk
@@ -225,6 +246,9 @@ jobs:
           fi
           if [ "${PHONE_TELEPHONY}" = "connect" ]; then
             CTX="${CTX} --context phoneTelephony=connect --context connectInstanceArn=${CONNECT_INSTANCE_ARN}"
+          fi
+          if [ "${HTTPS_FRONT}" = "cloudfront" ]; then
+            CTX="${CTX} --context httpsFront=cloudfront"
           fi
           npx cdk synth ${CTX} --quiet
 
@@ -267,6 +291,9 @@ jobs:
           if [ "${PHONE_TELEPHONY}" = "connect" ]; then
             CTX="${CTX} --context phoneTelephony=connect --context connectInstanceArn=${CONNECT_INSTANCE_ARN}"
           fi
+          if [ "${HTTPS_FRONT}" = "cloudfront" ]; then
+            CTX="${CTX} --context httpsFront=cloudfront"
+          fi
           npx cdk deploy --require-approval never ${CTX}
 
       - name: Migrate + seed (in-VPC one-off task)
@@ -283,6 +310,10 @@ jobs:
           aws cloudformation describe-stacks --stack-name "RakuRag-${STAGE}" \
             --query "Stacks[0].Outputs[?OutputKey=='ApiLoadBalancerDnsName'].OutputValue" --output text \
             | sed 's#^#Public URL (http): http://#' >> "$GITHUB_STEP_SUMMARY"
+          # Present only when https_front=cloudfront (the secure-context entry point).
+          aws cloudformation describe-stacks --stack-name "RakuRag-${STAGE}" \
+            --query "Stacks[0].Outputs[?OutputKey=='HttpsFrontUrl'].OutputValue" --output text \
+            | sed '/^[[:space:]]*$/d; s#^#Public URL (https, CloudFront): #' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Live smoke (Cognito + production probes)
         if: ${{ !inputs.dry_run && inputs.run_live_smoke }}
