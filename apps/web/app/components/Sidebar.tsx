@@ -9,7 +9,6 @@ import {
   type NavGroup,
   type NavIconName,
   type NavItem,
-  REVIEW_BADGE_COUNT,
   WORKSPACE_IDENTITY,
 } from "../../lib/full-saas";
 import {
@@ -20,7 +19,8 @@ import {
   userDisplayName,
   type WorkspaceRole,
 } from "../../lib/nav-rbac";
-import { getBrowserSessionState, startCognitoLogout } from "../../lib/session";
+import { manufacturingListDrafts } from "../../lib/api-client";
+import { getBrowserSessionState, getSessionToken, startCognitoLogout } from "../../lib/session";
 
 const ICON_PATHS: Record<NavIconName | "orgswitch" | "signout", string> = {
   home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/>',
@@ -68,7 +68,15 @@ function NavIcon({ name, size = 18 }: { name: keyof typeof ICON_PATHS; size?: nu
 
 // U8: a nav group. Groups marked defaultCollapsed (運用/管理) start closed so the sidebar stays
 // scannable, and auto-open whenever the active route lives inside them (deep links included).
-function NavGroupSection({ group, active }: { group: NavGroup; active: string | null }) {
+function NavGroupSection({
+  group,
+  active,
+  reviewCount,
+}: {
+  group: NavGroup;
+  active: string | null;
+  reviewCount: number | null;
+}) {
   const containsActive = group.items.some((item) => item.href === active);
   const [open, setOpen] = useState(!group.defaultCollapsed || containsActive);
 
@@ -81,7 +89,7 @@ function NavGroupSection({ group, active }: { group: NavGroup; active: string | 
       <div className="sidebar-group">
         <p className="sidebar-group-label">{group.label}</p>
         {group.items.map((item) => (
-          <NavLink key={item.href} item={item} active={active === item.href} />
+          <NavLink key={item.href} item={item} active={active === item.href} reviewCount={reviewCount} />
         ))}
       </div>
     );
@@ -110,14 +118,23 @@ function NavGroupSection({ group, active }: { group: NavGroup; active: string | 
       </button>
       <div id={sectionId} hidden={!open}>
         {group.items.map((item) => (
-          <NavLink key={item.href} item={item} active={active === item.href} />
+          <NavLink key={item.href} item={item} active={active === item.href} reviewCount={reviewCount} />
         ))}
       </div>
     </div>
   );
 }
 
-function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+function NavLink({
+  item,
+  active,
+  reviewCount = null,
+}: {
+  item: NavItem;
+  active: boolean;
+  /** U18: live pending-review draft count (null = unknown/fetch failed → badge hidden). */
+  reviewCount?: number | null;
+}) {
   return (
     <Link
       href={item.href}
@@ -126,9 +143,9 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
     >
       <NavIcon name={item.icon} />
       <span className="sidebar-nav-label">{item.label}</span>
-      {item.badge === "review" && REVIEW_BADGE_COUNT > 0 && (
-        <span className="sidebar-nav-badge" aria-label={`未レビュー ${REVIEW_BADGE_COUNT} 件`}>
-          {REVIEW_BADGE_COUNT}
+      {item.badge === "review" && reviewCount !== null && reviewCount > 0 && (
+        <span className="sidebar-nav-badge" aria-label={`未レビュー ${reviewCount} 件`}>
+          {reviewCount}
         </span>
       )}
     </Link>
@@ -169,6 +186,32 @@ export default function Sidebar() {
   const showHome = homeNavVisible(roles);
   const displayRole = roleLabel(primaryRole(roles));
 
+  // U18: real review badge — pending drafts (status draft/in_review) from the existing drafts API.
+  // Fetched once on mount and again when the route enters/leaves /reviews (no polling); on error the
+  // badge is hidden (null) rather than showing a stale or fake number.
+  const [reviewCount, setReviewCount] = useState<number | null>(null);
+  const hasReviewBadgeNav = groups.some((group) => group.items.some((item) => item.badge === "review"));
+  const inReviews = pathname.startsWith("/reviews");
+  useEffect(() => {
+    if (!hasReviewBadgeNav) {
+      setReviewCount(null);
+      return;
+    }
+    let cancelled = false;
+    void getSessionToken()
+      .then((token) => manufacturingListDrafts(token))
+      .then((drafts) => {
+        if (cancelled) return;
+        setReviewCount(drafts.filter((d) => d.status === "draft" || d.status === "in_review").length);
+      })
+      .catch(() => {
+        if (!cancelled) setReviewCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasReviewBadgeNav, inReviews]);
+
   function onSignOut() {
     void startCognitoLogout().then((started) => {
       if (!started) router.push("/login");
@@ -193,7 +236,7 @@ export default function Sidebar() {
       <nav className="sidebar-nav" aria-label="Primary">
         {showHome && <NavLink item={HOME_NAV} active={active === HOME_NAV.href} />}
         {groups.map((group) => (
-          <NavGroupSection key={group.label} group={group} active={active} />
+          <NavGroupSection key={group.label} group={group} active={active} reviewCount={reviewCount} />
         ))}
       </nav>
 

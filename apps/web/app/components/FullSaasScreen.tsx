@@ -141,7 +141,7 @@ import {
   type DraftRecord,
 } from "../../lib/drafts";
 import {
-  clearImprovementItems,
+  clearResolvedImprovementItems,
   FEEDBACK_REASONS,
   loadImprovementItems,
   reasonLabel,
@@ -541,6 +541,27 @@ function collectionDisplayName(id?: string | null): string {
   return id;
 }
 
+// U15/U11: the collections the workspace already knows about (same derivation as the Answers screen
+// selector: distinct collection_id over the registered datasources). Falls back to the demo
+// collection when the list is empty or the API is unreachable, so selects always render an option.
+function useKnownCollections(): string[] {
+  const [collections, setCollections] = useState<string[]>([DEMO_COLLECTION]);
+  useEffect(() => {
+    void getSessionToken()
+      .then((token) => adminDataSources(token))
+      .then((sources) => {
+        const ids = [...new Set(sources.map((source) => source.collection_id).filter(Boolean))].sort();
+        if (ids.length > 0) {
+          setCollections(ids.includes(DEMO_COLLECTION) ? ids : [DEMO_COLLECTION, ...ids]);
+        }
+      })
+      .catch(() => {
+        /* keep default collection list */
+      });
+  }, []);
+  return collections;
+}
+
 function syncedReferenceScopes(
   sources: AdminDataSource[],
   documents: ManufacturingDocumentSummary[] = [],
@@ -832,7 +853,7 @@ function AnswerPanel({
             {APPROVAL_WORKFLOW_ENABLED && (
               <Link className="citation-open" href="/reviews/documents">根拠文書レビュー</Link>
             )}
-            <Link className="citation-open" href="/sources/list">ソースを確認</Link>
+            <Link className="citation-open" href="/sources/list">外部接続を確認</Link>
             <Link className="citation-open" href="/documents">ドキュメントを確認</Link>
           </div>
         </div>
@@ -2041,7 +2062,7 @@ function SourceSearchBody() {
           {sync && <FieldGrid rows={[["状態", sync.status], ["コレクション", sync.collection_id ?? "—"], ["相関 ID", sync.correlation_id ?? "—"]]} />}
         </section>
         <section className="ops-panel">
-          <h3>取り込み実行</h3>
+          <h3>取込履歴</h3>
           <form className="src-inline-form" onSubmit={onRun}>
             <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder="run_id" aria-label="実行 ID" autoComplete="off" />
             <button type="submit">確認</button>
@@ -3309,11 +3330,13 @@ function screenTitle(screen: ManifestScreen): string {
     answers: "質問する",
     chatbot: "チャットボット",
     "answer-history": "回答履歴",
-    "source-search": "ソース",
-    "source-list": "ソース",
-    "source-detail": "ソース詳細",
-    "add-source": "ソースを追加",
-    "ingestion-runs": "取り込み実行",
+    // U17: 用語統一 — connectors/sources are 「外部接続」 (matches the nav label), file uploads stay
+    // 「ファイル」, and the ingestion-runs screen is 「取込履歴」 (was 取り込み実行/取込ラン).
+    "source-search": "検索",
+    "source-list": "外部接続",
+    "source-detail": "外部接続の詳細",
+    "add-source": "外部接続を追加",
+    "ingestion-runs": "取込履歴",
     "document-list": "ドキュメント",
     "document-detail": "ドキュメント詳細",
     "review-queue": "AIドラフトレビュー",
@@ -3349,7 +3372,7 @@ function AddSourceCta({ className }: { className?: string }) {
       <span className="add-source-plus" aria-hidden="true">
         +
       </span>
-      <span>ソースを追加</span>
+      <span>外部接続を追加</span>
     </Link>
   );
 }
@@ -4565,12 +4588,12 @@ function HomeDashboardBody() {
           ) : (
             <Link href="/sources/list" className="home-task-card">
               <div className="home-task-head">
-                <span className="home-task-label">ソース</span>
+                <span className="home-task-label">外部接続</span>
                 <span className="home-task-dot home-task-dot-ok" />
               </div>
               <strong>同期</strong>
               <span>外部接続とファイルを整える</span>
-              <span className="home-task-cta">ソースを見る</span>
+              <span className="home-task-cta">外部接続を見る</span>
             </Link>
           )}
           <Link href="/operations/safety" className="home-task-card">
@@ -4610,8 +4633,8 @@ function HomeDashboardBody() {
               <span>取り込んだナレッジで応答を確認する</span>
             </Link>
             <Link href="/sources/list" className="action-card">
-              <strong>ソース一覧</strong>
-              <span>ソースと同期状態を確認する</span>
+              <strong>外部接続</strong>
+              <span>接続と同期状態を確認する</span>
             </Link>
             {APPROVAL_WORKFLOW_ENABLED ? (
               <Link href="/reviews" className="action-card">
@@ -4783,7 +4806,7 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
       )}
 
       {latestRun && (
-        <Section title="最新取り込み実行">
+        <Section title="最新の取込">
           <FieldGrid
             rows={[
               ["状態", latestRun.status],
@@ -4827,10 +4850,10 @@ function ApprovalWorkflowPausedBody() {
       <p className="src-warning" role="status">
         文書承認フローは一時停止中です。新しく追加・同期した文書は、ソースを信頼する前提で質問に使える状態として取り込みます。
       </p>
-      <Section title="次に進む" note="まずはソース追加、同期、質問・チャットの end to end を優先します。">
+      <Section title="次に進む" note="まずは外部接続の追加、同期、質問・チャットの end to end を優先します。">
         <div className="quick-card-grid">
           <Link href="/sources/new" className="action-card">
-            <strong>ソースを追加</strong>
+            <strong>外部接続を追加</strong>
             <span>外部接続を設定する</span>
           </Link>
           <Link href="/files" className="action-card">
@@ -4928,7 +4951,7 @@ function DocumentApprovalQueueEnabledBody() {
       >
         {merged.length === 0 ? (
           <p className="ops-empty">
-            取り込んだ文書がありません。<Link href="/sources/new">ソースを追加</Link> からアップロードしてください。
+            取り込んだ文書がありません。<Link href="/sources/new">外部接続を追加</Link> から取り込んでください。
           </p>
         ) : (
           <div className="approval-list">
@@ -5355,10 +5378,58 @@ function ReviewQueueBody() {
   const router = useRouter();
   const [drafts, setDrafts] = useState<DraftRecord[]>([]);
   const [kind, setKind] = useState("checklist");
-  const [docIds, setDocIds] = useState("m1");
-  const [collection, setCollection] = useState("manuals");
+  // U11: source documents are picked from the real document list; the raw comma-separated ID input
+  // survives as an opt-in 詳細指定 fallback for power users (IDs not in the list, e.g. just-ingested).
+  const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
+  const [advancedDocInput, setAdvancedDocInput] = useState(false);
+  const [docIds, setDocIds] = useState("");
+  const [collection, setCollection] = useState(DEMO_COLLECTION);
+  const collections = useKnownCollections();
   const [creating, setCreating] = useState(false);
+  const [uploadedDocs, setUploadedDocs] = useState<IngestedDoc[]>([]);
+  const [docOptionsState, setDocOptionsState] = useState<ViewState<ManufacturingDocumentSummary[]>>({
+    state: "loading",
+  });
   const toast = useToast();
+
+  useEffect(() => {
+    setUploadedDocs(loadIngestedDocs());
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDocOptionsState({ state: "loading" });
+    void getSessionToken()
+      .then((token) => manufacturingDocuments(token, collection))
+      .then((docs) => {
+        if (!cancelled) setDocOptionsState({ state: "ready", data: docs });
+      })
+      .catch((err) => {
+        if (!cancelled) setDocOptionsState({ state: "error", error: formatLoadError(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [collection]);
+
+  const docOptions = useMemo(() => {
+    if (docOptionsState.state !== "ready") return [];
+    const titleById = new Map(
+      uploadedDocs.filter((doc) => doc.filename).map((doc) => [doc.document_id, doc.filename as string]),
+    );
+    return docOptionsState.data.map((doc) => ({
+      id: doc.document_id,
+      label: titleById.get(doc.document_id) ?? doc.document_id,
+      kind: documentKindLabel(doc.document_kind),
+      approval: doc.approval_status,
+    }));
+  }, [docOptionsState, uploadedDocs]);
+
+  function toggleDocSelection(id: string) {
+    setSelectedDocIds((current) =>
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
+    );
+  }
 
   async function reloadDrafts() {
     try {
@@ -5389,10 +5460,12 @@ function ReviewQueueBody() {
     setCreating(true);
     try {
       const token = await getSessionToken();
-      const ids = docIds
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+      const ids = advancedDocInput
+        ? docIds
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : selectedDocIds;
       const draft = await manufacturingCreateDraft(
         {
           kind,
@@ -5425,8 +5498,33 @@ function ReviewQueueBody() {
         <section className="review-queue-panel" aria-label="AIドラフトレビュー">
           <div className="review-queue-head">
             <h3>AIドラフトレビュー</h3>
-            <span className="review-queue-count">{drafts.length}</span>
+            {/* U18: pending (下書き+レビュー中) instead of the status-blind total. */}
+            <span
+              className="review-queue-count"
+              title="未対応（下書き + レビュー中）"
+              aria-label={`未対応 ${
+                drafts.filter((d) => d.status === "draft" || d.status === "in_review").length
+              } 件`}
+            >
+              {drafts.filter((d) => d.status === "draft" || d.status === "in_review").length}
+            </span>
           </div>
+          {drafts.length > 0 && (
+            <p className="review-queue-breakdown" aria-label="ステータス別件数">
+              {(
+                [
+                  ["draft", "下書き"],
+                  ["in_review", "レビュー中"],
+                  ["approved", "承認済み"],
+                  ["rejected", "却下"],
+                ] as const
+              ).map(([status, label]) => (
+                <span key={status}>
+                  {label} {drafts.filter((d) => d.status === status).length}
+                </span>
+              ))}
+            </p>
+          )}
           {drafts.length === 0 ? (
             <p className="ops-empty">
               まだドラフトはありません。右の「AI ドラフトを作成」から生成してください。
@@ -5463,13 +5561,81 @@ function ReviewQueueBody() {
               </select>
             </label>
             <label>
-              <span>根拠ドキュメント ID（カンマ区切り）</span>
-              <input value={docIds} onChange={(e) => setDocIds(e.target.value)} placeholder="m1, belt-c7" />
-            </label>
-            <label>
               <span>コレクション</span>
-              <input value={collection} onChange={(e) => setCollection(e.target.value)} />
+              <select
+                value={collection}
+                onChange={(e) => {
+                  setCollection(e.target.value);
+                  // Selected documents belong to the previous collection — reset the picker.
+                  setSelectedDocIds([]);
+                }}
+              >
+                {(collections.includes(collection) ? collections : [collection, ...collections]).map((id) => (
+                  <option key={id} value={id}>
+                    {collectionDisplayName(id)}
+                  </option>
+                ))}
+              </select>
             </label>
+            {!advancedDocInput && (
+              <div className="draft-doc-picker">
+                <span>根拠ドキュメント（未選択の場合はコレクション全体）</span>
+                {docOptionsState.state === "loading" && (
+                  <p className="ops-empty" role="status" aria-live="polite">
+                    ドキュメントを読み込み中…
+                  </p>
+                )}
+                {docOptionsState.state === "error" && (
+                  <p className="ops-note" role="alert">
+                    ドキュメント一覧を取得できませんでした。「詳細指定」で ID を直接入力できます。
+                  </p>
+                )}
+                {docOptionsState.state === "ready" &&
+                  (docOptions.length === 0 ? (
+                    <p className="ops-empty">
+                      このコレクションにドキュメントはまだありません。
+                      <Link href="/sources/new">外部接続を追加</Link> から取り込めます。
+                    </p>
+                  ) : (
+                    <div className="draft-doc-options" role="group" aria-label="根拠ドキュメントの選択">
+                      {docOptions.map((doc) => (
+                        <label key={doc.id} className="draft-doc-option">
+                          <input
+                            type="checkbox"
+                            checked={selectedDocIds.includes(doc.id)}
+                            onChange={() => toggleDocSelection(doc.id)}
+                          />
+                          <span className="draft-doc-option-label">{doc.label}</span>
+                          <span className="draft-doc-option-meta">{doc.kind}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                {selectedDocIds.length > 0 && (
+                  <p className="ops-note" aria-live="polite">
+                    {selectedDocIds.length} 件選択中
+                  </p>
+                )}
+              </div>
+            )}
+            {advancedDocInput && (
+              <label>
+                <span>根拠ドキュメント ID（カンマ区切り）</span>
+                <input
+                  value={docIds}
+                  onChange={(e) => setDocIds(e.target.value)}
+                  placeholder="document_id をカンマ区切りで入力"
+                />
+              </label>
+            )}
+            <button
+              type="button"
+              className="linklike draft-doc-mode-toggle"
+              aria-pressed={advancedDocInput}
+              onClick={() => setAdvancedDocInput((v) => !v)}
+            >
+              {advancedDocInput ? "一覧から選ぶに戻す" : "詳細指定（ID を直接入力）"}
+            </button>
             <button type="submit" disabled={creating}>
               {creating ? "生成中…" : "ドラフトを生成"}
             </button>
@@ -5535,7 +5701,7 @@ function IngestionRunsBody() {
       {connectorRuns.length > 0 && (
         <Section
           title="最近のコネクタ同期（このブラウザ）"
-          note="「ソースを追加」から開始した同期です。実行 ID で詳細を確認できます。"
+          note="「外部接続を追加」から開始した同期です。実行 ID で詳細を確認できます。"
         >
           <DataTable
             columns={["実行 ID", "ソース", "種別", "状態", "変更", "日時"]}
@@ -5562,7 +5728,7 @@ function IngestionRunsBody() {
         </Section>
       )}
       {uploads.length > 0 && (
-        <Section title="最近のアップロード取込（このブラウザ）" note="ファイルアップロードから作成された取込ランです。">
+        <Section title="最近のアップロード取込（このブラウザ）" note="ファイルアップロードから作成された取込です。">
           <DataTable
             columns={["実行 ID", "ソース", "状態", "チャンク", "日時"]}
             rows={uploads.map((doc) => [
@@ -5588,7 +5754,7 @@ function IngestionRunsBody() {
       )}
       {connectorRuns.length === 0 && uploads.length === 0 && (
         <p className="ops-empty">
-          まだ取込履歴はありません。<Link href="/sources/new">ソースを追加</Link> から同期またはアップロードしてください。
+          まだ取込履歴はありません。<Link href="/sources/new">外部接続を追加</Link> から同期またはアップロードしてください。
         </p>
       )}
       {state.state === "loading" && lastLookupId && <p className="ops-empty" role="status" aria-live="polite">実行状態を読み込み中…</p>}
@@ -5976,6 +6142,38 @@ function ImpactReportBody() {
   );
 }
 
+type ImprovementOrigin = "feedback" | "audit" | "local";
+type ImprovementStatusFilter = "all" | "open" | "resolved";
+
+const IMPROVEMENT_ORIGIN_LABEL: Record<ImprovementOrigin, string> = {
+  feedback: "フィードバック",
+  audit: "監査",
+  local: "この端末",
+};
+
+// U14: one row of the merged improvement queue. `localId` links a server row to the browser-local
+// record that duplicates it (matched on answer_id — the only key both sides share; local rows keep
+// no feedback_id/correlation_id), which supplies the 対応済み state. Server-side resolve is a
+// known follow-up: フィードバック/監査 rows have no persisted status yet.
+type UnifiedImprovementRow = {
+  key: string;
+  origin: ImprovementOrigin;
+  chip: { label: string; cls: string };
+  title: string;
+  detail: string;
+  created_at: string;
+  localId?: string;
+  resolved: boolean;
+};
+
+const IMPROVEMENT_KIND_LABEL: Record<string, string> = {
+  low_rating: "低評価",
+  unanswered: "未回答",
+  insufficient_evidence: "根拠不足",
+  safety_block: "安全ブロック",
+  obsolete_only: "旧版のみヒット",
+};
+
 function ImprovementQueueBody() {
   const [items, setItems] = useState<ImprovementItem[]>([]);
   const [serverItems, setServerItems] = useState<
@@ -5984,6 +6182,9 @@ function ImprovementQueueBody() {
   // ★G3a: persisted feedback rows (answer_feedback via GET /v1/feedback). null = endpoint
   // unavailable (offline / non-reviewer) → fall back to the browser-local queue only.
   const [feedbackRows, setFeedbackRows] = useState<FeedbackRecord[] | null>(null);
+  const [originFilter, setOriginFilter] = useState<"all" | ImprovementOrigin>("all");
+  const [statusFilter, setStatusFilter] = useState<ImprovementStatusFilter>("all");
+  const [confirmClearResolved, setConfirmClearResolved] = useState(false);
 
   useEffect(() => {
     setItems(loadImprovementItems());
@@ -6023,137 +6224,207 @@ function ImprovementQueueBody() {
     setImprovementStatus(id, "open");
     setItems(loadImprovementItems());
   }
-  function clearAll() {
-    clearImprovementItems();
-    setItems([]);
+  function clearResolved() {
+    clearResolvedImprovementItems();
+    setItems(loadImprovementItems());
+    setConfirmClearResolved(false);
   }
 
-  const open = items.filter((i) => i.status === "open");
+  const { rows, mergedCount } = useMemo(() => {
+    const localByAnswer = new Map<string, ImprovementItem>();
+    for (const item of items) {
+      if (item.answer_id && !localByAnswer.has(item.answer_id)) localByAnswer.set(item.answer_id, item);
+    }
+    // Local rows that duplicate a server row (same answer_id) are folded into it instead of listed twice.
+    const consumed = new Set<string>();
+    const merged: UnifiedImprovementRow[] = [];
+    for (const row of feedbackRows ?? []) {
+      const local = row.answer_id ? localByAnswer.get(row.answer_id) : undefined;
+      if (local) consumed.add(local.id);
+      merged.push({
+        key: `fb-${row.feedback_id}`,
+        origin: "feedback",
+        chip:
+          row.rating === "up"
+            ? { label: "👍 有用", cls: "approval-approved" }
+            : row.rating === "down"
+              ? { label: "👎 要改善", cls: "approval-obsolete" }
+              : { label: "中立", cls: "approval-draft" },
+        title: local?.question || row.answer_id || row.citation_id || row.feedback_id,
+        detail: `${row.reason_code ? `理由: ${reasonLabel(row.reason_code)} · ` : ""}${row.actor_id} · ${new Date(row.created_at).toLocaleString("ja-JP")}`,
+        created_at: row.created_at,
+        localId: local?.id,
+        resolved: local?.status === "resolved",
+      });
+    }
+    for (const item of serverItems) {
+      const local = item.answer_id ? localByAnswer.get(item.answer_id) : undefined;
+      if (local) consumed.add(local.id);
+      merged.push({
+        key: `audit-${item.id}`,
+        origin: "audit",
+        chip: { label: IMPROVEMENT_KIND_LABEL[item.kind] ?? item.kind, cls: "approval-obsolete" },
+        title: local?.question || item.answer_id || item.id,
+        detail: `${item.reason ?? "—"} · ${new Date(item.created_at).toLocaleString("ja-JP")}`,
+        created_at: item.created_at,
+        localId: local?.id,
+        resolved: local?.status === "resolved",
+      });
+    }
+    for (const item of items) {
+      if (consumed.has(item.id)) continue;
+      merged.push({
+        key: `local-${item.id}`,
+        origin: "local",
+        chip: { label: "👎 要改善", cls: "approval-obsolete" },
+        title: item.question,
+        detail: `理由: ${reasonLabel(item.reason)} · ${new Date(item.created_at).toLocaleString("ja-JP")}`,
+        created_at: item.created_at,
+        localId: item.id,
+        resolved: item.status === "resolved",
+      });
+    }
+    merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return { rows: merged, mergedCount: consumed.size };
+  }, [items, serverItems, feedbackRows]);
 
-  const kindLabel: Record<string, string> = {
-    low_rating: "低評価",
-    unanswered: "未回答",
-    insufficient_evidence: "根拠不足",
-    safety_block: "安全ブロック",
-    obsolete_only: "旧版のみヒット",
-  };
+  const filteredRows = rows.filter((row) => {
+    if (originFilter !== "all" && row.origin !== originFilter) return false;
+    if (statusFilter === "resolved" && !row.resolved) return false;
+    if (statusFilter === "open" && row.resolved) return false;
+    return true;
+  });
+  const openCount = rows.filter((row) => !row.resolved).length;
+  const resolvedLocalCount = items.filter((item) => item.status === "resolved").length;
+  const originCounts = (origin: ImprovementOrigin) => rows.filter((row) => row.origin === origin).length;
 
   return (
     <>
       <p className="src-warning">
-        サーバに保存されたフィードバック・監査ログ由来の改善候補・ブラウザ内フィードバックを合わせて表示します。
+        保存済みフィードバック・監査ログ由来の改善候補・このブラウザの記録を 1 つのキューに統合して表示します
+        （同じ回答への重複はまとめます）。
       </p>
-      {feedbackRows !== null && (
-        <Section title="保存済みフィードバック" note={`${feedbackRows.length} 件（全ユーザー・再起動後も保持）`}>
-          {feedbackRows.length === 0 ? (
-            <p className="ops-empty">まだ保存されたフィードバックはありません。</p>
-          ) : (
-            <div className="improve-list">
-              {feedbackRows.map((row) => (
-                <article className="improve-row" key={row.feedback_id}>
-                  <div className="improve-row-titles">
-                    <span
-                      className={`citation-chip ${row.rating === "up" ? "approval-approved" : "approval-obsolete"}`}
-                    >
-                      {row.rating === "up" ? "👍 有用" : row.rating === "down" ? "👎 要改善" : "中立"}
-                    </span>
-                    <strong>{row.answer_id || row.citation_id || row.feedback_id}</strong>
-                    <span>
-                      {row.reason_code ? `理由: ${reasonLabel(row.reason_code)} · ` : ""}
-                      {row.actor_id} · {new Date(row.created_at).toLocaleString("ja-JP")}
-                    </span>
-                  </div>
-                  <div className="improve-row-actions">
-                    <Link className="button-link secondary" href="/sources/new">
-                      文書を追加
-                    </Link>
-                    <Link className="button-link secondary" href="/admin/retrieval/debug">
-                      再評価
-                    </Link>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </Section>
-      )}
-      {serverItems.length > 0 && (
-        <Section title="監査由来の改善候補" note={`${serverItems.length} 件`}>
-          <div className="improve-list">
-            {serverItems.map((item) => (
-              <article className="improve-row" key={item.id}>
-                <div className="improve-row-titles">
-                  <span className="citation-chip approval-obsolete">{kindLabel[item.kind] ?? item.kind}</span>
-                  <strong>{item.answer_id ?? item.id}</strong>
-                  <span>
-                    {item.reason ?? "—"} · {new Date(item.created_at).toLocaleString("ja-JP")}
-                  </span>
-                </div>
-                <div className="improve-row-actions">
-                  <Link className="button-link secondary" href="/sources/new">
-                    文書を追加
-                  </Link>
-                  <Link className="button-link secondary" href="/admin/retrieval/debug">
-                    再評価
-                  </Link>
-                </div>
-              </article>
-            ))}
-          </div>
-        </Section>
+      {feedbackRows === null && (
+        <p className="ops-note" role="status">
+          保存済みフィードバックを取得できませんでした（権限またはオフライン）。監査由来とこのブラウザの記録のみ表示しています。
+        </p>
       )}
       <Section
         title="改善キュー"
-        note={`未対応 ${open.length} 件 / 全 ${items.length} 件（このブラウザのフィードバック）。`}
+        note={`未対応 ${openCount} 件 / 全 ${rows.length} 件（フィードバック ${originCounts("feedback")} · 監査 ${originCounts("audit")} · この端末 ${originCounts("local")}${mergedCount > 0 ? ` · 重複 ${mergedCount} 件を統合` : ""}）。対応済み状態はこの端末にのみ保存されます。`}
       >
-        {items.length === 0 ? (
+        <div className="source-list-controls improve-queue-controls" aria-label="改善キューの絞り込み">
+          <div className="source-list-filter" role="group" aria-label="由来で絞り込み">
+            {(
+              [
+                ["all", "すべて"],
+                ["feedback", "フィードバック"],
+                ["audit", "監査"],
+                ["local", "この端末"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={originFilter === value ? "source-filter-button active" : "source-filter-button"}
+                aria-pressed={originFilter === value}
+                onClick={() => setOriginFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="source-list-filter" role="group" aria-label="対応状況で絞り込み">
+            {(
+              [
+                ["all", "すべて"],
+                ["open", "未対応"],
+                ["resolved", "対応済み"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={statusFilter === value ? "source-filter-button active" : "source-filter-button"}
+                aria-pressed={statusFilter === value}
+                onClick={() => setStatusFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {rows.length === 0 ? (
           <p className="ops-empty">
             まだ改善項目はありません。<Link href="/">質問する</Link> で回答に「👎 要改善」を付けると、ここに集約されます。
           </p>
+        ) : filteredRows.length === 0 ? (
+          <p className="ops-empty">条件に合う改善項目はありません。絞り込みを変更してください。</p>
         ) : (
           <div className="improve-list">
-            {items.map((item) => (
-              <article className={`improve-row ${item.status === "resolved" ? "is-resolved" : ""}`} key={item.id}>
+            {filteredRows.map((row) => (
+              <article className={`improve-row ${row.resolved ? "is-resolved" : ""}`} key={row.key}>
                 <div className="improve-row-titles">
-                  <span
-                    className={`citation-chip ${item.status === "resolved" ? "approval-approved" : "approval-obsolete"}`}
-                  >
-                    {item.status === "resolved" ? "対応済み" : "未対応"}
+                  <span className="improve-row-chips">
+                    <span className={`citation-chip improve-origin improve-origin-${row.origin}`}>
+                      {IMPROVEMENT_ORIGIN_LABEL[row.origin]}
+                    </span>
+                    <span className={`citation-chip ${row.chip.cls}`}>{row.chip.label}</span>
+                    {row.localId && (
+                      <span className={`citation-chip ${row.resolved ? "approval-approved" : "approval-obsolete"}`}>
+                        {row.resolved ? "対応済み" : "未対応"}
+                      </span>
+                    )}
                   </span>
-                  <strong>{item.question}</strong>
-                  <span>
-                    理由: {reasonLabel(item.reason)} · {new Date(item.created_at).toLocaleString("ja-JP")}
-                  </span>
+                  <strong>{row.title}</strong>
+                  <span>{row.detail}</span>
                 </div>
                 <div className="improve-row-actions">
                   <Link className="button-link secondary" href="/sources/new">
                     文書を追加
                   </Link>
-                  <Link className="button-link secondary" href="/operations/quality">
-                    品質 KPI
-                  </Link>
-                  {item.status === "open" ? (
-                    <button type="button" className="btn-approve" onClick={() => resolve(item.id)}>
-                      対応済みにする
-                    </button>
+                  {row.origin === "local" ? (
+                    <Link className="button-link secondary" href="/operations/quality">
+                      品質 KPI
+                    </Link>
                   ) : (
-                    <button type="button" onClick={() => reopen(item.id)}>
-                      未対応に戻す
-                    </button>
+                    <Link className="button-link secondary" href="/admin/retrieval/debug">
+                      再評価
+                    </Link>
                   )}
+                  {row.localId &&
+                    (row.resolved ? (
+                      <button type="button" onClick={() => reopen(row.localId as string)}>
+                        未対応に戻す
+                      </button>
+                    ) : (
+                      <button type="button" className="btn-approve" onClick={() => resolve(row.localId as string)}>
+                        対応済みにする
+                      </button>
+                    ))}
                 </div>
               </article>
             ))}
           </div>
         )}
-        {items.length > 0 && (
+        {resolvedLocalCount > 0 && (
           <div className="screen-actions">
-            <button type="button" className="btn-reject" onClick={clearAll}>
-              この一覧を消去
+            <button type="button" className="btn-reject" onClick={() => setConfirmClearResolved(true)}>
+              対応済みをまとめて消去（{resolvedLocalCount} 件）
             </button>
           </div>
         )}
       </Section>
+      {confirmClearResolved && (
+        <ConfirmDialog
+          title="対応済みをまとめて消去"
+          body={`このブラウザで「対応済み」にした ${resolvedLocalCount} 件を消去します。未対応の項目とサーバ保存のフィードバック・監査記録は残ります。`}
+          confirmLabel="消去する"
+          danger
+          onCancel={() => setConfirmClearResolved(false)}
+          onConfirm={clearResolved}
+        />
+      )}
     </>
   );
 }
@@ -6275,6 +6546,9 @@ type AddSourceField = {
   label: string;
   placeholder: string;
   type?: "text" | "password";
+  /** U15: blocked client-side when empty (mirrors the answer-service connector requirements in
+   *  src/raku_rag/services/datasource_sync.py); backend errors stay as the final net. */
+  required?: boolean;
 };
 
 type AddSourceType = {
@@ -6408,7 +6682,7 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   },
   url: {
     fields: [
-      { id: "target_url", label: "クロール対象 URL", placeholder: "https://intranet.example/manuals" },
+      { id: "target_url", label: "クロール対象 URL", placeholder: "https://intranet.example/manuals", required: true },
       { id: "crawl_depth", label: "クロール深度", placeholder: "例: 2" },
       { id: "sync_schedule", label: "更新スケジュール", placeholder: "例: 毎日 03:00" },
     ],
@@ -6441,25 +6715,25 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   box: {
     fields: [
       { id: "folder_id", label: "対象フォルダ ID", placeholder: "0（ルート）または フォルダ ID" },
-      { id: "access_token", label: "アクセストークン", placeholder: "Box access token", type: "password" },
+      { id: "access_token", label: "アクセストークン", placeholder: "Box access token", type: "password", required: true },
     ],
     dataSourceType: "box",
     note: "アクセストークン（Bearer）方式でフォルダ内の文書を取込します。対応形式（txt/md/csv/html/docx/xlsx）のみ同期します。",
   },
   confluence: {
     fields: [
-      { id: "site_url", label: "サイト URL", placeholder: "https://example.atlassian.net/wiki" },
-      { id: "space_key", label: "対象スペース", placeholder: "MFG" },
-      { id: "email", label: "メールアドレス", placeholder: "bot@example.com" },
-      { id: "api_token", label: "API トークン", placeholder: "Atlassian API token", type: "password" },
+      { id: "site_url", label: "サイト URL", placeholder: "https://example.atlassian.net/wiki", required: true },
+      { id: "space_key", label: "対象スペース", placeholder: "MFG", required: true },
+      { id: "email", label: "メールアドレス", placeholder: "bot@example.com", required: true },
+      { id: "api_token", label: "API トークン", placeholder: "Atlassian API token", type: "password", required: true },
     ],
     dataSourceType: "confluence",
     note: "API トークン方式（メール + トークンの Basic 認証）で対象スペースのページを取込します。",
   },
   notion: {
     fields: [
-      { id: "database_id", label: "対象データベース ID", placeholder: "Notion database ID" },
-      { id: "integration_token", label: "インテグレーショントークン", placeholder: "secret_xxx", type: "password" },
+      { id: "database_id", label: "対象データベース ID", placeholder: "Notion database ID", required: true },
+      { id: "integration_token", label: "インテグレーショントークン", placeholder: "secret_xxx", type: "password", required: true },
     ],
     dataSourceType: "notion",
     note: "インテグレーショントークン方式でデータベース内のページをブロック展開し、Markdown 化して取込します。",
@@ -6472,9 +6746,9 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   },
   kintone: {
     fields: [
-      { id: "subdomain", label: "サブドメイン", placeholder: "example.cybozu.com" },
-      { id: "api_token", label: "API トークン", placeholder: "API token", type: "password" },
-      { id: "app_id", label: "対象アプリ", placeholder: "123" },
+      { id: "subdomain", label: "サブドメイン", placeholder: "example.cybozu.com", required: true },
+      { id: "api_token", label: "API トークン", placeholder: "API token", type: "password", required: true },
+      { id: "app_id", label: "対象アプリ", placeholder: "123", required: true },
     ],
     dataSourceType: "object_storage",
     note: "API トークン方式で kintone アプリのレコードを取込します（cybozu.com / kintone.com のみ許可）。",
@@ -6491,7 +6765,7 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   },
   s3: {
     fields: [
-      { id: "bucket", label: "バケット名", placeholder: "raku-rag-documents" },
+      { id: "bucket", label: "バケット名", placeholder: "raku-rag-documents", required: true },
       { id: "region", label: "リージョン", placeholder: "ap-northeast-1" },
       { id: "access_key_id", label: "アクセスキー ID", placeholder: "AKIA..." },
       { id: "secret_access_key", label: "シークレットアクセスキー", placeholder: "secret", type: "password" },
@@ -6505,8 +6779,8 @@ const ADD_SOURCE_CONFIGS: Record<AddSourceTypeId, AddSourceConfig> = {
   db: {
     fields: [
       { id: "db_engine", label: "エンジン", placeholder: "postgres または mysql" },
-      { id: "connection_string", label: "接続文字列", placeholder: "postgresql://… または mysql://user:pass@host:3306/db", type: "password" }, // pragma: allowlist secret -- illustrative placeholder, not a credential
-      { id: "table_name", label: "対象テーブル", placeholder: "public.maintenance_cases" },
+      { id: "connection_string", label: "接続文字列", placeholder: "postgresql://… または mysql://user:pass@host:3306/db", type: "password", required: true }, // pragma: allowlist secret -- illustrative placeholder, not a credential
+      { id: "table_name", label: "対象テーブル", placeholder: "public.maintenance_cases", required: true },
       { id: "updated_column", label: "更新検知列（任意）", placeholder: "updated_at" },
       { id: "allow_private_host", label: "内部ホストを許可（任意）", placeholder: "社内DBに接続する場合は true" },
     ],
@@ -7917,7 +8191,9 @@ function AddSourceBody() {
   const [selectedSource, setSelectedSource] = useState<AddSourceTypeId>("text");
   const [text, setText] = useState("");
   const [sourceName, setSourceName] = useState("");
-  const [collectionId, setCollectionId] = useState("manuals");
+  // U15: 回答範囲 — rendered as a select (options = the collections the workspace already knows).
+  const [collectionId, setCollectionId] = useState(DEMO_COLLECTION);
+  const collections = useKnownCollections();
   const [sourceId, setSourceId] = useState(() => defaultSourceIdFor("text"));
   const [approvalStatus] = useState<IngestApprovalStatus>(() => defaultIngestApprovalStatus());
   const [effectiveDate] = useState(() => defaultApprovalEffectiveDate() ?? todayIso());
@@ -7931,6 +8207,8 @@ function AddSourceBody() {
   const [uploadFailures, setUploadFailures] = useState<string[]>([]);
   const [result, setResult] = useState<IngestedDoc[]>([]);
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
+  // U15: per-field inline validation errors (key = field id, or "source_name" for the name field).
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [configSaving, setConfigSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const toast = useToast();
@@ -8008,6 +8286,7 @@ function AddSourceBody() {
     setSourceId(defaultSourceIdFor(sourceIdValue));
     setSourceName("");
     setConfigValues({});
+    setFieldErrors({});
     setText("");
     setResult([]);
     setUploadProgress("");
@@ -8023,15 +8302,44 @@ function AddSourceBody() {
 
   function onConfigChange(fieldId: string, value: string) {
     setConfigValues((current) => ({ ...current, [fieldId]: value }));
+    setFieldErrors((current) => {
+      if (!(fieldId in current)) return current;
+      const next = { ...current };
+      delete next[fieldId];
+      return next;
+    });
     resetConnectionValidation();
+  }
+
+  // U15: client-side required-field validation for the connector form. Sets inline errors, focuses
+  // the first invalid input, and blocks save/test/sync until valid (backend errors stay the final net).
+  function validateConnectorForm(): boolean {
+    const errors: Record<string, string> = {};
+    if (!sourceName.trim()) {
+      errors.source_name = "ソース名を入力してください。";
+    }
+    for (const field of selectedConfig.fields) {
+      if (field.required && !(configValues[field.id] ?? "").trim()) {
+        errors[field.id] = `${field.label}は必須です。`;
+      }
+    }
+    setFieldErrors(errors);
+    const firstInvalid = errors.source_name
+      ? "add-source-name"
+      : Object.keys(errors).length > 0
+        ? `add-source-field-${Object.keys(errors)[0]}`
+        : null;
+    if (firstInvalid) {
+      document.getElementById(firstInvalid)?.focus();
+      toast("入力内容を確認してください。必須項目が未入力です。", "error");
+      return false;
+    }
+    return true;
   }
 
   async function saveDatasource(): Promise<string | null> {
     if (selectedSource === "text" || configSaving || syncing) return null;
-    if (!sourceName.trim()) {
-      toast("ソース名を入力してください。", "error");
-      return null;
-    }
+    if (!validateConnectorForm()) return null;
     if (needsOAuthConnection && !oauthConnectionId) {
       toast("先に「Google で接続」で OAuth 認可を完了してください。", "error");
       return null;
@@ -8194,7 +8502,7 @@ function AddSourceBody() {
     setUploadProgress("");
 
     if (selectedSource !== "text") {
-      toast("このソース種別は接続設定フォームから保存してください。", "error");
+      toast("この外部接続は接続設定フォームから保存してください。", "error");
       return;
     }
     if (!sourceName.trim()) {
@@ -8308,7 +8616,7 @@ function AddSourceBody() {
   return (
     <>
       {step === "select" && (
-        <Section title="ソース種別" note="取り込むソースの種別を選択してください。">
+        <Section title="外部接続の種別" note="接続するサービス（またはテキスト貼り付け）を選択してください。">
           {/* U9: show the full connector lineup — ready ones selectable, the rest disabled with a
               対応予定 badge — so coverage is visible without creating dead configuration paths. */}
           <div className="source-type-grid">
@@ -8351,7 +8659,7 @@ function AddSourceBody() {
           className="add-source-back"
           onClick={() => setStep("select")}
         >
-          ← ソース種別の選択に戻る
+          ← 外部接続の種別選択に戻る
         </button>
       )}
 
@@ -8377,6 +8685,22 @@ function AddSourceBody() {
               <small id="text-source-name-help">
                 {sourceKindLabel(sourceTypeForConfig(selectedSource))} として登録されます。
               </small>
+            </label>
+
+            <label className="source-name-field">
+              <span>回答範囲（コレクション）</span>
+              <select
+                value={collectionId}
+                onChange={(e) => setCollectionId(e.target.value)}
+                aria-label="回答範囲（コレクション）"
+              >
+                {(collections.includes(collectionId) ? collections : [collectionId, ...collections]).map((id) => (
+                  <option key={id} value={id}>
+                    {collectionDisplayName(id)}
+                  </option>
+                ))}
+              </select>
+              <small>取込した文書は、このコレクションを参照する質問・チャットで利用できます。</small>
             </label>
 
             <textarea
@@ -8407,20 +8731,56 @@ function AddSourceBody() {
         <form className="connector-form" onSubmit={onSaveDatasource}>
           <Section title={`${selectedSourceDef.name} の接続設定`} note={selectedSourceDef.desc}>
             <label className="source-name-field">
-              <span>ソース名</span>
+              <span>
+                ソース名 <span className="req-mark" aria-hidden="true">*</span>
+              </span>
               <input
+                id="add-source-name"
                 value={sourceName}
                 onChange={(e) => {
                   setSourceName(e.target.value);
+                  setFieldErrors((current) => {
+                    if (!("source_name" in current)) return current;
+                    const next = { ...current };
+                    delete next.source_name;
+                    return next;
+                  });
                   resetConnectionValidation();
                 }}
                 placeholder={`例: ${selectedSourceDef.name} ナレッジ`}
                 required
-                aria-describedby="connector-source-name-help"
+                aria-invalid={fieldErrors.source_name ? true : undefined}
+                aria-describedby={
+                  fieldErrors.source_name ? "connector-source-name-error" : "connector-source-name-help"
+                }
               />
+              {fieldErrors.source_name && (
+                <span className="field-error" id="connector-source-name-error" role="alert">
+                  {fieldErrors.source_name}
+                </span>
+              )}
               <small id="connector-source-name-help">
                 {sourceKindLabel(sourceTypeForConfig(selectedSource))} として登録されます。
               </small>
+            </label>
+
+            <label className="source-name-field">
+              <span>回答範囲（コレクション）</span>
+              <select
+                value={collectionId}
+                onChange={(e) => {
+                  setCollectionId(e.target.value);
+                  resetConnectionValidation();
+                }}
+                aria-label="回答範囲（コレクション）"
+              >
+                {(collections.includes(collectionId) ? collections : [collectionId, ...collections]).map((id) => (
+                  <option key={id} value={id}>
+                    {collectionDisplayName(id)}
+                  </option>
+                ))}
+              </select>
+              <small>同期した文書は、このコレクションを参照する質問・チャットで利用できます。</small>
             </label>
 
             {selectedConfig.oauth && needsOAuthConnection && (
@@ -8466,13 +8826,30 @@ function AddSourceBody() {
             <div className="connector-form-grid">
               {selectedConfig.fields.map((field) => (
                 <label key={field.id}>
-                  <span>{field.label}</span>
+                  <span>
+                    {field.label}
+                    {field.required && (
+                      <>
+                        {" "}
+                        <span className="req-mark" aria-hidden="true">*</span>
+                      </>
+                    )}
+                  </span>
                   <input
+                    id={`add-source-field-${field.id}`}
                     type={field.type ?? "text"}
                     value={configValues[field.id] ?? ""}
                     onChange={(e) => onConfigChange(field.id, e.target.value)}
                     placeholder={field.placeholder}
+                    aria-required={field.required || undefined}
+                    aria-invalid={fieldErrors[field.id] ? true : undefined}
+                    aria-describedby={fieldErrors[field.id] ? `add-source-field-${field.id}-error` : undefined}
                   />
+                  {fieldErrors[field.id] && (
+                    <span className="field-error" id={`add-source-field-${field.id}-error`} role="alert">
+                      {fieldErrors[field.id]}
+                    </span>
+                  )}
                 </label>
               ))}
             </div>
@@ -8556,7 +8933,7 @@ function AddSourceBody() {
           />
           <div className="screen-actions">
             <Link className="button-link secondary" href="/ingestion-runs">
-              取込ランを見る
+              取込履歴を見る
             </Link>
           </div>
         </section>
@@ -8581,7 +8958,7 @@ function AddSourceBody() {
           />
           {result.length > 0 && (
             <DataTable
-              columns={["入力", "状態", "チャンク", "取込ラン"]}
+              columns={["入力", "状態", "チャンク", "実行 ID"]}
               rows={result.map((item) => [
                 <Link key={item.document_id} href={`/documents/${item.document_id}`}>
                   {item.filename || item.document_id}
@@ -8606,7 +8983,7 @@ function AddSourceBody() {
               </Link>
             )}
             <Link className="button-link secondary" href="/ingestion-runs">
-              取込ランを見る
+              取込履歴を見る
             </Link>
             <Link className="button-link secondary" href="/documents">
               ドキュメント一覧
@@ -8838,7 +9215,7 @@ function DocumentListBody() {
     setUploaded(loadIngestedDocs());
   }, []);
 
-  const emptyDocumentMessage = "ドキュメントはまだありません。「ソースを追加」から取り込めます。";
+  const emptyDocumentMessage = "ドキュメントはまだありません。「外部接続を追加」から取り込めます。";
   const serverDocs = docs.state === "ready" ? docs.data : [];
   const rows: DocumentListRow[] =
     docs.state === "ready"
@@ -9190,25 +9567,25 @@ function ApprovalWorkflowEnabledBody() {
 
   return (
     <>
-      <Section title="ナレッジ準備" note="ソース接続から正式根拠化、AI生成物レビューまでの作業順です。件数が残っている段階から処理してください。">
+      <Section title="ナレッジ準備" note="外部接続から正式根拠化、AI生成物レビューまでの作業順です。件数が残っている段階から処理してください。">
         <div className="knowledge-flow-grid" role="list" aria-label="ナレッジ準備の作業順">
           <KnowledgePrepStep
             index="1"
-            label="ソース"
+            label="外部接続"
             metric={`${sources.length} 件`}
             description={sourceActionCount > 0 ? `${sourceActionCount} 件に対応が必要` : "利用状態を確認済み"}
             tone={sourceActionCount > 0 ? "wait" : "ok"}
             href="/sources/list"
-            action="ソースを確認"
+            action="外部接続を確認"
           />
           <KnowledgePrepStep
             index="2"
             label="同期・取り込み"
-            metric={activeSyncCount > 0 ? `${activeSyncCount} 件実行中` : "取込ラン"}
+            metric={activeSyncCount > 0 ? `${activeSyncCount} 件実行中` : "取込履歴"}
             description={activeSyncCount > 0 ? "完了まで自動更新を確認" : "失敗や部分成功を確認"}
             tone={activeSyncCount > 0 ? "wait" : "ok"}
             href="/ingestion-runs"
-            action="取込ランを見る"
+            action="取込履歴を見る"
           />
           <KnowledgePrepStep
             index="3"
