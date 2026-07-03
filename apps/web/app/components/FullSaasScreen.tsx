@@ -2031,9 +2031,16 @@ function PhoneSimulatorSection() {
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const voiceModeRef = useRef(false);
-  const voiceSupported = useMemo(
-    () => speechRecognitionCtor() !== null && speechSynthesisSupported(),
+  // Browsers only allow microphone capture in a secure context (HTTPS or localhost); on plain
+  // HTTP the Web Speech APIs exist but recognition.start() is rejected — surface WHY instead of
+  // rendering a button that silently fails.
+  const voiceSecureContext = useMemo(
+    () => typeof window === "undefined" || window.isSecureContext !== false,
     [],
+  );
+  const voiceSupported = useMemo(
+    () => speechRecognitionCtor() !== null && speechSynthesisSupported() && voiceSecureContext,
+    [voiceSecureContext],
   );
 
   useEffect(() => {
@@ -2216,11 +2223,24 @@ function PhoneSimulatorSection() {
             type="button"
             onClick={toggleVoiceMode}
             disabled={!voiceSupported}
-            title={voiceSupported ? "マイクで話し、音声で回答を聞きます(ブラウザ内で完結)" : "このブラウザは音声認識に対応していません(Chrome推奨)"}
+            title={
+              voiceSupported
+                ? "マイクで話し、音声で回答を聞きます(ブラウザ内で完結)"
+                : !voiceSecureContext
+                  ? "マイクはHTTPS接続でのみ利用できます(現在はHTTP接続のためブラウザがマイクをブロックします)"
+                  : "このブラウザは音声認識に対応していません(Chrome推奨)"
+            }
             aria-pressed={voiceMode}
           >
             {voiceMode ? "音声モード: ON" : "音声モード: OFF"}
           </button>
+          {!voiceSupported && (
+            <span role="status">
+              {!voiceSecureContext
+                ? "音声モードはHTTPS接続でのみ利用できます(HTTP接続ではブラウザがマイクをブロックします)"
+                : "このブラウザは音声認識に対応していません(Chrome推奨)"}
+            </span>
+          )}
           {voiceMode && (
             <button
               type="button"
