@@ -42,7 +42,7 @@ from raku_rag.manufacturing.safety.visual_verify import (
     verify_visual_primary_evidence,
 )
 from raku_rag.services.cost import CostService
-from raku_rag.services.groundedness import GroundednessGate
+from raku_rag.services.groundedness import GateDecision, GroundednessGate
 from raku_rag.services.injection import PromptInjectionGuard
 from raku_rag.services.retrieval import RetrievalService
 from raku_rag.services.structured_query import classify_structured_query
@@ -132,7 +132,17 @@ class AnswerService:
         query: str,
         profile: QueryProfile,
         collection_id: str | None = None,
+        *,
+        intent_query: str | None = None,
     ) -> Answer:
+        """``query`` drives retrieval/generation. ``intent_query`` (optional) is the RAW,
+        un-enriched user question when an upstream coreference rewrite enriched ``query`` with
+        carried prior-turn signal (identifiers/document ids — see chatbot/coreference.py's
+        Finding). The ★G2 question-coverage gates judge "is the evidence responsive to what the
+        user actually ASKED", so they bind to this raw intent when present — a carried document id
+        must never be demanded of the evidence (same precedent as
+        manufacturing/api/answer_ext.py's ``_missing_query_identifiers``). ``None`` (every
+        non-rewriting caller) keeps behavior identical to before."""
         cid = new_correlation_id()
         total_started = time.perf_counter()
         span_cm = (
@@ -486,10 +496,23 @@ class AnswerService:
             # ★G2 no-answer gate: evidence must be responsive to the QUESTION. post_check above
             # only proves answer⊆evidence, which lets a question about absent content pull a
             # grounded-but-irrelevant sentence (goal.md 「"わからない"が言えない」). Text path only —
-            # visual answers ground in OCR regions, not the text context.
-            coverage_check = getattr(self._gate, "question_coverage_check", None)
-            if not use_vlm and context and callable(coverage_check):
-                coverage = coverage_check(query, context, profile.min_question_coverage)
+            # visual answers ground in OCR regions, not the text context. Two variants: the
+            # default-ON salient-term check (profile.salient_coverage_enabled — the root-cause fix)
+            # and the legacy all-content-terms fraction (profile.min_question_coverage, opt-in).
+            if not use_vlm and context:
+                # Judge the RAW intent when a rewrite enriched the query (see this method's
+                # docstring): carried prior-turn signal is a retrieval hint, not something the
+                # evidence must cover.
+                coverage_query = intent_query or query
+                coverage = GateDecision(True, "ok")
+                salient_check = getattr(self._gate, "salient_coverage_check", None)
+                if profile.salient_coverage_enabled and callable(salient_check):
+                    coverage = salient_check(coverage_query, context)
+                coverage_check = getattr(self._gate, "question_coverage_check", None)
+                if coverage.passed and callable(coverage_check):
+                    coverage = coverage_check(
+                        coverage_query, context, profile.min_question_coverage
+                    )
                 if not coverage.passed:
                     log(
                         "answer.insufficient_question_coverage",

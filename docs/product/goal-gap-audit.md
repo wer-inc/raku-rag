@@ -107,13 +107,27 @@ metadata+引用UI は A。残るギャップは4クラスタに集中する:
 - [x] ★G2 評価ゲート補強 — high_risk_recall を metrics として emit(常時0バグ解消)、
       EvaluationItem に answerability/category/risk_level、refusal 指標
       (over_refusal_rate / unanswerable_answer_rate / refusal_accuracy)+ risk_weighted_score、
-      golden corpus に回答不能7問(refuse 5 はハードゲート、in-domain 2 は**ratchet**:
+      golden corpus に回答不能7問(refuse 5 はハードゲート、in-domain 2 は当初**ratchet**:
       「ドメイン内の不在情報質問に根拠付き無関係文が ok で返る」既知ギャップの悪化を
       unanswerable_answer_rate ≤0.29 / risk_weighted_score ≥0.86 で封じ、改善時に締める)。
       QueryProfile.min_question_coverage(質問カバレッジ no-answer knob)は **opt-in デフォルト0**
       — 短い日本語追い質問(正解文書でも0.17)と無関係英語(0.14〜0.38)が分離不能なため。
-      根治は検索関連度/クエリ展開側(★G4以降)。矛盾/最新版選択カテゴリはコーパスハーネスが
-      base層(ライフサイクル無し)のため ★G4 で追加。
+      矛盾/最新版選択カテゴリはコーパスハーネスが base層(ライフサイクル無し)のため ★G4 で追加。
+- [x] ★G2続き **in-domain 回答不能ギャップ根治(CLOSED)** —
+      `GroundednessGate.salient_coverage_check`(**デフォルトON**、kill switch =
+      `QueryProfile.salient_coverage_enabled=False`): 質問の**顕著語**のみでカバレッジ判定
+      (①識別子(query_identifiers)は全て evidence 内に必須 — text/document_id/hot metadata、
+      ②顕著語彙(英数コンテンツ語から識別子断片を除外 + 漢字/カタカナ連続runの bigram、
+      ひらがな除外=naive版を壊した希釈の正体)の **≥50%** が evidence text に必須)。
+      PIIスパン(連絡先メール/電話)は判定前に Redactor で除去。coreference rewrite 経路は
+      `intent_query` を AnswerService.answer まで貫通し「ユーザが実際に聞いたこと」で判定
+      (持ち越し doc-id を evidence に要求しない — answer_ext の識別子判定と同じ束縛)。
+      **実測分離**(golden corpus + chatbot L2/L4/phone/U19 follow-up 全シナリオ):
+      要回答ケース ≥0.667 / 要拒否ケース ≤0.20、閾値0.5。golden corpus 実測:
+      unanswerable_answer_rate 0.2857→**0.0**、refusal_accuracy 0.92→**1.0**、
+      risk_weighted_score 0.8621→**1.0**、over_refusal_rate 0.0 維持、品質floor全維持。
+      ratchet は締め済み(baseline: ceiling 0.0 / floor 1.0)。副次効果: L2/L4 の
+      un-threaded bypass 形状(無関係承認文書の流用)もデフォルトで拒否(defense in depth)。
 - [x] ★G3a フィードバック永続化(#66 — 0023 answer_feedback + GET /v1/feedback + 改善キューのサーバ駆動化)
 - [x] ★G3b 未回答ドリルダウン(#68 — query_traces.query_redacted 0025 — 質問文はRedactorでPIIマスク後に
       保存 — + `GET /v1/quality/operational` + 品質・KPI画面「実測運用メトリクス」カード/未回答クエリ一覧)

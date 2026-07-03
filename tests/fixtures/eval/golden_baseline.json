@@ -1,5 +1,5 @@
 {
-  "_doc": "012/P1-5 COMMITTED deterministic baseline for tests/fixtures/uat/golden_corpus.json. These are measured, fixed values (NOT self-derived via baseline_from_run) so cross-commit quality drift is detectable. min_metrics are release-blocking floors; max_metrics are ceilings. p95_latency_ms is intentionally a generous ceiling only (latency is environment-dependent, not deterministic). precision_at_k=0.2 reflects precision@k with top_k=5 and one relevant doc per item (structural max 1/5); recall/mrr/citation/groundedness/claim_groundedness/faithfulness are 1.0 because each query's unique-token target is retrieved at rank 1 and the extractive answer is faithful by construction. claim_groundedness (P2, chatbot-conversational-agent-roadmap) is the per-claim/per-span strengthening of groundedness: every numeric/identifier span in an answer must trace to its cited evidence, not just share one term with it. ★G2: refusal behavior joins the gate. refusal_accuracy/risk_weighted_score floors and the unanswerable_answer_rate ceiling are RATCHETS pinned at measured values: the 2 unanswerable_in_domain items are answered today (grounded-but-irrelevant extraction — a known product gap, see goal-gap-audit ★G2/★G4), so the ceiling blocks the gap WIDENING and must be tightened when the no-answer gate improves (QueryProfile.min_question_coverage or retrieval-relevance work). high_risk_recall is the deterministic classifier recall over the red-team corpus (12/12), now also emitted as a metric for the 品質・KPI scorecard.",
+  "_doc": "012/P1-5 COMMITTED deterministic baseline for tests/fixtures/uat/golden_corpus.json. These are measured, fixed values (NOT self-derived via baseline_from_run) so cross-commit quality drift is detectable. min_metrics are release-blocking floors; max_metrics are ceilings. p95_latency_ms is intentionally a generous ceiling only (latency is environment-dependent, not deterministic). precision_at_k=0.2 reflects precision@k with top_k=5 and one relevant doc per item (structural max 1/5); recall/mrr/citation/groundedness/claim_groundedness/faithfulness are 1.0 because each query's unique-token target is retrieved at rank 1 and the extractive answer is faithful by construction. claim_groundedness (P2, chatbot-conversational-agent-roadmap) is the per-claim/per-span strengthening of groundedness: every numeric/identifier span in an answer must trace to its cited evidence, not just share one term with it. ★G2: refusal behavior joins the gate. All 7 unanswerable items (out-of-scope, safety, AND the 2 unanswerable_in_domain ones) now REFUSE: the former in-domain ratchet (unanswerable_answer_rate <=0.29 / risk_weighted_score >=0.86, which held the 'grounded-but-irrelevant extraction answers a question about absent in-domain content' gap) was CLOSED by the default-ON salient-term coverage gate (GroundednessGate.salient_coverage_check, QueryProfile.salient_coverage_enabled) and the ceilings/floors are tightened to the new measured values: unanswerable_answer_rate 0.0, refusal_accuracy 1.0, risk_weighted_score 1.0, query_cost 18.0 (the 2 flipped items no longer bill a completed answer). high_risk_recall is the deterministic classifier recall over the red-team corpus (12/12), also emitted as a metric for the 品質・KPI scorecard.",
   "metrics": {
     "recall_at_k": 1.0,
     "precision_at_k": 0.2,
@@ -8,11 +8,11 @@
     "groundedness": 1.0,
     "claim_groundedness": 1.0,
     "faithfulness": 1.0,
-    "query_cost": 20.0,
+    "query_cost": 18.0,
     "over_refusal_rate": 0.0,
-    "unanswerable_answer_rate": 0.2857,
-    "refusal_accuracy": 0.92,
-    "risk_weighted_score": 0.8621,
+    "unanswerable_answer_rate": 0.0,
+    "refusal_accuracy": 1.0,
+    "risk_weighted_score": 1.0,
     "high_risk_recall": 1.0
   },
   "min_metrics": {
@@ -23,15 +23,15 @@
     "groundedness": 1.0,
     "claim_groundedness": 1.0,
     "faithfulness": 1.0,
-    "refusal_accuracy": 0.92,
-    "risk_weighted_score": 0.86,
+    "refusal_accuracy": 1.0,
+    "risk_weighted_score": 1.0,
     "high_risk_recall": 1.0
   },
   "max_metrics": {
-    "query_cost": 20.0,
+    "query_cost": 18.0,
     "p95_latency_ms": 5000.0,
     "over_refusal_rate": 0.0,
-    "unanswerable_answer_rate": 0.29
+    "unanswerable_answer_rate": 0.0
   },
   "security_checks": [],
   "version_registry": {

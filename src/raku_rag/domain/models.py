@@ -136,13 +136,23 @@ class QueryProfile:
     # keys, generation uses that provider; unknown names fall back to the default (fail-open,
     # logged). The dataclass default means "no preference" (see DEFAULT_LLM_MODEL).
     llm_model: str = DEFAULT_LLM_MODEL
-    # ★G2 no-answer gate knob: minimum fraction of the question's content-terms that the USED
-    # evidence must contain, else the answer is refused as insufficient_evidence. OFF by default
-    # (0.0): measured coverage does NOT separate relevant from irrelevant for short Japanese
-    # queries (legit "その圧力の抜き方" vs its correct doc scores 0.17 — below irrelevant English
-    # cases) because particles/inflection dilute the CJK-bigram terms. Tenant-tunable opt-in via
-    # the retrieval profiles API for corpora where query/document vocabulary is aligned.
+    # ★G2 no-answer gate knob (naive variant): minimum fraction of the question's content-terms
+    # that the USED evidence must contain, else the answer is refused as insufficient_evidence.
+    # OFF by default (0.0): measured coverage does NOT separate relevant from irrelevant for short
+    # Japanese queries (legit "その圧力の抜き方" vs its correct doc scores 0.17 — below irrelevant
+    # English cases) because particles/inflection dilute the CJK-bigram terms. Kept as a
+    # tenant-tunable opt-in for corpora where query/document vocabulary is aligned; the DEFAULT
+    # no-answer gate is the salient-term check below, which fixes that JP dilution.
     min_question_coverage: float = 0.0
+    # ★G2 root-cause no-answer gate (default ON): the USED evidence must cover the question's
+    # SALIENT terms — all business identifiers plus >=50% of the ASCII content words and
+    # kanji/katakana-run bigrams (hiragana particles/inflection excluded, which is what broke the
+    # naive check above). Measured separation (2026-07-03, golden corpus + chatbot/phone/U19
+    # follow-up scenarios): must-answer cases >=0.667, must-refuse <=0.20. This closes the
+    # goal-gap-audit ★G2 in-domain gap (a question about ABSENT in-domain content no longer
+    # returns ok off a grounded-but-irrelevant sentence). Kill switch: set False per profile.
+    # See GroundednessGate.salient_coverage_check.
+    salient_coverage_enabled: bool = True
 
 
 @dataclass(frozen=True)

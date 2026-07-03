@@ -1614,6 +1614,18 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
     # through (adversarial review 2026-07-02). This is the headline case the root-cause fix closes.
     NO_KEYWORD_FOLLOWUP = "その排出弁の開け方を教えて"
 
+    def _disable_salient_coverage(self, mfg_sys: ManufacturingSystem) -> None:
+        # ★G2: the default-ON salient-coverage gate (services/groundedness.py) independently
+        # refuses the un-threaded bypass shape (the carried-in approved doc does not cover the
+        # follow-up's salient terms), so the pins below first prove that defense-in-depth refusal,
+        # then switch the gate OFF (its kill switch) to replay the PRE-FIX chain — proving the
+        # intent_query threading is load-bearing independently of the new gate.
+        registry = mfg_sys._mvp.profiles
+        registry.set(
+            "manuals",
+            dataclasses.replace(registry.resolve("manuals"), salient_coverage_enabled=False),
+        )
+
     def test_bypass_reproduces_when_intent_query_is_not_threaded(self):
         # Regression pin (proves the intent_query threading is load-bearing, not dead code): with the
         # raw intent DROPPED before it reaches the manufacturing chain -- i.e. the pre-fix behavior --
@@ -1625,6 +1637,13 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
         self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
         service = self._service_over(mfg_sys, authority="L2", thread_intent=False)
 
+        # Default profile: the ★G2 salient-coverage gate now refuses even this un-threaded shape.
+        status, second_turn = self._two_turns(service)
+        self.assertEqual(status, 200)
+        self.assertFalse(second_turn["rag"]["answerable"])
+        self.assertEqual(second_turn["assistant_message"]["citations"], [])
+
+        self._disable_salient_coverage(mfg_sys)
         status, second_turn = self._two_turns(service)
 
         self.assertEqual(status, 200)
@@ -1637,12 +1656,18 @@ class ChatbotL2CoreferenceHighRiskSafetyTest(unittest.TestCase):
         self.assertEqual(cited, [self.CONTEXT_DOC_ID], "cites the WRONG, unrelated document")
 
     def test_no_keyword_bypass_reproduces_when_intent_query_is_not_threaded(self):
-        # The exact case the keyword-only FIRST fix MISSED, un-threaded: reproduces identically.
+        # The exact case the keyword-only FIRST fix MISSED, un-threaded: reproduces identically
+        # (with the ★G2 salient-coverage gate switched off — see _disable_salient_coverage).
         mfg_sys = ManufacturingSystem()
         self._ingest_context_doc(mfg_sys)
         self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
         service = self._service_over(mfg_sys, authority="L2", thread_intent=False)
 
+        status, second_turn = self._two_turns(service, followup=self.NO_KEYWORD_FOLLOWUP)
+        self.assertEqual(status, 200)
+        self.assertFalse(second_turn["rag"]["answerable"])
+
+        self._disable_salient_coverage(mfg_sys)
         status, second_turn = self._two_turns(service, followup=self.NO_KEYWORD_FOLLOWUP)
 
         self.assertEqual(status, 200)
@@ -1882,6 +1907,21 @@ class ChatbotL4AgenticHighRiskSafetyTest(unittest.TestCase):
         self._ingest_real_doc(mfg_sys, approval_status=ApprovalStatus.PENDING_REVIEW)
         service = self._service_over(mfg_sys, wire_fix=False)
 
+        # ★G2: the default-ON salient-coverage gate independently refuses this blend (the unrelated
+        # approved doc does not cover the hazardous query's salient terms) — prove that first, then
+        # switch the gate OFF (its kill switch) to replay the pre-fix chain the pin documents.
+        status, turn = self._ask(service)
+        self.assertEqual(status, 200)
+        self.assertFalse(turn["rag"]["answerable"])
+        self.assertEqual(turn["assistant_message"]["citations"], [])
+
+        registry = mfg_sys._mvp.profiles
+        registry.set(
+            "manuals",
+            dataclasses.replace(registry.resolve("manuals"), salient_coverage_enabled=False),
+        )
+        # Fresh service: the scripted decision maker is single-shot (FinishAction once exhausted).
+        service = self._service_over(mfg_sys, wire_fix=False)
         status, turn = self._ask(service)
 
         self.assertEqual(status, 200)

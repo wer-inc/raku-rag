@@ -23,8 +23,15 @@ import re
 from dataclasses import dataclass
 from typing import Sequence
 
+from raku_rag.core.hybrid_retrieval import (
+    lexical_query_terms,
+    metadata_identifier_matches,
+    normalize_identifier,
+    query_identifiers,
+)
 from raku_rag.core.text import content_terms as _terms
 from raku_rag.domain.models import Chunk, QueryProfile, ScoredChunk
+from raku_rag.observability.redaction import Redactor
 
 
 @dataclass(frozen=True)
@@ -54,6 +61,60 @@ _IDENTIFIER_LIKE_RE = re.compile(
     r"|[A-Za-z]{1,20}[0-9]{1,20}(?:[_:-][A-Za-z0-9]{1,20})*"
     r")(?![A-Za-z0-9])"
 )
+
+
+# ★G2 salient-coverage gate constants (see `salient_coverage_check`).
+# Kanji/katakana runs of >=2 chars are the query's own content words; hiragana runs (particles,
+# inflection, politeness glue — "その/の/を教えて") are exactly the dilution that made the naive
+# all-content-terms fraction unable to separate a legit short JP follow-up (0.17 vs its correct doc)
+# from irrelevant English evidence (0.14–0.38). Bigrams WITHIN a strong run keep matching robust to
+# compound splits (温度センサ vs センサ) while never crossing a particle boundary.
+_STRONG_CJK_RUN_RE = re.compile(r"[㐀-鿿豈-﫿ァ-ヶー]{2,}")
+_ASCII_TERM_RE = re.compile(r"^[a-z0-9]+$")
+# "At least half of the question's salient terms must appear in the used evidence." Measured
+# separation over the golden corpus + chatbot/phone/U19 follow-up scenarios (2026-07-03):
+# must-answer cases score >=0.667, must-refuse cases <=0.20 — 0.5 sits in the gap with margin on
+# both sides (see tests/unit/test_question_coverage_gate.py::SalientCoverageCheckTest).
+SALIENT_LEXICAL_COVERAGE_THRESHOLD = 0.5
+# Contact/PII spans in a question ("...? contact alice@example.com or 03-1234-5678") are something
+# the EVIDENCE must never be expected to contain — left in, they become salient terms/identifiers
+# that dilute coverage and over-refuse an otherwise answerable question. Strip them (the same
+# Redactor the hot-path trace uses) before deriving salient terms, placeholders included.
+_PII_REDACTOR = Redactor()
+_PII_PLACEHOLDER_RE = re.compile(r"\[REDACTED:[a-z_]+\]")
+
+
+def _strip_pii(query: str) -> str:
+    return _PII_PLACEHOLDER_RE.sub(" ", _PII_REDACTOR.redact(query))
+
+
+def _salient_query_terms(query: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(identifiers, lexical) — the question's SALIENT terms.
+
+    identifiers: business identifiers per `core.hybrid_retrieval.query_identifiers` (both the
+    hyphenated and compact forms of each).
+    lexical: ASCII content terms from the lexical retrieval leg (stopword-filtered, >=3 chars or
+    2 chars with a digit) EXCLUDING fragments of the extracted identifiers ("press"/"100" inside
+    "EQ-PRESS-100" — the identifier leg already accounts for them, and counting them again lets an
+    identifier-sharing but otherwise unresponsive document inflate coverage), plus bigrams within
+    kanji/katakana runs (hiragana excluded — see `_STRONG_CJK_RUN_RE`).
+
+    PII spans are stripped first (see `_strip_pii`).
+    """
+    query = _strip_pii(query)
+    identifiers = query_identifiers(query)
+    lexical: set[str] = set()
+    for term in lexical_query_terms(query):
+        if not _ASCII_TERM_RE.match(term):
+            continue
+        if any(
+            term in identifier or term in identifier.replace("-", "") for identifier in identifiers
+        ):
+            continue
+        lexical.add(term)
+    for run in _STRONG_CJK_RUN_RE.findall(query):
+        lexical.update(run[i : i + 2] for i in range(len(run) - 1))
+    return identifiers, tuple(sorted(lexical))
 
 
 def _normalize_span(raw: str) -> str:
@@ -129,6 +190,61 @@ class GroundednessGate:
                 "insufficient_evidence: evidence does not cover the question "
                 f"(coverage={coverage:.2f} < {threshold:.2f})",
             )
+        return GateDecision(True, "ok")
+
+    def salient_coverage_check(self, query: str, evidence: Sequence[Chunk]) -> GateDecision:
+        """★G2 root-cause no-answer gate (goal.md §1-2 「"わからない"が言えない」), default-ON.
+
+        `question_coverage_check` above (the first attempt, opt-in via
+        QueryProfile.min_question_coverage) measured coverage over ALL content terms, which cannot
+        separate a legit short Japanese follow-up from irrelevant English evidence — particles/
+        inflection dilute the CJK-bigram term set. This check instead derives the question's
+        SALIENT terms (business identifiers + ASCII content words + kanji/katakana-run bigrams; see
+        `_salient_query_terms`) and requires the USED evidence to cover them:
+
+        - every extracted identifier must appear in the evidence (chunk text, document_id, or a hot
+          metadata identifier field — document_id/metadata matter for rewritten follow-ups whose
+          carried prior-turn signal is a document id, not prose); AND
+        - at least `SALIENT_LEXICAL_COVERAGE_THRESHOLD` of the salient lexical terms must appear in
+          the evidence text.
+
+        A question with no salient terms at all passes (nothing to judge — never over-refuse on
+        signal we could not extract). Evidence-based, not answer-based, so it is provider-
+        independent, and it runs AFTER post_check on the live path (services/answer.py), gated by
+        QueryProfile.salient_coverage_enabled (the kill switch).
+        """
+        identifiers, lexical = _salient_query_terms(query)
+        if not identifiers and not lexical:
+            return GateDecision(True, "ok")
+        evidence_text = " ".join(chunk.text for chunk in evidence).casefold()
+        if identifiers:
+            id_haystack = " ".join([evidence_text] + [chunk.document_id for chunk in evidence])
+            normalized_haystack = normalize_identifier(id_haystack)
+            compact_haystack = normalized_haystack.replace("-", "")
+            for identifier in identifiers:
+                if identifier in normalized_haystack:
+                    continue
+                if identifier.replace("-", "") in compact_haystack:
+                    continue
+                if any(
+                    metadata_identifier_matches(chunk.metadata, (identifier,)) for chunk in evidence
+                ):
+                    continue
+                return GateDecision(
+                    False,
+                    "insufficient_evidence: evidence does not cover the question "
+                    f"(identifier {identifier!r} not in evidence)",
+                )
+        if lexical:
+            covered = sum(1 for term in lexical if term in evidence_text)
+            coverage = covered / len(lexical)
+            if coverage < SALIENT_LEXICAL_COVERAGE_THRESHOLD:
+                return GateDecision(
+                    False,
+                    "insufficient_evidence: evidence does not cover the question "
+                    f"(salient coverage={coverage:.2f} < "
+                    f"{SALIENT_LEXICAL_COVERAGE_THRESHOLD:.2f})",
+                )
         return GateDecision(True, "ok")
 
     def claim_check(self, answer_text: str, evidence: Sequence[Chunk]) -> GateDecision:
