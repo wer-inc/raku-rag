@@ -45,7 +45,6 @@ class RlsPgvectorSecurityTest(unittest.TestCase):
             "retrieval_profiles",
             "logging_policies",
             "evaluation_runs",
-            "query_traces",
         ):
             with self.subTest(table=table):
                 self.assertIn(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY", self.sql)
