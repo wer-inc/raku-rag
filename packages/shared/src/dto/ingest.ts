@@ -23,6 +23,12 @@ export interface ManufacturingIngestMetadata {
   defect_type?: string;
   part_no?: string;
   customer?: string;
+  /** ★G4 freshness: responsible person/team for keeping the document current. */
+  owner?: string;
+  /** ★G4 freshness: review cycle in days (0/absent = no cycle). */
+  review_cycle_days?: number;
+  /** ★G4 freshness: ISO date of the last human "still correct" verification. */
+  last_verified_at?: string;
 }
 
 export interface IngestRequest {

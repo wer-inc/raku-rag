@@ -38,6 +38,7 @@ from raku_rag.domain.models import (
     QueryProfile,
     ScoredChunk,
 )
+from raku_rag.manufacturing.domain.freshness import is_review_overdue
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus, ManufacturingDocumentMetadata
 from raku_rag.manufacturing.domain.safety import (
     ClassificationSource,
@@ -96,10 +97,17 @@ class ManufacturingCitation:
     approval_status: str | None = None
     effective_date: str | None = None
     approval_source: str | None = None
+    # ★G4 freshness trust signal (derived; display-only — never a gate input)
+    last_verified_at: str | None = None
+    review_overdue: bool = False
 
     @classmethod
     def from_base(
-        cls, c: Citation, meta: ManufacturingDocumentMetadata | None
+        cls,
+        c: Citation,
+        meta: ManufacturingDocumentMetadata | None,
+        *,
+        today: date | None = None,
     ) -> "ManufacturingCitation":
         return cls(
             kind=c.kind,
@@ -133,6 +141,12 @@ class ManufacturingCitation:
             approval_status=(meta.approval_status.value if meta else None),
             effective_date=(meta.effective_date if meta else None),
             approval_source=(meta.approval_source.value if meta else None),
+            # ★G4: 最終確認日 + derived 要再確認 flag — a REVIEW NUDGE for the reader; the safety
+            # boundary stays approval/effective/obsolete (this flag never gates the answer).
+            last_verified_at=((meta.last_verified_at or None) if meta else None),
+            review_overdue=(
+                is_review_overdue(meta, today=today or date.today()) if meta else False
+            ),
         )
 
 
@@ -764,7 +778,9 @@ class ManufacturingAnswerService:
         base: Answer = answer_service.answer(principal, query, profile)
 
         mfg_citations = tuple(
-            ManufacturingCitation.from_base(c, self._get_mfg_meta(tenant, c.document_id))
+            ManufacturingCitation.from_base(
+                c, self._get_mfg_meta(tenant, c.document_id), today=self._today
+            )
             for c in base.citations
         )
         final_citations = (

@@ -104,4 +104,12 @@ metadata+引用UI は A。残るギャップは4クラスタに集中する:
 
 - [x] 本棚卸しドキュメント
 - [ ] ★G1 trace永続化(着手)
-- [ ] ★G2〜★G5
+- [x] ★G4 文書鮮度 — `owner` / `review_cycle_days` / `last_verified_at` を
+  ManufacturingDocumentMetadata + migration 0024 に追加。`review_overdue`
+  (= last_verified_at + review_cycle_days < today、両方設定時のみ)は
+  `manufacturing/domain/freshness.py` で導出し、KPI/ダッシュボードに
+  `review_overdue_document_count` + 期限超過ドキュメント一覧(document_id/owner/
+  last_verified_at/期限)、品質・KPI画面に stat+一覧、引用ビューアに 最終確認日 +
+  要再確認バッジを表示。ingest metadata / PUT documents/{id}/metadata の両経路で設定可。
+  **最新版選択(canonical)・兄弟文書間の版比較は未実装(deferred)**
+- [ ] ★G2 / ★G3 / ★G5

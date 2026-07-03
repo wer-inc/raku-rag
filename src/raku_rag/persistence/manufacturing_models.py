@@ -86,6 +86,10 @@ else:  # pragma: no cover - SQLAlchemy is optional in the local test environment
         quality_category: Mapped[str] = mapped_column(String, nullable=False, default="")
         approval_status: Mapped[str] = mapped_column(String, nullable=False, default="draft")
         effective_date: Mapped[object | None] = mapped_column(Date, nullable=True)
+        # ★G4 document freshness (0024): owner / review cycle / last human verification.
+        owner: Mapped[str] = mapped_column(String, nullable=False, default="")
+        review_cycle_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+        last_verified_at: Mapped[object | None] = mapped_column(Date, nullable=True)
         approval_metadata_checksum: Mapped[str] = mapped_column(String, nullable=False, default="")
         document_metadata: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
         is_tombstoned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

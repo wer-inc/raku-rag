@@ -20,7 +20,7 @@ import csv
 import io
 import json
 from dataclasses import asdict, dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from raku_rag.core.errors import AnswerStatus
 from raku_rag.domain.models import IdentityClaims
@@ -29,6 +29,7 @@ from raku_rag.eval.models import EvaluationRun
 # Shared audit-derivation primitives (action labels + entry filters) — single source of truth with
 # the writers (api/audit.py) and the dashboard (api/dashboard.py).
 from raku_rag.manufacturing.api import audit as audit_derive
+from raku_rag.manufacturing.domain.freshness import review_overdue_entries
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus
 from raku_rag.manufacturing.interfaces import AuditLogWriter
 from raku_rag.manufacturing.telemetry.safety_metrics import SafetyTelemetry
@@ -46,6 +47,9 @@ KPI_KEYS: tuple[str, ...] = (
     "expert_interruption_reduction",
     "high_risk_query_count",
     "safety_gate_block_count",
+    # ★G4 document freshness (additive; derived from owner/review_cycle_days/last_verified_at).
+    "review_overdue_document_count",
+    "review_overdue_documents",
 )
 
 
@@ -89,6 +93,9 @@ class PocKpiReport:
     expert_interruption_reduction: float = 0.0
     high_risk_query_count: int = 0
     safety_gate_block_count: int = 0
+    # ★G4 freshness: docs whose review window lapsed (derived, reference rows only).
+    review_overdue_document_count: int = 0
+    review_overdue_documents: tuple = ()
     materialized_at: str = ""
 
     # --- compute (single source of truth = the audit log) -----------------------------------------
@@ -102,6 +109,7 @@ class PocKpiReport:
         iter_meta,
         collection_id: str | None = None,
         time_range: tuple[str, str] | None = None,
+        today: date | None = None,
     ) -> "PocKpiReport":
         """Derive the KPI set from the tenant-scoped audit log + approval metadata.
 
@@ -156,15 +164,21 @@ class PocKpiReport:
         frequently_referenced_documents = tuple(d for d, _n in doc_hits.most_common())
 
         # obsolete_document_candidates: from approval metadata (obsolete / superseded).
+        all_meta = [meta for _key, meta in iter_meta()]
         obsolete = tuple(
             sorted(
                 meta.document_id
-                for _key, meta in iter_meta()
+                for meta in all_meta
                 if meta.approval_status == ApprovalStatus.OBSOLETE
                 or meta.obsolete_at is not None
                 or meta.superseded_by is not None
             )
         )
+
+        # ★G4 review_overdue: docs whose freshness window lapsed (last_verified_at +
+        # review_cycle_days < today; only when both set). Derived from the same approval metadata
+        # as obsolete_document_candidates — reference rows only (ids/owner/dates, no content).
+        overdue = review_overdue_entries(all_meta, today=today or date.today())
 
         # safety counters: reuse T048 so they MATCH GET /safety-telemetry exactly.
         if telemetry is not None:
@@ -189,6 +203,8 @@ class PocKpiReport:
             expert_interruption_reduction=expert_interruption_reduction,
             high_risk_query_count=high_risk,
             safety_gate_block_count=block_count,
+            review_overdue_document_count=len(overdue),
+            review_overdue_documents=overdue,
             materialized_at=_now(),
         )
 
@@ -199,6 +215,7 @@ class PocKpiReport:
         # tuples -> lists for JSON cleanliness; average_time_to_answer stays a {p50,p95} dict.
         out["frequently_referenced_documents"] = list(self.frequently_referenced_documents)
         out["obsolete_document_candidates"] = list(self.obsolete_document_candidates)
+        out["review_overdue_documents"] = [dict(row) for row in self.review_overdue_documents]
         return out
 
     def to_csv(self) -> str:

@@ -14,6 +14,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+def _int_or_zero(value: object) -> int:
+    """jsonb-safe int coercion for ``review_cycle_days`` (never raises; garbage -> 0 = no cycle)."""
+    try:
+        n = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    return n if n > 0 else 0
+
+
 class DocumentKind(str, Enum):
     """``document_type`` / ``document_kind`` enumeration (data-model §B)."""
 
@@ -85,6 +94,13 @@ class ManufacturingDocumentMetadata:
     superseded_by: str | None = None  # document_id of the superseding doc
     approval_source: ApprovalSource = ApprovalSource.WORKFLOW
 
+    # --- document freshness (★G4, goal.md §1-4 document lifecycle) ---
+    # ``review_overdue`` is always DERIVED (domain/freshness.py), never stored:
+    # overdue <=> last_verified_at + review_cycle_days < today (both fields set).
+    owner: str = ""  # responsible person/team for keeping this document current
+    review_cycle_days: int = 0  # 0 = no review cycle configured
+    last_verified_at: str = ""  # ISO date of the last human "still correct" verification
+
     # free-form extension carried through 001 metadata JSON
     extra: dict = field(default_factory=dict)
 
@@ -120,6 +136,9 @@ class ManufacturingDocumentMetadata:
             "obsolete_at": self.obsolete_at,
             "superseded_by": self.superseded_by,
             "approval_source": self.approval_source.value,
+            "owner": self.owner,
+            "review_cycle_days": self.review_cycle_days,
+            "last_verified_at": self.last_verified_at,
             "extra": dict(self.extra),
         }
 
@@ -168,5 +187,8 @@ class ManufacturingDocumentMetadata:
             approval_source=_enum(
                 ApprovalSource, m.get("approval_source"), ApprovalSource.WORKFLOW
             ),
+            owner=str(m.get("owner") or ""),
+            review_cycle_days=_int_or_zero(m.get("review_cycle_days")),
+            last_verified_at=str(m.get("last_verified_at") or ""),
             extra=dict(m.get("extra") or {}),
         )
