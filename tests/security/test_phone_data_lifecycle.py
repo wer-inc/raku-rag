@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import unittest
 
 from raku_rag.domain.models import IdentityClaims
@@ -104,7 +105,12 @@ class PhoneDataLifecycleTest(unittest.TestCase):
         _, detail = self.service.get_call(ADMIN, self.call_id)
         blob = repr(detail)
         self.assertNotIn("返金条件", blob)
-        self.assertNotIn("5678", blob.replace("+81******1234", ""))  # spoken number gone
+        # Trace identifiers (call_/handoff_/corr_... random hex) survive redaction by design
+        # ("audit continuity" below) and can coincidentally contain the spoken digits — e.g. a
+        # real CI run produced handoff_2805678742c34251. Strip long hex runs so the assertion
+        # checks CONTENT fields only; a leak of "5678" in any transcript/summary text still fails.
+        scrubbed = re.sub(r"[0-9a-f]{12,}", "", blob.replace("+81******1234", ""))
+        self.assertNotIn("5678", scrubbed)  # spoken number gone
         self.assertEqual(detail["summary"], "")
         self.assertEqual(detail["transcript_redaction_status"], "redacted")
         # Trace identifiers survive for audit continuity.
