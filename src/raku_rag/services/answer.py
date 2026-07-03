@@ -440,6 +440,38 @@ class AnswerService:
                     span.finish("ok", answer_status=status)
                 return Answer(status=status, used_chunks=(), correlation_id=cid)
 
+            # ★G2 no-answer gate: evidence must be responsive to the QUESTION. post_check above
+            # only proves answer⊆evidence, which lets a question about absent content pull a
+            # grounded-but-irrelevant sentence (goal.md 「"わからない"が言えない」). Text path only —
+            # visual answers ground in OCR regions, not the text context.
+            coverage_check = getattr(self._gate, "question_coverage_check", None)
+            if not use_vlm and context and callable(coverage_check):
+                coverage = coverage_check(query, context, profile.min_question_coverage)
+                if not coverage.passed:
+                    log(
+                        "answer.insufficient_question_coverage",
+                        correlation_id=cid,
+                        reason=coverage.reason,
+                    )
+                    status = AnswerStatus.INSUFFICIENT_EVIDENCE.value
+                    self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
+                    self._record_audit(principal, cid, "answer", status, reason=coverage.reason)
+                    self._record_hot_path(
+                        principal,
+                        cid,
+                        profile,
+                        status,
+                        total_started=total_started,
+                        llm_call_count=1,
+                        generation_ms=generation_ms,
+                        context_tokens=context_tokens,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    )
+                    if hasattr(span, "finish"):
+                        span.finish("ok", answer_status=status)
+                    return Answer(status=status, used_chunks=(), correlation_id=cid)
+
             if self._output_guardrail is not None:
                 try:
                     verdict = self._output_guardrail.check(text)

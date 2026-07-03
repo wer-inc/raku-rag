@@ -37,6 +37,16 @@ class EvaluationItem:
     expected_answer: str = ""
     expected_evidence: tuple[ExpectedEvidence, ...] = ()
     item_id: str = ""
+    # ★G2 (goal.md §2-1): behavioral expectations. `answerability="unanswerable"` items MUST be
+    # refused (no-answer gate); `risk_level="high"` items are up-weighted in risk_weighted_score.
+    # Defaults keep every pre-★G2 corpus byte-compatible (ids and dataset_version unchanged).
+    answerability: str = "answerable"
+    category: str = ""
+    risk_level: str = "normal"
+
+    @property
+    def is_answerable(self) -> bool:
+        return self.answerability != "unanswerable"
 
     @classmethod
     def from_mapping(
@@ -69,6 +79,9 @@ class EvaluationItem:
             expected_answer=expected_answer,
             expected_evidence=tuple(evidence),
             item_id=item_id,
+            answerability=str(data.get("answerability") or "answerable"),
+            category=str(data.get("category") or ""),
+            risk_level=str(data.get("risk_level") or "normal"),
         )
 
 
@@ -170,24 +183,34 @@ def _bbox_from_mapping(raw: object) -> BoundingBox | None:
 def _dataset_version(tenant_id: str, items: tuple[EvaluationItem, ...]) -> str:
     payload = {
         "tenant_id": tenant_id,
-        "items": [
-            {
-                "item_id": item.item_id,
-                "question": item.question,
-                "expected_answer": item.expected_answer,
-                "expected_evidence": [
-                    {
-                        "document_id": evidence.document_id,
-                        "chunk_id": evidence.chunk_id,
-                        "kind": evidence.kind,
-                        "asset_id": evidence.asset_id,
-                        "region_id": evidence.region_id,
-                        "bbox": evidence.bbox.__dict__ if evidence.bbox else None,
-                    }
-                    for evidence in item.expected_evidence
-                ],
-            }
-            for item in items
-        ],
+        "items": [_item_version_payload(item) for item in items],
     }
     return _stable_id("dataset", payload)
+
+
+def _item_version_payload(item: EvaluationItem) -> dict:
+    payload = {
+        "item_id": item.item_id,
+        "question": item.question,
+        "expected_answer": item.expected_answer,
+        "expected_evidence": [
+            {
+                "document_id": evidence.document_id,
+                "chunk_id": evidence.chunk_id,
+                "kind": evidence.kind,
+                "asset_id": evidence.asset_id,
+                "region_id": evidence.region_id,
+                "bbox": evidence.bbox.__dict__ if evidence.bbox else None,
+            }
+            for evidence in item.expected_evidence
+        ],
+    }
+    # ★G2 behavioral fields feed the version ONLY when set, so every pre-★G2 corpus keeps its
+    # pinned dataset_version while a change to answerability/risk tagging still bumps it.
+    if item.answerability != "answerable":
+        payload["answerability"] = item.answerability
+    if item.category:
+        payload["category"] = item.category
+    if item.risk_level != "normal":
+        payload["risk_level"] = item.risk_level
+    return payload
