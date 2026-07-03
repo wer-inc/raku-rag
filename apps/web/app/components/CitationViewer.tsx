@@ -174,8 +174,12 @@ export default function CitationViewer({
               要再確認
             </span>
           )}
-          <span className="citation-chip">{citation.kind === "visual" ? "ビジュアル" : "テキスト"}</span>
-          <span className="citation-chip">スコア {citation.retrieval_score.toFixed(3)}</span>
+          <span
+            className="citation-chip"
+            title={`検索スコア: ${citation.retrieval_score.toFixed(3)}（運用診断用）`}
+          >
+            {citation.kind === "visual" ? "ビジュアル" : "テキスト"}
+          </span>
         </div>
 
         {isObsolete && (
@@ -196,9 +200,15 @@ export default function CitationViewer({
             <dd>{loc.value}</dd>
           </div>
           <div>
-            <dt>有効期限 / 発効</dt>
+            <dt>発効日</dt>
             <dd>{citation.effective_date ?? "—"}</dd>
           </div>
+          {citation.valid_until && (
+            <div>
+              <dt>有効期限</dt>
+              <dd>{citation.valid_until}</dd>
+            </div>
+          )}
           {citation.last_verified_at && (
             <div>
               <dt>最終確認日</dt>
@@ -239,6 +249,9 @@ export default function CitationViewer({
           <section className="cv-grounded">
             <h4>PDF プレビュー</h4>
             <iframe className="cv-pdf-frame" src={fileUrl} title={`${citation.document_id} preview`} />
+            <a className="cv-open-file" href={fileUrl} target="_blank" rel="noreferrer">
+              新しいタブで開く
+            </a>
           </section>
         )}
 

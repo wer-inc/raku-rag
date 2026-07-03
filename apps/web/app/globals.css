@@ -19,6 +19,24 @@
   --danger-bg: #fff1f2;
   --info: #3b67a8;
   --info-bg: #eef4ff;
+  --accent-weak: #f7f7fd;
+  /* unified action system control tokens (see action-system section below) */
+  --control-height-sm: 32px;
+  --control-height-md: 36px;
+  --control-radius: 8px;
+  --control-font-size: 13px;
+  --control-font-size-sm: 12.5px;
+  --control-weight: 650;
+  --control-min-width: 84px;
+  --control-padding-x: 14px;
+  --control-primary-bg: var(--accent);
+  --control-primary-hover: var(--accent-strong);
+  --control-secondary-bg: #ffffff;
+  --control-secondary-hover: #f6f6f7;
+  --control-secondary-text: var(--text);
+  --control-danger-bg: var(--danger);
+  --control-danger-hover: #8f2d35;
+  --control-focus-ring: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 * {
@@ -31,36 +49,20 @@ body {
   margin: 0;
 }
 
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family:
-    Geist, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-}
-
 button,
 input,
 textarea {
   font: inherit;
 }
 
+/* NOTE: extended in standalone override section below */
 .app-shell {
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   min-height: 100dvh;
 }
 
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 28px;
-  padding: 26px 22px;
-  background: #ffffff;
-  color: var(--text);
-  border-right: 1px solid var(--line);
-}
-
+/* NOTE: extended in standalone override section below */
 .sidebar h1,
 .topbar h2 {
   margin: 4px 0 0;
@@ -69,6 +71,7 @@ textarea {
   letter-spacing: 0;
 }
 
+/* NOTE: extended in standalone override section below */
 .eyebrow {
   margin: 0;
   color: var(--accent);
@@ -88,16 +91,18 @@ textarea {
   gap: 1px;
 }
 
+/* NOTE: extended in standalone override section below */
 .nav-group-label {
   margin: 12px 0 5px;
   padding: 0 10px;
-  color: #a1a1aa;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
+/* NOTE: extended in standalone override section below */
 .nav-item {
   display: block;
   padding: 8px 10px;
@@ -106,15 +111,7 @@ textarea {
   text-decoration: none;
 }
 
-.nav-item:hover {
-  background: #f6f6f7;
-}
-
-.nav-item.active {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-}
-
+/* NOTE: extended in standalone override section below */
 .workspace {
   display: grid;
   align-content: start;
@@ -134,6 +131,27 @@ textarea {
   gap: 20px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
+}
+
+/* Lightweight back affordance on detail screens (source/document/review detail). */
+.topbar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.topbar-back:hover {
+  color: var(--text);
+  border-color: #d4d4d8;
 }
 
 .screen-header-actions {
@@ -164,6 +182,7 @@ textarea {
   letter-spacing: 0;
 }
 
+/* NOTE: extended in standalone override section below */
 .route-meta-route {
   padding: 3px 8px;
   border-radius: 999px;
@@ -226,12 +245,14 @@ textarea {
   font-weight: 700;
 }
 
+/* NOTE: extended in unified action system section below */
 .add-source-cta {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
+/* NOTE: extended in unified action system section below */
 .add-source-plus {
   display: inline-grid;
   flex: 0 0 auto;
@@ -618,6 +639,7 @@ textarea {
   vertical-align: top;
 }
 
+/* NOTE: extended in standalone override section below */
 .data-table th {
   background: #fafafa;
   font-size: 12px;
@@ -674,6 +696,7 @@ textarea {
   resize: vertical;
 }
 
+/* NOTE: extended in unified action system section below */
 .screen-actions {
   display: flex;
   flex-wrap: wrap;
@@ -690,6 +713,7 @@ textarea {
   text-decoration: none;
 }
 
+/* NOTE: extended in standalone override section below */
 .topbar .eyebrow {
   color: var(--accent);
   font-weight: 500;
@@ -1444,7 +1468,8 @@ textarea {
 .chatbot-diagnostics,
 .chatbot-ops-details,
 .answer-diagnostics,
-.citation-diagnostics {
+.citation-diagnostics,
+.source-ops-details {
   color: var(--muted);
   font-size: 12px;
 }
@@ -1452,11 +1477,17 @@ textarea {
 .chatbot-diagnostics summary,
 .chatbot-ops-details summary,
 .answer-diagnostics summary,
-.citation-diagnostics summary {
+.citation-diagnostics summary,
+.source-ops-details summary {
   width: fit-content;
   color: var(--accent);
   font-weight: 600;
   cursor: pointer;
+}
+
+.source-ops-details {
+  display: grid;
+  gap: 12px;
 }
 
 .chatbot-ops-details {
@@ -1585,11 +1616,13 @@ textarea {
   margin-left: auto;
 }
 
+/* NOTE: extended in unified action system section below */
 .history-actions {
   align-items: flex-start;
   margin-top: 14px;
 }
 
+/* NOTE: extended in unified action system section below */
 .history-clear-confirm {
   display: flex;
   flex-wrap: wrap;
@@ -1722,7 +1755,7 @@ textarea {
 }
 
 .standalone-search span {
-  color: #a1a1aa;
+  color: var(--muted);
   font-size: 15px;
   line-height: 1;
 }
@@ -1837,7 +1870,7 @@ textarea {
   padding: 11px 20px;
   border-bottom: 1px solid var(--line);
   background: #fafafa;
-  color: #a1a1aa;
+  color: var(--muted);
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -1916,6 +1949,7 @@ textarea {
   min-width: 0;
 }
 
+/* NOTE: extended in unified action system section below */
 .source-filter-button {
   height: 32px;
   padding: 0 12px;
@@ -1925,17 +1959,6 @@ textarea {
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
-}
-
-.source-filter-button:hover {
-  background: #f6f6f7;
-  color: var(--text);
-}
-
-.source-filter-button.active {
-  border-color: color-mix(in srgb, var(--accent) 42%, #ffffff);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
 }
 
 .source-list-summary {
@@ -2503,7 +2526,7 @@ textarea {
 }
 
 .standalone-ops-kpi-sub {
-  color: #a1a1aa;
+  color: var(--muted);
   font-size: 11.5px;
 }
 
@@ -2585,7 +2608,7 @@ textarea {
 
 .standalone-ops-bar-label {
   margin-top: 6px;
-  color: #a1a1aa;
+  color: var(--muted);
   font-size: 11px;
   text-align: center;
 }
@@ -2619,7 +2642,7 @@ textarea {
 
 .standalone-ops-expiring-title {
   margin-top: 20px;
-  color: #a1a1aa;
+  color: var(--muted);
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.03em;
@@ -2644,7 +2667,7 @@ textarea {
 }
 
 .standalone-ops-expiring-date {
-  color: #a1a1aa;
+  color: var(--muted);
   font-family: "Geist Mono", ui-monospace, monospace;
   font-size: 11.5px;
 }
@@ -2705,6 +2728,7 @@ button:hover {
   background: var(--accent-strong);
 }
 
+/* NOTE: extended in standalone override section below */
 button:disabled {
   background: #c4c6d4;
   cursor: not-allowed;
@@ -2720,11 +2744,7 @@ button:disabled {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
 }
 
-.error-panel {
-  border-color: #e3b7b7;
-  background: #fff7f7;
-}
-
+/* NOTE: extended in standalone override section below */
 .error-panel h3,
 .error-panel p {
   margin: 0;
@@ -2748,15 +2768,6 @@ button:disabled {
   color: var(--accent-strong);
   font-size: 13px;
   font-weight: 600;
-}
-
-.status-insufficient_evidence {
-  color: var(--warning);
-}
-
-.status-budget_exceeded,
-.status-temporarily_unavailable {
-  color: var(--danger);
 }
 
 .correlation-id {
@@ -2786,11 +2797,13 @@ button:disabled {
   color: var(--muted);
 }
 
+/* NOTE: extended in standalone override section below */
 .answer-text-muted {
   color: var(--muted);
   font-size: 16px;
 }
 
+/* NOTE: extended in standalone override section below */
 .safety-panel {
   display: grid;
   gap: 12px;
@@ -2799,6 +2812,7 @@ button:disabled {
   background: linear-gradient(90deg, rgba(91, 91, 214, 0.08), rgba(255, 255, 255, 0));
 }
 
+/* NOTE: extended in standalone override section below */
 .safety-panel.safety-blocked {
   border-left-color: var(--danger);
   background: linear-gradient(90deg, rgba(178, 58, 68, 0.1), rgba(255, 255, 255, 0));
@@ -2919,17 +2933,6 @@ button:disabled {
   color: var(--muted);
 }
 
-.citation-row .approval-approved {
-  background: #e7f4ea;
-  color: #23643a;
-}
-
-.citation-row .approval-draft,
-.citation-row .approval-pending_review {
-  background: var(--warning-bg);
-  color: var(--warning);
-}
-
 .citation-row .approval-obsolete {
   background: var(--danger-bg);
   color: var(--danger);
@@ -3018,6 +3021,7 @@ button:disabled {
   margin-right: 8px;
 }
 
+/* NOTE: extended in standalone override section below */
 .ops-list li .ops-kv-val {
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -3051,11 +3055,6 @@ button:disabled {
   font-weight: 800;
 }
 
-.ops-flag.on {
-  background: #e7f4ea;
-  color: #23643a;
-}
-
 .ops-flag.off {
   background: var(--danger-bg);
   color: var(--danger);
@@ -3080,6 +3079,7 @@ button:disabled {
   line-height: 1.5;
 }
 
+/* NOTE: extended in standalone override section below */
 .src-warning {
   margin: 0 0 8px;
   padding: 8px 12px;
@@ -3298,14 +3298,6 @@ button:disabled {
   background: var(--accent);
 }
 
-.btn-reject {
-  background: var(--danger);
-}
-
-.btn-reject:hover {
-  background: #7e2626;
-}
-
 @media (max-width: 900px) {
   .nav-item {
     overflow: hidden;
@@ -3482,25 +3474,8 @@ button:disabled {
 }
 
 /* Standalone HTML visual override */
-:root {
-  --bg: #fafafa;
-  --surface: #ffffff;
-  --surface-muted: #f4f4fc;
-  --text: #17181f;
-  --muted: #666b78;
-  --line: #ececec;
-  --accent: #5b5bd6;
-  --accent-strong: #4747c8;
-  --accent-soft: #eeeefb;
-  --accent-weak: #f7f7fd;
-  --danger: #b23a44;
-  --warning: #9f6a14;
-  --warning-bg: #fff7e6;
-  --danger-bg: #fff1f2;
-  --info: #3b67a8;
-  --info-bg: #eef4ff;
-}
 
+/* NOTE: extended by a later duplicate rule below */
 body {
   background: var(--bg);
   color: var(--text);
@@ -3509,10 +3484,7 @@ body {
     sans-serif;
 }
 
-.app-shell {
-  background: var(--bg);
-}
-
+/* NOTE: extended by a later duplicate rule below */
 .sidebar {
   gap: 28px;
   padding: 26px 22px;
@@ -4106,7 +4078,7 @@ button,
   align-items: center;
   gap: 12px;
   margin: 22px 0;
-  color: #a1a1aa;
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -4161,7 +4133,7 @@ button,
 
 .auth-note {
   margin: 24px 0 0;
-  color: #a1a1aa;
+  color: var(--muted);
   font-size: 12.5px;
   text-align: center;
 }
@@ -4195,7 +4167,7 @@ button,
   display: flex;
   gap: 8px;
   margin-bottom: 18px;
-  color: #a1a1aa;
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -4293,7 +4265,7 @@ button,
 }
 
 .auth-org-copy span {
-  color: #a1a1aa;
+  color: var(--muted);
   font-size: 12.5px;
 }
 
@@ -4402,7 +4374,7 @@ button,
 
 .sidebar-org-sub {
   font-size: 11px;
-  color: #a1a1aa;
+  color: var(--muted);
 }
 
 /* Scrolling nav region */
@@ -4427,7 +4399,7 @@ button,
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: #a1a1aa;
+  color: var(--muted);
 }
 
 /* U8: collapsible group header (運用/管理). Same visual weight as the static label. */
@@ -4451,7 +4423,7 @@ button,
 .sidebar-group-chevron {
   flex: none;
   margin: 7px 10px 0 0;
-  color: #a1a1aa;
+  color: var(--muted);
   transition: transform 0.15s ease;
 }
 
@@ -4563,7 +4535,7 @@ button,
 
 .sidebar-foot-role {
   font-size: 11.5px;
-  color: #a1a1aa;
+  color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4579,7 +4551,7 @@ button,
   border: none;
   border-radius: 7px;
   background: transparent;
-  color: #a1a1aa;
+  color: var(--muted);
   cursor: pointer;
 }
 
@@ -4801,7 +4773,7 @@ button,
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: #a1a1aa;
+  color: var(--muted);
 }
 
 .answer-card-q p {
@@ -5208,7 +5180,7 @@ button,
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  color: #a1a1aa;
+  color: var(--muted);
 }
 
 .cv-fields dd {
@@ -5265,17 +5237,25 @@ button,
 
 .cv-pdf-frame {
   width: 100%;
-  height: 280px;
+  height: 480px;
   border: 1px solid var(--line, #ececec);
   border-radius: 8px;
   background: #fff;
+}
+
+.cv-open-file {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
 }
 
 .cv-note {
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: #a1a1aa;
+  color: var(--muted);
 }
 
 .cv-foot {
@@ -5478,6 +5458,7 @@ button,
   justify-content: flex-end;
 }
 
+/* NOTE: extended in unified action system section below */
 .add-source-actions > button {
   min-width: auto;
   height: 34px;
@@ -5638,7 +5619,7 @@ button,
 
 .upload-drop-sub {
   font-size: 12px;
-  color: #a1a1aa;
+  color: var(--muted);
 }
 
 .upload-textarea {
@@ -6933,24 +6914,6 @@ textarea:focus-visible,
 /* Unified product action system
    Keep SaaS actions predictable: primary actions are accent-filled and right aligned,
    secondary actions are neutral, destructive actions are red, and filters stay compact. */
-:root {
-  --control-height-sm: 32px;
-  --control-height-md: 36px;
-  --control-radius: 8px;
-  --control-font-size: 13px;
-  --control-font-size-sm: 12.5px;
-  --control-weight: 650;
-  --control-min-width: 84px;
-  --control-padding-x: 14px;
-  --control-primary-bg: var(--accent);
-  --control-primary-hover: var(--accent-strong);
-  --control-secondary-bg: #ffffff;
-  --control-secondary-hover: #f6f6f7;
-  --control-secondary-text: var(--text);
-  --control-danger-bg: var(--danger);
-  --control-danger-hover: #8f2d35;
-  --control-focus-ring: color-mix(in srgb, var(--accent) 24%, transparent);
-}
 
 .button-link,
 .quick-links a,
