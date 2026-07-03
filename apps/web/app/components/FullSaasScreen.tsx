@@ -30,6 +30,7 @@ import type {
   PhoneQualityEvaluation,
   PhoneScenarioSummary,
   PhoneTurnResponse,
+  QualityOperationalResponse,
   SafetyTelemetryView,
   SearchResultItem,
   DraftArtifact,
@@ -94,6 +95,7 @@ import {
   phoneSubmitTurn,
   phoneUpsertScenarioVersion,
   listFeedback,
+  qualityOperational,
   submitFeedback,
 } from "../../lib/api-client";
 import {
@@ -5286,14 +5288,21 @@ function QualityBody() {
   const [state, reload] = useLoad(
     async () => {
       const token = await getSessionToken();
-      const [kpi, governance] = await Promise.all([manufacturingKpi(token), manufacturingGovernanceStatus(token)]);
-      return { kpi, governance };
+      const [kpi, governance, operational] = await Promise.all([
+        manufacturingKpi(token),
+        manufacturingGovernanceStatus(token),
+        // ★G3b/★G5: 実測メトリクス is reviewer/admin-only — degrade to the proxy-only view
+        // (card hidden) instead of failing the whole screen for other roles.
+        qualityOperational(token).catch(() => null as QualityOperationalResponse | null),
+      ]);
+      return { kpi, governance, operational };
     },
     [],
   );
   if (state.state === "loading") return <p className="ops-empty" role="status" aria-live="polite">品質データを読み込み中…</p>;
   if (state.state === "error") return <ScreenLoadError error={state.error} onRetry={reload} />;
-  const { kpi } = state.data;
+  const { kpi, operational } = state.data;
+  const hasRealLatency = Boolean(operational && operational.query_count > 0);
   return (
     <>
       <Section title="品質 KPI">
@@ -5304,11 +5313,45 @@ function QualityBody() {
           <Stat label="低評価" value={`${(kpi.low_rating_rate * 100).toFixed(1)}%`} />
         </div>
       </Section>
+      {operational && (
+        <Section
+          title="実測運用メトリクス"
+          note="query_traces(実測の遅延・回答状態)と永続化フィードバックに基づく運用指標です。質問文は保存前にPIIマスク済みです。"
+        >
+          <div className="metric-grid">
+            <Stat label="質問数" value={operational.query_count} />
+            <Stat label="実測 p50" value={`${operational.p50_ms.toFixed(0)} ms`} />
+            <Stat label="実測 p95" value={`${operational.p95_ms.toFixed(0)} ms`} />
+            <Stat label="未回答率" value={`${(operational.insufficient_rate * 100).toFixed(1)}%`} />
+            <Stat label="低評価件数" value={operational.low_rating_count} />
+          </div>
+          <h3 className="src-h4">最近の未回答クエリ</h3>
+          <DataTable
+            columns={["質問(マスク済み)", "状態", "日時"]}
+            rows={operational.recent_refusals.map((r) => [
+              r.query_redacted || r.request_id,
+              r.status,
+              r.created_at ? new Date(r.created_at).toLocaleString("ja-JP") : "—",
+            ])}
+            empty="未回答のクエリはまだありません。"
+          />
+        </Section>
+      )}
       <Section title="監査由来サマリー">
         <FieldGrid
           rows={[
-            ["回答 p50", kpi.average_time_to_answer.p50],
-            ["回答 p95", kpi.average_time_to_answer.p95],
+            [
+              "回答 p50",
+              hasRealLatency && operational
+                ? `${operational.p50_ms.toFixed(0)} ms(実測)`
+                : `${kpi.average_time_to_answer.p50}(代理値: 根拠数)`,
+            ],
+            [
+              "回答 p95",
+              hasRealLatency && operational
+                ? `${operational.p95_ms.toFixed(0)} ms(実測)`
+                : `${kpi.average_time_to_answer.p95}(代理値: 根拠数)`,
+            ],
             ["頻出文書", kpi.frequently_referenced_documents.length],
             ["旧版候補", kpi.obsolete_document_candidates.length],
             ["集計時刻", kpi.materialized_at],

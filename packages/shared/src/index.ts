@@ -7,6 +7,7 @@ export * from "./dto/manufacturing.js";
 export * from "./dto/ingest.js";
 export * from "./dto/eval.js";
 export * from "./dto/feedback.js";
+export * from "./dto/quality.js";
 export * from "./dto/admin-settings.js";
 export * from "./dto/assets.js";
 export * from "./policy/lifecycle.js";

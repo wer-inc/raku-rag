@@ -12,6 +12,7 @@ import { ProviderPoliciesController } from "./admin/provider-policies.controller
 import { RetrievalProfilesController } from "./admin/retrieval-profiles.controller";
 import { EvalController } from "./eval/eval.controller";
 import { FeedbackController } from "./feedback/feedback.controller";
+import { QualityController } from "./quality/quality.controller";
 import { AssetsController } from "./assets/assets.controller";
 import { IndustriesController } from "./industries/industries.controller";
 import { OpenApiController } from "./openapi/openapi.controller";
@@ -44,6 +45,7 @@ import { BedrockCohereRerankService } from "./rerank/bedrock-cohere-rerank.servi
     RetrievalProfilesController,
     EvalController,
     FeedbackController,
+    QualityController,
     AssetsController,
     IndustriesController,
     RealEstateController,
@@ -82,6 +84,7 @@ export class AppModule implements NestModule {
         RetrievalProfilesController,
         EvalController,
         FeedbackController,
+        QualityController,
         AssetsController,
         IndustriesController,
         RealEstateController,

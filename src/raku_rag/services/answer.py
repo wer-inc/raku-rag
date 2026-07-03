@@ -34,6 +34,7 @@ from raku_rag.interfaces.base import LLMProvider, VLMProvider
 from raku_rag.observability.audit import AuditEvent, AuditSink
 from raku_rag.observability.logging import log, new_correlation_id
 from raku_rag.observability.metrics import MetricsRecorder
+from raku_rag.observability.redaction import Redactor
 from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.manufacturing.safety.visual_verify import (
     VisualEvidenceVerifier,
@@ -46,6 +47,9 @@ from raku_rag.services.retrieval import RetrievalService
 from raku_rag.services.structured_query import classify_structured_query
 
 _EST_QUERY_COST = 1.0
+# ★G3b: the hot-path trace stores the question (未回答分析 needs it) but only AFTER PII
+# redaction — the raw query never reaches MetricsRecorder / query_traces.
+_REDACTOR = Redactor()
 _IDENTIFIER = re.compile(
     r"(?<![A-Za-z0-9])(?:"
     r"[A-Za-z]{1,12}(?:[-_][A-Za-z0-9]{1,16})+"
@@ -154,7 +158,9 @@ class AnswerService:
                 status = AnswerStatus.TEMPORARILY_UNAVAILABLE.value
                 self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
                 self._record_audit(principal, cid, "answer", status, reason=route.reason)
-                self._record_hot_path(principal, cid, profile, status, total_started=total_started)
+                self._record_hot_path(
+                    principal, cid, profile, status, total_started=total_started, query=query
+                )
                 if hasattr(span, "finish"):
                     span.finish("ok", answer_status=status, route=route.route, reason=route.reason)
                 return Answer(status=status, used_chunks=(), correlation_id=cid, route=route.route)
@@ -174,6 +180,7 @@ class AnswerService:
                     profile,
                     AnswerStatus.BUDGET_EXCEEDED.value,
                     total_started=total_started,
+                    query=query,
                 )
                 if hasattr(span, "finish"):
                     span.finish("ok", answer_status=AnswerStatus.BUDGET_EXCEEDED.value)
@@ -195,6 +202,7 @@ class AnswerService:
                     profile,
                     status,
                     total_started=total_started,
+                    query=query,
                 )
                 if hasattr(span, "finish"):
                     span.finish("ok", answer_status=status)
@@ -213,6 +221,7 @@ class AnswerService:
                     profile,
                     status,
                     total_started=total_started,
+                    query=query,
                     context_tokens=context_tokens,
                     prompt_tokens=_token_count(query) + context_tokens,
                 )
@@ -233,6 +242,7 @@ class AnswerService:
                     profile,
                     status,
                     total_started=total_started,
+                    query=query,
                     context_tokens=context_tokens,
                     prompt_tokens=_token_count(query) + context_tokens,
                 )
@@ -253,6 +263,7 @@ class AnswerService:
                     profile,
                     status,
                     total_started=total_started,
+                    query=query,
                     context_tokens=context_tokens,
                     prompt_tokens=_token_count(query) + context_tokens,
                 )
@@ -270,7 +281,9 @@ class AnswerService:
                 status = AnswerStatus.INSUFFICIENT_EVIDENCE.value
                 self._record_metric(principal.tenant_id, profile.profile_id, status, 0)
                 self._record_audit(principal, cid, "answer", status, reason="prompt_injection")
-                self._record_hot_path(principal, cid, profile, status, total_started=total_started)
+                self._record_hot_path(
+                    principal, cid, profile, status, total_started=total_started, query=query
+                )
                 if hasattr(span, "finish"):
                     span.finish("ok", answer_status=status, reason="prompt_injection")
                 return Answer(status=status, used_chunks=(), correlation_id=cid)
@@ -372,6 +385,7 @@ class AnswerService:
                     profile,
                     "llm_unavailable",
                     total_started=total_started,
+                    query=query,
                     llm_call_count=1,
                     generation_ms=generation_ms,
                     context_tokens=context_tokens,
@@ -430,6 +444,7 @@ class AnswerService:
                     profile,
                     status,
                     total_started=total_started,
+                    query=query,
                     llm_call_count=1,
                     generation_ms=generation_ms,
                     context_tokens=context_tokens,
@@ -459,6 +474,7 @@ class AnswerService:
                         profile,
                         status,
                         total_started=total_started,
+                        query=query,
                         llm_call_count=1,
                         generation_ms=generation_ms,
                         context_tokens=context_tokens,
@@ -604,6 +620,7 @@ class AnswerService:
                     profile,
                     status,
                     total_started=total_started,
+                    query=query,
                     llm_call_count=1,
                     generation_ms=generation_ms,
                     context_tokens=context_tokens,
@@ -636,6 +653,7 @@ class AnswerService:
                 profile,
                 AnswerStatus.OK.value,
                 total_started=total_started,
+                query=query,
                 llm_call_count=1,
                 generation_ms=generation_ms,
                 context_tokens=context_tokens,
@@ -701,7 +719,7 @@ class AnswerService:
                 reason="structured_tool_unavailable",
             )
             self._record_hot_path(
-                principal, correlation_id, profile, status, total_started=total_started
+                principal, correlation_id, profile, status, total_started=total_started, query=query
             )
             if hasattr(span, "finish"):
                 span.finish("ok", answer_status=status, route="structured_tool")
@@ -729,6 +747,7 @@ class AnswerService:
             profile,
             ans.status,
             total_started=total_started,
+            query=query,
             context_tokens=0,
             prompt_tokens=_token_count(query),
             completion_tokens=_token_count(ans.text or ""),
@@ -1022,6 +1041,7 @@ class AnswerService:
         status: str,
         *,
         total_started: float,
+        query: str = "",
         llm_call_count: int = 0,
         generation_ms: float = 0.0,
         context_tokens: int = 0,
@@ -1039,6 +1059,8 @@ class AnswerService:
             user_id=principal.user_id,
             profile_id=profile.profile_id,
             status=status,
+            # ★G3b: redacted HERE so the metric/trace layers only ever see masked text.
+            query_redacted=_REDACTOR.redact(query) if query else "",
             llm_call_count=llm_call_count,
             retrieval_ms=self._float_attr(attrs, "retrieval_ms"),
             rerank_ms=self._float_attr(attrs, "rerank_ms"),

@@ -57,6 +57,7 @@ import type {
   PhoneSimulateCallResponse,
   PhoneTurnRequest,
   PhoneTurnResponse,
+  QualityOperationalResponse,
   ReviewDraftRequest,
   SafetyTelemetryView,
   SearchRequest,
@@ -414,6 +415,14 @@ export async function submitFeedback(
   userToken: string,
 ): Promise<FeedbackResponse> {
   return apiPostJson<FeedbackResponse>("/feedback", req, userToken);
+}
+
+/** ★G3b/★G5: 実測運用メトリクス (query_traces 由来の実 p50/p95・未回答 drill-down; reviewer/admin only). */
+export async function qualityOperational(
+  userToken: string,
+  limit = 20,
+): Promise<QualityOperationalResponse> {
+  return apiGetJson<QualityOperationalResponse>(`/quality/operational?limit=${limit}`, userToken);
 }
 
 /** ★G3a: list the persisted feedback rows (server-driven 改善キュー; reviewer/admin only). */

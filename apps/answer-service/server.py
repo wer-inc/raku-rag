@@ -110,6 +110,10 @@ from raku_rag.persistence.feedback import (  # noqa: E402
     InMemoryFeedbackRepository,
     PostgresFeedbackRepository,
 )
+from raku_rag.persistence.telemetry import (  # noqa: E402
+    InMemoryQueryTraceReader,
+    PostgresQueryTraceReader,
+)
 from raku_rag.services.lexicon import LexiconError, LexiconService  # noqa: E402
 from raku_rag.persistence.uploads import (  # noqa: E402
     InMemoryUploadRecordRepository,
@@ -1606,6 +1610,14 @@ def _feedback_repository_for(system: ProductionSystem):
     return InMemoryFeedbackRepository()
 
 
+def _query_trace_reader_for(system: ProductionSystem):
+    """★G3b/★G5: 実測運用メトリクス reader — Postgres query_traces, else in-memory metrics."""
+    conn = getattr(system, "_conn", None)
+    if isinstance(system, ProductionSystem) and conn is not None:
+        return PostgresQueryTraceReader(conn)
+    return InMemoryQueryTraceReader(system.metrics)
+
+
 def _upload_record_repository_for(system: ProductionSystem):
     conn = getattr(system, "_conn", None)
     if isinstance(system, ProductionSystem) and conn is not None:
@@ -1703,6 +1715,8 @@ def make_handler(system: ProductionSystem):
     )
     admin_settings = _AdminSettingsStore(system, datasource_repo=datasource_repo)
     eval_feedback = _EvalFeedbackStore(system, feedback_repository=_feedback_repository_for(system))
+    # ★G3b/★G5: real operational metrics for the 品質・KPI screen (query_traces-backed).
+    quality_reader = _query_trace_reader_for(system)
     manufacturing_system = build_manufacturing_system_for_base(system)
     chatbot = ChatbotService(
         # Accepts the optional keyword-only `intent_query` (the raw, un-enriched user query) that
@@ -2248,6 +2262,19 @@ def make_handler(system: ProductionSystem):
                             )
                         },
                     )
+                elif parts == ["internal", "quality", "operational"]:
+                    # ★G3b/★G5: 実測運用メトリクス — real p50/p95/status counts from query_traces
+                    # plus the persisted low-rating count. Tenant comes from the authenticated
+                    # principal headers ONLY, never a query param.
+                    principal = _claims_from_headers(self.headers)
+                    qs = parse_qs(parsed.query)
+                    summary = quality_reader.operational_summary(
+                        principal.tenant_id, limit=_qs_int(qs, "limit", 20)
+                    )
+                    summary["low_rating_count"] = len(
+                        eval_feedback.list_feedback(principal.tenant_id, limit=1000, rating="down")
+                    )
+                    self._send(200, _jsonable(summary))
                 elif len(parts) >= 3 and parts[:2] == ["internal", "admin"]:
                     resource = parts[2]
                     qs = parse_qs(parsed.query)

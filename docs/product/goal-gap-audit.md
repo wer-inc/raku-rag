@@ -103,5 +103,12 @@ metadata+引用UI は A。残るギャップは4クラスタに集中する:
 ## 実装状況
 
 - [x] 本棚卸しドキュメント
-- [ ] ★G1 trace永続化(着手)
-- [ ] ★G2〜★G5
+- [x] ★G1 trace永続化(query_traces 0022 + cost_records/rerank_traces writer — PR #61)
+- [x] ★G3a フィードバック永続化(answer_feedback 0023 + `GET /v1/feedback` — PR #66)
+- [x] ★G3b 未回答ドリルダウン(query_traces.query_redacted 0024 — 質問文はRedactorでPIIマスク後に
+      保存 — + `GET /v1/quality/operational` + 品質・KPI画面「実測運用メトリクス」カード/未回答クエリ一覧)
+- [x] ★G5(実測メトリクス部分)実測 p50/p95(ms)・status別件数・未回答率・低評価件数を query_traces/
+      answer_feedback から集計して品質・KPI画面へ(KPI p95 の evidence-count 代理値は実測があれば置換、
+      無ければ「代理値」明記)
+- [ ] ★G5(残り)キャッシュ格納側+モデルルーティング(小型rewrite/高リスク大型の分岐)は未着手
+- [ ] ★G2 / ★G4
