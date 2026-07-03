@@ -335,9 +335,26 @@ class AnswerPathFollowupHighRiskSafetyTest(unittest.TestCase):
 
     def test_regression_pin_dropping_the_intent_reproduces_the_bypass(self):
         # Proves the intent_query threading is load-bearing on the answer path: the SAME rewritten
-        # query WITHOUT the raw intent flips the block into status="ok" citing the unrelated
+        # query WITHOUT the raw intent used to flip the block into status="ok" citing the unrelated
         # approved document — the exact corruption chatbot/coreference.py's Finding documents.
+        #
+        # ★G2 (salient coverage, default ON) now catches even this un-threaded shape as defense in
+        # depth: the carried-in approved document does not cover the follow-up's salient terms
+        # (圧力), so the base answer path refuses. The threading pin therefore replays the pre-fix
+        # chain with the salient gate switched OFF (its kill switch) — the bypass still reproduces
+        # there, proving the intent threading is load-bearing independently of the new gate.
         mfg_sys = self._system(real_doc_status=ApprovalStatus.PENDING_REVIEW)
+
+        ans, _, _ = self._answer_with_history(mfg_sys, self.FOLLOWUP_QUERY, thread_intent=False)
+
+        self.assertEqual(ans.status, "insufficient_evidence")
+        self.assertEqual(ans.citations, ())
+
+        registry = mfg_sys._mvp.profiles
+        registry.set(
+            "manuals",
+            dataclasses.replace(registry.resolve("manuals"), salient_coverage_enabled=False),
+        )
 
         ans, _, _ = self._answer_with_history(mfg_sys, self.FOLLOWUP_QUERY, thread_intent=False)
 

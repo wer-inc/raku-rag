@@ -775,7 +775,10 @@ class ManufacturingAnswerService:
             decision = filtered_decision
             notice = ONSITE_CONFIRMATION_NOTICE if decision.requires_onsite_confirmation else None
 
-        base: Answer = answer_service.answer(principal, query, profile)
+        # Thread the raw intent (None for non-rewriting callers) so the base ★G2 question-coverage
+        # gates judge what the user actually asked, never a carried prior-turn document id — the
+        # same binding `_missing_query_identifiers`/the classification above already use.
+        base: Answer = answer_service.answer(principal, query, profile, intent_query=intent_query)
 
         mfg_citations = tuple(
             ManufacturingCitation.from_base(

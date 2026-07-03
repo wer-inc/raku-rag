@@ -149,15 +149,29 @@ class TestGoldenCorpusBaseline(unittest.TestCase):
             sum(1 for i in unanswerable if i.category == "unanswerable_in_domain"), 2
         )
 
+    def test_in_domain_unanswerable_gap_is_closed(self) -> None:
+        # ★G2 (goal-gap-audit): the 2 unanswerable_in_domain items (a question about ABSENT
+        # in-domain content) used to answer via a grounded-but-irrelevant extraction and were held
+        # by a ratchet (unanswerable_answer_rate <=0.29 / risk_weighted_score >=0.86). The
+        # default-ON salient-term coverage gate (GroundednessGate.salient_coverage_check) closed
+        # the gap: every unanswerable item now refuses, with zero over-refusal of answerable ones.
+        run = EvaluationRunner(self.sys).run(self.eval_set, principal=self.principal)
+        self.assertEqual(run.metrics["unanswerable_answer_rate"], 0.0)
+        self.assertEqual(run.metrics["over_refusal_rate"], 0.0)
+        self.assertEqual(run.metrics["refusal_accuracy"], 1.0)
+        self.assertEqual(run.metrics["risk_weighted_score"], 1.0)
+
     def test_refusal_and_risk_regressions_fail_gate(self) -> None:
-        # ★G2 ratchet mechanics: worsening any refusal/risk metric beyond the committed values
-        # blocks the release, exactly like the quality-metric floors above.
+        # ★G2 gate mechanics: worsening any refusal/risk metric beyond the committed values blocks
+        # the release, exactly like the quality-metric floors above. (Formerly a RATCHET holding
+        # the in-domain gap at 0.29/0.86 — tightened to 0.0/1.0 once the salient coverage gate
+        # closed it.)
         run = EvaluationRunner(self.sys).run(self.eval_set, principal=self.principal)
         seeded = {
-            "unanswerable_answer_rate": 0.5,  # above the 0.29 ratchet ceiling
+            "unanswerable_answer_rate": 0.5,  # above the 0.0 ceiling (a reopened in-domain gap)
             "over_refusal_rate": 0.1,  # above the 0.0 ceiling
-            "refusal_accuracy": 0.8,  # below the 0.92 floor
-            "risk_weighted_score": 0.7,  # below the 0.86 floor
+            "refusal_accuracy": 0.8,  # below the 1.0 floor
+            "risk_weighted_score": 0.7,  # below the 1.0 floor
             "high_risk_recall": 0.9,  # below the 1.0 floor
         }
         for metric, bad_value in seeded.items():
