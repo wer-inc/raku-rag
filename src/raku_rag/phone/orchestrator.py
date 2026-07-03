@@ -143,8 +143,15 @@ class PhoneCallService:
         call.answered_at = call.updated_at
         if call.recording_enabled:
             # FR-042: disclosure prompt is played (and recorded as played) before conversation.
+            # ★V2 tenant_lexicon: the disclosure WORDING is brand tone (tenant-replaceable);
+            # whether it plays is not — recording_enabled alone decides that.
             call.recording_disclosure_played = True
-            self._system_turn(call, _RECORDING_DISCLOSURE)
+            self._system_turn(
+                call,
+                self._lexicon_message(
+                    "recording_disclosure", call.tenant_id, _RECORDING_DISCLOSURE
+                ),
+            )
         if version and version.required_slots:
             call.missing_slots = [str(s.get("slot") or "") for s in version.required_slots]
         self._repo.save_call(call)
@@ -441,6 +448,23 @@ class PhoneCallService:
         except Exception:  # noqa: BLE001 — lexicon outage must not break call handling
             return {}
 
+    def _lexicon_message(self, key: str, tenant_id: str, default: str) -> str:
+        """★V2 tenant_lexicon `messages.phone`: a tenant override REPLACES the default wording
+        (brand tone), unlike the additive keyword namespaces. Unset tenant / lexicon outage
+        falls back to the hardcoded default (byte-identical to pre-lexicon behavior). Safety
+        wording (`_INSUFFICIENT_NOTICE` and the no-assertion path) never routes through here."""
+        if self._lexicon is None or not tenant_id:
+            return default
+        try:
+            entries = self._lexicon.entries(tenant_id, "messages.phone")
+        except Exception:  # noqa: BLE001 — lexicon outage must not break call handling
+            return default
+        for value in entries.get(key, ()):
+            text = str(value).strip()
+            if text:
+                return text
+        return default
+
     def _record_lifecycle_audit(
         self, principal: IdentityClaims, *, action: str, resource_id: str, decision: str
     ) -> None:
@@ -642,15 +666,30 @@ class PhoneCallService:
                 call.transition("abandoned")
             else:
                 call.transition("completed" if self._has_answer(call) else "abandoned")
-            turn = self._ai_turn(call, "end_call", "お電話ありがとうございました。", started)
+            turn = self._ai_turn(
+                call,
+                "end_call",
+                self._lexicon_message("closing", call.tenant_id, "お電話ありがとうございました。"),
+                started,
+            )
             return 200, self._turn_payload(principal, call, turn, handoff=None)
         if event.event_type == "hold":
             call.transition("on_hold")
-            turn = self._ai_turn(call, "fallback", _HOLD_NOTICE, started)
+            turn = self._ai_turn(
+                call,
+                "fallback",
+                self._lexicon_message("hold_notice", call.tenant_id, _HOLD_NOTICE),
+                started,
+            )
             return 200, self._turn_payload(principal, call, turn, handoff=None)
         if event.event_type == "resume":
             call.transition("active")
-            turn = self._ai_turn(call, "fallback", _RESUME_NOTICE, started)
+            turn = self._ai_turn(
+                call,
+                "fallback",
+                self._lexicon_message("resume_notice", call.tenant_id, _RESUME_NOTICE),
+                started,
+            )
             return 200, self._turn_payload(principal, call, turn, handoff=None)
 
         asr_started = time.perf_counter()
@@ -889,9 +928,15 @@ class PhoneCallService:
             if call.state == "ringing":
                 call.transition("active")
             call.transition("handoff_pending")
-        message = _INSUFFICIENT_NOTICE if reason == "insufficient_evidence" else _HANDOFF_NOTICE
-        if version and reason == "insufficient_evidence" and version.fallback_message:
-            message = version.fallback_message
+        if reason == "insufficient_evidence":
+            # Safety-boundary wording (no assertion without approved evidence) stays hardcoded;
+            # only the scenario's APPROVED fallback_message may replace it — never the lexicon.
+            message = _INSUFFICIENT_NOTICE
+            if version and version.fallback_message:
+                message = version.fallback_message
+        else:
+            # ★V2 tenant_lexicon messages.phone: brand-tone transfer announcement.
+            message = self._lexicon_message("handoff_announce", call.tenant_id, _HANDOFF_NOTICE)
         turn = self._ai_turn(
             call,
             "handoff",
