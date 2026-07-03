@@ -74,6 +74,10 @@ class RagHotPathMetric:
     cache_hit: bool
     model: str = ""
     prompt_version: str = ""
+    # ★G3b: the question text for 未回答分析. Hashed-identity stance is kept — callers MUST pass
+    # text that is ALREADY PII-redacted (services/answer.py runs the observability Redactor);
+    # this layer never sees the raw query.
+    query_redacted: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -95,6 +99,7 @@ class RagHotPathMetric:
             "cache_hit": self.cache_hit,
             "model": self.model,
             "prompt_version": self.prompt_version,
+            "query_redacted": self.query_redacted,
         }
 
 
@@ -169,8 +174,13 @@ class MetricsRecorder:
         cache_hit: bool = False,
         model: str = "",
         prompt_version: str = "",
+        query_redacted: str = "",
     ) -> RagHotPathMetric:
-        """Record request-level RAG latency/count/token metrics without raw identities."""
+        """Record request-level RAG latency/count/token metrics without raw identities.
+
+        ``query_redacted`` must ALREADY be PII-redacted by the caller (Redactor in the answer
+        path) — same stance as the hashed tenant/user identities: raw PII never enters here.
+        """
         metric = RagHotPathMetric(
             request_id=request_id,
             tenant_id_hash=_identity_hash(tenant_id),
@@ -190,6 +200,7 @@ class MetricsRecorder:
             cache_hit=bool(cache_hit),
             model=model,
             prompt_version=prompt_version,
+            query_redacted=query_redacted,
         )
         self._rag_hot_paths.append(metric)
         if self.hot_path_sink is not None:

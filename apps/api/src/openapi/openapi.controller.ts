@@ -2332,6 +2332,42 @@ const OPENAPI_DOC = {
           items: { type: "array", items: { $ref: "#/components/schemas/FeedbackRecord" } },
         },
       },
+      QualityRefusalRecord: {
+        type: "object",
+        required: ["request_id", "query_redacted", "status", "created_at"],
+        properties: {
+          request_id: { type: "string" },
+          query_redacted: { type: "string" },
+          status: { type: "string" },
+          created_at: { type: "string" },
+        },
+      },
+      QualityOperationalResponse: {
+        type: "object",
+        required: [
+          "query_count",
+          "p50_ms",
+          "p95_ms",
+          "avg_total_tokens",
+          "status_counts",
+          "insufficient_rate",
+          "recent_refusals",
+          "low_rating_count",
+        ],
+        properties: {
+          query_count: { type: "number" },
+          p50_ms: { type: "number" },
+          p95_ms: { type: "number" },
+          avg_total_tokens: { type: "number" },
+          status_counts: { type: "object", additionalProperties: { type: "number" } },
+          insufficient_rate: { type: "number" },
+          recent_refusals: {
+            type: "array",
+            items: { $ref: "#/components/schemas/QualityRefusalRecord" },
+          },
+          low_rating_count: { type: "number" },
+        },
+      },
       IndustryListResponse: {
         type: "object",
         required: ["industries"],
@@ -5172,6 +5208,32 @@ const OPENAPI_DOC = {
           "401": { description: "Unauthorized", content: { "application/json": {} } },
           "403": { description: "Reviewer or admin role required", content: { "application/json": {} } },
           "502": { description: "Feedback service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/quality/operational": {
+      get: {
+        operationId: "getQualityOperationalSummary",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [{ name: "limit", in: "query", required: false, schema: { type: "integer" } }],
+        responses: {
+          "200": {
+            description:
+              "実測運用メトリクス — real p50/p95/status counts from query_traces plus the persisted low-rating count (reviewer/admin; tenant-scoped from the principal)",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/QualityOperationalResponse" },
+              },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Reviewer or admin role required", content: { "application/json": {} } },
+          "502": { description: "Quality service unavailable", content: { "application/json": {} } },
         },
       },
     },

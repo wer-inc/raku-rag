@@ -115,7 +115,9 @@ metadata+引用UI は A。残るギャップは4クラスタに集中する:
       根治は検索関連度/クエリ展開側(★G4以降)。矛盾/最新版選択カテゴリはコーパスハーネスが
       base層(ライフサイクル無し)のため ★G4 で追加。
 - [x] ★G3a フィードバック永続化(#66 — 0023 answer_feedback + GET /v1/feedback + 改善キューのサーバ駆動化)
-- [x] ★G4 文書鮮度 — `owner` / `review_cycle_days` / `last_verified_at` を
+- [x] ★G3b 未回答ドリルダウン(#68 — query_traces.query_redacted 0025 — 質問文はRedactorでPIIマスク後に
+      保存 — + `GET /v1/quality/operational` + 品質・KPI画面「実測運用メトリクス」カード/未回答クエリ一覧)
+- [x] ★G4 文書鮮度(#67)— `owner` / `review_cycle_days` / `last_verified_at` を
   ManufacturingDocumentMetadata + migration 0024 に追加。`review_overdue`
   (= last_verified_at + review_cycle_days < today、両方設定時のみ)は
   `manufacturing/domain/freshness.py` で導出し、KPI/ダッシュボードに
@@ -123,4 +125,7 @@ metadata+引用UI は A。残るギャップは4クラスタに集中する:
   last_verified_at/期限)、品質・KPI画面に stat+一覧、引用ビューアに 最終確認日 +
   要再確認バッジを表示。ingest metadata / PUT documents/{id}/metadata の両経路で設定可。
   **最新版選択(canonical)・兄弟文書間の版比較は未実装(deferred)**
-- [ ] ★G3b+★G5実測(#68 スタックPR)/ ★G5残: キャッシュ+モデルルーティング
+- [x] ★G5(実測メトリクス部分、#68)実測 p50/p95(ms)・status別件数・未回答率・低評価件数を
+      query_traces/answer_feedback から集計して品質・KPI画面へ(KPI p95 の evidence-count 代理値は
+      実測があれば置換、無ければ「代理値」明記)
+- [ ] ★G5(残り)キャッシュ格納側+モデルルーティング(小型rewrite/高リスク大型の分岐)は未着手
