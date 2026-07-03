@@ -127,12 +127,14 @@ export default function CitationViewer({
     setBusy(true);
     try {
       const token = await getSessionToken();
+      const citationId = `${citation.document_id}${citation.chunk_id ? `/${citation.chunk_id}` : ""}`;
       await submitFeedback(
         {
           subject: "user",
           rating: verdict === "correct" ? 5 : 1,
           answer_id: answerId || undefined,
-          comment: `citation:${citation.document_id}${citation.chunk_id ? `/${citation.chunk_id}` : ""} verdict:${verdict}`,
+          comment: `citation:${citationId} verdict:${verdict}`,
+          citation_id: citationId,
         },
         token,
       );
