@@ -1022,6 +1022,7 @@ class ManufacturingAnswerService:
                 structured_tool=self._answer_service._structured_tool,
                 settings=self._answer_service._settings,
                 visual_verifiers=self._answer_service._visual_verifiers,
+                llm_by_model=self._answer_service._llm_by_model,
             ),
             tuple(evidence),
         )

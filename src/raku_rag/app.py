@@ -92,6 +92,10 @@ class MvpSystem:
             self.cost,
             self.metrics,
             self.tracer,
+            # ★G5: query-embedding cache (same wiring as ProductionSystem so the deterministic
+            # gate exercises the cached path; the hashing embedder is cheap but correctness is
+            # identical).
+            cache=self.cache,
         )
         self.gate = GroundednessGate()
         self.structured_tool = TableManifestStructuredTool(self.registry, self.acl)

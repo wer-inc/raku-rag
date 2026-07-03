@@ -128,4 +128,21 @@ metadata+引用UI は A。残るギャップは4クラスタに集中する:
 - [x] ★G5(実測メトリクス部分、#68)実測 p50/p95(ms)・status別件数・未回答率・低評価件数を
       query_traces/answer_feedback から集計して品質・KPI画面へ(KPI p95 の evidence-count 代理値は
       実測があれば置換、無ければ「代理値」明記)
-- [ ] ★G5(残り)キャッシュ格納側+モデルルーティング(小型rewrite/高リスク大型の分岐)は未着手
+- [x] ★G5(残り)キャッシュ格納側+モデルルーティングの seam —
+  **クエリ埋め込みキャッシュ**: RetrievalService が CacheService(既存の (tenant_id, key) 契約で
+  テナント分離)にクエリ→ベクトルを格納。キーは `embed:{provider:model_version:dims}:{sha256(query)}`
+  で埋め込みモデル版を含む(モデル差し替えで旧ベクトルを配らない)。fail-open(キャッシュ障害は
+  ログ+メトリクスのみ、検索は無傷)。CacheService に per-tenant LRU 上限(既定1000)を追加。
+  メトリクス `embedding_cache_hits_total`/`_misses_total`/`_errors_total`、hot-path の `cache_hit`
+  が実配線(query_traces に乗る)。ヒット時は embedding コスト計上もスキップ(それが節約の実体)。
+  クエリ埋め込みは文書内容に依存しないため文書削除の invalidation 対象外(設計コメント参照)。
+  **回答(セマンティック)キャッシュは意図的に未実装**: キャッシュ済み回答は ACL 変更・文書版
+  更新・tombstone・承認状態遷移を貫通して古い/越境回答を返すリスクがあり(SC-003 と同型の
+  再出現問題)、キー設計に可視性集合+文書版+承認状態のフィンガープリントが必要。正しさ優先で
+  見送り、必要になった時点で invalidation 契約から設計する。
+  **モデルルーティング seam**: AnswerService に `llm_by_model` レジストリ(省略時=従来動作)。
+  QueryProfile.llm_model(既存 admin query-profiles API でテナント調整可)がレジストリのキーに
+  一致すれば生成をそのプロバイダへ、未知名は既定へ fail-open
+  (`answer.llm_model_fallback` ログ + `answer_llm_model_fallback_total`)。dataclass 既定値
+  (DEFAULT_LLM_MODEL)は「指定なし」扱い。production.py は既定プロバイダを自モデル名で登録する
+  のみ — 小型モデルの実登録・rewrite 段の分岐(小型 rewrite/高リスク大型)は**未実装**(seam のみ)

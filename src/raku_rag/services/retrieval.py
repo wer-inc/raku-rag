@@ -6,6 +6,7 @@ additionally re-asserts visibility on every returned chunk (fail-closed) and app
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Mapping
 
@@ -16,6 +17,7 @@ from raku_rag.interfaces.base import EmbeddingProvider, Reranker, VectorStore
 from raku_rag.observability.logging import log
 from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.tracing import InMemoryTracer
+from raku_rag.services.cache import CacheService
 from raku_rag.services.cost import CostService
 
 MAX_RERANK_CANDIDATES = 80
@@ -30,6 +32,30 @@ def _token_count(text: str) -> int:
 
 def _rerank_candidate_limit(profile: QueryProfile) -> int:
     return max(0, min(int(profile.rerank_top_n), MAX_RERANK_CANDIDATES))
+
+
+def _embedder_cache_identity(embedder: EmbeddingProvider) -> str:
+    """Stable identity for the embedding model so cached vectors never cross model versions.
+
+    Mirrors eval/version_registry.py: prefer the provider ``capability`` (provider + model_version +
+    dimensions), fall back to the ``model_version`` attribute (e.g. ``hashing-bow-v2`` — the same
+    identity stamped on chunks at ingest), then to the class name so an unidentified provider still
+    gets a non-empty, type-scoped key.
+    """
+    capability = getattr(embedder, "capability", None)
+    provider = str(getattr(capability, "provider", "") or "")
+    model_version = str(
+        getattr(capability, "model_version", "")
+        or getattr(embedder, "model_version", "")
+        or type(embedder).__name__
+    )
+    dims = (
+        getattr(capability, "dimensions", None)
+        or getattr(embedder, "dim", None)
+        or getattr(embedder, "dimensions", None)
+        or 0
+    )
+    return f"{provider}:{model_version}:{dims}"
 
 
 def _merge_hybrid_results(*result_sets: list[ScoredChunk]) -> list[ScoredChunk]:
@@ -59,6 +85,7 @@ class RetrievalService:
         metrics: MetricsRecorder | None = None,
         tracer: InMemoryTracer | None = None,
         rerank_trace_sink: object | None = None,
+        cache: CacheService | None = None,
     ) -> None:
         self._store = store
         self._embedder = embedder
@@ -69,6 +96,15 @@ class RetrievalService:
         self._tracer = tracer
         # ★G1: optional durable sink (rerank_traces table); fail-open, never blocks retrieval.
         self._rerank_trace_sink = rerank_trace_sink
+        # ★G5 query-embedding cache (default None = behaviour unchanged). Every request re-embeds
+        # the query — with a real embedding provider (OpenAI text-embedding-3) that is a paid API
+        # call per request. Keys are tenant-scoped via CacheService's (tenant_id, key) contract and
+        # include the embedding model identity so a provider/version swap can never serve vectors
+        # from the old model. NOTE: query→vector is content-independent, so these entries need NO
+        # document-deletion invalidation (they carry no document_ids); deleted documents are still
+        # filtered by the tenant/ACL/tombstone PRE-filter on every search.
+        self._cache = cache
+        self._embed_cache_identity = _embedder_cache_identity(embedder) if cache else ""
 
     def retrieve(
         self,
@@ -93,8 +129,13 @@ class RetrievalService:
             query_plan = plan_query(query)
             rerank_candidate_limit = _rerank_candidate_limit(profile)
             search_top_k = max(1, profile.top_k, rerank_candidate_limit)
-            query_vec = self._embedder.embed([query])[0]
-            if self._cost:
+            metric_labels = {"tenant_id": principal.tenant_id, "profile_id": profile.profile_id}
+            query_vec, embed_cache_hit = self._embed_query(
+                principal.tenant_id, query, metric_labels, correlation_id
+            )
+            if self._cost and not embed_cache_hit:
+                # A cache hit skips the embedding call entirely, so no embedding cost is incurred
+                # (or recorded) for it — that saving is the point of the cache.
                 self._cost.record_tokens(
                     principal.tenant_id,
                     kind="embedding_tokens",
@@ -143,7 +184,6 @@ class RetrievalService:
             rerank_input_count = 0
             rerank_status = "skipped"
             rerank_error = ""
-            metric_labels = {"tenant_id": principal.tenant_id, "profile_id": profile.profile_id}
             if profile.rerank_enabled and self._reranker is not None and rerank_candidate_limit > 0:
                 rerank_input = scored[:rerank_candidate_limit]
                 rerank_input_count = len(rerank_input)
@@ -249,6 +289,7 @@ class RetrievalService:
                     query_lexical_term_count=len(query_plan.lexical_terms),
                     query_rewrite_hint_count=len(query_plan.rewrite_hints),
                     query_filter_hints=sorted(query_plan.filter_hints),
+                    embed_cache_hit=embed_cache_hit,
                 )
             if self._metrics:
                 self._metrics.record_stage(
@@ -258,6 +299,63 @@ class RetrievalService:
                     latency_ms=(time.perf_counter() - started) * 1000,
                 )
             return result
+
+    def _embed_query(
+        self,
+        tenant_id: str,
+        query: str,
+        metric_labels: dict[str, str],
+        correlation_id: str,
+    ) -> tuple[list[float], bool]:
+        """Embed the query, serving repeats from the tenant-scoped embedding cache (★G5).
+
+        Cache key = ("embed", embedding model identity, sha256(query)); the tenant scope comes from
+        CacheService's (tenant_id, key) contract. Every cache interaction is fail-open: a cache
+        error is logged/metered and the query is embedded as if no cache were configured.
+        """
+        if self._cache is None:
+            return self._embedder.embed([query])[0], False
+        key = (
+            "embed:"
+            f"{self._embed_cache_identity}:"
+            f"{hashlib.sha256(query.encode('utf-8')).hexdigest()}"
+        )
+        try:
+            cached = self._cache.get(tenant_id, key)
+        except Exception as exc:  # fail-open: cache errors never break retrieval
+            cached = None
+            log(
+                "retrieval.embed_cache_error",
+                correlation_id=correlation_id,
+                tenant=tenant_id,
+                op="get",
+                error=type(exc).__name__,
+            )
+            if self._metrics:
+                self._metrics.increment("embedding_cache_errors_total", labels=metric_labels)
+        if isinstance(cached, tuple):
+            if self._metrics:
+                self._metrics.increment("embedding_cache_hits_total", labels=metric_labels)
+            return list(cached), True
+        query_vec = self._embedder.embed([query])[0]
+        if self._metrics:
+            self._metrics.increment("embedding_cache_misses_total", labels=metric_labels)
+        try:
+            # Stored as an immutable tuple so later callers can't mutate the cached vector.
+            # document_ids is empty on purpose: a query embedding depends on no document content,
+            # so document deletion must NOT invalidate it (see the constructor note).
+            self._cache.put(tenant_id, key, tuple(query_vec), set())
+        except Exception as exc:  # fail-open
+            log(
+                "retrieval.embed_cache_error",
+                correlation_id=correlation_id,
+                tenant=tenant_id,
+                op="put",
+                error=type(exc).__name__,
+            )
+            if self._metrics:
+                self._metrics.increment("embedding_cache_errors_total", labels=metric_labels)
+        return query_vec, False
 
     def is_visible(self, principal: IdentityClaims, chunk: Chunk) -> bool:
         """Re-check current ACL/tenant/tombstone visibility for already-retrieved evidence.
