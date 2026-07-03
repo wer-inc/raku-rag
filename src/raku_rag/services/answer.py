@@ -1050,6 +1050,8 @@ class AnswerService:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cache_hit=cache_hit,
+            model=getattr(self._llm, "model", ""),
+            prompt_version=getattr(self._llm, "prompt_version", ""),
         )
 
     def _retrieval_span_attrs(self, correlation_id: str) -> dict:

@@ -58,6 +58,7 @@ class RetrievalService:
         cost: CostService | None = None,
         metrics: MetricsRecorder | None = None,
         tracer: InMemoryTracer | None = None,
+        rerank_trace_sink: object | None = None,
     ) -> None:
         self._store = store
         self._embedder = embedder
@@ -66,6 +67,8 @@ class RetrievalService:
         self._cost = cost
         self._metrics = metrics
         self._tracer = tracer
+        # ★G1: optional durable sink (rerank_traces table); fail-open, never blocks retrieval.
+        self._rerank_trace_sink = rerank_trace_sink
 
     def retrieve(
         self,
@@ -166,6 +169,24 @@ class RetrievalService:
                         )
                 rerank_ms = (time.perf_counter() - rerank_started) * 1000
             result = scored[: profile.top_k]
+
+            if self._rerank_trace_sink is not None and rerank_status != "skipped":
+                try:
+                    self._rerank_trace_sink.record(
+                        tenant_id=principal.tenant_id,
+                        query_id=correlation_id,
+                        retrieval_profile_id=profile.profile_id,
+                        provider=type(self._reranker).__name__,
+                        model=getattr(self._reranker, "model", ""),
+                        candidate_count=rerank_input_count,
+                        final_context_count=len(result),
+                        latency_ms=rerank_ms,
+                    )
+                except Exception:
+                    if self._metrics:
+                        self._metrics.increment(
+                            "rerank_trace_persist_failures_total", labels=metric_labels
+                        )
 
             # P1-8 root-cause attribution for an empty retrieval (PR-006): never a silent zero.
             if result:

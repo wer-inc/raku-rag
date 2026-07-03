@@ -72,6 +72,8 @@ class RagHotPathMetric:
     prompt_tokens: int
     completion_tokens: int
     cache_hit: bool
+    model: str = ""
+    prompt_version: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -91,6 +93,8 @@ class RagHotPathMetric:
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "cache_hit": self.cache_hit,
+            "model": self.model,
+            "prompt_version": self.prompt_version,
         }
 
 
@@ -102,6 +106,9 @@ class MetricsRecorder:
     )
     _rag_hot_paths: list[RagHotPathMetric] = field(default_factory=list)
     exporter: TelemetryExporter | None = field(default=None, repr=False)
+    # ★G1: optional durable sink (query_traces). Persistence is fail-open — a sink outage
+    # degrades to in-memory-only metrics and never breaks the answer path.
+    hot_path_sink: object | None = field(default=None, repr=False)
 
     def increment(
         self, name: str, value: float = 1.0, *, labels: dict[str, str] | None = None
@@ -160,6 +167,8 @@ class MetricsRecorder:
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
         cache_hit: bool = False,
+        model: str = "",
+        prompt_version: str = "",
     ) -> RagHotPathMetric:
         """Record request-level RAG latency/count/token metrics without raw identities."""
         metric = RagHotPathMetric(
@@ -179,8 +188,20 @@ class MetricsRecorder:
             prompt_tokens=max(0, int(prompt_tokens)),
             completion_tokens=max(0, int(completion_tokens)),
             cache_hit=bool(cache_hit),
+            model=model,
+            prompt_version=prompt_version,
         )
         self._rag_hot_paths.append(metric)
+        if self.hot_path_sink is not None:
+            try:
+                # The sink needs the raw tenant_id for RLS; the metric itself stays hashed.
+                self.hot_path_sink.record(tenant_id, metric)
+            except Exception:
+                # Fail-open: durable telemetry must never break answering, but not silent.
+                self.increment(
+                    "query_trace_persist_failures_total",
+                    labels={"tenant_id_hash": metric.tenant_id_hash},
+                )
         labels = {
             "tenant_id_hash": metric.tenant_id_hash,
             "profile_id": profile_id,
