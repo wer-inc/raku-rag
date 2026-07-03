@@ -1,5 +1,7 @@
 import * as cdk from "aws-cdk-lib";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
 import * as cognito from "aws-cdk-lib/aws-cognito";
@@ -210,6 +212,26 @@ export class RakuRagStack extends cdk.Stack {
       throw new Error("prod deployment requires --context domainName=<custom-domain> for HTTPS");
     }
     const publicBaseUrl = publicDomainName ? `https://${publicDomainName}` : "http://localhost:3002";
+    // Optional `--context httpsFront=cloudfront` puts a CloudFront distribution in front of the
+    // public ALB so the stack serves HTTPS on *.cloudfront.net WITHOUT owning a custom domain
+    // (browser secure-context features — e.g. the Web Speech API microphone on /phone — cannot run
+    // on the HTTP-only ALB). Only for the aws-nextjs no-custom-domain shape: with domainName the
+    // ALB already terminates HTTPS via ACM, and with external-vercel there is no AWS-hosted web.
+    const httpsFrontCtx = String(this.node.tryGetContext("httpsFront") ?? "none");
+    if (httpsFrontCtx !== "none" && httpsFrontCtx !== "cloudfront") {
+      throw new Error("httpsFront must be none or cloudfront");
+    }
+    const useCloudFrontHttpsFront = httpsFrontCtx === "cloudfront";
+    if (useCloudFrontHttpsFront && !awsWeb) {
+      throw new Error(
+        "httpsFront=cloudfront requires frontendHosting=aws-nextjs (the web-owned public ALB is the origin)"
+      );
+    }
+    if (useCloudFrontHttpsFront && publicDomainName) {
+      throw new Error(
+        "httpsFront=cloudfront is for the no-custom-domain case; domainName already provides HTTPS at the ALB"
+      );
+    }
     const authMode = String(this.node.tryGetContext("authMode") ?? (isProd ? "cognito" : "dev"));
     const manageCognitoGroups = String(this.node.tryGetContext("manageCognitoGroups") ?? "false").toLowerCase() === "true";
     const basicAuthUser = String(this.node.tryGetContext("basicAuthUser") ?? "").trim();
@@ -412,6 +434,15 @@ export class RakuRagStack extends cdk.Stack {
     const cognitoJwksUri = `${cognitoIssuer}/.well-known/jwks.json`;
     const cognitoHostedUiDomain = userPoolDomain.baseUrl();
 
+    // Registered OAuth redirect targets. The web app builds redirect_uri from the BROWSER origin
+    // (apps/web/lib/session.ts callbackUrl() = window.location.origin), so every public origin the
+    // app is reachable on must be listed; the CloudFront https origin is appended below via an L1
+    // escape hatch once the distribution exists (it cannot be known here).
+    const cognitoCallbackUrls = [
+      `${publicBaseUrl}/oauth/cognito/callback`,
+      "http://localhost:3002/oauth/cognito/callback"
+    ];
+    const cognitoLogoutUrls = [publicBaseUrl, "http://localhost:3002"];
     const userPoolClient = userPool.addClient("UserPoolClient", {
       userPoolClientName: `${servicePrefix}-web`,
       generateSecret: false,
@@ -424,8 +455,8 @@ export class RakuRagStack extends cdk.Stack {
           authorizationCodeGrant: true
         },
         scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
-        callbackUrls: [`${publicBaseUrl}/oauth/cognito/callback`, "http://localhost:3002/oauth/cognito/callback"],
-        logoutUrls: [publicBaseUrl, "http://localhost:3002"]
+        callbackUrls: cognitoCallbackUrls,
+        logoutUrls: cognitoLogoutUrls
       }
     });
 
@@ -550,6 +581,7 @@ export class RakuRagStack extends cdk.Stack {
     let publicAlb: elbv2.IApplicationLoadBalancer;
     let apiTargetGroup: elbv2.IApplicationTargetGroup;
     let apiFargateService: ecs.BaseService;
+    let httpsFrontDistribution: cloudfront.Distribution | undefined;
 
     if (awsWeb) {
       // ---- Next.js web owns the public ALB; API rides the same listener under /v1/* (same origin) ----
@@ -686,6 +718,46 @@ export class RakuRagStack extends cdk.Stack {
         ec2.Port.tcp(3000),
         "Public ALB to NestJS API (/v1/*)"
       );
+
+      if (useCloudFrontHttpsFront) {
+        // HTTPS without a custom domain: CloudFront terminates TLS on *.cloudfront.net and forwards
+        // EVERYTHING to the ALB over plain HTTP (the ALB keeps its HTTP:80 listener — same shape as
+        // direct access, which stays reachable; restricting the ALB to the CloudFront origin prefix
+        // list is a possible follow-up). ALL_VIEWER forwards the viewer Host header, so the app
+        // keeps seeing the browser-facing hostname: the client builds the Cognito redirect_uri from
+        // window.location.origin and the presign route self-calls /v1/whoami via x-forwarded-host —
+        // both resolve to the CloudFront domain with no extra public-URL env. CACHING_DISABLED
+        // because the origin is a live app/API, not static content.
+        httpsFrontDistribution = new cloudfront.Distribution(this, "HttpsFrontDistribution", {
+          comment: `${servicePrefix} https front for the public web+API ALB`,
+          defaultBehavior: {
+            origin: new origins.LoadBalancerV2Origin(webService.loadBalancer, {
+              protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+              // LLM-backed answers can exceed CloudFront's 30s default origin-response timeout.
+              readTimeout: cdk.Duration.seconds(60)
+            }),
+            allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+            viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+            cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+            originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER
+          },
+          // PRICE_CLASS_200 includes Japan (the primary user base); PRICE_CLASS_100 does not.
+          priceClass: cloudfront.PriceClass.PRICE_CLASS_200
+        });
+        // Register the CloudFront origin with Cognito ALONGSIDE the existing URLs. L1 escape hatch:
+        // the UserPoolClient is created long before the ALB/distribution, so the URL cannot be part
+        // of addClient(). No CFN cycle: UserPoolClient -> Distribution -> ALB, while the task
+        // definitions/services that reference the client id sit downstream of all three.
+        const cfnUserPoolClient = userPoolClient.node.defaultChild as cognito.CfnUserPoolClient;
+        cfnUserPoolClient.callbackUrLs = [
+          ...cognitoCallbackUrls,
+          `https://${httpsFrontDistribution.domainName}/oauth/cognito/callback`
+        ];
+        cfnUserPoolClient.logoutUrLs = [
+          ...cognitoLogoutUrls,
+          `https://${httpsFrontDistribution.domainName}`
+        ];
+      }
 
       publicAlb = webService.loadBalancer;
       apiTargetGroup = apiTg;
@@ -1287,6 +1359,12 @@ export class RakuRagStack extends cdk.Stack {
     new cdk.CfnOutput(this, "ApiLoadBalancerDnsName", {
       value: publicAlb.loadBalancerDnsName
     });
+    if (httpsFrontDistribution) {
+      // The secure-context entry point when httpsFront=cloudfront (no custom domain needed).
+      new cdk.CfnOutput(this, "HttpsFrontUrl", {
+        value: `https://${httpsFrontDistribution.domainName}`
+      });
+    }
     if (langfuseService) {
       new cdk.CfnOutput(this, "LangfuseInternalLoadBalancerDnsName", {
         value: langfuseService.loadBalancer.loadBalancerDnsName
