@@ -77,6 +77,7 @@ import {
   type QualityEvalResult,
   manufacturingRequestSourceSync,
   manufacturingReviewDraft,
+  manufacturingPublishDraft,
   manufacturingSafetyTelemetry,
   manufacturingSourceSyncStatus,
   manufacturingTroubleCaseSearch,
@@ -5074,9 +5075,9 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
   const [approvalState, setApprovalState] = useState("pending_review");
   const [actionError, setActionError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  // The pending approve/reject awaiting confirmation (null = no dialog open). Approval is irreversible
-  // and audited, so it always passes through a confirm step. (issue 0015)
-  const [confirmKind, setConfirmKind] = useState<"approved" | "rejected" | null>(null);
+  // The pending approve/reject/publish awaiting confirmation (null = no dialog open). All three are
+  // irreversible, audited human actions, so they always pass through a confirm step. (issues 0015/0019)
+  const [confirmKind, setConfirmKind] = useState<"approved" | "rejected" | "publish" | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -5143,6 +5144,24 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
     }
   }
 
+  // issue 0019 — publish the approved draft as knowledge. Server-guarded: only status=approved and
+  // not-yet-published drafts publish (a second publish returns 409); the actor is the signed principal.
+  async function onPublish() {
+    if (draftState.state !== "ready" || saving) return;
+    setActionError(null);
+    setSaving(true);
+    try {
+      await runWithToken((token) => manufacturingPublishDraft(artifactId, token));
+      const refreshed = await runWithToken((token) => manufacturingGetDraft(artifactId, token));
+      setDraftState({ state: "ready", data: refreshed });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "リクエストに失敗しました");
+    } finally {
+      setSaving(false);
+      setConfirmKind(null);
+    }
+  }
+
   async function onApproveDocument() {
     if (!docId.trim() || saving) return;
     setActionError(null);
@@ -5186,9 +5205,26 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
             "このドラフトは未承認です。AI 出力はレビューで承認されるまで正式な知識・公開物にはなりません。"}
         </p>
       )}
-      {draft.status === "approved" && (
+      {draft.status === "approved" && !draft.published_document_id && (
+        <div className="review-publish-cta">
+          <p className="ops-note" role="status" aria-live="polite" style={{ color: "#15803d", fontWeight: 600 }}>
+            承認済み — このドラフトはまだ公開されていません。公開すると回答の根拠として利用可能になります。
+          </p>
+          <button
+            type="button"
+            className="btn-approve"
+            onClick={() => setConfirmKind("publish")}
+            disabled={saving}
+          >
+            ナレッジとして公開
+          </button>
+        </div>
+      )}
+      {draft.status === "approved" && draft.published_document_id && (
         <p className="ops-note" role="status" aria-live="polite" style={{ color: "#15803d", fontWeight: 600 }}>
-          承認済み — このドラフトは正式に公開できます。
+          公開済み — {draft.published_at ? `${new Date(draft.published_at).toLocaleString("ja-JP")} に` : ""}
+          文書 <Link href={`/documents/${encodeURIComponent(draft.published_document_id)}`}>{draft.published_document_id}</Link>{" "}
+          として公開され、回答の根拠として利用可能です。
         </p>
       )}
       {draft.status === "rejected" && (
@@ -5282,7 +5318,7 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
               onClick={() => setConfirmKind("approved")}
               disabled={saving || draft.status !== "in_review"}
             >
-              承認・公開
+              承認
             </button>
             <button
               type="button"
@@ -5324,17 +5360,27 @@ function ReviewDetailBody({ artifactId }: { artifactId: string }) {
       )}
       {confirmKind && (
         <ConfirmDialog
-          title={confirmKind === "approved" ? "このドラフトを承認しますか？" : "このドラフトを却下しますか？"}
-          body={
-            confirmKind === "approved"
-              ? "承認すると正式なレビュー結果として監査に記録されます。この操作は取り消せません。"
-              : "却下するとこのドラフトは終了状態になります。この操作は取り消せません。"
+          title={
+            confirmKind === "publish"
+              ? "このドラフトをナレッジとして公開しますか？"
+              : confirmKind === "approved"
+                ? "このドラフトを承認しますか？"
+                : "このドラフトを却下しますか？"
           }
-          confirmLabel={confirmKind === "approved" ? "承認する" : "却下する"}
+          body={
+            confirmKind === "publish"
+              ? "公開すると回答の根拠として利用可能になります。公開は監査に記録され、取り消せません。"
+              : confirmKind === "approved"
+                ? "承認すると正式なレビュー結果として監査に記録されます。この操作は取り消せません。"
+                : "却下するとこのドラフトは終了状態になります。この操作は取り消せません。"
+          }
+          confirmLabel={
+            confirmKind === "publish" ? "公開する" : confirmKind === "approved" ? "承認する" : "却下する"
+          }
           danger={confirmKind === "rejected"}
           busy={saving}
           onCancel={() => setConfirmKind(null)}
-          onConfirm={() => void onReview(confirmKind)}
+          onConfirm={() => (confirmKind === "publish" ? void onPublish() : void onReview(confirmKind))}
         />
       )}
     </>

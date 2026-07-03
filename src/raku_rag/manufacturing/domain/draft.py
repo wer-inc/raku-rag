@@ -65,5 +65,12 @@ class DraftArtifact:
     approval_decision: str | None = None  # approve | reject (reviewer's explicit decision)
     review_status: str | None = None
 
+    # --- publish fields (issue 0019; approved -> published-as-knowledge) ---
+    # Set ONLY by DraftService.publish (a separate, attributable HUMAN action after approval):
+    # the 001 Document the approved draft was ingested as, who published it, and when.
+    published_document_id: str | None = None
+    published_by: str | None = None
+    published_at: str | None = None  # ISO timestamp
+
     # free-form generated content payload (not load-bearing for schema gates)
     content: dict = field(default_factory=dict)

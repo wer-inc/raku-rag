@@ -134,6 +134,18 @@ describe("manufacturing answer facade (e2e)", () => {
           res.end(JSON.stringify({ artifact_id: "art1", status: "approved" }));
         } else if (
           req.method === "POST" &&
+          url.pathname === "/internal/manufacturing/drafts/art1/publish"
+        ) {
+          // issue 0019 — publish an approved draft as knowledge
+          res.end(
+            JSON.stringify({
+              artifact_id: "art1",
+              status: "approved",
+              published_document_id: "pub_art1",
+            }),
+          );
+        } else if (
+          req.method === "POST" &&
           url.pathname === "/internal/manufacturing/drafts/art409/review"
         ) {
           // out-of-order lifecycle transition -> answer-service returns a real 409 (issue 0023)
@@ -469,6 +481,15 @@ describe("manufacturing answer facade (e2e)", () => {
     expect(res.status).toBe(200);
     expect(receivedPath).toBe("/internal/manufacturing/drafts/art1/review");
 
+    // issue 0019 — publish shares the same reviewer/admin gate as review/approve
+    res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/drafts/art1/publish")
+      .set(authed)
+      .send();
+    expect(res.status).toBe(200);
+    expect(receivedPath).toBe("/internal/manufacturing/drafts/art1/publish");
+    expect(res.body.published_document_id).toBe("pub_art1");
+
     res = await request(app.getHttpServer())
       .post("/v1/manufacturing/documents/doc1/approval")
       .set(authed)
@@ -497,6 +518,13 @@ describe("manufacturing answer facade (e2e)", () => {
       .post("/v1/manufacturing/drafts/art1/review")
       .set(authed)
       .send({ decision: "approved" });
+    expect(res.status).toBe(403);
+
+    // issue 0019 — publish is gated by the same reviewer/admin check as review
+    res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/drafts/art1/publish")
+      .set(authed)
+      .send();
     expect(res.status).toBe(403);
 
     res = await request(app.getHttpServer())

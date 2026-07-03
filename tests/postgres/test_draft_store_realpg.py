@@ -122,6 +122,31 @@ class TestPostgresDraftStoreDurability(unittest.TestCase):
 
         self._cleanup(aid)
 
+    def test_publish_fields_round_trip_in_payload(self) -> None:
+        # issue 0019 — published_document_id / published_by / published_at ride in the payload jsonb
+        # (no schema migration) and must survive a fresh-store read. The artifact deliberately stays
+        # in_review here: the CHECK `NOT (created_by='ai' AND status='approved')` still blocks a
+        # human-approved AI draft (issue 0012), so this pins ONLY the payload carriage of the fields.
+        with self._conn() as w:
+            writer = self._Store(w)
+            art = self._artifact(writer, self.tenant)
+            writer.add(art)
+            aid = art.artifact_id
+            loaded = writer.get(self.tenant, aid)
+            loaded.status = self._DraftStatus.IN_REVIEW
+            loaded.published_document_id = f"pub_{aid}"
+            loaded.published_by = "carol"
+            loaded.published_at = "2026-07-03T00:00:00+00:00"
+            writer.save(loaded)
+
+        with self._conn() as r:
+            got = self._Store(r).get(self.tenant, aid)
+            self.assertEqual(got.published_document_id, f"pub_{aid}")
+            self.assertEqual(got.published_by, "carol")
+            self.assertEqual(got.published_at, "2026-07-03T00:00:00+00:00")
+
+        self._cleanup(aid)
+
     def test_list_filters_and_tenant_isolation(self) -> None:
         with self._conn() as w:
             store = self._Store(w)

@@ -299,6 +299,24 @@ export class ManufacturingController {
     );
   }
 
+  // issue 0019 — publish an APPROVED draft into the knowledge base. Same reviewer/admin gate as
+  // review/approve; the answer-service enforces the approved-only + already-published (409) rules
+  // and attributes the publish to the signed principal (never the body).
+  @Post("drafts/:artifactId/publish")
+  @HttpCode(200)
+  async publishDraft(
+    @Req() req: Request,
+    @Param("artifactId") artifactId: string,
+  ): Promise<Record<string, unknown>> {
+    assertReviewApprovalAllowed(req);
+    return this.requestCore(
+      req,
+      "POST",
+      `/internal/manufacturing/drafts/${encodeURIComponent(artifactId)}/publish`,
+      {},
+    );
+  }
+
   @Get("documents")
   async documents(
     @Req() req: Request,

@@ -41,6 +41,10 @@ _PAYLOAD_FIELDS = (
     "review_comment",
     "approval_decision",
     "review_status",
+    # publish fields (issue 0019) — carried in payload, no schema migration needed
+    "published_document_id",
+    "published_by",
+    "published_at",
 )
 
 _SELECT = (
@@ -202,5 +206,8 @@ def _row_to_artifact(row) -> DraftArtifact:
         review_comment=payload.get("review_comment"),
         approval_decision=payload.get("approval_decision"),
         review_status=payload.get("review_status"),
+        published_document_id=payload.get("published_document_id"),
+        published_by=payload.get("published_by"),
+        published_at=payload.get("published_at"),
         content=dict(content),
     )
