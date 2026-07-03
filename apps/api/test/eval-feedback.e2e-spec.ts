@@ -18,6 +18,13 @@ describe("evaluation and feedback facades (e2e)", () => {
     roles: ["admin"],
   });
 
+  const memberToken = makeUserToken({
+    tenant_id: "tenant_eval",
+    user_id: "carol",
+    groups: [],
+    roles: ["member"],
+  });
+
   beforeAll(async () => {
     process.env.NODE_ENV = "test";
     previousAnswerServiceUrl = process.env.ANSWER_SERVICE_URL;
@@ -67,6 +74,29 @@ describe("evaluation and feedback facades (e2e)", () => {
         if (req.method === "POST" && req.url === "/internal/feedback") {
           res.statusCode = 202;
           res.end(JSON.stringify({ feedback_id: "fb_1", status: "accepted" }));
+          return;
+        }
+        if (req.method === "GET" && req.url?.startsWith("/internal/feedback")) {
+          res.end(
+            JSON.stringify({
+              items: [
+                {
+                  feedback_id: "fb_1",
+                  tenant_id: "tenant_eval",
+                  answer_id: "ans_1",
+                  evaluation_run_id: "",
+                  subject: "user",
+                  rating: "down",
+                  score: 2,
+                  reason_code: "vague",
+                  comment: "answer:needs_improvement reason:vague",
+                  actor_id: "alice",
+                  citation_id: null,
+                  created_at: "2026-07-03T00:00:00+00:00",
+                },
+              ],
+            }),
+          );
           return;
         }
         res.statusCode = 500;
@@ -138,5 +168,32 @@ describe("evaluation and feedback facades (e2e)", () => {
     expect(res.status).toBe(202);
     expect(res.body.feedback_id).toBe("fb_1");
     expect(seen[seen.length - 1].url).toBe("/internal/feedback");
+  });
+
+  // ★G3a: server-driven improvement queue — the persisted feedback list.
+  it("lists persisted feedback for reviewer/admin with tenant scope from the principal", async () => {
+    const res = await request(app.getHttpServer())
+      .get("/v1/feedback?limit=25&rating=down")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", token);
+
+    expect(res.status).toBe(200);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].feedback_id).toBe("fb_1");
+    expect(res.body.items[0].rating).toBe("down");
+    const last = seen[seen.length - 1];
+    expect(last.method).toBe("GET");
+    expect(last.url).toBe("/internal/feedback?limit=25&rating=down");
+    // Tenant scope travels as the signed principal's header, never a query param.
+    expect(last.tenant).toBe("tenant_eval");
+  });
+
+  it("rejects the feedback list for non-reviewer roles", async () => {
+    const res = await request(app.getHttpServer())
+      .get("/v1/feedback")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", memberToken);
+
+    expect(res.status).toBe(403);
   });
 });

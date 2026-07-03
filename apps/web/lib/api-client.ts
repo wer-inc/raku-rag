@@ -25,6 +25,7 @@ import type {
   DocumentApprovalRequest,
   DocumentApprovalResult,
   DraftArtifact,
+  FeedbackListResponse,
   FeedbackRequest,
   FeedbackResponse,
   GovernanceStatus,
@@ -413,6 +414,19 @@ export async function submitFeedback(
   userToken: string,
 ): Promise<FeedbackResponse> {
   return apiPostJson<FeedbackResponse>("/feedback", req, userToken);
+}
+
+/** ★G3a: list the persisted feedback rows (server-driven 改善キュー; reviewer/admin only). */
+export async function listFeedback(
+  userToken: string,
+  limit = 100,
+  rating?: "up" | "down" | "neutral",
+): Promise<FeedbackListResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (rating) {
+    params.set("rating", rating);
+  }
+  return apiGetJson<FeedbackListResponse>(`/feedback?${params.toString()}`, userToken);
 }
 
 // --- Operations read views (specs/014; all GET, audit-derived, read-only) ----------------------

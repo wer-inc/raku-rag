@@ -1,7 +1,7 @@
 // Client-side knowledge-improvement queue (goal.md Priority #7). Low answer
-// ratings (👎 要改善) are POSTed to /v1/feedback for the backend AND recorded
-// here so an admin can triage them (there is no list-feedback endpoint yet —
-// see specs/full-saas/gaps.md). Each item carries the reason the user selected.
+// ratings (👎 要改善) are POSTed to /v1/feedback (persisted server-side since
+// ★G3a; admins list them via GET /v1/feedback) AND recorded here as an
+// offline/browser-local fallback. Each item carries the reason the user selected.
 
 export const FEEDBACK_REASONS: Array<{ code: string; label: string }> = [
   { code: "wrong_evidence", label: "根拠が違う" },
