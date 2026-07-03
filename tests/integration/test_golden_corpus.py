@@ -70,7 +70,8 @@ def _build_system_and_set(corpus):
         sys.grant(tenant, ScopeType.COLLECTION, collection_id, SubjectType.USER, user)
         for item in industry["items"]:
             items.append(item)
-            expected_doc_ids.extend(e["document_id"] for e in item["expected_evidence"])
+            # ★G2: unanswerable items carry no gold evidence by design.
+            expected_doc_ids.extend(e["document_id"] for e in item.get("expected_evidence") or ())
     eval_set = EvaluationSet.register(tenant_id=tenant, items=items)
     principal = IdentityClaims(tenant_id=tenant, user_id=user)
     return sys, eval_set, principal, tenant, expected_doc_ids
@@ -134,6 +135,34 @@ class TestGoldenCorpusBaseline(unittest.TestCase):
             with self.subTest(metric=metric):
                 floor = self.baseline.min_metrics[metric]
                 degraded = replace(run, metrics={**run.metrics, metric: floor - 0.1})
+                result = evaluate_baseline_gate(degraded, self.baseline)
+                self.assertFalse(result.passed)
+                self.assertTrue(any(metric in f for f in result.failures), msg=str(result.failures))
+
+    def test_unanswerable_slice_is_represented(self) -> None:
+        # ★G2 (goal.md §2-1): the release corpus must carry must-refuse items, including a
+        # high-risk one, so "cannot say I don't know" regressions are visible to the gate.
+        unanswerable = [i for i in self.eval_set.items if not i.is_answerable]
+        self.assertGreaterEqual(len(unanswerable), 5)
+        self.assertGreaterEqual(sum(1 for i in unanswerable if i.risk_level == "high"), 1)
+        self.assertGreaterEqual(
+            sum(1 for i in unanswerable if i.category == "unanswerable_in_domain"), 2
+        )
+
+    def test_refusal_and_risk_regressions_fail_gate(self) -> None:
+        # ★G2 ratchet mechanics: worsening any refusal/risk metric beyond the committed values
+        # blocks the release, exactly like the quality-metric floors above.
+        run = EvaluationRunner(self.sys).run(self.eval_set, principal=self.principal)
+        seeded = {
+            "unanswerable_answer_rate": 0.5,  # above the 0.29 ratchet ceiling
+            "over_refusal_rate": 0.1,  # above the 0.0 ceiling
+            "refusal_accuracy": 0.8,  # below the 0.92 floor
+            "risk_weighted_score": 0.7,  # below the 0.86 floor
+            "high_risk_recall": 0.9,  # below the 1.0 floor
+        }
+        for metric, bad_value in seeded.items():
+            with self.subTest(metric=metric):
+                degraded = replace(run, metrics={**run.metrics, metric: bad_value})
                 result = evaluate_baseline_gate(degraded, self.baseline)
                 self.assertFalse(result.passed)
                 self.assertTrue(any(metric in f for f in result.failures), msg=str(result.failures))

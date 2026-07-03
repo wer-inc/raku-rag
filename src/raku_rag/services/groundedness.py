@@ -101,6 +101,36 @@ class GroundednessGate:
         # provider needs `claim_check` made normalization-symmetric first (separate, tested change).
         return GateDecision(True, "ok")
 
+    def question_coverage_check(
+        self, query: str, evidence: Sequence[Chunk], threshold: float
+    ) -> GateDecision:
+        """★G2 no-answer gate (goal.md §1-2 「"わからない"が言えない」): the USED evidence must be
+        responsive to the QUESTION, not merely internally consistent.
+
+        `post_check` validates answer⊆evidence, so a question about content that does not exist
+        (e.g. "AGVフォークリフトのバッテリー交換周期は?") could still return status=ok by extracting a
+        grounded-but-irrelevant sentence that shares one incidental term ("交換"). This check
+        computes the fraction of the question's content-terms present in the evidence and refuses
+        below `threshold` (QueryProfile.min_question_coverage; 0 disables). Evidence-based, not
+        answer-based, so it is provider-independent (a generative model paraphrases the answer but
+        cannot make the evidence responsive)."""
+        if threshold <= 0:
+            return GateDecision(True, "ok")
+        question_terms = _terms(query)
+        if not question_terms:
+            return GateDecision(True, "ok")
+        evidence_terms: set[str] = set()
+        for chunk in evidence:
+            evidence_terms |= _terms(chunk.text)
+        coverage = len(question_terms & evidence_terms) / len(question_terms)
+        if coverage < threshold:
+            return GateDecision(
+                False,
+                "insufficient_evidence: evidence does not cover the question "
+                f"(coverage={coverage:.2f} < {threshold:.2f})",
+            )
+        return GateDecision(True, "ok")
+
     def claim_check(self, answer_text: str, evidence: Sequence[Chunk]) -> GateDecision:
         """Per-claim/per-span grounding: every numeric/identifier span in `answer_text` must be
         traceable to the union of `evidence` chunks' text. An answer with no such spans (a purely
