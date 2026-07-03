@@ -48,5 +48,8 @@ tenant_lexicon(tenant_id, namespace, key, values jsonb)
 
 ## 実装状況
 
-- [ ] 提案テーブル + 解決シーム(未着手 — 次スプリント候補)
+- [x] 提案テーブル + 解決シーム(#59: migration 0021 + LexiconService — ①safety語彙
+      ②chat転送トリガ/phone意図まで配線済み。admin API + 監査 + live-PG RLS smoke付き)
+- [ ] ③文言: `messages.chat` / `messages.phone` は編集可能(EDITABLE_NAMESPACES)だが
+      **読む側が未配線** — 転送アナウンス・免責等は固定文言のまま(★G 棚卸しの小粒項目)
 - [x] 本監査ドキュメント
