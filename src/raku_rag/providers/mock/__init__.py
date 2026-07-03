@@ -16,7 +16,6 @@ from raku_rag.domain.models import IdentityClaims, ScoredChunk
 from raku_rag.interfaces.base import Reranker
 from raku_rag.providers.embeddings import HashingEmbeddingProvider
 from raku_rag.providers.llms import ExtractiveLLMProvider
-from raku_rag.providers.rerankers import ScoreOrderReranker
 from raku_rag.providers.mock.visual import (
     FakeAsyncDocumentAnalyzer,
     FakeCaptioningProvider,
@@ -42,21 +41,23 @@ class MockLLMProvider(ExtractiveLLMProvider):
 class MockRerankProvider(Reranker):
     """Deterministic score-order rerank with an explicit skip-on-failure fallback (FR-030).
 
-    When ``fail`` is set (or the inner rerank raises), returns the unmodified candidate order
-    truncated to ``top_n`` so the caller can proceed on the un-reranked results.
+    When ``fail`` is set (or the rerank raises), returns the unmodified candidate order truncated
+    to ``top_n`` so the caller can proceed on the un-reranked results. NB: this Phase-0 mock keeps
+    its own score-desc sort on purpose — the production ``ScoreOrderReranker`` became
+    order-PRESERVING with RRF fusion (Wave 1b), but this mock's P0-T19 conformance contract is
+    "re-rank by score", exercising a reranker that actually reorders.
     """
 
     capabilities = dict(NO_TRAIN_CAPABILITY)
 
     def __init__(self, *, fail: bool = False) -> None:
-        self._inner = ScoreOrderReranker()
         self.fail = fail
 
     def rerank(self, query: str, scored: Sequence[ScoredChunk], top_n: int) -> list[ScoredChunk]:
         if self.fail:
             return list(scored)[:top_n]  # skip fallback: preserve candidate order
         try:
-            return self._inner.rerank(query, scored, top_n)
+            return sorted(scored, key=lambda s: s.retrieval_score, reverse=True)[:top_n]
         except Exception:
             return list(scored)[:top_n]
 

@@ -24,6 +24,34 @@ MAX_RERANK_CANDIDATES = 80
 QUERY_PLAN_DOCUMENT_KIND_BOOST = 0.06
 QUERY_PLAN_SAFETY_SCOPE_BOOST = 0.06
 QUERY_PLAN_IDENTIFIER_BOOST = 0.02
+# Standard Reciprocal Rank Fusion constant: fused score = Σ_legs 1/(RRF_K + rank_in_leg).
+RRF_K = 60
+# Sort placeholder for chunks the metadata-exact leg did not return (they order after every
+# metadata-leg member inside the same score band).
+_NO_META_RANK = 10**9
+
+
+class _HybridRanks:
+    """Per-chunk ordering signals carried from ``_merge_hybrid_results`` to the boost sort.
+
+    ``meta_rank``: rank inside the metadata-exact leg (identifier match multiplicity first — see
+    the stores), or ``_NO_META_RANK``. ``rrf``: Σ_legs 1/(RRF_K + rank_in_leg) across the three
+    legs. Both are ORDERING-only signals; ``ScoredChunk.retrieval_score`` stays absolute.
+    """
+
+    __slots__ = ("meta_rank_by_id", "rrf_by_id")
+
+    def __init__(self, meta_rank_by_id: dict[str, int], rrf_by_id: dict[str, float]) -> None:
+        self.meta_rank_by_id = meta_rank_by_id
+        self.rrf_by_id = rrf_by_id
+
+    def sort_key(self, chunk_id: str, sort_score: float) -> tuple:
+        return (
+            -sort_score,
+            self.meta_rank_by_id.get(chunk_id, _NO_META_RANK),
+            -self.rrf_by_id.get(chunk_id, 0.0),
+            chunk_id,
+        )
 
 
 def _token_count(text: str) -> int:
@@ -58,20 +86,57 @@ def _embedder_cache_identity(embedder: EmbeddingProvider) -> str:
     return f"{provider}:{model_version}:{dims}"
 
 
-def _merge_hybrid_results(*result_sets: list[ScoredChunk]) -> list[ScoredChunk]:
-    """Union hybrid retrieval legs without duplicating chunks."""
-    merged_by_id: dict[str, ScoredChunk] = {}
-    order: list[str] = []
-    for results in result_sets:
-        for scored in results:
+def _merge_hybrid_results(
+    metadata_results: list[ScoredChunk],
+    lexical_results: list[ScoredChunk],
+    vector_results: list[ScoredChunk],
+) -> tuple[list[ScoredChunk], _HybridRanks]:
+    """Fuse the hybrid legs (metadata-exact / lexical / vector) with Reciprocal Rank Fusion.
+
+    Ordering (Wave 1b, docs/product/scale-bench.md — the winner of a measured strategy grid over
+    the 3,000/10,000-doc bench):
+
+    1. absolute score (after query-plan boosts) — the coarse relevance bands are unchanged:
+       identifier-exact (``METADATA_EXACT_MATCH_SCORE``) > lexical > vector. Equal-weight RRF
+       ACROSS bands was measured and rejected: it let lexical+vector agreement outrank
+       identifier-exact matches (multi_doc recall@5 1.0 → 0.32 at 3k) — exact business
+       identifiers must stay the strongest signal (manufacturing safety design).
+    2. metadata-leg rank — the stores rank that leg by identifier match MULTIPLICITY
+       (``core.hybrid_retrieval.metadata_identifier_match_count``), so inside the flat
+       1.25-score band a chunk matching BOTH query identifiers precedes chunks matching one.
+       This is the measured scale defect: the old union-with-max merge degenerated these ties
+       to chunk position/chunk_id order (identifier recall@5 1.0@300 → 0.417@10k).
+    3. RRF: fused score = Σ_legs 1/(RRF_K + rank_in_leg) — remaining ties (lexical score
+       collisions, single-identifier crowds) resolve by cross-leg agreement instead of
+       arbitrary position order.
+    4. chunk_id (full determinism).
+
+    Score scale: ``retrieval_score`` intentionally stays the MAX absolute leg score (as before),
+    NOT the RRF value. RRF values live on a ~1/RRF_K (≈0.016/leg) scale that would break every
+    absolute-score consumer — the groundedness pre-gate (``QueryProfile.score_threshold=0.10``),
+    answer confidence, and the eval scorecard all compare absolute scores, and the no-answer gate
+    must keep refusing on weak evidence. The rank signals are returned alongside
+    (``_HybridRanks``) so ``_apply_query_plan_boosts`` can re-apply the same key on boosted
+    scores, and the deterministic ``ScoreOrderReranker`` preserves retrieval order.
+    """
+    max_by_id: dict[str, ScoredChunk] = {}
+    rrf_by_id: dict[str, float] = {}
+    meta_rank_by_id: dict[str, int] = {}
+    for leg_index, results in enumerate((metadata_results, lexical_results, vector_results)):
+        for rank, scored in enumerate(results, start=1):
             chunk_id = scored.chunk.chunk_id
-            if chunk_id not in merged_by_id:
-                order.append(chunk_id)
-                merged_by_id[chunk_id] = scored
-                continue
-            if scored.retrieval_score > merged_by_id[chunk_id].retrieval_score:
-                merged_by_id[chunk_id] = scored
-    return [merged_by_id[chunk_id] for chunk_id in order]
+            rrf_by_id[chunk_id] = rrf_by_id.get(chunk_id, 0.0) + 1.0 / (RRF_K + rank)
+            if leg_index == 0:
+                meta_rank_by_id[chunk_id] = rank
+            current = max_by_id.get(chunk_id)
+            if current is None or scored.retrieval_score > current.retrieval_score:
+                max_by_id[chunk_id] = scored
+    ranks = _HybridRanks(meta_rank_by_id, rrf_by_id)
+    merged = sorted(
+        max_by_id.values(),
+        key=lambda scored: ranks.sort_key(scored.chunk.chunk_id, scored.retrieval_score),
+    )
+    return merged, ranks
 
 
 class RetrievalService:
@@ -170,9 +235,12 @@ class RetrievalService:
                     visible=visible,
                     top_k=search_top_k,
                 )
+            hybrid_ranks: _HybridRanks | None = None
             if metadata_exact_matches or lexical_matches:
-                scored = _merge_hybrid_results(metadata_exact_matches, lexical_matches, scored)
-            scored = _apply_query_plan_boosts(scored, query_plan)
+                scored, hybrid_ranks = _merge_hybrid_results(
+                    metadata_exact_matches, lexical_matches, scored
+                )
+            scored = _apply_query_plan_boosts(scored, query_plan, hybrid_ranks)
             # Double defense: re-assert ACL on every result (fail-closed if anything slipped through).
             for s in scored:
                 self._acl.assert_visible(principal, s.chunk)
@@ -375,14 +443,33 @@ class RetrievalService:
         return True
 
 
-def _apply_query_plan_boosts(scored: list[ScoredChunk], query_plan) -> list[ScoredChunk]:
+def _apply_query_plan_boosts(
+    scored: list[ScoredChunk], query_plan, hybrid_ranks: _HybridRanks | None = None
+) -> list[ScoredChunk]:
+    """Add query-plan boosts to the absolute score and re-rank.
+
+    Boost ↔ RRF interaction (Wave 1b design decision): boosts stay ABSOLUTE score additions —
+    exactly the pre-RRF semantics, so ``retrieval_score`` means the same thing to every
+    downstream consumer (groundedness pre-gate, confidence, scorecard) and the boost keeps its
+    original power of lifting plan-hinted chunks across nearby score bands. On the hybrid path
+    the sort simply re-applies ``_HybridRanks.sort_key`` on the BOOSTED score: bands first, then
+    metadata-leg rank (multiplicity), then RRF, then chunk_id. (Scaling boosts into RRF units and
+    ranking RRF-first was measured on the bench grid and rejected — see
+    ``_merge_hybrid_results``.) On the vector-only path (no hybrid legs) the boosted-score sort
+    is unchanged pre-1b behavior.
+    """
     if not scored or query_plan.intent == "clarification":
         return scored
     boosted: list[ScoredChunk] = []
     for item in scored:
         boost = _query_plan_boost(item.chunk, query_plan)
         boosted.append(ScoredChunk(item.chunk, item.retrieval_score + boost))
-    return sorted(boosted, key=lambda item: item.retrieval_score, reverse=True)
+    if hybrid_ranks is None:
+        return sorted(boosted, key=lambda item: -item.retrieval_score)
+    return sorted(
+        boosted,
+        key=lambda item: hybrid_ranks.sort_key(item.chunk.chunk_id, item.retrieval_score),
+    )
 
 
 def _query_plan_boost(chunk: Chunk, query_plan) -> float:

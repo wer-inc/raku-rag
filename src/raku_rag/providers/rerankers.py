@@ -14,8 +14,18 @@ from raku_rag.interfaces.base import Reranker
 
 
 class ScoreOrderReranker(Reranker):
+    """Deterministic-profile reranker: preserves the retrieval service's ranking, capped to top_n.
+
+    Wave 1b (RRF fusion): retrieval's hybrid ranking is score band → metadata-leg rank
+    (identifier multiplicity) → RRF → chunk_id, while ``retrieval_score`` keeps the absolute
+    max-leg scale for the groundedness pre-gate — order and score are decoupled, and equal-score
+    ties are no longer arbitrary. A re-sort by ``retrieval_score`` here (the pre-1b behavior) is a
+    stable no-op on the already-score-banded input, so the deterministic rerank is explicitly the
+    identity: RetrievalService owns the ranking; this reranker must never re-degenerate it.
+    """
+
     def rerank(self, query: str, scored: Sequence[ScoredChunk], top_n: int) -> list[ScoredChunk]:
-        return sorted(scored, key=lambda s: s.retrieval_score, reverse=True)[:top_n]
+        return list(scored)[:top_n]
 
 
 # Invoker seam: (query, documents) -> relevance scores aligned to documents. Injected so the provider is

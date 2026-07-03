@@ -12,7 +12,7 @@ from typing import Sequence
 from raku_rag.core.hybrid_retrieval import (
     lexical_match_score,
     METADATA_EXACT_MATCH_SCORE,
-    metadata_identifier_matches,
+    metadata_identifier_match_count,
     query_identifiers,
 )
 from raku_rag.domain.models import Chunk, Modality, ScoredChunk
@@ -70,11 +70,18 @@ class InMemoryVectorStore(VectorStore):
         visible: VisibilityPredicate,
         top_k: int,
     ) -> list[ScoredChunk]:
-        """Return ACL-visible chunks whose hot metadata identifiers exactly match the query."""
+        """Return ACL-visible chunks whose hot metadata identifiers exactly match the query.
+
+        The leg is RANKED by identifier match multiplicity (how many distinct query identifiers
+        the chunk matches, descending) so rank fusion in the retrieval service can separate a
+        chunk matching BOTH identifiers from the flat-score crowd matching only one; position and
+        chunk_id keep the order deterministic within one multiplicity. The score itself stays the
+        flat ``METADATA_EXACT_MATCH_SCORE`` (absolute-scale contract for the groundedness gate).
+        """
         identifiers = query_identifiers(query)
         if not identifiers or top_k <= 0:
             return []
-        matches: list[ScoredChunk] = []
+        matches: list[tuple[int, ScoredChunk]] = []
         for chunk, _vec in self._items.values():
             if chunk.tenant_id != tenant_id:
                 continue
@@ -82,10 +89,14 @@ class InMemoryVectorStore(VectorStore):
                 continue
             if not visible(chunk):
                 continue
-            if metadata_identifier_matches(chunk.metadata, identifiers):
-                matches.append(ScoredChunk(chunk=chunk, retrieval_score=METADATA_EXACT_MATCH_SCORE))
-        matches.sort(key=lambda s: (s.chunk.position, s.chunk.chunk_id))
-        return matches[:top_k]
+            match_count = metadata_identifier_match_count(chunk.metadata, identifiers)
+            if match_count <= 0:
+                continue
+            matches.append(
+                (match_count, ScoredChunk(chunk=chunk, retrieval_score=METADATA_EXACT_MATCH_SCORE))
+            )
+        matches.sort(key=lambda item: (-item[0], item[1].chunk.position, item[1].chunk.chunk_id))
+        return [scored for _count, scored in matches[:top_k]]
 
     def lexical_matches(
         self,
