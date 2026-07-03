@@ -822,6 +822,14 @@ function AnswerPanel({
         <span className="answer-summary-item">安全: {safetyLabel(r)}</span>
         <span className="answer-summary-item">引用 {r.citations.length}件</span>
         <span className="answer-summary-item">確信度 {confidenceLabel(r.confidence)}</span>
+        {r.context_carried && (
+          <span
+            className="answer-summary-item answer-context-chip"
+            title={r.retrieval_query ? `検索クエリ: ${r.retrieval_query}` : undefined}
+          >
+            文脈を引き継ぎました
+          </span>
+        )}
       </div>
 
       {r.text ? (
@@ -1039,6 +1047,19 @@ function AnswersBody() {
     if (!trimmed || loading) return;
     const targetCollection = (collectionOverride ?? collectionId).trim() || DEMO_COLLECTION;
 
+    // U19 (追い質問の文脈維持): the thread is already state — send the last ≤5 answered turns as
+    // history so the server can resolve a referential follow-up (「その締付トルクは?」). Safety
+    // classification stays bound to the raw query server-side (intent_query threading).
+    const history = turns
+      .filter((turn): turn is Extract<AnswerTurn, { kind: "answer" }> => turn.kind === "answer")
+      .slice(-5)
+      .map((turn) => ({
+        question: turn.question,
+        cited_document_ids: [
+          ...new Set(turn.response.citations.map((citation) => citation.document_id)),
+        ],
+      }));
+
     const turnId = `${Date.now().toString(36)}-${turns.length}`;
     setTurns((prev) => [...prev, { kind: "user", id: `${turnId}-q`, text: trimmed }]);
     setLoading(true);
@@ -1047,7 +1068,11 @@ function AnswersBody() {
     try {
       const token = await getSessionToken();
       const response = await manufacturingAnswer(
-        { query: trimmed, collection_id: targetCollection },
+        {
+          query: trimmed,
+          collection_id: targetCollection,
+          ...(history.length > 0 ? { history } : {}),
+        },
         token,
         controller.signal,
       );

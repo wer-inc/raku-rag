@@ -77,6 +77,7 @@ from raku_rag.production import (  # noqa: E402
     build_manufacturing_system_for_base,
 )
 from raku_rag.core.config import settings_from_env  # noqa: E402
+from raku_rag.core.coreference import followup_from_history  # noqa: E402
 from raku_rag.services.answer_format import answer_format_metadata  # noqa: E402
 from raku_rag.services.datasource_sync import build_sync_documents  # noqa: E402
 from raku_rag.persistence.oauth_connection import (  # noqa: E402
@@ -2530,15 +2531,34 @@ def make_handler(system: ProductionSystem):
                     principal = _claims(body)
                     query = str(body.get("query") or "")
                     collection_id = body.get("collection_id")
+                    # U19 (追い質問の文脈維持): optional `history` = prior thread turns
+                    # [{question, cited_document_ids?}] (most recent last, server-capped). A short
+                    # referential follow-up ("その締付トルクは?") is rewritten into a standalone
+                    # RETRIEVAL query carrying the prior turn's identifiers/terms — the exact shared
+                    # logic the chatbot L2 rung uses (core/coreference.py) — while the RAW query is
+                    # threaded as `intent_query` so the high-risk classification and the
+                    # approved-citation requirement bind to what the user actually asked, never the
+                    # enriched text (the intent-query safety invariant; chatbot/coreference.py's
+                    # Finding). No history / non-referential => (query, None): byte-identical call.
+                    retrieval_query, intent_query = followup_from_history(
+                        query, body.get("history")
+                    )
                     mfg_ans = manufacturing_system.answer(
                         principal,
-                        query,
+                        retrieval_query,
                         collection_id,
                         intent_hint=body.get("intent_hint"),
                         manufacturing_filters=body.get("manufacturing_filters"),
                         factory_id=body.get("factory_id"),
+                        intent_query=intent_query,
                     )
-                    self._send(200, _manufacturing_answer_json(mfg_ans))
+                    payload = _manufacturing_answer_json(mfg_ans)
+                    if intent_query is not None:
+                        # Transparency for the UI chip (文脈を引き継ぎました): report that the
+                        # query was rewritten and what retrieval actually searched for.
+                        payload["context_carried"] = True
+                        payload["retrieval_query"] = retrieval_query
+                    self._send(200, payload)
                 elif (
                     len(parts) == 5
                     and parts[:3] == ["internal", "manufacturing", "sources"]

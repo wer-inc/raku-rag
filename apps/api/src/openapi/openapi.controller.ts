@@ -2029,6 +2029,19 @@ const OPENAPI_DOC = {
           collection_id: { type: "string" },
           intent_hint: { type: "string" },
           manufacturing_filters: { type: "object" },
+          history: {
+            type: "array",
+            description:
+              "U19: prior thread turns (most recent last, send at most 5) so a short referential follow-up can be resolved server-side. Safety classification always binds to the raw query.",
+            items: {
+              type: "object",
+              required: ["question"],
+              properties: {
+                question: { type: "string" },
+                cited_document_ids: { type: "array", items: { type: "string" } },
+              },
+            },
+          },
         },
       },
       ManufacturingSafetyExtension: {
@@ -2076,6 +2089,14 @@ const OPENAPI_DOC = {
           used_chunks: { type: "array", items: { $ref: "#/components/schemas/UsedChunk" } },
           correlation_id: { type: "string" },
           manufacturing: { $ref: "#/components/schemas/ManufacturingSafetyExtension" },
+          context_carried: {
+            type: "boolean",
+            description: "U19: present/true when a referential follow-up was rewritten using history.",
+          },
+          retrieval_query: {
+            type: "string",
+            description: "U19: the standalone query retrieval used when context_carried is true.",
+          },
         },
       },
       ManufacturingDataUsePolicy: {
