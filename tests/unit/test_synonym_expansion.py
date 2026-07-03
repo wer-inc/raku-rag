@@ -25,7 +25,6 @@ import unittest
 from raku_rag.core.hybrid_retrieval import (
     lexical_match_score,
     SYNONYM_COVERAGE_WEIGHT,
-    SynonymExpansion,
     synonym_expansions,
 )
 from raku_rag.domain.models import QueryProfile, ScopeType, SubjectType
