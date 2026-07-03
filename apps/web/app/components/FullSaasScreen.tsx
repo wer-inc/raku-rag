@@ -176,6 +176,18 @@ const CHAT_MARKDOWN_ALLOWED_ELEMENTS = [
   "ul",
 ];
 
+/** U1: the answer body additionally renders Bedrock-style `#`/`##` headings and `---` rules. */
+const ANSWER_MARKDOWN_ALLOWED_ELEMENTS = [
+  ...CHAT_MARKDOWN_ALLOWED_ELEMENTS,
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+];
+
 const MOCK_USERS: AdminListRow[] = [
   { id: "alice", label: "Alice Tanaka", meta: "tenant_admin · reviewer", status: "active" },
   { id: "bob", label: "Bob Sato", meta: "field_user", status: "active" },
@@ -221,12 +233,53 @@ function isSyncActive(status: string | undefined | null): boolean {
   return !!status && SYNC_ACTIVE_STATUSES.has(status);
 }
 
-function formatLoadError(err: unknown): string {
-  const message = err instanceof Error ? err.message : "リクエストに失敗しました";
-  if (/failed to fetch|networkerror|load failed/i.test(message)) {
-    return "バックエンド API に接続できません。API が起動しているか確認してください。";
+type LoadErrorView = { message: string; detail?: string };
+
+function isAbortError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null || !("name" in err)) return false;
+  const name = (err as { name?: unknown }).name;
+  return name === "AbortError" || name === "TimeoutError";
+}
+
+function loadErrorStatus(err: unknown, message: string): number | undefined {
+  if (typeof err === "object" && err !== null && "status" in err) {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === "number") return status;
   }
-  return message;
+  const match = /HTTP (\d{3})/.exec(message);
+  return match ? Number(match[1]) : undefined;
+}
+
+/** U12: humanize load/submit errors; keep the raw technical detail available for ops. */
+function describeLoadError(err: unknown): LoadErrorView {
+  if (isAbortError(err)) {
+    return { message: "応答がありませんでした。回線状況を確認して再試行してください。" };
+  }
+  const raw = err instanceof Error ? err.message : "リクエストに失敗しました";
+  if (/failed to fetch|networkerror|load failed/i.test(raw)) {
+    return { message: "バックエンド API に接続できません。API が起動しているか確認してください。" };
+  }
+  const status = loadErrorStatus(err, raw);
+  if (status === 401) {
+    return { message: "認証の有効期限が切れています。再ログインしてください。", detail: raw };
+  }
+  if (status === 403) {
+    return { message: "この操作を行う権限がありません。管理者に確認してください。", detail: raw };
+  }
+  if (status !== undefined && status >= 500) {
+    return {
+      message: "サーバーで問題が発生しました。少し待ってからもう一度お試しください。",
+      detail: raw,
+    };
+  }
+  return { message: raw };
+}
+
+function formatLoadError(err: unknown): string {
+  const described = describeLoadError(err);
+  return described.detail && described.detail !== described.message
+    ? `${described.message}(${described.detail})`
+    : described.message;
 }
 
 type UseLoadOptions<T> = {
@@ -443,7 +496,7 @@ function safetyLabel(response: { manufacturing: { safety_block_reason?: string |
 type AnswerTurn =
   | { kind: "user"; id: string; text: string }
   | { kind: "answer"; id: string; question: string; response: ManufacturingAnswerResponse }
-  | { kind: "error"; id: string; question: string; error: string };
+  | { kind: "error"; id: string; question: string; error: string; detail?: string };
 
 const CITE_APPROVAL: Record<string, { label: string; cls: string }> = {
   approved: { label: "承認済み", cls: "approval-approved" },
@@ -457,6 +510,9 @@ function citeApproval(status?: string | null): { label: string; cls: string } {
     ? CITE_APPROVAL[status]
     : { label: status ? status : "承認状態不明", cls: "approval-draft" };
 }
+
+/** U12: hard cutoff for one answer generation round-trip (Bedrock can take 2-9s; 60s = stuck). */
+const ANSWER_REQUEST_TIMEOUT_MS = 60_000;
 
 const ANSWER_STARTERS = [
   "プレス機の異音が出たときの初動手順を教えて",
@@ -747,7 +803,12 @@ function AnswerPanel({
       </div>
 
       {r.text ? (
-        <p className="answer-text">{r.text}</p>
+        <ChatMessageMarkdown
+          content={r.text}
+          className="answer-text answer-markdown"
+          tableWrapClassName="answer-markdown-table-wrap"
+          allowedElements={ANSWER_MARKDOWN_ALLOWED_ELEMENTS}
+        />
       ) : (
         <p className="answer-text answer-text-muted">
           {blocked
@@ -866,6 +927,47 @@ function AnswerPanel({
   );
 }
 
+/** U2: staged generating-answer card (mirrors the chatbot's ChatThinkingBubble treatment). */
+const ANSWER_THINKING_STAGES = {
+  thinking: { title: "回答を生成中", detail: "質問の意図を整理しています。" },
+  checking_rag: {
+    title: "承認済みナレッジを照合しています",
+    detail: "根拠となる引用候補を確認しています。",
+  },
+  delayed: {
+    title: "回答の生成に時間がかかっています",
+    detail: "混み合っている可能性があります。このままお待ちください(最大60秒)。",
+  },
+} as const;
+
+function AnswerThinkingCard() {
+  const [stage, setStage] = useState<keyof typeof ANSWER_THINKING_STAGES>("thinking");
+
+  useEffect(() => {
+    const checking = setTimeout(() => setStage("checking_rag"), 450);
+    const delayed = setTimeout(() => setStage("delayed"), 5000);
+    return () => {
+      clearTimeout(checking);
+      clearTimeout(delayed);
+    };
+  }, []);
+
+  const copy = ANSWER_THINKING_STAGES[stage];
+  return (
+    <section className="answer-card answer-thinking-card" role="status" aria-live="polite">
+      <div className="answer-thinking-copy">
+        <strong>{copy.title}</strong>
+        <span>{copy.detail}</span>
+      </div>
+      <div className="answer-thinking-dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+    </section>
+  );
+}
+
 function AnswersBody() {
   const [query, setQuery] = useState("");
   const [collectionId, setCollectionId] = useState(DEMO_COLLECTION);
@@ -896,38 +998,50 @@ function AnswersBody() {
     saveAnswerCollection(value);
   }
 
-  async function onAsk(event: FormEvent) {
-    event.preventDefault();
-    const trimmed = query.trim();
+  async function submitQuestion(question: string) {
+    const trimmed = question.trim();
     if (!trimmed || loading) return;
     const targetCollection = collectionId.trim() || DEMO_COLLECTION;
 
     const turnId = `${Date.now().toString(36)}-${turns.length}`;
     setTurns((prev) => [...prev, { kind: "user", id: `${turnId}-q`, text: trimmed }]);
-    setQuery("");
     setLoading(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ANSWER_REQUEST_TIMEOUT_MS);
     try {
       const token = await getSessionToken();
       const response = await manufacturingAnswer(
         { query: trimmed, collection_id: targetCollection },
         token,
+        controller.signal,
       );
       recordAnswer(trimmed, response, targetCollection);
       setTurns((prev) => [...prev, { kind: "answer", id: `${turnId}-a`, question: trimmed, response }]);
     } catch (err) {
-      clearSessionToken();
+      if (isAuthError(err)) clearSessionToken();
+      const described = describeLoadError(err);
       setTurns((prev) => [
         ...prev,
         {
           kind: "error",
           id: `${turnId}-e`,
           question: trimmed,
-          error: formatLoadError(err),
+          error: described.message,
+          detail: described.detail,
         },
       ]);
     } finally {
+      clearTimeout(timeout);
       setLoading(false);
     }
+  }
+
+  async function onAsk(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = query.trim();
+    if (!trimmed || loading) return;
+    setQuery("");
+    await submitQuestion(trimmed);
   }
 
   return (
@@ -971,13 +1085,24 @@ function AnswersBody() {
               <section className="result-panel error-panel" aria-live="polite" key={turn.id}>
                 <h3>処理に失敗しました</h3>
                 <p>{turn.error}</p>
+                {turn.detail && <p className="error-detail">詳細: {turn.detail}</p>}
+                <div>
+                  <button
+                    type="button"
+                    className="citation-open"
+                    disabled={loading}
+                    onClick={() => void submitQuestion(turn.question)}
+                  >
+                    再試行
+                  </button>
+                </div>
               </section>
             );
           }
           return <AnswerPanel key={turn.id} turn={turn} onOpenCitation={setViewer} />;
         })}
 
-        {loading && <p className="ops-empty" role="status" aria-live="polite">回答を生成中…</p>}
+        {loading && <AnswerThinkingCard />}
       </div>
 
       <form className="answers-composer" onSubmit={onAsk}>
@@ -1122,17 +1247,27 @@ function ChatThinkingBubble({
   );
 }
 
-function ChatMessageMarkdown({ content }: { content: string }) {
+function ChatMessageMarkdown({
+  content,
+  className = "chat-markdown",
+  tableWrapClassName = "chat-markdown-table-wrap",
+  allowedElements = CHAT_MARKDOWN_ALLOWED_ELEMENTS,
+}: {
+  content: string;
+  className?: string;
+  tableWrapClassName?: string;
+  allowedElements?: string[];
+}) {
   return (
-    <div className="chat-markdown">
+    <div className={className}>
       <ReactMarkdown
-        allowedElements={CHAT_MARKDOWN_ALLOWED_ELEMENTS}
+        allowedElements={allowedElements}
         remarkPlugins={[remarkGfm]}
         skipHtml
         unwrapDisallowed
         components={{
           table: ({ node: _node, ...props }) => (
-            <div className="chat-markdown-table-wrap">
+            <div className={tableWrapClassName}>
               <table {...props} />
             </div>
           ),
