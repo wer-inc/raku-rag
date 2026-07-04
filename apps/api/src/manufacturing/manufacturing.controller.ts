@@ -222,6 +222,21 @@ export class ManufacturingController {
     );
   }
 
+  @Post("documents/approval-batch")
+  @HttpCode(200)
+  async batchDocumentApproval(
+    @Req() req: Request,
+    @Body() body: JsonObject,
+  ): Promise<Record<string, unknown>> {
+    assertReviewApprovalAllowed(req);
+    return this.requestCore(
+      req,
+      "POST",
+      "/internal/manufacturing/documents/approval-batch",
+      body,
+    );
+  }
+
   @Post("trouble-cases/search")
   @HttpCode(200)
   async searchTroubleCases(

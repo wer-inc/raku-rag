@@ -30,9 +30,10 @@ from __future__ import annotations
 
 import unittest
 
-from raku_rag.domain.models import ScopeType, SubjectType
+from raku_rag.domain.models import Document, JobStatus, ScopeType, SubjectType
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus
 from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY
+from raku_rag.workers.ingestion import DocumentProcessingState
 from tests.manufacturing.helpers import T, claims, fresh, mfg_meta
 
 _TORQUE = "The torque specification for the flange bolt is forty newton meters."
@@ -118,6 +119,173 @@ class TestApprovalStateIdentifiable(unittest.TestCase):
         # An obsolete-only basis must not back an asserted answer (FR-MFG-006 consistency).
         ans = self.sys.answer(self.op, _Q)
         self.assertNotEqual(ans.status, "ok")
+
+
+class TestDocumentApprovalRequiresIndexedEvidence(unittest.TestCase):
+    def setUp(self) -> None:
+        self.sys = fresh()
+        self.actor = claims(T, "reviewer", roles=("reviewer",))
+        self.sys.grant(T, ScopeType.COLLECTION, "c", SubjectType.USER, "reviewer")
+
+    def test_queued_document_is_listed_but_not_approval_ready(self) -> None:
+        meta = mfg_meta(
+            tenant_id=T,
+            document_id="queued_pdf",
+            approval_status=ApprovalStatus.PENDING_REVIEW,
+            effective_date=None,
+        )
+        self.sys._mvp.registry.put(
+            Document(
+                tenant_id=T,
+                collection_id="c",
+                document_id="queued_pdf",
+                source_id="datasource_pdf",
+                metadata={MFG_META_KEY: meta.to_mapping()},
+            )
+        )
+        self.sys._set_mfg_meta(T, "queued_pdf", meta)
+        self.sys.control_plane.upsert_processing_state(
+            DocumentProcessingState(
+                tenant_id=T,
+                document_id="queued_pdf",
+                ingestion_run_id="ing_queued_pdf",
+                collection_id="c",
+                source_id="datasource_pdf",
+                status=JobStatus.QUEUED.value,
+                chunk_count=0,
+            )
+        )
+
+        [row] = self.sys.list_documents(self.actor, collection_id="c")
+        self.assertEqual(row["document_id"], "queued_pdf")
+        self.assertEqual(row["index_status"], JobStatus.QUEUED.value)
+        self.assertEqual(row["chunk_count"], 0)
+        self.assertFalse(row["approval_ready"])
+        self.assertEqual(row["approval_block_reason"], "indexing_in_progress")
+
+        with self.assertRaisesRegex(ValueError, "not ready for approval"):
+            self.sys.transition_approval(
+                tenant_id=T, document_id="queued_pdf", to_status="approved", actor=self.actor
+            )
+
+    def test_indexed_document_is_approval_ready(self) -> None:
+        self.sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="c",
+            document_id="indexed_doc",
+            text=_TORQUE,
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="indexed_doc",
+                approval_status=ApprovalStatus.PENDING_REVIEW,
+                effective_date=None,
+            ),
+        )
+
+        [row] = self.sys.list_documents(self.actor, collection_id="c")
+        self.assertEqual(row["document_id"], "indexed_doc")
+        self.assertEqual(row["index_status"], JobStatus.SUCCEEDED.value)
+        self.assertGreater(row["chunk_count"], 0)
+        self.assertTrue(row["approval_ready"])
+
+        state = self.sys.transition_approval(
+            tenant_id=T, document_id="indexed_doc", to_status="approved", actor=self.actor
+        )
+        self.assertEqual(state.approval_status, ApprovalStatus.APPROVED.value)
+
+    def test_batch_approves_ready_document_and_skips_queued_document(self) -> None:
+        self.sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="c",
+            document_id="indexed_doc",
+            text=_TORQUE,
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="indexed_doc",
+                approval_status=ApprovalStatus.PENDING_REVIEW,
+                effective_date=None,
+            ),
+        )
+        queued_meta = mfg_meta(
+            tenant_id=T,
+            document_id="queued_pdf",
+            approval_status=ApprovalStatus.PENDING_REVIEW,
+            effective_date=None,
+        )
+        self.sys._mvp.registry.put(
+            Document(
+                tenant_id=T,
+                collection_id="c",
+                document_id="queued_pdf",
+                source_id="datasource_pdf",
+                metadata={MFG_META_KEY: queued_meta.to_mapping()},
+            )
+        )
+        self.sys._set_mfg_meta(T, "queued_pdf", queued_meta)
+        self.sys.control_plane.upsert_processing_state(
+            DocumentProcessingState(
+                tenant_id=T,
+                document_id="queued_pdf",
+                ingestion_run_id="ing_queued_pdf",
+                collection_id="c",
+                source_id="datasource_pdf",
+                status=JobStatus.QUEUED.value,
+                chunk_count=0,
+            )
+        )
+
+        result = self.sys.batch_transition_approval(
+            tenant_id=T,
+            document_ids=["indexed_doc", "queued_pdf"],
+            to_status="approved",
+            actor=self.actor,
+        )
+
+        self.assertEqual(result["requested_count"], 2)
+        self.assertEqual(result["approved_count"], 1)
+        self.assertEqual(result["skipped_count"], 1)
+        self.assertEqual(result["approved"][0]["document_id"], "indexed_doc")
+        self.assertEqual(
+            result["approved"][0]["approval_state"].approval_status,
+            ApprovalStatus.APPROVED.value,
+        )
+        self.assertEqual(
+            result["skipped"],
+            [{"document_id": "queued_pdf", "reason": "indexing_in_progress"}],
+        )
+        self.assertEqual(
+            self.sys.get_mfg_meta(T, "queued_pdf").approval_status,
+            ApprovalStatus.PENDING_REVIEW,
+        )
+
+    def test_batch_skips_acl_invisible_document_without_state_leak(self) -> None:
+        self.sys.ingest_manufacturing(
+            tenant_id=T,
+            collection_id="private",
+            document_id="hidden_doc",
+            text=_TORQUE,
+            metadata=mfg_meta(
+                tenant_id=T,
+                document_id="hidden_doc",
+                approval_status=ApprovalStatus.PENDING_REVIEW,
+                effective_date=None,
+            ),
+        )
+
+        result = self.sys.batch_transition_approval(
+            tenant_id=T,
+            document_ids=["hidden_doc"],
+            to_status="approved",
+            actor=self.actor,
+        )
+
+        self.assertEqual(result["approved_count"], 0)
+        self.assertEqual(result["skipped_count"], 1)
+        self.assertEqual(result["skipped"], [{"document_id": "hidden_doc", "reason": "not_available"}])
+        self.assertEqual(
+            self.sys.get_mfg_meta(T, "hidden_doc").approval_status,
+            ApprovalStatus.PENDING_REVIEW,
+        )
 
 
 class TestImportedApprovalIsSourceOfTruth(unittest.TestCase):

@@ -23,10 +23,11 @@ from __future__ import annotations
 import base64
 import os
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import unquote, urlparse
 
 from raku_rag.app import MvpSystem
 from raku_rag.core.config import Settings
-from raku_rag.domain.models import IdentityClaims, ScopeType, SubjectType
+from raku_rag.domain.models import IdentityClaims, JobStatus, ScopeType, SubjectType
 from raku_rag.manufacturing.api import record_answer_decision, record_answer_feedback
 from raku_rag.manufacturing.api.answer_ext import ManufacturingAnswer, ManufacturingAnswerService
 from raku_rag.manufacturing.api.dashboard import DashboardService
@@ -46,7 +47,7 @@ from raku_rag.manufacturing.domain.entities import (
     FailureMode,
     TroubleCase,
 )
-from raku_rag.manufacturing.domain.metadata import ManufacturingDocumentMetadata
+from raku_rag.manufacturing.domain.metadata import ApprovalStatus, ManufacturingDocumentMetadata
 from raku_rag.manufacturing.governance.no_train import (
     InMemoryDataUsePolicyStore,
     InMemoryNoTrainGuard,
@@ -315,6 +316,120 @@ class ManufacturingSystem:
             doc.metadata[_MFG_META_KEY] = metadata.to_mapping()
             self._mvp.registry.put(doc)
 
+    def _chunk_counts_for_tenant(self, tenant_id: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        iter_items = getattr(self._mvp.store, "iter_items", None)
+        if not callable(iter_items):
+            return counts
+        for chunk, _vec in iter_items():
+            if chunk.tenant_id != tenant_id or getattr(chunk, "tombstone", False):
+                continue
+            counts[chunk.document_id] = counts.get(chunk.document_id, 0) + 1
+        return counts
+
+    def _processing_state_for_document(self, tenant_id: str, document_id: str):
+        """Return the best available ingest processing state for a document.
+
+        Production ingestion records state on the wrapped ``ProductionSystem.ingestion_runs``. The
+        in-memory manufacturing sync test path stores it on ``self.control_plane``. Prefer production
+        state when both exist so the deployed answer-service path reflects the real worker status.
+        """
+        repos = (getattr(self._mvp, "ingestion_runs", None), self.control_plane)
+        seen: set[int] = set()
+        for repo in repos:
+            if repo is None or id(repo) in seen:
+                continue
+            seen.add(id(repo))
+            processing_state = getattr(repo, "processing_state", None)
+            if not callable(processing_state):
+                continue
+            state = processing_state(tenant_id, document_id)
+            if state is not None:
+                return state
+        return None
+
+    def _document_processing_summary(
+        self,
+        tenant_id: str,
+        document_id: str,
+        *,
+        chunk_count: int | None = None,
+    ) -> dict:
+        chunks = (
+            self._chunk_counts_for_tenant(tenant_id).get(document_id, 0)
+            if chunk_count is None
+            else chunk_count
+        )
+        state = self._processing_state_for_document(tenant_id, document_id)
+        status = getattr(state, "status", "") if state is not None else ""
+        if not status:
+            status = JobStatus.SUCCEEDED.value if chunks > 0 else "unknown"
+        indexed = status == JobStatus.SUCCEEDED.value and chunks > 0
+        if indexed:
+            reason = ""
+        elif status in {JobStatus.QUEUED.value, JobStatus.RUNNING.value}:
+            reason = "indexing_in_progress"
+        elif status in {JobStatus.FAILED.value, JobStatus.DEAD_LETTER.value}:
+            reason = "indexing_failed"
+        elif chunks <= 0:
+            reason = "no_indexed_chunks"
+        else:
+            reason = "index_not_ready"
+        return {
+            "processing_status": status,
+            "parse_status": status,
+            "chunk_status": status,
+            "embedding_status": status,
+            "index_status": status,
+            "chunk_count": chunks,
+            "ingestion_run_id": getattr(state, "ingestion_run_id", "") if state else "",
+            "last_indexed_at": (
+                getattr(state, "updated_at", "")
+                if state and status == JobStatus.SUCCEEDED.value
+                else ""
+            ),
+            "last_error": getattr(state, "failure_reason", "") if state else "",
+            "approval_ready": indexed,
+            "approval_block_reason": reason,
+        }
+
+    @staticmethod
+    def _safe_display_title(value: object, fallback: str) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return fallback
+        parsed = urlparse(raw)
+        candidate = parsed.path if parsed.scheme else raw
+        candidate = candidate.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+        title = unquote(candidate.rsplit("/", 1)[-1] or raw).strip()
+        return title[:200] if title else fallback
+
+    def _document_display_title(self, doc) -> str:
+        for key in (
+            "display_title",
+            "filename",
+            "file_name",
+            "document_name",
+            "name",
+            "document_ref",
+            "source_document_id",
+        ):
+            value = doc.metadata.get(key)
+            if value:
+                return self._safe_display_title(value, doc.document_id)
+        return doc.document_id
+
+    def _assert_document_ready_for_approval(self, tenant_id: str, document_id: str) -> None:
+        summary = self._document_processing_summary(tenant_id, document_id)
+        if summary["approval_ready"]:
+            return
+        status = summary["processing_status"]
+        reason = summary["approval_block_reason"]
+        raise ValueError(
+            "document is not ready for approval: "
+            f"index_status={status!r}, chunk_count={summary['chunk_count']}, reason={reason}"
+        )
+
     def list_documents(
         self,
         principal: IdentityClaims,
@@ -358,13 +473,18 @@ class ManufacturingSystem:
                     continue
                 pairs.append((doc, meta))
 
+        chunk_counts = self._chunk_counts_for_tenant(tenant_id)
         out: list[dict] = []
         for doc, meta in pairs:
             kind = getattr(getattr(meta, "document_kind", None), "value", None)
             status = getattr(getattr(meta, "approval_status", None), "value", None)
+            processing = self._document_processing_summary(
+                tenant_id, doc.document_id, chunk_count=chunk_counts.get(doc.document_id, 0)
+            )
             out.append(
                 {
                     "document_id": doc.document_id,
+                    "display_title": self._document_display_title(doc),
                     "collection_id": doc.collection_id,
                     "source_id": doc.source_id,
                     "document_kind": (
@@ -377,6 +497,7 @@ class ManufacturingSystem:
                     "superseded_by": getattr(meta, "superseded_by", None),
                     "equipment": getattr(meta, "equipment", None),
                     "safety_category": getattr(meta, "safety_category", None),
+                    **processing,
                 }
             )
         if approval_status:
@@ -412,8 +533,12 @@ class ManufacturingSystem:
                 }
             )
         chunks.sort(key=lambda c: c["position"])
+        processing = self._document_processing_summary(
+            tenant_id, document_id, chunk_count=len(chunks)
+        )
         return {
             "document_id": doc.document_id,
+            "display_title": self._document_display_title(doc),
             "collection_id": doc.collection_id,
             "source_id": doc.source_id,
             "document_kind": kind,
@@ -424,8 +549,8 @@ class ManufacturingSystem:
             "superseded_by": getattr(meta, "superseded_by", None),
             "equipment": getattr(meta, "equipment", None),
             "safety_category": getattr(meta, "safety_category", None),
-            "chunk_count": len(chunks),
             "chunks": chunks,
+            **processing,
         }
 
     def _stash_document_source(
@@ -760,7 +885,93 @@ class ManufacturingSystem:
         actor: IdentityClaims,
     ) -> ApprovalState:
         """Drive the lightweight workflow (approval_source = workflow). Audited (FR-MFG-004/021)."""
+        target_status = getattr(to_status, "value", to_status)
+        if target_status == ApprovalStatus.APPROVED.value:
+            self._assert_document_ready_for_approval(tenant_id, document_id)
         return self._approval.transition(tenant_id, document_id, to_status, actor)
+
+    def batch_transition_approval(
+        self,
+        *,
+        tenant_id: str,
+        document_ids,
+        to_status: str,
+        actor: IdentityClaims,
+    ) -> dict:
+        """Approve a reviewer-selected batch, skipping anything not visible or not ready.
+
+        The batch path is intentionally a thin loop over the same lifecycle guard as
+        ``transition_approval``. It never bulk-mutates by source id, and it re-checks tenant ACL and
+        index readiness per document so preparing/failed/unreadable rows cannot be accidentally
+        promoted by the UI.
+        """
+        target_status = getattr(to_status, "value", to_status)
+        if target_status != ApprovalStatus.APPROVED.value:
+            raise ValueError("batch approval supports only approved transitions")
+
+        if isinstance(document_ids, str):
+            raw_document_ids = (document_ids,)
+        else:
+            raw_document_ids = document_ids or ()
+        seen: set[str] = set()
+        requested: list[str] = []
+        for raw_id in raw_document_ids:
+            document_id = str(raw_id or "").strip()
+            if not document_id or document_id in seen:
+                continue
+            seen.add(document_id)
+            requested.append(document_id)
+
+        approved: list[dict] = []
+        skipped: list[dict] = []
+        registry = self._mvp.registry
+        acl = self._mvp.acl
+        for document_id in requested:
+            doc = registry.get(tenant_id, document_id)
+            if (
+                doc is None
+                or getattr(doc, "tombstone", False)
+                or not acl.can_read_document(actor, doc)
+            ):
+                skipped.append({"document_id": document_id, "reason": "not_available"})
+                continue
+            meta = self.get_mfg_meta(tenant_id, document_id)
+            status = getattr(getattr(meta, "approval_status", None), "value", None)
+            if status == ApprovalStatus.APPROVED.value:
+                skipped.append({"document_id": document_id, "reason": "already_approved"})
+                continue
+            if status == ApprovalStatus.OBSOLETE.value:
+                skipped.append({"document_id": document_id, "reason": "not_in_review"})
+                continue
+
+            summary = self._document_processing_summary(tenant_id, document_id)
+            if not summary["approval_ready"]:
+                skipped.append(
+                    {
+                        "document_id": document_id,
+                        "reason": summary["approval_block_reason"] or "not_ready",
+                    }
+                )
+                continue
+            try:
+                state = self.transition_approval(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                    to_status=target_status,
+                    actor=actor,
+                )
+            except ValueError:
+                skipped.append({"document_id": document_id, "reason": "not_in_review"})
+                continue
+            approved.append({"document_id": document_id, "approval_state": state})
+
+        return {
+            "requested_count": len(requested),
+            "approved_count": len(approved),
+            "skipped_count": len(skipped),
+            "approved": approved,
+            "skipped": skipped,
+        }
 
     def import_external_approval(
         self,
