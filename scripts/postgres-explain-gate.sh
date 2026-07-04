@@ -22,17 +22,24 @@ if [ -z "$URL" ]; then
   exit 2
 fi
 
-# A representative tenant-scoped vector search, mirroring persistence/postgres.py search().
+# A representative tenant-scoped vector search, mirroring persistence/postgres.py search()'s
+# Wave 1d over-fetch window: a schema-dimension query vector, the partial-index predicate
+# (embedding IS NOT NULL AND tombstone = false), a pure-distance ORDER BY (an appended chunk_id
+# tie-break would force a sort node and un-index the query — determinism is restored in Python),
+# hnsw.ef_search raised to the window size, and the over-fetch LIMIT.
+qvec="[$(printf '0,%.0s' $(seq 1 255))0]"
 plan="$(
-  psql "$URL" -v ON_ERROR_STOP=1 -At <<'SQL'
+  psql "$URL" -v ON_ERROR_STOP=1 -At <<SQL
 SET ROLE raku_app;
 SELECT set_config('app.current_tenant_id', 'explain_gate_tenant', false);
+SELECT set_config('hnsw.ef_search', '400', false);
+SET enable_seqscan = off;  -- scoped cost penalty, as in search() (see persistence/postgres.py)
 EXPLAIN (ANALYZE false, COSTS false)
-  SELECT chunk_id, (embedding <=> '[0,0,0]'::vector) AS distance
+  SELECT chunk_id, (embedding <=> '$qvec'::vector) AS distance
   FROM chunks
-  WHERE tombstone = false
-  ORDER BY embedding <=> '[0,0,0]'::vector, chunk_id
-  LIMIT 5;
+  WHERE tombstone = false AND embedding IS NOT NULL
+  ORDER BY embedding <=> '$qvec'::vector
+  LIMIT 400;
 RESET ROLE;
 SQL
 )"

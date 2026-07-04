@@ -1,0 +1,92 @@
+{
+  "mode": "local",
+  "n_docs": 10000,
+  "n_queries": 200,
+  "seed": 20260703,
+  "top_k": 20,
+  "synonyms": true,
+  "ingest": {
+    "docs": 10000,
+    "chunks": 10000,
+    "seconds": 41.43,
+    "docs_per_sec": 241.4,
+    "chunks_per_sec": 241.4
+  },
+  "latency": {
+    "1": {
+      "concurrency": 1,
+      "queries": 200,
+      "wall_seconds": 419.45,
+      "qps": 0.48,
+      "p50_ms": 2057.9,
+      "p95_ms": 2527.1,
+      "mean_ms": 2097.3,
+      "max_ms": 2832.3
+    },
+    "4": {
+      "concurrency": 4,
+      "queries": 200,
+      "wall_seconds": 341.66,
+      "qps": 0.59,
+      "p50_ms": 6846.7,
+      "p95_ms": 8425.0,
+      "mean_ms": 6709.7,
+      "max_ms": 12096.3
+    },
+    "8": {
+      "concurrency": 8,
+      "queries": 200,
+      "wall_seconds": 344.89,
+      "qps": 0.58,
+      "p50_ms": 13534.2,
+      "p95_ms": 16948.4,
+      "mean_ms": 13524.3,
+      "max_ms": 20010.6
+    }
+  },
+  "quality": {
+    "slices": {
+      "overall": {
+        "n": 170,
+        "recall@5": 0.8235,
+        "recall@10": 0.8882,
+        "mrr@10": 0.7945,
+        "ndcg@10": 0.8159
+      },
+      "identifier": {
+        "n": 60,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr@10": 0.9917,
+        "ndcg@10": 0.9938
+      },
+      "multi_doc": {
+        "n": 30,
+        "recall@5": 1.0,
+        "recall@10": 1.0,
+        "mrr@10": 1.0,
+        "ndcg@10": 1.0
+      },
+      "paraphrase": {
+        "n": 50,
+        "recall@5": 0.54,
+        "recall@10": 0.74,
+        "mrr@10": 0.4631,
+        "ndcg@10": 0.5258
+      },
+      "synonym": {
+        "n": 30,
+        "recall@5": 0.7667,
+        "recall@10": 0.8,
+        "mrr@10": 0.7472,
+        "ndcg@10": 0.7596
+      }
+    },
+    "unanswerable": {
+      "n": 30,
+      "mean_top1_score": 0.7886,
+      "max_top1_score": 0.8757
+    },
+    "answerable_mean_top1_score": 1.0944
+  }
+}

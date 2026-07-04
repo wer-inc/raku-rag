@@ -384,3 +384,137 @@ python3 scripts/bench/run_bench.py --mode local --n-docs 10000 --skip-ingest
 
 スモークテスト: `tests/unit/test_bench_generator.py`(生成の決定性 / eval set の妥当性 /
 synonym ペアの bigram 非重複 / rank metrics の正しさ)。
+
+## Wave 1d 実施後の再実測(検索パス性能)— 2026-07-04
+
+Wave 1d(branch `feat/search-path-performance`)で結果2の根本原因(O(N) 全件転送 ×2 +
+O(N) Python スコアリング)を3レグとも根治し、同一ハーネス・同一シード(20260703)で
+再実測した。before = 上の Wave 1c after 相当(develop 6524d83 で再実測、
+`docs/product/bench-runs/wave1d-before-*.json`。品質は Wave 1c after と完全一致 =
+ハーネス決定性確認済み)。
+
+### 実装(3レグの根治+共有規約)
+
+1. **vector レグ — HNSW over-fetch 窓**(`persistence/postgres.py::search`):
+   `ORDER BY embedding <=> q LIMIT max(top_k×20, 200)`(純距離 ORDER BY — chunk_id
+   タイブレークを SQL に付けると sort ノード化してインデックスが使えないため、窓内の
+   `(distance, chunk_id)` 決定的順序は Python 側で復元)+ `hnsw.ef_search` を窓サイズに
+   引き上げ + `embedding IS NOT NULL`(0001 部分インデックス述語に一致させる — 従来
+   クエリはこれが無く LIMIT も無いため **HNSW インデックスが構造的に使えなかった**)。
+   pgvector の HNSW コストモデルは 10k 行規模だと seq scan を過大評価で選ぶため(実測:
+   seq 41ms vs index 9.7ms)、この窓クエリ1文だけ `enable_seqscan=off`(コストペナルティ
+   であってハードブロックではない — インデックス不使用環境でも実行は成立)。
+   **ACL は従来どおり Python 後段フィルタ**: 窓が top_k 件の可視チャンクを出せなければ
+   網羅スキャン(pre-1d と同一・厳密)へフォールバックするため、ACL 不可視チャンクが
+   窓を占拠しても可視チャンクの取りこぼし(false negative)は起きない。リーク/取りこぼし
+   両方向を `tests/integration/test_vector_overfetch_acl.py` が実 Postgres で強制再現。
+2. **lexical レグ — ingest 時トークンハッシュ+候補プール**(0026 +
+   `lexical_matches`): 全件転送だけでなく「score>0 になり得る行」述語も共有語彙
+   コーパスでは **94% が該当し絞れない**(ILIKE ANY 実測: 10k 中 9,437 行該当、述語評価
+   だけで 307ms)ことが実測で判明。そこで候補契約自体を共有規約化:
+   **プール = 直接一致クエリ語数 (m) 降順・position・chunk_id で上位 max(top_k×50, 1000) 件**
+   (`core/hybrid_retrieval.py::LEXICAL_POOL_FACTOR/MIN`)。Postgres は ingest 時に
+   `chunks.lexical_token_hashes int4[]`(retrieval_tokens の crc32 集合 — 書き込み側・
+   読み出し側とも Python で計算、PG は整数比較のみ)を書き、
+   `ORDER BY icount(hashes & term_hashes) DESC LIMIT`(intarray)でプールだけ転送・
+   厳密スコアリング(スコア式・LEXICAL_IDENTIFIER_MATCH_WEIGHT・recency・expansions=
+   同義語は完全不変)。in-memory ストアも同一プール規約をミラー(プール床 1000 未満の
+   コーパス = Tier A 全 fixture・デモKB・golden corpus では **従来と byte 同一挙動**)。
+   ACL 整合: 切詰済みプール内に ACL 不可視行があれば網羅パスへフォールバック
+   (`tests/integration/test_lexical_pool_acl.py`)。未バックフィル行('{}' センチネル)
+   検知でも網羅パスに退避 — 0026 適用直後の既存データで壊れない(fail-safe 方向)。
+3. **metadata-exact レグ — identifier compacts 事前計算**(0026 + `metadata_exact_matches`):
+   初回再計測で識別子系クエリ(identifier/multi_doc + 識別子付き unanswerable ≈ 110/200問)
+   だけ p50 ~1.5s のままと判明。原因は 40式 `lower()`/`regexp_replace` OR 述語の全行評価
+   (実測 **1,361ms/query @10k、ヒット0件でも同額**)。ingest 時に hot 識別子の compact
+   正規形を `chunks/documents.identifier_compacts text[]` へ事前計算し、レグは配列 overlap
+   1発に置換。既存述語との**等価性は証明済み**(`_value_matches` の意味論 ⟺
+   compact(value) ∈ compact(クエリ識別子集合) — superset ではなく同一述語。
+   `tests/integration/test_metadata_compacts_parity.py` が fast≡legacy を実測固定)。
+   NULL(未計算)検知で旧述語へフォールバック。多重度ランキング(1b)は不変。
+4. **クエリ側純関数の per-row 再計算除去**: `lexical_query_terms` /
+   `_query_identifier_compacts` を lru_cache 化(純関数・不変 tuple 返却のみ)。
+
+不変条件: `retrieval_score` は絶対 max-leg スコアのまま(groundedness pre-gate 0.10 の
+意味論不変 — 実測でも answerable/unanswerable スコア分布は下表のとおり不変)。RRF(1b)/
+同義語展開(1c)/intent_query 高リスク分類(RAW クエリ)にも非接触。
+
+### レイテンシ before → after(search のみ、closed-loop)
+
+#### N=3,000
+
+| conc | p50 (ms) | p95 (ms) | mean (ms) | QPS |
+|---|---|---|---|---|
+| 1 | 587 → **185** | 734 → **220** | 601 → 182 | 1.66 → **5.50** |
+| 4 | 1,931 → **534** | 2,374 → **722** | 1,930 → 522 | 2.05 → **7.49** |
+| 8 | 3,952 → **1,082** | 4,913 → **1,357** | 3,946 → 1,063 | 2.00 → **7.44** |
+
+#### N=10,000
+
+| conc | p50 (ms) | p95 (ms) | mean (ms) | QPS |
+|---|---|---|---|---|
+| 1 | 2,058 → **239** | 2,527 → **296** | 2,097 → 238 | 0.48 → **4.20** |
+| 4 | 6,847 → **604** | 8,425 → **801** | 6,710 → 622 | 0.59 → **6.40** |
+| 8 | 13,534 → **1,223** | 16,948 → **1,566** | 13,524 → 1,221 | 0.58 → **6.47** |
+
+**ターゲット判定: N=10,000 conc=1 p95 296ms(< 1.0s 達成)/ conc=4 p95 801ms(< 2.5s
+達成)**。`Settings.target_p95_latency_ms=2000` も両スケール・全並列度でクリア
+(before は 3k×4並列 / 10k×1並列で既に超過していた)。QPS は before の「並列を増やしても
+~0.6 で飽和」から 6.4+ へ — p50 が文書数にほぼ線形だった O(N) 構造(3.33倍の文書で
+before 3.5倍 → after 1.29倍)が解消。ingest は 241→213 docs/s(-12%、ハッシュ/compacts
+計算分 — スケール非依存のまま)。
+
+### 検索品質 before → after(concurrency=1、200問、doc-level)
+
+#### N=3,000 — 全スライス・全指標で**完全一致**(byte 同一)
+
+| スライス | recall@5 | recall@10 | MRR@10 | nDCG@10 |
+|---|---|---|---|---|
+| overall | 0.847 → 0.847 | 0.929 → 0.929 | 0.831 → 0.831 | 0.854 → 0.854 |
+| identifier | 1.000 → 1.000 | 1.000 → 1.000 | 0.981 → 0.981 | 0.986 → 0.986 |
+| paraphrase | 0.640 → 0.640 | 0.800 → 0.800 | 0.625 → 0.625 | 0.665 → 0.665 |
+| synonym | 0.733 → 0.733 | 0.933 → 0.933 | 0.706 → 0.706 | 0.758 → 0.758 |
+| multi_doc | 1.000 → 1.000 | 1.000 → 1.000 | 1.000 → 1.000 | 1.000 → 1.000 |
+
+#### N=10,000 — 全スライス許容幅 ±0.02 以内
+
+| スライス | recall@5 | recall@10 | MRR@10 | nDCG@10 |
+|---|---|---|---|---|
+| overall | 0.824 → 0.818 | 0.888 → 0.882 | 0.794 → 0.789 | 0.816 → 0.810 |
+| identifier | 1.000 → **0.983** | 1.000 → 0.983 | 0.992 → 0.975 | 0.994 → 0.977 |
+| paraphrase | 0.540 → 0.540 | 0.740 → 0.740 | 0.463 → 0.463 | 0.526 → 0.526 |
+| synonym | 0.767 → 0.767 | 0.800 → 0.800 | 0.747 → 0.747 | 0.760 → 0.760 |
+| multi_doc | 1.000 → 1.000 | 1.000 → 1.000 | 1.000 → 1.000 | 1.000 → 1.000 |
+
+唯一の変動は identifier@10k の −0.017(60問中1問で gold が top5 落ち — HNSW 近似窓 or
+プール選抜の境界事例。1b 目標 ≥0.9 は 0.983 で維持)。paraphrase/synonym/multi_doc は
+全指標不変。回答不能スライスのスコア分離も不変(mean/max 0.730/0.881@3k、
+0.789/0.876@10k)— スコア絶対値の意味論が変わっていない実測確認。
+
+### EXPLAIN 証跡(vector レグ、N=10,000 実データ、本番クエリ形状)
+
+```
+Limit  (cost=2289.25..2823.24 rows=400 width=18) (actual time=8.903..11.201 rows=400 loops=1)
+  Buffers: shared hit=4573
+  ->  Index Scan using idx_chunks_embedding_hnsw on chunks
+        (cost=2289.25..15639.00 rows=10000 width=18) (actual time=8.901..11.172 rows=400 loops=1)
+        Order By: (embedding <=> '[...256-dim query vector...]'::vector)
+        Filter: (tenant_id = NULLIF(current_setting('app.current_tenant_id'::text, true), ''::text))
+        Buffers: shared hit=4573
+Planning Time: 1.194 ms
+Execution Time: 11.377 ms
+```
+
+before は同一データで `Seq Scan on chunks`(41ms、shared hit=32,028)+ top-N sort。
+`scripts/postgres-explain-gate.sh` も本番形状(over-fetch 窓)に更新済み。
+
+### Ops ノート(stg / 既存データへの適用)
+
+- **0026 マイグレーション必須**(`intarray` 拡張は `WITH SCHEMA public` — "$user" スキーマに
+  入ると `SET ROLE raku_app` セッションから演算子が解決できない。migration/repair 両方に
+  再配置ガードあり)。
+- **既存コーパスは `scripts/backfill_lexical_token_hashes.py` でバックフィル**(冪等)。
+  未バックフィルの間は lexical / metadata レグとも自動で旧・網羅パスに退避するため
+  **壊れないが速くもならない**(fail-safe 方向)。再インジェストでも同効果。
+- ベンチ再現: `python3 scripts/bench/run_bench.py --mode local --n-docs 10000`
+  (before/after の生 JSON は `docs/product/bench-runs/wave1d-*.json`)。
