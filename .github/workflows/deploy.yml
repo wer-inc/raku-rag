@@ -101,6 +101,11 @@ on:
         type: choice
         options: [none, cloudfront]
         default: none
+      expected_sha:
+        description: Optional full commit SHA expected to deploy; fail before AWS changes if the run SHA differs
+        type: string
+        required: false
+        default: ""
       dry_run:
         description: Synth/plan only (no AWS changes)
         type: boolean
@@ -115,6 +120,9 @@ jobs:
     name: Deploy (${{ inputs.stage }})
     runs-on: ubuntu-latest
     environment: ${{ inputs.stage }} # add required reviewers on the `prod` Environment for a gate
+    concurrency:
+      group: deploy-${{ inputs.stage }}
+      cancel-in-progress: false
     env:
       # All workflow_dispatch inputs are passed via env and referenced as shell vars (never inlined into
       # run: scripts) to avoid GitHub Actions expression injection. STAGE/FRONTEND are constrained
@@ -136,6 +144,7 @@ jobs:
       PHONE_TELEPHONY: ${{ inputs.phone_telephony }}
       CONNECT_INSTANCE_ARN: ${{ inputs.connect_instance_arn }}
       HTTPS_FRONT: ${{ inputs.https_front }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
       # Textract is not available in every AWS region where the app can run (for example Tokyo).
       # Keep the app stack regional, but route Textract OCR/layout calls to a supported region by
       # default. Override with repo/environment Variable TEXTRACT_REGION if residency requires it.
@@ -155,6 +164,28 @@ jobs:
           if [ -z "${ROLE_ARN}" ]; then
             echo "::error::Set repo Variable AWS_DEPLOY_ROLE_ARN (OIDC deploy role). See infra/cdk/DEPLOY-CI.md."
             exit 1
+          fi
+          remote_develop_sha=""
+          if [ -n "${EXPECTED_SHA}" ] && ! printf '%s\n' "${EXPECTED_SHA}" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::expected_sha must be a full 40-character lowercase hex commit SHA."
+            exit 1
+          fi
+          if [ -n "${EXPECTED_SHA}" ] && [ "${GITHUB_SHA}" != "${EXPECTED_SHA}" ]; then
+            echo "::error::Refusing deploy: expected_sha=${EXPECTED_SHA} but workflow is pinned to github.sha=${GITHUB_SHA}."
+            echo "::error::Re-run the workflow with ref pointing at the expected commit, or update expected_sha after confirming the new head."
+            exit 1
+          fi
+          if [ "${GITHUB_REF_NAME:-}" = "develop" ]; then
+            remote_develop_sha="$(git ls-remote --heads origin develop | awk '{print $1}')"
+            if [ -z "${remote_develop_sha}" ]; then
+              echo "::error::Could not resolve origin/develop. Refusing develop deploy without head verification."
+              exit 1
+            fi
+            if [ "${remote_develop_sha}" != "${GITHUB_SHA}" ]; then
+              echo "::error::Refusing stale develop deploy: workflow github.sha=${GITHUB_SHA}, origin/develop=${remote_develop_sha}."
+              echo "::error::develop moved after this run was queued or selected. Re-run deploy for the current head."
+              exit 1
+            fi
           fi
           # DOMAIN_NAME is free-text input — allow only hostname chars (or empty); reject anything else.
           # Skip the regex when blank: an empty string yields no line for grep to match, which would
@@ -214,6 +245,21 @@ jobs:
             exit 1
           fi
           echo "stage=${STAGE} frontend=${FRONTEND} auth=${AUTH_MODE} visual=${VISUAL_PROVIDER_PROFILE} domain='${DOMAIN_NAME}' https_front=${HTTPS_FRONT} region=${AWS_REGION}"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            commit_subject="$(git log -1 --pretty=%s | sed 's/|/\\|/g')"
+            {
+              echo "## Deploy identity"
+              echo ""
+              echo "| Field | Value |"
+              echo "|---|---|"
+              echo "| stage | \`${STAGE}\` |"
+              echo "| ref | \`${GITHUB_REF_NAME:-unknown}\` |"
+              echo "| github.sha | \`${GITHUB_SHA}\` |"
+              echo "| expected_sha | \`${EXPECTED_SHA:-not provided}\` |"
+              echo "| origin/develop | \`${remote_develop_sha:-not checked}\` |"
+              echo "| subject | ${commit_subject} |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Install + build CDK app
         working-directory: infra/cdk
@@ -307,6 +353,13 @@ jobs:
         run: |
           set -euo pipefail
           echo "## Deploy outputs (stage=${STAGE})" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy ref: \`${GITHUB_REF_NAME:-unknown}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy commit: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          aws cloudformation describe-stacks --stack-name "RakuRag-${STAGE}" \
+            --query "Stacks[0].[StackStatus,LastUpdatedTime]" --output text \
+            | awk '{print "CloudFormation: " $1 " updated=" $2}' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
           aws cloudformation describe-stacks --stack-name "RakuRag-${STAGE}" \
             --query "Stacks[0].Outputs[?OutputKey=='ApiLoadBalancerDnsName'].OutputValue" --output text \
             | sed 's#^#Public URL (http): http://#' >> "$GITHUB_STEP_SUMMARY"
