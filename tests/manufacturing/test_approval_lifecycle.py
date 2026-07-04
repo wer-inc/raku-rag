@@ -281,7 +281,9 @@ class TestDocumentApprovalRequiresIndexedEvidence(unittest.TestCase):
 
         self.assertEqual(result["approved_count"], 0)
         self.assertEqual(result["skipped_count"], 1)
-        self.assertEqual(result["skipped"], [{"document_id": "hidden_doc", "reason": "not_available"}])
+        self.assertEqual(
+            result["skipped"], [{"document_id": "hidden_doc", "reason": "not_available"}]
+        )
         self.assertEqual(
             self.sys.get_mfg_meta(T, "hidden_doc").approval_status,
             ApprovalStatus.PENDING_REVIEW,
