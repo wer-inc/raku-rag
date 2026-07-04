@@ -19,6 +19,7 @@ import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as ssm from "aws-cdk-lib/aws-ssm";
+import * as servicediscovery from "aws-cdk-lib/aws-servicediscovery";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as path from "path";
 import { Construct } from "constructs";
@@ -239,10 +240,12 @@ export class RakuRagStack extends cdk.Stack {
     const enablePresignedUpload = authMode === "cognito" || authMode === "dev";
     const enableInlineUploadSink = authMode === "dev";
     const fargateSize = {
-      api: minimalSpec ? { cpu: 512, memoryLimitMiB: 1024 } : { cpu: 1024, memoryLimitMiB: 2048 },
+      web: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 1024, memoryLimitMiB: 2048 },
+      api: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 1024, memoryLimitMiB: 2048 },
       worker: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 512, memoryLimitMiB: 1024 },
-      answer: minimalSpec ? { cpu: 512, memoryLimitMiB: 1024 } : { cpu: 1024, memoryLimitMiB: 2048 }
+      answer: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 1024, memoryLimitMiB: 2048 }
     };
+    const containerLogRetention = minimalSpec ? logs.RetentionDays.ONE_WEEK : logs.RetentionDays.ONE_MONTH;
 
     cdk.Tags.of(this).add("app", "raku-rag");
     cdk.Tags.of(this).add("stage", props.stageName);
@@ -516,9 +519,14 @@ export class RakuRagStack extends cdk.Stack {
       securityGroups: [databaseSecurityGroup]
     });
 
+    const serviceDiscoveryNamespaceName = `${servicePrefix}.local`;
     const cluster = new ecs.Cluster(this, "EcsCluster", {
       clusterName: `${servicePrefix}-cluster`,
       vpc,
+      defaultCloudMapNamespace: {
+        name: serviceDiscoveryNamespaceName,
+        type: servicediscovery.NamespaceType.DNS_PRIVATE
+      },
       containerInsightsV2: ecs.ContainerInsights.ENABLED
     });
 
@@ -545,7 +553,7 @@ export class RakuRagStack extends cdk.Stack {
       essential: true,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "api",
-        logRetention: logs.RetentionDays.ONE_MONTH
+        logRetention: containerLogRetention
       }),
       environment: {
         NODE_ENV: "production",
@@ -587,8 +595,8 @@ export class RakuRagStack extends cdk.Stack {
       // ---- Next.js web owns the public ALB; API rides the same listener under /v1/* (same origin) ----
       const webTask = new ecs.FargateTaskDefinition(this, "AwsNextjsTaskDefinition", {
         family: `${servicePrefix}-web`,
-        cpu: fargateSize.api.cpu,
-        memoryLimitMiB: fargateSize.api.memoryLimitMiB,
+        cpu: fargateSize.web.cpu,
+        memoryLimitMiB: fargateSize.web.memoryLimitMiB,
         runtimePlatform: {
           operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
           cpuArchitecture: ecs.CpuArchitecture.X86_64
@@ -610,7 +618,7 @@ export class RakuRagStack extends cdk.Stack {
         essential: true,
         logging: ecs.LogDrivers.awsLogs({
           streamPrefix: "web",
-          logRetention: logs.RetentionDays.ONE_MONTH
+          logRetention: containerLogRetention
         }),
         environment: {
           NODE_ENV: "production",
@@ -884,7 +892,7 @@ export class RakuRagStack extends cdk.Stack {
       essential: true,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "worker",
-        logRetention: logs.RetentionDays.ONE_MONTH
+        logRetention: containerLogRetention
       }),
       environment: {
         ...embeddingEnvironment,
@@ -975,8 +983,18 @@ export class RakuRagStack extends cdk.Stack {
       essential: true,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "answer",
-        logRetention: logs.RetentionDays.ONE_MONTH
+        logRetention: containerLogRetention
       }),
+      healthCheck: {
+        command: [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/healthz', timeout=2).read()\""
+        ],
+        interval: cdk.Duration.seconds(30),
+        timeout: cdk.Duration.seconds(5),
+        retries: 3,
+        startPeriod: cdk.Duration.seconds(60)
+      },
       environment: {
         ...embeddingEnvironment,
         ...answerLlmEnvironment,
@@ -985,8 +1003,7 @@ export class RakuRagStack extends cdk.Stack {
         ...visualStorageEnvironment,
         ...ingestConnectorEnvironment,
         STAGE_NAME: props.stageName,
-        // Listen on all interfaces so the internal ALB health check reaches the task ENI (the default
-        // 127.0.0.1 bind is loopback-only → failed ELB health checks → ECS kills the task).
+        // Listen on all interfaces so VPC-internal callers can reach the task ENI.
         ANSWER_SERVICE_HOST: "0.0.0.0",
         // S2-1 (#0034): execute stored `sync_schedule` values (registry 0019 + private-connection
         // scheduler thread in server.py). Set to "0" to disable in an emergency.
@@ -1015,35 +1032,39 @@ export class RakuRagStack extends cdk.Stack {
     });
     answerContainer.addPortMappings({ containerPort: 8088 });
 
-    const answerService = new ecsPatterns.ApplicationLoadBalancedFargateService(
-      this,
-      "AnswerService",
-      {
-        cluster,
-        taskDefinition: answerTask,
-        serviceName: `${servicePrefix}-answer`,
-        publicLoadBalancer: false, // internal — reached by the API over the VPC only
-        listenerPort: 8088,
-        desiredCount: isProd ? 2 : 1,
-        minHealthyPercent: 100,
-        circuitBreaker: { rollback: true },
-        assignPublicIp: false,
-        securityGroups: [ecsSecurityGroup],
-        taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-        healthCheckGracePeriod: cdk.Duration.seconds(90)
-      }
-    );
-    answerService.targetGroup.configureHealthCheck({
-      path: "/healthz",
-      healthyHttpCodes: "200-399"
+    const answerDiscoveryName = "answer";
+    const answerServiceDnsName = `${answerDiscoveryName}.${serviceDiscoveryNamespaceName}`;
+    const answerServiceUrl = `http://${answerServiceDnsName}:8088`;
+    const answerService = new ecs.FargateService(this, "AnswerService", {
+      cluster,
+      taskDefinition: answerTask,
+      serviceName: `${servicePrefix}-answer`,
+      desiredCount: isProd ? 2 : 1,
+      minHealthyPercent: 100,
+      circuitBreaker: { rollback: true },
+      assignPublicIp: false,
+      securityGroups: [ecsSecurityGroup],
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      cloudMapOptions: {
+        name: answerDiscoveryName,
+        dnsRecordType: servicediscovery.DnsRecordType.A,
+        dnsTtl: cdk.Duration.seconds(10)
+      },
+      healthCheckGracePeriod: cdk.Duration.seconds(90)
     });
+    const answerCfnService = answerService.node.defaultChild as ecs.CfnService;
+    // Preserve the existing L3-created logical id so CloudFormation updates the named ECS service
+    // in place instead of trying to create a second service with the same ServiceName.
+    answerCfnService.overrideLogicalId("AnswerService0FC0D34F");
     // Same boot-ordering guard as the worker: answer-service opens a Postgres connection at startup.
-    answerService.service.node.addDependency(database);
-    // Wire the API -> answer-service internal endpoint now that both exist.
-    apiContainer.addEnvironment(
-      "ANSWER_SERVICE_URL",
-      `http://${answerService.loadBalancer.loadBalancerDnsName}:8088`
+    answerService.node.addDependency(database);
+    ecsSecurityGroup.addIngressRule(
+      ecsSecurityGroup,
+      ec2.Port.tcp(8088),
+      "ECS tasks to answer-service over Cloud Map"
     );
+    // Wire the API -> answer-service internal endpoint now that both exist.
+    apiContainer.addEnvironment("ANSWER_SERVICE_URL", answerServiceUrl);
 
     // 024-phone-live-telephony: OPT-IN Amazon Connect channel adapter (`-c phoneTelephony=connect`).
     // Default OFF — a normal deploy synthesizes nothing here. When enabled it adds ONLY a stdlib
@@ -1079,7 +1100,7 @@ export class RakuRagStack extends cdk.Stack {
         memorySize: 256,
         description: "Translates Amazon Connect contact-flow events to /internal/phone/* turns",
         environment: {
-          RAKU_INTERNAL_API_BASE: `http://${answerService.loadBalancer.loadBalancerDnsName}:8088`,
+          RAKU_INTERNAL_API_BASE: answerServiceUrl,
           RAKU_INTERNAL_AUTH_SECRET_ARN: internalAuthSecret.secretArn,
           RAKU_PHONE_DID_MAP_SSM_PARAM: didMapParam.parameterName,
           RAKU_PHONE_HANDOFF_URL_BASE:
@@ -1089,7 +1110,7 @@ export class RakuRagStack extends cdk.Stack {
       });
       internalAuthSecret.grantRead(phoneAdapter);
       didMapParam.grantRead(phoneAdapter);
-      answerService.loadBalancer.connections.allowFrom(
+      answerService.connections.allowFrom(
         phoneAdapterSecurityGroup,
         ec2.Port.tcp(8088),
         "Connect phone adapter Lambda"
@@ -1125,17 +1146,17 @@ export class RakuRagStack extends cdk.Stack {
     migrateSeedTask.addContainer("MigrateSeedContainer", {
       image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "infra/ops/Dockerfile" }),
       entryPoint: ["/bin/bash", "-lc"],
-      // migrate (idempotent) -> then seed the demo KB via the internal answer-service ALB.
+      // migrate (idempotent) -> then seed the demo KB via the internal answer-service endpoint.
       command: [
         `set -euo pipefail; export POSTGRES_URL="${PG_URL_EXPR}"; ` +
           `scripts/pg-migrate.sh up; ` +
-          `ANSWER_SERVICE_URL="http://${answerService.loadBalancer.loadBalancerDnsName}:8088" ` +
+          `ANSWER_SERVICE_URL="${answerServiceUrl}" ` +
           `bash scripts/demo/demo_seed.sh`
       ],
       essential: true,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "migrate-seed",
-        logRetention: logs.RetentionDays.ONE_MONTH
+        logRetention: containerLogRetention
       }),
       environment: {
         STAGE_NAME: props.stageName,
@@ -1171,7 +1192,7 @@ export class RakuRagStack extends cdk.Stack {
       essential: true,
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: "langfuse",
-        logRetention: logs.RetentionDays.ONE_MONTH
+        logRetention: containerLogRetention
       }),
       environment: {
         NODE_ENV: "production",
@@ -1370,8 +1391,15 @@ export class RakuRagStack extends cdk.Stack {
         value: langfuseService.loadBalancer.loadBalancerDnsName
       });
     }
+    new cdk.CfnOutput(this, "AnswerServiceInternalDnsName", {
+      value: answerServiceDnsName
+    });
+    new cdk.CfnOutput(this, "AnswerServiceInternalUrl", {
+      value: answerServiceUrl
+    });
     new cdk.CfnOutput(this, "AnswerServiceInternalLoadBalancerDnsName", {
-      value: answerService.loadBalancer.loadBalancerDnsName
+      value: answerServiceDnsName,
+      description: "Compatibility output; this is now private Cloud Map DNS, not an ALB."
     });
     // 021-gdrive: populate this secret with the real Google OAuth client_id/client_secret/redirect_uri
     // post-deploy, then restart the API + answer-service tasks (see infra/cdk/DEPLOY.md).
