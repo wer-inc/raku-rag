@@ -183,8 +183,23 @@ export interface ManufacturingSourceSyncStatus {
 }
 
 /** GET /v1/manufacturing/documents — tenant document inventory row. */
-export interface ManufacturingDocumentSummary {
+export interface ManufacturingDocumentProcessingProjection {
+  processing_status?: string;
+  parse_status?: string;
+  chunk_status?: string;
+  embedding_status?: string;
+  index_status?: string;
+  chunk_count?: number;
+  ingestion_run_id?: string;
+  last_indexed_at?: string;
+  last_error?: string;
+  approval_ready?: boolean;
+  approval_block_reason?: string;
+}
+
+export interface ManufacturingDocumentSummary extends ManufacturingDocumentProcessingProjection {
   document_id: string;
+  display_title?: string;
   collection_id: string;
   source_id: string;
   document_kind: string | null;
@@ -297,6 +312,30 @@ export interface DocumentApprovalResult {
   approval_state: unknown;
 }
 
+/** POST /v1/manufacturing/documents/approval-batch — approve only currently ready documents. */
+export interface DocumentApprovalBatchRequest {
+  document_ids: string[];
+  to_status: "approved";
+}
+
+export interface DocumentApprovalBatchApproved {
+  document_id: string;
+  approval_state: unknown;
+}
+
+export interface DocumentApprovalBatchSkipped {
+  document_id: string;
+  reason: string;
+}
+
+export interface DocumentApprovalBatchResult {
+  requested_count: number;
+  approved_count: number;
+  skipped_count: number;
+  approved: DocumentApprovalBatchApproved[];
+  skipped: DocumentApprovalBatchSkipped[];
+}
+
 /** GET /v1/manufacturing/drafts — tenant draft inventory. */
 export interface DraftListResponse {
   drafts: DraftArtifact[];
@@ -316,8 +355,9 @@ export interface DocumentChunkSummary {
 }
 
 /** GET /v1/admin/documents/:id — document detail for review / citation. */
-export interface AdminDocumentDetail {
+export interface AdminDocumentDetail extends ManufacturingDocumentProcessingProjection {
   document_id: string;
+  display_title?: string;
   collection_id: string;
   source_id: string;
   document_kind: string | null;

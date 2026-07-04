@@ -108,6 +108,19 @@ describe("manufacturing answer facade (e2e)", () => {
           res.end(JSON.stringify({ document_id: "doc1", manufacturing_metadata: received }));
         } else if (
           req.method === "POST" &&
+          url.pathname === "/internal/manufacturing/documents/approval-batch"
+        ) {
+          res.end(
+            JSON.stringify({
+              requested_count: (received?.document_ids as unknown[] | undefined)?.length ?? 0,
+              approved_count: 1,
+              skipped_count: 0,
+              approved: [{ document_id: "doc1", approval_state: { approval_status: "approved" } }],
+              skipped: [],
+            }),
+          );
+        } else if (
+          req.method === "POST" &&
           url.pathname === "/internal/manufacturing/documents/doc1/approval"
         ) {
           res.end(JSON.stringify({ document_id: "doc1", approval_state: { approval_status: "approved" } }));
@@ -402,6 +415,15 @@ describe("manufacturing answer facade (e2e)", () => {
     expect(receivedPath).toBe("/internal/manufacturing/documents/doc1/approval");
 
     res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/documents/approval-batch")
+      .set(authed(adminToken))
+      .send({ tenant_id: "tenant_evil", document_ids: ["doc1"], to_status: "approved" });
+    expect(res.status).toBe(200);
+    expect(receivedPath).toBe("/internal/manufacturing/documents/approval-batch");
+    expect(received?.tenant_id).toBeUndefined();
+    expect(received?.document_ids).toEqual(["doc1"]);
+
+    res = await request(app.getHttpServer())
       .post("/v1/manufacturing/trouble-cases/search")
       .set(authed(readerToken))
       .send({ symptom_query: "振動" });
@@ -496,6 +518,13 @@ describe("manufacturing answer facade (e2e)", () => {
       .send({ to_status: "approved" });
     expect(res.status).toBe(200);
     expect(receivedPath).toBe("/internal/manufacturing/documents/doc1/approval");
+
+    res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/documents/approval-batch")
+      .set(authed)
+      .send({ document_ids: ["doc1"], to_status: "approved" });
+    expect(res.status).toBe(200);
+    expect(receivedPath).toBe("/internal/manufacturing/documents/approval-batch");
   });
 
   it("denies a field-user principal the approval loop (before forwarding)", async () => {
@@ -531,6 +560,12 @@ describe("manufacturing answer facade (e2e)", () => {
       .post("/v1/manufacturing/documents/doc1/approval")
       .set(authed)
       .send({ to_status: "approved" });
+    expect(res.status).toBe(403);
+
+    res = await request(app.getHttpServer())
+      .post("/v1/manufacturing/documents/approval-batch")
+      .set(authed)
+      .send({ document_ids: ["doc1"], to_status: "approved" });
     expect(res.status).toBe(403);
 
     expect(upstreamRequestCount).toBe(before); // gated BEFORE the answer-service is ever called

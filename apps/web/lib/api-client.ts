@@ -23,6 +23,8 @@ import type {
   DocumentFileResponse,
   ImprovementQueueResponse,
   DocumentApprovalRequest,
+  DocumentApprovalBatchRequest,
+  DocumentApprovalBatchResult,
   DocumentApprovalResult,
   DraftArtifact,
   FeedbackListResponse,
@@ -478,6 +480,13 @@ export async function manufacturingDocuments(
   return res.documents ?? [];
 }
 
+export async function manufacturingDocumentDetail(
+  documentId: string,
+  userToken: string,
+): Promise<AdminDocumentDetail> {
+  return mfgGet<AdminDocumentDetail>(`documents/${encodeURIComponent(documentId)}`, userToken);
+}
+
 export async function adminDocumentDetail(
   documentId: string,
   userToken: string,
@@ -816,4 +825,11 @@ export async function manufacturingDocumentApproval(
     req,
     userToken,
   );
+}
+
+export async function manufacturingDocumentApprovalBatch(
+  req: DocumentApprovalBatchRequest,
+  userToken: string,
+): Promise<DocumentApprovalBatchResult> {
+  return mfgPost<DocumentApprovalBatchResult>("documents/approval-batch", req, userToken);
 }

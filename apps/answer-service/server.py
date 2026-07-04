@@ -2599,6 +2599,15 @@ def make_handler(system: ProductionSystem):
                             f"/v1/manufacturing/ingestion-runs/{executed['sync_run_id']}"
                         )
                         self._send(202, executed)
+                elif parts == ["internal", "manufacturing", "documents", "approval-batch"]:
+                    principal = _claims_from_headers(self.headers)
+                    result = manufacturing_system.batch_transition_approval(
+                        tenant_id=principal.tenant_id,
+                        document_ids=body.get("document_ids") or (),
+                        to_status=str(body.get("to_status") or ""),
+                        actor=principal,
+                    )
+                    self._send(200, _jsonable(result))
                 elif (
                     len(parts) == 5
                     and parts[:3] == ["internal", "manufacturing", "documents"]

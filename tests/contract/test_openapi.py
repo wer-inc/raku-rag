@@ -137,6 +137,27 @@ class OpenApiContractTest(unittest.TestCase):
             schemas["IngestRequest"]["properties"]["ref"]["description"],
         )
 
+    def test_manufacturing_document_review_contract_is_published(self) -> None:
+        expected_paths = {
+            "/manufacturing/documents",
+            "/manufacturing/documents/{document_id}",
+            "/manufacturing/documents/{document_id}/approval",
+            "/manufacturing/documents/approval-batch",
+        }
+        self.assertTrue(expected_paths.issubset(set(self.doc["paths"])))
+
+        schemas = self.doc["components"]["schemas"]
+        self.assertIn("display_title", str(schemas["ManufacturingDocumentSummary"]))
+        self.assertIn("approval_ready", str(schemas["ManufacturingDocumentProcessingProjection"]))
+        self.assertEqual(
+            schemas["DocumentApprovalBatchRequest"]["properties"]["to_status"]["enum"],
+            ["approved"],
+        )
+        self.assertEqual(
+            schemas["DocumentApprovalBatchResult"]["properties"]["skipped"]["items"]["$ref"],
+            "#/components/schemas/DocumentApprovalBatchSkipped",
+        )
+
     def test_admin_settings_surface_is_published(self) -> None:
         expected_paths = {
             "/admin/datasources",

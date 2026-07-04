@@ -8,6 +8,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import type { FormEvent, ReactNode } from "react";
 import type {
   AdminDataSource,
+  AdminDocumentDetail,
   AdminDataSourceOverview,
   ChatAssistantMessage,
   ChatbotSourceExposurePolicy,
@@ -63,6 +64,8 @@ import {
   manufacturingDataUsePolicy,
   manufacturingDeleteDocument,
   manufacturingDocumentApproval,
+  manufacturingDocumentApprovalBatch,
+  manufacturingDocumentDetail,
   manufacturingDocuments,
   manufacturingGetDraft,
   manufacturingDashboard,
@@ -4897,10 +4900,10 @@ function SourceDetailBody({ sourceId }: { sourceId: string }) {
 }
 
 const DOC_APPROVAL_STATUS: Record<string, { label: string; cls: string }> = {
-  draft: { label: "ドラフト", cls: "approval-draft" },
-  pending_review: { label: "承認待ち", cls: "approval-draft" },
-  approved: { label: "承認済み", cls: "approval-approved" },
-  obsolete: { label: "旧版", cls: "approval-obsolete" },
+  draft: { label: "レビュー待ち", cls: "approval-draft" },
+  pending_review: { label: "レビュー待ち", cls: "approval-draft" },
+  approved: { label: "質問に利用中", cls: "approval-approved" },
+  obsolete: { label: "利用停止中", cls: "approval-obsolete" },
 };
 
 const DOC_LIFECYCLE_RANK: Record<string, number> = {
@@ -4941,25 +4944,236 @@ function DocumentApprovalQueueBody() {
   return <DocumentApprovalQueueEnabledBody />;
 }
 
+type ApprovalQueueDetailState =
+  | { documentId: string; state: "loading" }
+  | { documentId: string; state: "ready"; data: AdminDocumentDetail }
+  | { documentId: string; state: "error"; error: string };
+
+type ApprovalQueueRow = {
+  document_id: string;
+  display_title?: string;
+  filename?: string;
+  collection_id: string;
+  source_id: string;
+  source_name?: string;
+  source_type?: string;
+  approval_status: string;
+  effective_date: string | null;
+  approved_at?: string | null;
+  chunk_count?: number;
+  ingested_at?: string;
+  processing_status?: string;
+  index_status?: string;
+  last_error?: string;
+  approval_ready?: boolean;
+  approval_block_reason?: string;
+  source: "server" | "local";
+};
+
+type ApprovalReviewState = {
+  key: "ready" | "preparing" | "failed" | "empty" | "approved" | "obsolete" | "reference";
+  label: string;
+  cls: string;
+  detail: string;
+  ready: boolean;
+  problem: boolean;
+  needsAttention: boolean;
+};
+
+type ApprovalSourceGroup = {
+  key: string;
+  sourceId: string;
+  collectionId: string;
+  name: string;
+  typeLabel: string;
+  lastSyncedAt: string;
+  docs: ApprovalQueueRow[];
+  readyDocs: ApprovalQueueRow[];
+  preparingDocs: ApprovalQueueRow[];
+  problemDocs: ApprovalQueueRow[];
+  approvedDocs: ApprovalQueueRow[];
+};
+
+function approvalDocTitle(doc: ApprovalQueueRow): string {
+  return doc.display_title || doc.filename || doc.document_id;
+}
+
+function approvalDateLabel(value?: string | null): string {
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString("ja-JP");
+}
+
+function safeDomId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, "-");
+}
+
+function approvalQueueReady(doc: ApprovalQueueRow): boolean {
+  if (typeof doc.approval_ready === "boolean") return doc.approval_ready;
+  return (doc.chunk_count ?? 0) > 0 && (!doc.index_status || doc.index_status === "succeeded");
+}
+
+function approvalReviewState(doc: ApprovalQueueRow): ApprovalReviewState {
+  if (doc.approval_status === "approved") {
+    return {
+      cls: "is-approved",
+      detail: "回答の正式な根拠として利用されています。",
+      key: "approved",
+      label: "質問に利用中",
+      needsAttention: false,
+      problem: false,
+      ready: false,
+    };
+  }
+  if (doc.approval_status === "obsolete") {
+    return {
+      cls: "is-obsolete",
+      detail: "回答の正式な根拠としては利用されません。",
+      key: "obsolete",
+      label: "利用停止中",
+      needsAttention: false,
+      problem: false,
+      ready: false,
+    };
+  }
+  if (approvalQueueReady(doc)) {
+    return {
+      cls: "is-ready",
+      detail: "本文の読み取りが完了しています。内容を確認して承認できます。",
+      key: "ready",
+      label: "承認できます",
+      needsAttention: true,
+      problem: false,
+      ready: true,
+    };
+  }
+  const status = doc.index_status || doc.processing_status || "";
+  if (status === "failed" || status === "dead_letter" || doc.approval_block_reason === "indexing_failed") {
+    return {
+      cls: "is-failed",
+      detail: "同期に失敗しました。接続設定または元ファイルを確認して再同期してください。",
+      key: "failed",
+      label: "同期に失敗",
+      needsAttention: true,
+      problem: true,
+      ready: false,
+    };
+  }
+  if (doc.approval_block_reason === "no_indexed_chunks") {
+    return {
+      cls: "is-failed",
+      detail: "本文を読み取れませんでした。ファイル形式や権限を確認して再同期してください。",
+      key: "empty",
+      label: "本文を読み取れませんでした",
+      needsAttention: true,
+      problem: true,
+      ready: false,
+    };
+  }
+  if (status === "queued" || status === "running" || status === "unknown" || !status) {
+    return {
+      cls: "is-wait",
+      detail: "同期処理が完了するとレビューできます。",
+      key: "preparing",
+      label: "準備中",
+      needsAttention: true,
+      problem: false,
+      ready: false,
+    };
+  }
+  return {
+    cls: "is-wait",
+    detail: "同期状態を確認しています。",
+    key: "reference",
+    label: "準備中",
+    needsAttention: true,
+    problem: false,
+    ready: false,
+  };
+}
+
+function buildApprovalSourceGroups(
+  docs: ApprovalQueueRow[],
+  sources: AdminDataSourceOverview[],
+): ApprovalSourceGroup[] {
+  const sourceMap = new Map(sources.map((source) => [source.source_id, source]));
+  const groups = new Map<string, ApprovalSourceGroup>();
+  for (const doc of docs) {
+    const source = sourceMap.get(doc.source_id);
+    const sourceKey = `${doc.collection_id}\u0000${doc.source_id || doc.source_name || doc.document_id}`;
+    const current =
+      groups.get(sourceKey) ??
+      ({
+        approvedDocs: [],
+        collectionId: doc.collection_id,
+        docs: [],
+        key: sourceKey,
+        lastSyncedAt: "",
+        name: source?.display_name || doc.source_name || doc.source_id || "直接アップロード",
+        preparingDocs: [],
+        problemDocs: [],
+        readyDocs: [],
+        sourceId: doc.source_id,
+        typeLabel: sourceKindLabel(source?.source_type || doc.source_type || doc.source_id || "upload"),
+      } satisfies ApprovalSourceGroup);
+    const lastSynced =
+      syncFreshness(source?.sync ?? null) ||
+      source?.last_synced_at ||
+      doc.approved_at ||
+      doc.ingested_at ||
+      "";
+    if (lastSynced && (!current.lastSyncedAt || lastSynced > current.lastSyncedAt)) {
+      current.lastSyncedAt = lastSynced;
+    }
+    current.docs.push(doc);
+    const state = approvalReviewState(doc);
+    if (state.ready) current.readyDocs.push(doc);
+    if (state.key === "preparing" || state.key === "reference") current.preparingDocs.push(doc);
+    if (state.problem) current.problemDocs.push(doc);
+    if (state.key === "approved") current.approvedDocs.push(doc);
+    groups.set(sourceKey, current);
+  }
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      docs: [...group.docs].sort((a, b) => {
+        const rankA = DOC_LIFECYCLE_RANK[a.approval_status] ?? 0;
+        const rankB = DOC_LIFECYCLE_RANK[b.approval_status] ?? 0;
+        return rankA - rankB || approvalDocTitle(a).localeCompare(approvalDocTitle(b), "ja");
+      }),
+    }))
+    .sort((a, b) => {
+      const attention = b.readyDocs.length - a.readyDocs.length || b.problemDocs.length - a.problemDocs.length;
+      return attention || a.name.localeCompare(b.name, "ja");
+    });
+}
+
 function DocumentApprovalQueueEnabledBody() {
   const [docs, setDocs] = useState<IngestedDoc[]>([]);
-  const [serverDocs, setServerDocs] = useState<
-    Array<{ document_id: string; approval_status: string; collection_id: string; effective_date: string | null }>
-  >([]);
+  const [serverDocs, setServerDocs] = useState<ManufacturingDocumentSummary[]>([]);
+  const [sourceOverview, setSourceOverview] = useState<AdminDataSourceOverview[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [expandedSourceKey, setExpandedSourceKey] = useState<string | null>(null);
+  const [problemOnlySourceKey, setProblemOnlySourceKey] = useState<string | null>(null);
+  const [detailState, setDetailState] = useState<ApprovalQueueDetailState | null>(null);
+  const [chunkLimitByDoc, setChunkLimitByDoc] = useState<Record<string, number>>({});
+  const [confirmObsolete, setConfirmObsolete] = useState<ApprovalQueueRow | null>(null);
+  const detailRequestRef = useRef(0);
   const toast = useToast();
 
   async function reload() {
     setDocs(loadIngestedDocs());
     try {
       const token = await getSessionToken();
-      // Manufacturing approval queue reads the manufacturing overlay endpoint (same one its
-      // approve/obsolete writes use). The old /admin/documents path 404s on this build, leaving the
-      // queue silently empty even when 18 docs exist.
-      const rows = await manufacturingDocuments(token);
+      const [rows, overview] = await Promise.all([
+        manufacturingDocuments(token),
+        adminDataSourceOverview(token).catch(() => ({ sources: [] as AdminDataSourceOverview[] })),
+      ]);
       setServerDocs(rows);
+      setSourceOverview(overview.sources ?? []);
     } catch {
       setServerDocs([]);
+      setSourceOverview([]);
     }
   }
 
@@ -4967,24 +5181,97 @@ function DocumentApprovalQueueEnabledBody() {
     void reload();
   }, []);
 
-  const merged = [
+  const merged: ApprovalQueueRow[] = [
     ...serverDocs.map((d) => ({
-      document_id: d.document_id,
-      filename: d.document_id,
-      collection_id: d.collection_id,
-      approval_status: d.approval_status,
-      effective_date: d.effective_date,
-      chunk_count: 0,
+      ...d,
+      filename: d.display_title || d.document_id,
+      chunk_count: d.chunk_count ?? 0,
       source: "server" as const,
     })),
     ...docs
       .filter((d) => !serverDocs.some((s) => s.document_id === d.document_id))
-      .map((d) => ({ ...d, source: "local" as const })),
+      .map((d) => ({
+        ...d,
+        approval_block_reason: d.chunk_count > 0 ? "" : "no_indexed_chunks",
+        approval_ready: d.chunk_count > 0 && (!d.status || d.status === "succeeded"),
+        index_status: d.status || (d.chunk_count > 0 ? "succeeded" : "unknown"),
+        ingested_at: d.ingested_at,
+        processing_status: d.status || (d.chunk_count > 0 ? "succeeded" : "unknown"),
+        source: "local" as const,
+      })),
   ];
+  const sourceGroups = buildApprovalSourceGroups(merged, sourceOverview);
+  const reviewGroups = sourceGroups.filter(
+    (group) => group.readyDocs.length + group.preparingDocs.length + group.problemDocs.length > 0,
+  );
+  const totalReady = reviewGroups.reduce((sum, group) => sum + group.readyDocs.length, 0);
+  const totalPreparing = reviewGroups.reduce((sum, group) => sum + group.preparingDocs.length, 0);
+  const totalProblems = reviewGroups.reduce((sum, group) => sum + group.problemDocs.length, 0);
 
-  async function transition(doc: { document_id: string; approval_status: string; effective_date: string | null }, toStatus: string) {
+  async function openDetail(doc: ApprovalQueueRow) {
+    if (detailState?.documentId === doc.document_id) {
+      detailRequestRef.current += 1;
+      setDetailState(null);
+      return;
+    }
+    const requestId = detailRequestRef.current + 1;
+    detailRequestRef.current = requestId;
+    setDetailState({ documentId: doc.document_id, state: "loading" });
+    try {
+      const token = await getSessionToken();
+      const data = await manufacturingDocumentDetail(doc.document_id, token);
+      if (detailRequestRef.current !== requestId) return;
+      setDetailState({ documentId: doc.document_id, state: "ready", data });
+      setChunkLimitByDoc((current) => ({ ...current, [doc.document_id]: current[doc.document_id] ?? 4 }));
+    } catch (err) {
+      if (detailRequestRef.current !== requestId) return;
+      setDetailState({
+        documentId: doc.document_id,
+        state: "error",
+        error: err instanceof Error ? err.message : "文書詳細を取得できませんでした",
+      });
+    }
+  }
+
+  function toggleSource(group: ApprovalSourceGroup, problemOnly = false) {
+    const nextOpen = expandedSourceKey === group.key && problemOnlySourceKey === (problemOnly ? group.key : null);
+    setExpandedSourceKey(nextOpen ? null : group.key);
+    setProblemOnlySourceKey(nextOpen ? null : problemOnly ? group.key : null);
+    if (nextOpen) {
+      detailRequestRef.current += 1;
+      setDetailState(null);
+    }
+  }
+
+  async function approveGroup(group: ApprovalSourceGroup) {
+    if (busy || group.readyDocs.length === 0) return;
+    setBusy(`group:${group.key}`);
+    try {
+      const token = await getSessionToken();
+      const res = await manufacturingDocumentApprovalBatch(
+        { document_ids: group.readyDocs.map((doc) => doc.document_id), to_status: "approved" },
+        token,
+      );
+      for (const item of res.approved) {
+        const state = (item.approval_state ?? {}) as { approval_status?: string; effective_date?: string | null };
+        updateIngestedDoc(item.document_id, {
+          approval_status: state.approval_status ?? "approved",
+          effective_date: state.effective_date ?? null,
+        });
+      }
+      await reload();
+      const suffix = res.skipped_count > 0 ? `（${res.skipped_count}件は準備中または要確認のため除外）` : "";
+      toast(`${res.approved_count}件を質問に利用できる状態にしました。${suffix}`, "success");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "承認に失敗しました", "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function transition(doc: ApprovalQueueRow, toStatus: string) {
     if (busy) return;
-    setBusy(doc.document_id);
+    setBusy(`doc:${doc.document_id}`);
     try {
       const token = await getSessionToken();
       const res = await manufacturingDocumentApproval(doc.document_id, { to_status: toStatus }, token);
@@ -4995,74 +5282,255 @@ function DocumentApprovalQueueEnabledBody() {
         effective_date: state.effective_date ?? doc.effective_date,
       });
       await reload();
-      toast(`${doc.document_id} を「${DOC_APPROVAL_STATUS[nextStatus]?.label ?? nextStatus}」に更新しました。`, "success");
+      toast(`${approvalDocTitle(doc)} を「${DOC_APPROVAL_STATUS[nextStatus]?.label ?? nextStatus}」に更新しました。`, "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "更新に失敗しました", "error");
     } finally {
       setBusy(null);
+      setConfirmObsolete(null);
     }
   }
-
-  const pending = merged.filter((d) => (DOC_LIFECYCLE_RANK[d.approval_status] ?? 0) < 2);
 
   return (
     <>
       <p className="src-warning">
-        取り込んだ文書は、ここで承認するまで正式な根拠になりません。AIドラフトのレビュー（
-        <Link href="/reviews">AIドラフトレビュー</Link>）とは別キューです。
+        同期・アップロードした内容は、承認するまで正式な根拠になりません。AIドラフトのレビュー（
+        <Link href="/reviews">AIドラフトレビュー</Link>）とは別に確認します。
       </p>
       <Section
         title="根拠文書レビュー"
-        note={`テナント ${merged.length} 件（承認待ち相当 ${pending.length} 件）。承認すると質問の正式な根拠になります。`}
+        note={`レビューが必要なソース ${reviewGroups.length} 件。承認できる変更だけまとめて処理します。`}
       >
         {merged.length === 0 ? (
           <p className="ops-empty">
             取り込んだ文書がありません。<Link href="/sources/new">外部接続を追加</Link> から取り込んでください。
           </p>
+        ) : reviewGroups.length === 0 ? (
+          <p className="ops-empty">
+            現在レビューが必要な同期結果はありません。新しく取り込むと、ここに確認対象が表示されます。
+          </p>
         ) : (
-          <div className="approval-list">
-            {merged.map((doc) => {
-              const st = DOC_APPROVAL_STATUS[doc.approval_status] ?? {
-                label: doc.approval_status,
-                cls: "approval-draft",
-              };
-              const rank = DOC_LIFECYCLE_RANK[doc.approval_status] ?? 0;
-              const isBusy = busy === doc.document_id;
+          <div className="approval-inbox">
+            <div className="approval-inbox-summary" aria-live="polite">
+              <span>
+                <strong>{totalReady}</strong> 承認できます
+              </span>
+              <span>
+                <strong>{totalPreparing}</strong> 準備中
+              </span>
+              <span>
+                <strong>{totalProblems}</strong> 問題あり
+              </span>
+            </div>
+            <div className="approval-list">
+              {reviewGroups.map((group) => {
+                const panelId = `approval-source-${safeDomId(group.key)}`;
+                const isOpen = expandedSourceKey === group.key;
+                const problemOnly = problemOnlySourceKey === group.key;
+                const isBusy = busy === `group:${group.key}`;
+                const lastSynced = approvalDateLabel(group.lastSyncedAt);
+                const detailDocs = group.docs.filter((doc) => {
+                  const state = approvalReviewState(doc);
+                  if (problemOnly) return state.problem;
+                  return state.needsAttention;
+                });
+                const hiddenApproved = group.approvedDocs.length;
               return (
-                <article className="approval-row" key={doc.document_id}>
-                  <div className="approval-row-main">
+                <article className="approval-source-row" key={group.key}>
+                  <div className="approval-source-main">
                     <div className="approval-row-titles">
-                      <strong>{doc.document_id}</strong>
+                      <strong>{group.name}</strong>
                       <span>
-                        {doc.filename} · {doc.collection_id} · 発効 {doc.effective_date ?? "—"} · {doc.chunk_count} チャンク
+                        {group.typeLabel} · {collectionDisplayName(group.collectionId)}
+                        {lastSynced ? ` · 最終同期 ${lastSynced}` : ""}
                       </span>
                     </div>
-                    <span className={`citation-chip ${st.cls}`}>{st.label}</span>
+                    <div className="approval-source-counts">
+                      <span className="approval-count-pill is-ready">{group.readyDocs.length} 承認できます</span>
+                      <span className="approval-count-pill is-wait">{group.preparingDocs.length} 準備中</span>
+                      <span className="approval-count-pill is-failed">{group.problemDocs.length} 問題あり</span>
+                      <span className="approval-count-pill is-approved">{group.approvedDocs.length} 質問に利用中</span>
+                    </div>
                   </div>
-                  <div className="approval-row-actions">
-                    {rank < 2 && (
+                  <div className="approval-source-actions">
+                    {group.readyDocs.length > 0 && (
                       <button
                         type="button"
                         className="btn-approve"
                         disabled={isBusy}
-                        onClick={() => void transition(doc, "approved")}
+                        onClick={() => void approveGroup(group)}
                       >
-                        承認
+                        {isBusy ? "承認中…" : `${group.readyDocs.length}件を承認`}
                       </button>
                     )}
-                    {rank < 3 && (
-                      <button type="button" disabled={isBusy} onClick={() => void transition(doc, "obsolete")}>
-                        旧版化
+                    <button
+                      type="button"
+                      aria-expanded={isOpen && !problemOnly}
+                      aria-controls={panelId}
+                      onClick={() => toggleSource(group)}
+                    >
+                      確認する
+                    </button>
+                    {group.problemDocs.length > 0 && (
+                      <button
+                        type="button"
+                        aria-expanded={isOpen && problemOnly}
+                        aria-controls={panelId}
+                        onClick={() => toggleSource(group, true)}
+                      >
+                        問題だけ見る
                       </button>
                     )}
-                    {rank >= 3 && <span className="ops-note">終了状態</span>}
                   </div>
+                  {isOpen && (
+                    <div className="approval-source-detail" id={panelId}>
+                      {detailDocs.length === 0 ? (
+                        <p className="ops-empty">表示できる確認対象はありません。</p>
+                      ) : (
+                        <ul className="approval-doc-list">
+                          {detailDocs.map((doc) => {
+                            const state = approvalReviewState(doc);
+                            const docBusy = busy === `doc:${doc.document_id}`;
+                            const docLimit = chunkLimitByDoc[doc.document_id] ?? 4;
+                            const detailOpen = detailState?.documentId === doc.document_id;
+                            const detail = detailOpen && detailState?.state === "ready" ? detailState.data : null;
+                            const shownChunks = detail?.chunks.slice(0, docLimit) ?? [];
+                            return (
+                              <li className="approval-doc-item" key={doc.document_id}>
+                                <div className="approval-doc-row">
+                                  <div className="approval-doc-title">
+                                    <strong>{approvalDocTitle(doc)}</strong>
+                                    <span>
+                                      {doc.effective_date ? `発効 ${doc.effective_date}` : "発効日未設定"}
+                                    </span>
+                                  </div>
+                                  <span className={`approval-state-pill ${state.cls}`}>{state.label}</span>
+                                </div>
+                                <p className="approval-doc-detail">{state.detail}</p>
+                                <div className="approval-doc-actions">
+                                  <button type="button" onClick={() => void openDetail(doc)} disabled={docBusy}>
+                                    {detailOpen ? "閉じる" : "全文を見る"}
+                                  </button>
+                                  {state.ready && (
+                                    <button
+                                      type="button"
+                                      className="btn-approve"
+                                      disabled={docBusy}
+                                      onClick={() => void transition(doc, "approved")}
+                                    >
+                                      {docBusy ? "承認中…" : "この文書を承認"}
+                                    </button>
+                                  )}
+                                  {(doc.approval_status === "approved" || doc.approval_status === "pending_review") && (
+                                    <button
+                                      type="button"
+                                      className="approval-secondary-danger"
+                                      disabled={docBusy}
+                                      onClick={() => setConfirmObsolete(doc)}
+                                    >
+                                      利用停止にする
+                                    </button>
+                                  )}
+                                </div>
+                                {detailOpen && (
+                                  <div className="approval-detail-panel" aria-live="polite">
+                                    {detailState.state === "loading" && <p className="ops-note">本文を読み込み中です。</p>}
+                                    {detailState.state === "error" && <p className="src-warning">{detailState.error}</p>}
+                                    {detail && (
+                                      <>
+                                        {detail.chunks.length === 0 ? (
+                                          <p className="ops-empty">確認できる本文がまだありません。</p>
+                                        ) : (
+                                          <>
+                                            <ol className="approval-chunk-list">
+                                              {shownChunks.map((chunk) => (
+                                                <li key={chunk.chunk_id}>
+                                                  <strong>{chunk.heading_path?.join(" / ") || `本文 ${chunk.position + 1}`}</strong>
+                                                  <span>{chunk.text}</span>
+                                                </li>
+                                              ))}
+                                            </ol>
+                                            {shownChunks.length < detail.chunks.length && (
+                                              <button
+                                                type="button"
+                                                className="approval-more-button"
+                                                onClick={() =>
+                                                  setChunkLimitByDoc((current) => ({
+                                                    ...current,
+                                                    [doc.document_id]: (current[doc.document_id] ?? 4) + 8,
+                                                  }))
+                                                }
+                                              >
+                                                さらに表示（{shownChunks.length}/{detail.chunks.length}）
+                                              </button>
+                                            )}
+                                          </>
+                                        )}
+                                        <details className="approval-admin-details">
+                                          <summary>管理者向け詳細</summary>
+                                          <dl>
+                                            <div>
+                                              <dt>文書ID</dt>
+                                              <dd>{detail.document_id}</dd>
+                                            </div>
+                                            <div>
+                                              <dt>ソースID</dt>
+                                              <dd>{detail.source_id || "—"}</dd>
+                                            </div>
+                                            <div>
+                                              <dt>処理状態</dt>
+                                              <dd>{detail.index_status ?? "unknown"}</dd>
+                                            </div>
+                                            <div>
+                                              <dt>本文数</dt>
+                                              <dd>{detail.chunk_count ?? detail.chunks.length}</dd>
+                                            </div>
+                                            {detail.ingestion_run_id && (
+                                              <div>
+                                                <dt>取込実行</dt>
+                                                <dd>{detail.ingestion_run_id}</dd>
+                                              </div>
+                                            )}
+                                            {detail.last_error && (
+                                              <div>
+                                                <dt>エラー</dt>
+                                                <dd>{detail.last_error}</dd>
+                                              </div>
+                                            )}
+                                          </dl>
+                                        </details>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                      {hiddenApproved > 0 && !problemOnly && (
+                        <p className="ops-note">{hiddenApproved} 件はすでに質問に利用中です。</p>
+                      )}
+                    </div>
+                  )}
                 </article>
               );
-            })}
+              })}
+            </div>
           </div>
         )}
       </Section>
+      {confirmObsolete && (
+        <ConfirmDialog
+          title="この文書を利用停止にしますか"
+          body={`${approvalDocTitle(confirmObsolete)} は質問の正式な根拠として使われなくなります。`}
+          confirmLabel="利用停止にする"
+          danger
+          busy={busy === `doc:${confirmObsolete.document_id}`}
+          onCancel={() => setConfirmObsolete(null)}
+          onConfirm={() => void transition(confirmObsolete, "obsolete")}
+        />
+      )}
     </>
   );
 }

@@ -945,6 +945,164 @@ const OPENAPI_DOC = {
           dagster_run_id: { type: "string" },
         },
       },
+      ManufacturingDocumentProcessingProjection: {
+        type: "object",
+        properties: {
+          processing_status: { type: "string" },
+          parse_status: { type: "string" },
+          chunk_status: { type: "string" },
+          embedding_status: { type: "string" },
+          index_status: { type: "string" },
+          chunk_count: { type: "number" },
+          ingestion_run_id: { type: "string" },
+          last_indexed_at: { type: "string" },
+          last_error: { type: "string" },
+          approval_ready: { type: "boolean" },
+          approval_block_reason: { type: "string" },
+        },
+      },
+      ManufacturingDocumentSummary: {
+        type: "object",
+        required: ["document_id", "collection_id", "source_id", "approval_status"],
+        properties: {
+          document_id: { type: "string" },
+          display_title: { type: "string" },
+          collection_id: { type: "string" },
+          source_id: { type: "string" },
+          document_kind: { type: "string", nullable: true },
+          approval_status: { type: "string" },
+          effective_date: { type: "string", nullable: true },
+          approved_by: { type: "string", nullable: true },
+          approved_at: { type: "string", nullable: true },
+          superseded_by: { type: "string", nullable: true },
+          equipment: { type: "string", nullable: true },
+          safety_category: { type: "string", nullable: true },
+          processing_status: { type: "string" },
+          parse_status: { type: "string" },
+          chunk_status: { type: "string" },
+          embedding_status: { type: "string" },
+          index_status: { type: "string" },
+          chunk_count: { type: "number" },
+          ingestion_run_id: { type: "string" },
+          last_indexed_at: { type: "string" },
+          last_error: { type: "string" },
+          approval_ready: { type: "boolean" },
+          approval_block_reason: { type: "string" },
+        },
+      },
+      ManufacturingDocumentListResponse: {
+        type: "object",
+        required: ["documents"],
+        properties: {
+          documents: {
+            type: "array",
+            items: { $ref: "#/components/schemas/ManufacturingDocumentSummary" },
+          },
+        },
+      },
+      DocumentChunkSummary: {
+        type: "object",
+        required: ["chunk_id", "text", "position", "heading_path", "metadata"],
+        properties: {
+          chunk_id: { type: "string" },
+          text: { type: "string" },
+          position: { type: "number" },
+          heading_path: { type: "array", items: { type: "string" } },
+          metadata: { type: "object", additionalProperties: true },
+        },
+      },
+      AdminDocumentDetail: {
+        type: "object",
+        required: ["document_id", "collection_id", "source_id", "approval_status", "chunk_count", "chunks"],
+        properties: {
+          document_id: { type: "string" },
+          display_title: { type: "string" },
+          collection_id: { type: "string" },
+          source_id: { type: "string" },
+          document_kind: { type: "string", nullable: true },
+          approval_status: { type: "string" },
+          effective_date: { type: "string", nullable: true },
+          approved_by: { type: "string", nullable: true },
+          approved_at: { type: "string", nullable: true },
+          superseded_by: { type: "string", nullable: true },
+          equipment: { type: "string", nullable: true },
+          safety_category: { type: "string", nullable: true },
+          processing_status: { type: "string" },
+          parse_status: { type: "string" },
+          chunk_status: { type: "string" },
+          embedding_status: { type: "string" },
+          index_status: { type: "string" },
+          chunk_count: { type: "number" },
+          ingestion_run_id: { type: "string" },
+          last_indexed_at: { type: "string" },
+          last_error: { type: "string" },
+          approval_ready: { type: "boolean" },
+          approval_block_reason: { type: "string" },
+          chunks: {
+            type: "array",
+            items: { $ref: "#/components/schemas/DocumentChunkSummary" },
+          },
+        },
+      },
+      DocumentApprovalRequest: {
+        type: "object",
+        properties: {
+          to_status: {
+            type: "string",
+            enum: ["draft", "pending_review", "approved", "obsolete"],
+          },
+          import_external: { type: "object", additionalProperties: true },
+        },
+      },
+      DocumentApprovalResult: {
+        type: "object",
+        required: ["document_id", "approval_state"],
+        properties: {
+          document_id: { type: "string" },
+          approval_state: { type: "object", additionalProperties: true },
+        },
+      },
+      DocumentApprovalBatchRequest: {
+        type: "object",
+        required: ["document_ids", "to_status"],
+        properties: {
+          document_ids: { type: "array", items: { type: "string" } },
+          to_status: { type: "string", enum: ["approved"] },
+        },
+      },
+      DocumentApprovalBatchApproved: {
+        type: "object",
+        required: ["document_id", "approval_state"],
+        properties: {
+          document_id: { type: "string" },
+          approval_state: { type: "object", additionalProperties: true },
+        },
+      },
+      DocumentApprovalBatchSkipped: {
+        type: "object",
+        required: ["document_id", "reason"],
+        properties: {
+          document_id: { type: "string" },
+          reason: { type: "string" },
+        },
+      },
+      DocumentApprovalBatchResult: {
+        type: "object",
+        required: ["requested_count", "approved_count", "skipped_count", "approved", "skipped"],
+        properties: {
+          requested_count: { type: "number" },
+          approved_count: { type: "number" },
+          skipped_count: { type: "number" },
+          approved: {
+            type: "array",
+            items: { $ref: "#/components/schemas/DocumentApprovalBatchApproved" },
+          },
+          skipped: {
+            type: "array",
+            items: { $ref: "#/components/schemas/DocumentApprovalBatchSkipped" },
+          },
+        },
+      },
       SourceSyncStatus: {
         type: "object",
         required: [
@@ -2789,6 +2947,118 @@ const OPENAPI_DOC = {
             },
           },
           "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "502": { description: "Answer service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/manufacturing/documents": {
+      get: {
+        operationId: "listManufacturingDocuments",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "collection_id", in: "query", required: false, schema: { type: "string" } },
+          { name: "approval_status", in: "query", required: false, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "ACL-filtered manufacturing document inventory with review readiness.",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/ManufacturingDocumentListResponse" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "502": { description: "Answer service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/manufacturing/documents/{document_id}": {
+      get: {
+        operationId: "getManufacturingDocumentDetail",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "document_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": {
+            description: "ACL-filtered manufacturing document detail for reviewer inspection.",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/AdminDocumentDetail" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "404": { description: "Not found", content: { "application/json": {} } },
+          "502": { description: "Answer service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/manufacturing/documents/{document_id}/approval": {
+      post: {
+        operationId: "postManufacturingDocumentApproval",
+        security: [{ bearerAuth: [], userToken: [] }],
+        parameters: [
+          { name: "document_id", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/DocumentApprovalRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Reviewer-driven document approval transition.",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/DocumentApprovalResult" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: reviewer role required", content: { "application/json": {} } },
+          "404": { description: "Not found", content: { "application/json": {} } },
+          "422": { description: "Invalid lifecycle transition", content: { "application/json": {} } },
+          "502": { description: "Answer service unavailable", content: { "application/json": {} } },
+        },
+      },
+    },
+    "/manufacturing/documents/approval-batch": {
+      post: {
+        operationId: "postManufacturingDocumentApprovalBatch",
+        security: [{ bearerAuth: [], userToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/DocumentApprovalBatchRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Batch approval that approves only ready, ACL-visible documents.",
+            headers: {
+              "api-version": { $ref: "#/components/headers/ApiVersion" },
+              Deprecation: { $ref: "#/components/headers/Deprecation" },
+              Sunset: { $ref: "#/components/headers/Sunset" },
+            },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/DocumentApprovalBatchResult" } },
+            },
+          },
+          "401": { description: "Unauthorized", content: { "application/json": {} } },
+          "403": { description: "Forbidden: reviewer role required", content: { "application/json": {} } },
+          "422": { description: "Unsupported batch transition", content: { "application/json": {} } },
           "502": { description: "Answer service unavailable", content: { "application/json": {} } },
         },
       },
