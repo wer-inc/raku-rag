@@ -1,3 +1,59 @@
+# ★ 現在地と引き継ぎ(2026-07-04 更新 — 次の担当者はここから読む)
+
+本ドキュメントの §0〜§9 は製品化の「地図」(一般論のプラン)。このセクションだけが
+**今どこまで来ていて、次に何をやるべきか**の引き継ぎ情報。SSOT は本リポジトリの
+`docs/product/goal-gap-audit.md`(★G 棚卸し)/ `docs/product/scale-bench.md`(スケール実測)/
+`docs/product/ui-ux-audit.md`(UI/UX 監査)。
+
+## 現在地(何が終わっているか)
+
+- **本プランの Phase 0〜2 相当は実装済み**: 評価基盤(golden corpus + committed baseline + CI ゲート)、
+  trace/コスト観測、ACL/テナント分離(検索レイヤー強制・RLS)、hybrid 検索(vector+BM25風+識別子
+  メタデータ)、reranker(Bedrock Cohere, opt-in)、no-answer 制御(salient coverage gate)、
+  human-in-the-loop(ドラフト承認・レビュー門・承認後公開経路)。
+- **スケール実証(Wave 1、PR #82-#85、2026-07-04 完了)**: 10,000 文書で recall@5 0.82 / 識別子
+  1.0 / p95 296ms(1並列)・801ms(4並列)を実測。HNSW 有効化 + ACL over-fetch +
+  lexical/metadata の SQL 絞り込みで文書数比例の遅延を解消(詳細 `docs/product/scale-bench.md`)。
+- **stg 環境 LIVE**: `https://dgjq9rlehwxl7.cloudfront.net`(Cognito 認証 / OpenAI 埋め込み /
+  Bedrock Claude 回答 / Guardrail / 電話 Connect アダプタ)。デモ KB 20文書(承認19+旧版1)。
+- **次元別評点(2026-07-03 評価)**: Security A / Evaluation A− / Generation B+ / Ops B+ /
+  Data B / **Retrieval B−→B+(Wave 1 完了で更新)** / Product(商用性) C+。
+
+## 次にやるとビジネス価値が上がること(優先順)
+
+| # | 何を | なぜ(ビジネス価値) | 規模 |
+|---|---|---|---|
+| 1 | **デモ即戦力化**: チャット公開ポリシー+WI-0733 をシード定義(`scripts/demo/`)に組込 / wi-0612・wi-0701 を draft/レビュー中に戻す / stg-visual-smoke 残骸削除 | 新環境・DB リセット後に「チャットが一切答えない」商談事故を根絶。「draft は根拠にしない」対比はデモの見せ場 | S(即日) |
+| 2 | **Wave 4 前倒し(商用足回り)**: ユーザー管理画面(Cognito 招待/グループ)・課金実データ化(cost_records→月次集計→請求画面)・prod 環境設計+SLA ドラフト(実測 p95 296ms@10k 文書を根拠に) | デモ→有償パイロットの受注ブロッカーはこの3つ。品質ではない | M(1-2日) |
+| 3 | **Wave 2(品質 A 化)**: LLM judge オーバーレイ / claim_check 正規化対称化→本番 ON / 版矛盾の明示回答 | 「品質をどう担保しているか」に実測値で回答できる。パイロット中の品質クレーム予防 | M |
+| 4 | **Wave 3(Data A 化)**: canonical/最新版解決 + 矛盾候補キュー(候補提示→人間確定) | 顧客の版管理の悩みに直接刺さる差別化(§Phase 3 の矛盾文書検出に相当) | M-L |
+
+※ Wave の詳細計画・検証手順(worktree エージェント→CI green→マージ→stg デプロイ、測定 PR は
+前後実測表必須)は `docs/product/goal-gap-audit.md` と各 PR(#78-#85)の本文を参照。
+
+## オーナー(人間)にしかできない保留アクション
+
+1. **050 電話番号の AWS サポートケース起票**(Amazon Connect 日本番号)— 通れば「実番号に電話して AI が答える」デモが完成
+2. **Google Cloud OAuth client_id/secret の発行** — GDrive コネクタはコード完成済み、Secrets Manager(`GoogleOAuthConfigSecretName`)に入れるだけ
+3. **AWS ルート認証情報のローテーション**(セキュリティ衛生)
+
+## 引き継ぎ時の運用注意(ハマりどころ)
+
+- **デプロイ**: GitHub Actions `deploy.yml` を手動 dispatch。**`dry_run=false` を明示必須**(既定 true =
+  synth のみで「success」に見える)。stg は毎回 `https_front=cloudfront` を含める(外すと CloudFront が
+  消え Cognito コールバックが巻き戻る)。bedrock/textract 使用時は `bedrock_guardrail_id/version` 必須。
+  実デプロイの確認は ECS タスク定義リビジョンが上がったことまで見る。
+- **チャットボットは既定拒否**: ソース公開ポリシー(`PUT /v1/chat/source-exposure-policies/…`)が無いと
+  全質問が「承認済みの根拠だけでは回答を確定できません」になる。同じ定型文の原因は 3 通りあり、
+  `rag.no_answer_reason` で判別(source_not_enabled_for_chatbot=ポリシー未設定 /
+  insufficient_evidence=KB に文書が無い / security_refusal)。
+- **CI が正**: ローカル `scripts/gate.sh all` GREEN は必要条件でしかない。保護テスト
+  (tests/security/ 等)は src/ と同一 PR で変更不可(separation gate)。
+- **環境は stg のみ**: 新しい stage/stack を作らない(コスト倍増)。in-VPC の一回きり作業
+  (バックフィル・SQL 照会)は migrate-seed / answer-service タスク定義の command override で実行。
+
+---
+
 以下は、対象システム情報が未記入のため、**「社内・業務ナレッジ検索向けRAG ChatBotを、有償SaaSまたは個社導入で提供する」**前提での製品化改善案です。会計・人事・総務・法務・顧客サポートなど、**誤答が業務リスクになるドメイン**を想定します。結論から言うと、プロトタイプと販売可能製品の差は、モデル性能そのものよりも **評価基盤・データ品質・権限制御・運用監視・改善ループ**に出ます。
 
 ---
