@@ -356,10 +356,10 @@ stg 実測は **課金が発生**(文書3,000件 × チャンク毎の OpenAI �
 
 1. **専用テナントに隔離**: ハーネスは tenant/collection とも `bench` 固定
    (`run_bench.py`)。デモテナント(`demo`)を汚さない。ACL grant も `bench-user` のみ。
-2. **in-VPC 実行**: answer-service は内部ALBのみ。`scripts/aws/migrate-seed.sh` と同じ
+2. **in-VPC 実行**: answer-service は Cloud Map の private DNS のみ。`scripts/aws/migrate-seed.sh` と同じ
    ops RunTask パターン(`infra/ops/Dockerfile` 像は `scripts/` 同梱)でタスク内から:
    ```bash
-   ANSWER_SERVICE_URL=http://<AnswerServiceInternalLoadBalancerDnsName> \
+   ANSWER_SERVICE_URL=<AnswerServiceInternalUrl> \
    RAKU_INTERNAL_AUTH_SECRET=<Secrets Manager: raku-rag/internal-auth> \
    python3 scripts/bench/run_bench.py --mode stg --n-docs 3000 --yes-costs-money \
      --out /tmp/bench_stg_3000.json

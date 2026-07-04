@@ -11,12 +11,12 @@ Langfuse) / Cognito / S3・SQS・KMS / WAF / CloudWatch** を1スタックで定
 `--context minimalSpec=true|false` で上書き（既定: 非prod=ON / prod=OFF）。`minimalSpec` が効かせる差分:
 
 - **Aurora: reader を外し writer 1台のみ**（常時2台→1台 ＝ 最大の削減）／ max ACU 4→2。
-- **Fargate 縮小**: API 1vCPU→0.5・worker 0.5→0.25・answer 1vCPU→0.5。
+- **Fargate 縮小**: web/API/answer 1vCPU→0.25・worker 0.5→0.25。
 - **Langfuse 停止**（Fargate＋内部ALB を作らない。観測性は後で `minimalSpec=false` で復帰）。
-- NAT/ALB はそのまま（接続リスク最小＝バランス型）。
+- NAT/公開ALB はそのまま、answer-service は内部ALBではなく Cloud Map 経由（接続リスク最小＝バランス型）。
 
 概算（東京・常時起動、参考値）: フル `sales` ≈ **$440/月** → `minimalSpec` ≈ **$150〜180/月**。
-`cdk synth` 実数: `stage=sales` = Aurora 1 / ECS 3 / ALB 2 / Langfuse無、`stage=prod` = Aurora 2 / ECS 4 / ALB 3 / Langfuse有。
+`cdk synth` 実数: `stage=sales` = Aurora 1 / ECS 3 / ALB 1 / Langfuse無、`stage=prod` = Aurora 2 / ECS 4 / ALB 2 / Langfuse有。
 
 ```bash
 # 最小・営業/初期本番（使い捨て可）:
@@ -28,13 +28,13 @@ npx cdk deploy --context stage=prod
 ```
 
 ```
-[ユーザ/Vercel web] → ALB+WAF → ECS:NestJS API ──(ANSWER_SERVICE_URL, 内部ALB)──→ ECS:answer-service(Python)
+[ユーザ/Vercel web] → ALB+WAF → ECS:NestJS API ──(ANSWER_SERVICE_URL, Cloud Map)──→ ECS:answer-service(Python)
                                       │  Cognito / Secrets(JWT+内部認証) / Bedrock IAM        └─ Aurora pgvector(RLS)
                                       └─ SQS+DLQ → ECS:ingest worker → S3(KMS)
 ```
 
 直近の補完（本番が「回答を返す」ために必須だった結線）：
-- **answer-service を ECS サービスとして追加**（内部ALB:8088、`/healthz`）＋ API に `ANSWER_SERVICE_URL` を注入。
+- **answer-service を ECS サービスとして追加**（Cloud Map:8088、container `/healthz`）＋ API に `ANSWER_SERVICE_URL` を注入。
 - **全アプリ画像を実 Dockerfile に結線**（`fromAsset`：api/web/worker/answer。以前は `sleep infinity` の雛形）。
 - **内部認証シークレット**を API↔answer-service で共有（B6 の X-Internal-Auth）。
 - **Bedrock IAM**（`bedrock:InvokeModel*`）を answer-service / worker に付与（#1 セマンティック用、鍵投入で有効）。
@@ -51,7 +51,7 @@ cd infra/cdk
 npm ci && npm run build
 npx cdk bootstrap                     # 初回のみ
 npx cdk deploy --context stage=sales  # 営業用（or prod）
-# 出力: ApiLoadBalancerDnsName / AnswerServiceInternalLoadBalancerDnsName / CognitoUserPoolId ...
+# 出力: ApiLoadBalancerDnsName / AnswerServiceInternalUrl / CognitoUserPoolId ...
 ```
 
 ## デプロイ後の一回タスク（スキーマ＋シード）— ワンコマンド化済み
@@ -175,7 +175,7 @@ aws secretsmanager get-secret-value --secret-id "$SECRET" \
 
 ## まだ残る穴（正直に）
 - **初回 cdk deploy は未実機検証**（この環境にAWS鍵・Docker無し→ `cdk synth` 緑まで）。最初のデプロイで
-  Aurora の `raku_rag`→`SET ROLE raku_app` 権限、内部ALB到達、ヘルスチェックを実機確認してください。
+  Aurora の `raku_rag`→`SET ROLE raku_app` 権限、Cloud Map 到達、ヘルスチェックを実機確認してください。
 - **Cognitoユーザーの初期投入は手動**：User Pool / App Client / groups / Hosted UI / JWT検証はCDKとアプリに
   結線済みですが、初回ユーザー作成・仮パスワード配布・グループ付与は運用手順として実施します。
 - **マイグレーション自動化**・**TLS(ACM/独自ドメイン)** は別途。
