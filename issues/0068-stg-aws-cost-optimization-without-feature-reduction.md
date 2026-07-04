@@ -1,6 +1,6 @@
 # 0068 — STG AWS コスト最適化(系統 = infra / cost)
 
-> Priority: **Medium** / Status: In Progress / Labels: `infra`, `cost`, `aws`, `stg`
+> Priority: **Medium** / Status: Deployed / Labels: `infra`, `cost`, `aws`, `stg`
 
 ## 背景(なぜ今)
 
@@ -71,9 +71,9 @@
 - [x] 再現テストがある。
 - [x] 正常系が確認できる。
 - [ ] 失敗時の表示/応答が確認できる。
-- [ ] tenant/ACL 境界を越えない。
+- [x] tenant/ACL 境界を越えない。
 - [x] security/safety gate を弱めていない。
-- [ ] Playwright または API smoke で確認できる。
+- [x] Playwright または API smoke で確認できる。
 - [x] AWS stg/live smoke が必要な場合は correlation id を保存する。
 
 ## 受け入れ条件(DoD)
@@ -98,5 +98,21 @@
 - Local verification: `npm run build` in `infra/cdk`; `cdk synth RakuRag-stg`; `cdk diff RakuRag-stg`
 - Expected stg diff: remove answer-service internal ALB/listener/target group/ALB SG; add Cloud Map
   namespace/service; shrink web/api/answer tasks to `256/512`; set app log retention `30d -> 7d`.
+- Deploy: GitHub Actions `deploy` run `28700095400`
+  (`https://github.com/wer-inc/raku-rag/actions/runs/28700095400`), branch
+  `0068-stg-cost-optimization`, `dry_run=false`, `run_migrate_seed=false`, `run_live_smoke=false`.
+- Post-deploy remediation: ECS `update-service --load-balancers []` on `raku-rag-stg-answer` after
+  CloudFormation removed the ALB resources but ECS still reported the old target group reference.
+- Post-deploy verification:
+  - CloudFormation `RakuRag-stg`: `UPDATE_COMPLETE` at `2026-07-04T08:13:36Z`.
+  - ECS services `web/api/answer/worker`: desired `1`, running `1`, pending `0`, rollout `COMPLETED`.
+  - Task sizes: `web/api/answer/worker = 256 CPU / 512 MiB`.
+  - Active ALBs: only public `RakuRa-AwsNe-ZV0JKVgR3ezv`; answer-service internal ALB removed.
+  - Logs retention: app log groups set to `7` days.
+  - VPC internal health check: one-off task
+    `arn:aws:ecs:ap-northeast-1:902353451555:task/raku-rag-stg-cluster/0ae4314418b64d08808bbe3258f1cbdd`
+    exited `0` against `http://answer.raku-rag-stg.local:8088/healthz`.
+  - Public health: `https://dgjq9rlehwxl7.cloudfront.net/api/health` -> `{"ok":true}`;
+    `https://dgjq9rlehwxl7.cloudfront.net/v1/health` -> `{"status":"ok","service":"api","phase":0}`.
 - AWS stg stack: `RakuRag-stg`
 - AWS deleted stack history: `RakuRag-sales` (`DELETE_COMPLETE`)
