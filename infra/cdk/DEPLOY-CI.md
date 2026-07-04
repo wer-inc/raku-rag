@@ -49,7 +49,20 @@ npx aws-cdk@2 bootstrap aws://<ACCOUNT_ID>/ap-northeast-1
 **Settings → Environments → `prod`** を作り、Required reviewers を設定すると prod デプロイに承認が要る。
 
 ## デプロイの実行
-**GitHub → Actions →「deploy」→ Run workflow** で入力を選ぶだけ：
+**GitHub → Actions →「deploy」→ Run workflow** で入力を選ぶだけ。
+
+STG などで「最新の `develop` を出したつもりだが、実際は古い commit だった」を防ぐため、
+deploy 前に対象 SHA を控えて `expected_sha` に入れる。workflow は AWS 更新前の Preflight で
+`github.sha` と `expected_sha` を比較し、不一致なら失敗する。さらに `develop` からの deploy では
+`origin/develop` の現在 head とも比較し、run 起動後に `develop` が進んでいた場合も失敗する。
+
+```bash
+git fetch origin develop
+git rev-parse origin/develop
+```
+
+表示された 40 文字 SHA を `expected_sha` に入れてから実行する。完了後は workflow Summary の
+`Deploy identity` / `Deploy outputs` で `github.sha` と `Deploy commit` が同じ SHA になっていることを確認する。
 
 | 入力 | 初回おすすめ |
 |---|---|
@@ -58,9 +71,11 @@ npx aws-cdk@2 bootstrap aws://<ACCOUNT_ID>/ap-northeast-1
 | domain_name | 空（まずHTTPで疎通／後でドメイン追加） |
 | run_migrate_seed | ✅（スキーマ＋デモKB投入まで自動） |
 | run_live_smoke | 初回はOFF。Environment secrets/vars を入れた後にON |
+| expected_sha | deploy したい 40 文字 commit SHA（特に `stg` / `develop` は指定推奨） |
 | **dry_run** | **まず `true`**（synthのみ・無変更で配線確認）→ OKなら `false` で本番実行 |
 
-完了後、ワークフローの **Summary に公開URL（`http://<ALB>`）** が出ます。ブラウザで開いて回答が返ればOK。
+完了後、ワークフローの **Summary に deploy commit と公開URL（`http://<ALB>`）** が出ます。
+ブラウザで開いて回答が返ればOK。
 
 ### Post-deploy live smoke
 
