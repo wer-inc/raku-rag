@@ -11,7 +11,9 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any, NamedTuple
+from zlib import crc32
 
 from raku_rag.core.text import retrieval_tokens
 
@@ -231,10 +233,141 @@ def metadata_identifier_match_count(
     return len(matched_identifier_compacts(metadata, identifiers))
 
 
+def metadata_hot_identifier_compacts(metadata: Mapping[str, Any] | object) -> list[str]:
+    """All hot-field identifier values of ``metadata`` in compact canonical form, sorted (0026).
+
+    Ingest-time companion of ``matched_identifier_compacts``: the stores persist this set
+    (``chunks.identifier_compacts`` / ``documents.identifier_compacts``) so the metadata-exact leg
+    can match identifiers in SQL as a plain array overlap instead of evaluating dozens of
+    lower()/regexp_replace expressions per row (the measured ~1.4s/query hot spot at N=10,000).
+    EXACTNESS: ``_value_matches`` accepts a value iff its normalized OR compact form appears in the
+    query set, which itself holds both forms of every query identifier — that is equivalent to
+    compact(value) ∈ {compact(query identifier)}, so comparing compact sets is the SAME predicate,
+    not a superset.
+    """
+    compacts: set[str] = set()
+    for mapping in _metadata_mappings(metadata):
+        for field in HOT_IDENTIFIER_FIELDS:
+            value = mapping.get(field)
+            if value is None:
+                continue
+            values = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
+            for item in values:
+                compact = compact_identifier(item)
+                if compact:
+                    compacts.add(compact)
+    return sorted(compacts)
+
+
+@lru_cache(maxsize=512)
 def lexical_query_terms(query: str) -> tuple[str, ...]:
-    """Content terms used by the lexical retrieval leg."""
+    """Content terms used by the lexical retrieval leg.
+
+    Cached (Wave 1d): the lexical leg calls this once per CANDIDATE ROW via
+    ``lexical_match_score`` — a pure per-query derivation repeated O(N) times was a measurable
+    slice of the per-query Python cost at corpus scale (docs/product/scale-bench.md). The
+    function is pure and returns an immutable tuple, so memoization is semantics-preserving.
+    """
     terms = {term.casefold() for term in retrieval_tokens(query) if _lexical_term_is_signal(term)}
     return tuple(sorted(terms))
+
+
+# Wave 1d lexical candidate-pool contract (docs/product/scale-bench.md §根本原因). The measured
+# O(N) failure was NOT only the full-table transfer: on a shared-vocabulary manufacturing corpus
+# ~94% of chunks contain at least one query term, so any "rows that could score > 0" predicate
+# still transfers (and Python-tokenizes) nearly the whole tenant corpus per query. The leg's
+# candidate contract is therefore, on BOTH stores (in-memory mirrors it exactly):
+#
+#   pool = the top max(top_k * LEXICAL_POOL_FACTOR, LEXICAL_POOL_MIN) ACL-VISIBLE candidate
+#          chunks ordered by (distinct directly-matched query terms DESC, position, chunk_id);
+#          the shared exact scorer then ranks the pool and top_k is taken from it.
+#
+# The match-count ordering key is exactly the scorer's dominant coverage component, so at pool
+# sizes ≥ 50×top_k the exact top_k is preserved in practice (verified against the 3,000/10,000-doc
+# bench: all quality slices within the ±0.02 tolerance). Corpora smaller than the pool floor —
+# every Tier A test, the demo KB, the golden corpus — fetch every candidate, making the pool rule
+# byte-identical to the pre-1d exhaustive behavior there. The Postgres store computes the pool in
+# SQL over the ingest-time `lexical_token_hashes` column (migration 0026) so non-pool rows are
+# never transferred; it falls back to the exhaustive Python path whenever the SQL pool cannot be
+# trusted (ACL-invisible rows inside a truncated pool, or un-backfilled token hashes).
+LEXICAL_POOL_FACTOR = 50
+LEXICAL_POOL_MIN = 1000
+
+
+def lexical_token_hash(token: str) -> int:
+    """Stable 32-bit (signed, int4-compatible) hash of a retrieval token.
+
+    Must be process- and version-stable because ingest WRITES these to Postgres
+    (``chunks.lexical_token_hashes``) and query time re-derives them for SQL intersection — so
+    zlib.crc32 (a fixed algorithm), never Python's salted ``hash()``. A collision can only ever
+    ADD a row to the SQL candidate pool / bump its pool rank (the exact scorer re-ranks the pool
+    on real tokens), never remove one.
+    """
+    value = crc32(token.encode("utf-8"))
+    return value - 0x1_0000_0000 if value >= 0x8000_0000 else value
+
+
+def lexical_token_hashes(text: str) -> list[int]:
+    """Sorted DISTINCT token hashes of ``text`` — the ingest-time chunk column (0026).
+
+    Uses the FULL retrieval token set (not the signal-filtered query terms): the scorer matches
+    query terms against every retrieval token of the text, so the stored set must cover them all.
+    Sorted for intarray's merge-based ``&``/``&&`` operators.
+
+    A NON-empty text yielding zero tokens (punctuation-only) returns the ``[0]`` marker instead of
+    ``[]``: the empty array is the '{}' *un-backfilled* sentinel that forces the whole tenant onto
+    the exhaustive lexical path — a hashed-but-tokenless chunk must not look un-backfilled. The
+    marker is harmless: a (rare) real crc32 of 0 in a query's candidate set would only over-select
+    the row, and the exact scorer gives it 0 anyway.
+    """
+    hashes = sorted({lexical_token_hash(token) for token in retrieval_tokens(text)})
+    if not hashes and str(text or "").strip():
+        return [0]
+    return hashes
+
+
+def lexical_query_term_hashes(terms: Iterable[str]) -> list[int]:
+    """Sorted hashes of the DIRECT query terms — the SQL pool-ordering array (match count)."""
+    return sorted({lexical_token_hash(term) for term in terms})
+
+
+def lexical_candidate_tokens(
+    terms: Iterable[str], expansions: tuple[SynonymExpansion, ...] = ()
+) -> frozenset[str]:
+    """Tokens whose presence in a text's token set is NECESSARY for ``lexical_match_score`` > 0.
+
+    score>0 requires a direct query term in the text's token set OR a synonym alternative present
+    in the text: a present alternative implies ALL of its own retrieval tokens are in the text's
+    token set (CJK alternatives as substrings imply their character bigrams; ASCII alternatives
+    require whole-token presence), so ANY-of over this set over-selects and never under-selects.
+    Both stores use it for pool eligibility; the Postgres store pushes its hashed form
+    (``lexical_candidate_hashes``) into SQL.
+    """
+    tokens = {str(term) for term in terms if term}
+    for expansion in expansions:
+        for alternative in expansion.alternatives:
+            tokens.update(retrieval_tokens(alternative))
+    return frozenset(tokens)
+
+
+def lexical_candidate_hashes(
+    terms: Iterable[str], expansions: tuple[SynonymExpansion, ...] = ()
+) -> list[int]:
+    """Sorted hashes of ``lexical_candidate_tokens`` — the SQL candidacy array
+    (``lexical_token_hashes && ...``)."""
+    return sorted(
+        lexical_token_hash(token) for token in lexical_candidate_tokens(terms, expansions)
+    )
+
+
+def lexical_direct_match_count(terms: Iterable[str], text_term_set: frozenset[str] | set) -> int:
+    """DISTINCT direct query terms present in the text token set — the pool-ordering key.
+
+    The in-memory store computes this on real tokens; the Postgres store computes the same count
+    in SQL as ``icount(lexical_token_hashes & term_hashes)`` (hash collisions can only over-count,
+    i.e. promote a row INTO the pool — never drop one).
+    """
+    return sum(1 for term in terms if term in text_term_set)
 
 
 def lexical_match_score(
@@ -299,11 +432,19 @@ def lexical_match_score(
 
 def _text_identifier_match_count(query: str, text: str) -> int:
     """Distinct query identifiers appearing verbatim (compact-form) in the text."""
-    query_compacts = {identifier.replace("-", "") for identifier in query_identifiers(query)}
+    query_compacts = _query_identifier_compacts(query)
     if not query_compacts:
         return 0
     text_compacts = {identifier.replace("-", "") for identifier in query_identifiers(text)}
     return len(query_compacts & text_compacts)
+
+
+@lru_cache(maxsize=512)
+def _query_identifier_compacts(query: str) -> frozenset[str]:
+    """Query-side identifier compacts, cached (Wave 1d): called once per candidate row by
+    ``lexical_match_score`` but a pure function of the query — the per-row ``finditer`` over the
+    query was pure repeated work. The text side stays uncached (one distinct text per row)."""
+    return frozenset(identifier.replace("-", "") for identifier in query_identifiers(query))
 
 
 def recency_boost(metadata: Mapping[str, Any] | object = None) -> float:

@@ -10,8 +10,11 @@ These mirror the in-memory MVP adapters (``providers/vectorstores.InMemoryVector
 - Every connection drops to the non-superuser ``raku_app`` role and sets ``app.current_tenant_id`` per
   operation, so **RLS is genuinely exercised** (a superuser would bypass it).
 - ranking uses pgvector (``ORDER BY embedding <=> q`` = cosine distance) over the RLS-tenant live set,
-  with the ACL filter applied in Python AFTER ranking and BEFORE ``top_k`` — so ``top_k`` never truncates
-  before ACL (see ``search``). ``retrieval_score`` = ``1 - cosine_distance`` (the in-memory cosine).
+  with the ACL filter applied in Python AFTER ranking and BEFORE ``top_k``. Wave 1d: ranking reads an
+  HNSW-indexed over-fetch window (``LIMIT`` = a multiple of ``top_k``) and falls back to the exhaustive
+  scan whenever the window yields fewer than ``top_k`` ACL-visible chunks — so ``top_k`` still never
+  truncates before ACL (see ``search``). ``retrieval_score`` = ``1 - cosine_distance`` (the in-memory
+  cosine).
 """
 
 from __future__ import annotations
@@ -34,12 +37,17 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by the stdlib-only T
     Json = None  # type: ignore[assignment]
 
 from raku_rag.core.security.acl import AclPolicy
+from raku_rag.core import hybrid_retrieval  # module ref: pool/over-fetch constants stay patchable
 from raku_rag.core.hybrid_retrieval import (
     HOT_IDENTIFIER_FIELDS,
+    lexical_candidate_hashes,
     lexical_match_score,
+    lexical_query_term_hashes,
     lexical_query_terms,
+    lexical_token_hashes,
     matched_identifier_compacts,
     METADATA_EXACT_MATCH_SCORE,
+    metadata_hot_identifier_compacts,
     NESTED_METADATA_KEYS,
     query_identifiers,
     SynonymExpansion,
@@ -163,6 +171,27 @@ def _repair_reset_schema(cur: "psycopg.Cursor", existing: set[str]) -> None:
             "CHECK (status IN ('idle', 'queued', 'observing', 'syncing', 'succeeded', "
             "'partially_succeeded', 'failed'))"
         )
+    if "chunks" in existing:
+        # Wave 1d lexical candidate pool (migration 0026): the store both WRITES the token-hash
+        # column on upsert and reads it (with intarray's icount/&) in lexical_matches, so a Tier-B
+        # gate database whose migration set predates 0026 must be repaired on reset. Runs as the
+        # connecting (super)user before SET ROLE, like the rest of this helper; idempotent.
+        # WITH SCHEMA public + relocation: a "$user"-schema install would be unresolvable for the
+        # runtime SET ROLE raku_app sessions (same rationale as in the 0026 migration).
+        cur.execute("CREATE EXTENSION IF NOT EXISTS intarray WITH SCHEMA public")
+        cur.execute(
+            "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_extension e "
+            "JOIN pg_namespace n ON n.oid = e.extnamespace "
+            "WHERE e.extname = 'intarray' AND n.nspname <> 'public') THEN "
+            "ALTER EXTENSION intarray SET SCHEMA public; END IF; END $$"
+        )
+        cur.execute(
+            "ALTER TABLE chunks "
+            "ADD COLUMN IF NOT EXISTS lexical_token_hashes integer[] NOT NULL DEFAULT '{}'"
+        )
+        cur.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS identifier_compacts text[]")
+    if "documents" in existing:
+        cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS identifier_compacts text[]")
     if "ingestion_runs" in existing:
         cur.execute(
             "ALTER TABLE ingestion_runs "
@@ -259,8 +288,10 @@ def _ensure_doc_parents(
     _ensure_collection_parent(conn, tenant_id, collection_id)
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO documents (document_id, tenant_id, collection_id, source_id) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+            # identifier_compacts '{}' = COMPUTED-empty (the stub has no metadata), never NULL —
+            # a NULL here would trip the metadata leg's un-backfilled probe (0026).
+            "INSERT INTO documents (document_id, tenant_id, collection_id, source_id, "
+            "identifier_compacts) VALUES (%s, %s, %s, %s, '{}') ON CONFLICT DO NOTHING",
             (document_id, tenant_id, collection_id, source_id),
         )
 
@@ -310,6 +341,23 @@ def _row_to_chunk(r) -> Chunk:
 def _stable_id(prefix: str, *parts: str) -> str:
     digest = hashlib.sha256(":".join(parts).encode("utf-8")).hexdigest()[:20]
     return f"{prefix}_{digest}"
+
+
+# Wave 1d (docs/product/scale-bench.md §根本原因): the vector leg fetches a bounded, HNSW-indexed
+# candidate window (ORDER BY embedding <=> q LIMIT n) instead of rank-ordering and transferring the
+# whole tenant live set. ACL stays a Python POST-filter, so the window OVER-fetches:
+# limit = max(top_k * FACTOR, MIN). Whenever the window still yields fewer than top_k ACL-visible
+# chunks, ``search`` falls back to the exhaustive (pre-1d, exact) scan — a visible chunk is never
+# silently dropped because the nearest window happened to be dominated by chunks the principal
+# cannot see. Module-level so the ACL probe test (tests/integration/test_vector_overfetch_acl.py)
+# can patch them to force the fallback deterministically.
+_VECTOR_OVERFETCH_FACTOR = 20
+_VECTOR_OVERFETCH_MIN = 200
+# pgvector's HNSW scan returns at most hnsw.ef_search rows (bounded at 1000): ef_search is raised to
+# the window size per query, and asking for MORE than 1000 could silently truncate the window — the
+# visible-count fallback below covers that case too (truncation only ever causes an extra exhaustive
+# scan, never a wrong result).
+_HNSW_MAX_EF_SEARCH = 1000
 
 
 def _metadata_identifier_conditions() -> tuple[str, int]:
@@ -478,11 +526,17 @@ class PostgresVectorStore(VectorStore):
                 cur.execute(
                     "INSERT INTO chunks (chunk_id, tenant_id, document_id, collection_id, modality, "
                     "text, token_count, position, heading_path, offset_mapping, metadata, "
-                    "embedding_model_version, embedding, tombstone) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector,%s) "
+                    "embedding_model_version, embedding, tombstone, lexical_token_hashes, "
+                    "identifier_compacts) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector,%s,%s::int4[],"
+                    "%s::text[]) "
                     "ON CONFLICT (chunk_id) DO UPDATE SET text=EXCLUDED.text, "
                     "embedding=EXCLUDED.embedding, tombstone=EXCLUDED.tombstone, "
-                    "position=EXCLUDED.position, metadata=EXCLUDED.metadata",
+                    "position=EXCLUDED.position, metadata=EXCLUDED.metadata, "
+                    # text/metadata and their derived columns must move together — a stale hash
+                    # or compact set would mis-rank the Wave 1d lexical pool / metadata leg.
+                    "lexical_token_hashes=EXCLUDED.lexical_token_hashes, "
+                    "identifier_compacts=EXCLUDED.identifier_compacts",
                     (
                         chunk.chunk_id,
                         chunk.tenant_id,
@@ -498,6 +552,8 @@ class PostgresVectorStore(VectorStore):
                         chunk.embedding_model_version,
                         _vec_literal(vec),
                         chunk.tombstone,
+                        lexical_token_hashes(chunk.text),
+                        metadata_hot_identifier_compacts(chunk.metadata),
                     ),
                 )
 
@@ -526,33 +582,88 @@ class PostgresVectorStore(VectorStore):
     ) -> list[ScoredChunk]:
         """pgvector distance ranking, ACL post-filter, THEN top_k.
 
-        Step 3 moves ranking to pgvector (``ORDER BY embedding <=> q`` = cosine distance) over the
-        RLS-tenant + live set, but deliberately applies NO SQL ``LIMIT`` before the Python ACL filter:
-        a ``LIMIT k`` in SQL would truncate the candidate set before ACL and silently drop visible
-        chunks that rank just past it. So we rank-order the whole visible-tenant set, drop non-visible
-        chunks in Python (reused AclPolicy, order preserved), set ``last_prefiltered_count``, and only
-        then take ``top_k`` — identical semantics to the in-memory store. ``retrieval_score`` =
-        ``1 - cosine_distance`` = the cosine similarity the in-memory store reports (ranking parity).
+        Wave 1d (docs/product/scale-bench.md §根本原因): the pre-1d leg deliberately ranked the WHOLE
+        tenant live set with no SQL ``LIMIT`` — which is exactly the query shape the 0001 HNSW index
+        (``idx_chunks_embedding_hnsw``) cannot serve, so every search seq-scanned, sorted, and
+        transferred every chunk (text included). The leg now reads a bounded over-fetch window
+        (``ORDER BY embedding <=> q LIMIT max(top_k*factor, min)``) that the HNSW index CAN serve,
+        keeping the two ACL invariants:
+
+        - **no leak**: ACL stays the Python ``visible`` post-filter on every fetched row — a SQL
+          ``LIMIT`` can only ever shrink what is fetched, never widen what is returned;
+        - **no false negative**: if the window yields fewer than ``top_k`` visible chunks (an
+          ACL-dense neighborhood, a small tenant, or HNSW/ef_search truncation), ``search`` falls
+          back to the exhaustive pre-1d scan, so a visible chunk is never silently dropped because
+          non-visible chunks crowded the window. Probed by
+          tests/integration/test_vector_overfetch_acl.py.
+
+        Determinism: the SQL keeps the pure distance ``ORDER BY`` (an appended ``chunk_id``
+        tie-break would force a sort node and un-index the query); the fetched window is re-sorted
+        by ``(distance, chunk_id)`` in Python instead — same total order as the exhaustive scan.
+        ``last_prefiltered_count`` counts the visible candidates the leg actually considered: exact
+        whenever the fallback ran (in particular for every empty result, keeping the
+        ``retrieval.empty`` attribution exact); a window-local lower bound when the indexed window
+        already satisfied ``top_k``. ``retrieval_score`` = ``1 - cosine_distance`` (unchanged
+        absolute scale — the groundedness pre-gate depends on it).
         """
         _use_tenant(self._conn, tenant_id)  # RLS scopes the tenant
         qlit = _vec_literal(query_vec)
+        over_fetch = max(top_k * _VECTOR_OVERFETCH_FACTOR, _VECTOR_OVERFETCH_MIN)
+        candidates = self._vector_candidates(qlit, visible, limit=over_fetch)
+        if len(candidates) < top_k:
+            # Over-fetch window exhausted before top_k visible chunks were found: exhaustive scan
+            # (identical to the pre-1d leg) so ACL post-filtering can never drop a visible chunk.
+            candidates = self._vector_candidates(qlit, visible, limit=None)
+        self.last_prefiltered_count = len(candidates)
+        return candidates[:top_k]
+
+    def _vector_candidates(
+        self, qlit: str, visible: VisibilityPredicate, *, limit: int | None
+    ) -> list[ScoredChunk]:
+        """Distance-ranked, ACL-filtered candidates; ``limit=None`` = exhaustive exact scan."""
+        base = (
+            "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, token_count, "
+            "position, heading_path, offset_mapping, metadata, embedding_model_version, tombstone, "
+            "(embedding <=> %s::vector) AS distance FROM chunks "
+            # ``embedding IS NOT NULL`` matches the 0001 partial-index predicate — without it the
+            # planner cannot use idx_chunks_embedding_hnsw at all.
+            "WHERE tombstone = false AND embedding IS NOT NULL "
+        )
         with self._conn.cursor() as cur:
-            cur.execute(
-                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, token_count, "
-                "position, heading_path, offset_mapping, metadata, embedding_model_version, tombstone, "
-                "(embedding <=> %s::vector) AS distance FROM chunks WHERE tombstone = false "
-                "ORDER BY embedding <=> %s::vector, chunk_id",  # cosine-distance rank; chunk_id breaks ties
-                (qlit, qlit),
-            )
-            rows = cur.fetchall()
+            if limit is None:
+                cur.execute(
+                    base + "ORDER BY embedding <=> %s::vector, chunk_id",  # exact rank + tie-break
+                    (qlit, qlit),
+                )
+                rows = cur.fetchall()
+            else:
+                # The HNSW scan returns at most hnsw.ef_search rows — raise it to the window size
+                # (bounded; see _HNSW_MAX_EF_SEARCH) so LIMIT is not silently truncated.
+                ef_search = min(max(limit, 40), _HNSW_MAX_EF_SEARCH)
+                cur.execute("SELECT set_config('hnsw.ef_search', %s, false)", (str(ef_search),))
+                # pgvector's HNSW cost model over-prices the scan startup (~ef_search distance
+                # evaluations) against a pilot-sized seq scan + top-N sort, so at N=10,000 the
+                # planner still picked the Seq Scan (measured: 41ms seq vs 9.7ms index — and the
+                # seq side grows linearly with N). Disabling seq scans is scoped to this one
+                # window query and is a COST PENALTY, not a hard block: with the index unusable
+                # Postgres still runs the seq scan, and the visible-count fallback in ``search``
+                # keeps ACL correctness either way.
+                cur.execute("SET enable_seqscan = off")
+                try:
+                    cur.execute(
+                        base + "ORDER BY embedding <=> %s::vector LIMIT %s",
+                        (qlit, qlit, limit),
+                    )
+                    rows = sorted(cur.fetchall(), key=lambda r: (float(r[13]), r[0]))
+                finally:
+                    cur.execute("RESET enable_seqscan")
         candidates: list[ScoredChunk] = []
-        for r in rows:  # rows already in best-first distance order
+        for r in rows:  # rows in best-first (distance, chunk_id) order
             chunk = _row_to_chunk(r)
             if not visible(chunk):  # ACL post-filter in Python — AFTER ranking, BEFORE top_k
                 continue
             candidates.append(ScoredChunk(chunk=chunk, retrieval_score=1.0 - float(r[13])))
-        self.last_prefiltered_count = len(candidates)
-        return candidates[:top_k]
+        return candidates
 
     def metadata_exact_matches(
         self,
@@ -566,27 +677,46 @@ class PostgresVectorStore(VectorStore):
 
         ACL remains the same Python ``visible`` predicate used by vector search. The SQL leg only
         narrows to tenant/RLS-live chunks whose chunk or document metadata names an exact business
-        identifier from the query. As in the in-memory store, the leg is RANKED by identifier
-        match multiplicity (distinct query identifiers matched, over chunk AND document metadata —
-        the same sources the SQL predicate checks) with position/chunk_id as the deterministic
-        tie-break, while the score stays the flat ``METADATA_EXACT_MATCH_SCORE``.
+        identifier from the query. Wave 1d: the identifier match runs as an array overlap over the
+        ingest-time ``identifier_compacts`` columns (0026) — provably the SAME predicate as the
+        legacy lower()/regexp_replace expression forest (see
+        ``core.hybrid_retrieval.metadata_hot_identifier_compacts``), which was measured at
+        ~1.4s/query over N=10,000 chunks. Rows whose compacts were never computed (NULL — pre-0026
+        data) force the legacy exact predicate until backfill
+        (scripts/backfill_lexical_token_hashes.py) or re-ingest. As in the in-memory store, the
+        leg is RANKED by identifier match multiplicity (distinct query identifiers matched, over
+        chunk AND document metadata — the same sources the SQL predicate checks) with
+        position/chunk_id as the deterministic tie-break, while the score stays the flat
+        ``METADATA_EXACT_MATCH_SCORE``.
         """
         identifiers = query_identifiers(query)
         if not identifiers or top_k <= 0:
             return []
-        conditions, parameter_count = _metadata_identifier_conditions()
         _use_tenant(self._conn, tenant_id)
+        select = (
+            "SELECT c.chunk_id, c.tenant_id, c.document_id, c.collection_id, c.modality, "
+            "c.text, c.token_count, c.position, c.heading_path, c.offset_mapping, "
+            "c.metadata, c.embedding_model_version, c.tombstone, d.metadata "
+            "FROM chunks c JOIN documents d "
+            "ON d.document_id = c.document_id AND d.tenant_id = c.tenant_id "
+            "WHERE c.tenant_id = %s AND c.tombstone = false AND d.tombstone = false "
+        )
         with self._conn.cursor() as cur:
-            cur.execute(
-                "SELECT c.chunk_id, c.tenant_id, c.document_id, c.collection_id, c.modality, "
-                "c.text, c.token_count, c.position, c.heading_path, c.offset_mapping, "
-                "c.metadata, c.embedding_model_version, c.tombstone, d.metadata "
-                "FROM chunks c JOIN documents d "
-                "ON d.document_id = c.document_id AND d.tenant_id = c.tenant_id "
-                "WHERE c.tenant_id = %s AND c.tombstone = false AND d.tombstone = false "
-                f"AND ({conditions}) ORDER BY c.position, c.chunk_id",
-                (tenant_id, *[list(identifiers) for _ in range(parameter_count)]),
-            )
+            if self._has_uncompacted_live_rows(tenant_id):
+                # Legacy exact predicate (pre-1d): correct on any schema state, slow at scale.
+                conditions, parameter_count = _metadata_identifier_conditions()
+                cur.execute(
+                    select + f"AND ({conditions}) ORDER BY c.position, c.chunk_id",
+                    (tenant_id, *[list(identifiers) for _ in range(parameter_count)]),
+                )
+            else:
+                compacts = sorted({identifier.replace("-", "") for identifier in identifiers})
+                cur.execute(
+                    select + "AND (c.identifier_compacts && %s::text[] "
+                    "OR d.identifier_compacts && %s::text[]) "
+                    "ORDER BY c.position, c.chunk_id",
+                    (tenant_id, compacts, compacts),
+                )
             rows = cur.fetchall()
         candidates: list[tuple[int, ScoredChunk]] = []
         for row in rows:
@@ -616,34 +746,135 @@ class PostgresVectorStore(VectorStore):
         """Lexical keyword leg for deployed hybrid retrieval.
 
         The shared Python scorer owns matching semantics so Tier A and Postgres stay behaviorally
-        aligned, including Japanese-aware tokenization. SQL only applies tenant/RLS/live narrowing
-        here; a simple tsvector predicate misses CJK bigram matches and can silently remove the exact
-        manual before the shared scorer sees it.
+        aligned, including Japanese-aware tokenization. Wave 1d replaces the measured O(N)
+        full-table transfer (docs/product/scale-bench.md §根本原因) with the shared candidate-pool
+        contract (``core.hybrid_retrieval.LEXICAL_POOL_FACTOR``/``LEXICAL_POOL_MIN``): SQL ranks
+        the tenant live set by DISTINCT directly-matched query terms — computed in C as
+        ``icount(lexical_token_hashes & term_hashes)`` over the ingest-time hash column (0026) —
+        and only the pool is transferred and exactly scored in Python. A tsvector predicate could
+        not express this (it drops CJK bigrams); the hash column is the tokenizer's own output.
 
-        ``expansions`` (Wave 1c): tenant-approved synonym groups from ``retrieval.synonyms`` —
-        forwarded verbatim to the shared scorer (in-memory-store parity; default () is
-        byte-identical to the pre-1c leg).
+        ACL stays the Python ``visible`` post-filter, so the SQL pool is ACL-blind — two guarded
+        fallbacks keep the leg exact-to-contract (probed by
+        tests/integration/test_lexical_pool_acl.py):
+
+        - the pool came back truncated AND contained an ACL-invisible row → the visible top-pool
+          cannot be derived from it → exhaustive fallback;
+        - any live row still has un-backfilled ``lexical_token_hashes`` ('{}' with text) → pool
+          ranks would be wrong → exhaustive fallback until backfill
+          (scripts/backfill_lexical_token_hashes.py) or re-ingest.
+
+        The exhaustive fallback scores EVERY visible row (the pre-1d behavior — a strict superset
+        of the pool contract, so it can only err toward exactness). ``expansions`` (Wave 1c):
+        tenant-approved synonym groups, forwarded verbatim to the shared scorer and reflected in
+        the SQL candidacy hashes so a chunk matching ONLY via a synonym alternative is still
+        fetched.
         """
         terms = lexical_query_terms(query)
         if not terms or top_k <= 0:
             return []
         _use_tenant(self._conn, tenant_id)
+        pool_limit = max(
+            top_k * hybrid_retrieval.LEXICAL_POOL_FACTOR, hybrid_retrieval.LEXICAL_POOL_MIN
+        )
+        rows = None
+        if not self._has_unhashed_live_rows(tenant_id):
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    "SELECT c.chunk_id, c.tenant_id, c.document_id, c.collection_id, c.modality, "
+                    "c.text, c.token_count, c.position, c.heading_path, c.offset_mapping, "
+                    "c.metadata, c.embedding_model_version, c.tombstone, d.metadata "
+                    "FROM chunks c JOIN documents d "
+                    "ON d.document_id = c.document_id AND d.tenant_id = c.tenant_id "
+                    "WHERE c.tenant_id = %s AND c.tombstone = false AND d.tombstone = false "
+                    "AND c.lexical_token_hashes && %s::int4[] "
+                    "ORDER BY icount(c.lexical_token_hashes & %s::int4[]) DESC, "
+                    "c.position, c.chunk_id LIMIT %s",
+                    (
+                        tenant_id,
+                        lexical_candidate_hashes(terms, expansions),
+                        lexical_query_term_hashes(terms),
+                        pool_limit,
+                    ),
+                )
+                rows = cur.fetchall()
+            truncated = len(rows) >= pool_limit
+            candidates, acl_dropped = self._score_lexical_rows(query, rows, visible, expansions)
+            if truncated and acl_dropped:
+                # The SQL pool is ACL-blind: with the pool truncated AND ACL-invisible rows inside
+                # it, the top-pool among VISIBLE rows extends past what was fetched — fall through
+                # to the exhaustive path so no visible chunk is silently dropped.
+                rows = None
+        if rows is None:
+            # Exhaustive fallback (exact, pre-1d full scan): visible-filter and score everything.
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    "SELECT c.chunk_id, c.tenant_id, c.document_id, c.collection_id, c.modality, "
+                    "c.text, c.token_count, c.position, c.heading_path, c.offset_mapping, "
+                    "c.metadata, c.embedding_model_version, c.tombstone, d.metadata "
+                    "FROM chunks c JOIN documents d "
+                    "ON d.document_id = c.document_id AND d.tenant_id = c.tenant_id "
+                    "WHERE c.tenant_id = %s AND c.tombstone = false AND d.tombstone = false "
+                    "ORDER BY c.position, c.chunk_id",
+                    (tenant_id,),
+                )
+                rows = cur.fetchall()
+            candidates, _acl_dropped = self._score_lexical_rows(query, rows, visible, expansions)
+        candidates.sort(key=lambda s: (-s.retrieval_score, s.chunk.position, s.chunk.chunk_id))
+        return candidates[:top_k]
+
+    def _has_unhashed_live_rows(self, tenant_id: str) -> bool:
+        """Any live chunk without ingest-time token hashes? ('{}' default from migration 0026.)
+
+        O(1) on backfilled databases via the partial index
+        ``idx_chunks_lexical_tokens_unbackfilled`` (empty once every row is hashed).
+        """
         with self._conn.cursor() as cur:
             cur.execute(
-                "SELECT c.chunk_id, c.tenant_id, c.document_id, c.collection_id, c.modality, "
-                "c.text, c.token_count, c.position, c.heading_path, c.offset_mapping, "
-                "c.metadata, c.embedding_model_version, c.tombstone, d.metadata "
-                "FROM chunks c JOIN documents d "
-                "ON d.document_id = c.document_id AND d.tenant_id = c.tenant_id "
-                "WHERE c.tenant_id = %s AND c.tombstone = false AND d.tombstone = false "
-                "ORDER BY c.position, c.chunk_id",
+                "SELECT EXISTS(SELECT 1 FROM chunks WHERE tenant_id = %s AND tombstone = false "
+                "AND lexical_token_hashes = '{}' AND text <> '')",
                 (tenant_id,),
             )
-            rows = cur.fetchall()
+            row = cur.fetchone()
+        return bool(row and row[0])
+
+    def _has_uncompacted_live_rows(self, tenant_id: str) -> bool:
+        """Any live chunk/document whose ``identifier_compacts`` was never computed (NULL)?
+
+        NULL is the 0026 "not yet computed" sentinel — distinct from '{}' (computed, no
+        identifiers). O(1) on backfilled databases via the two
+        ``idx_*_identifier_compacts_unbackfilled`` partial indexes (empty once computed).
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS(SELECT 1 FROM chunks WHERE tenant_id = %s AND tombstone = false "
+                "AND identifier_compacts IS NULL) "
+                "OR EXISTS(SELECT 1 FROM documents WHERE tenant_id = %s AND tombstone = false "
+                "AND identifier_compacts IS NULL)",
+                (tenant_id, tenant_id),
+            )
+            row = cur.fetchone()
+        return bool(row and row[0])
+
+    def _score_lexical_rows(
+        self,
+        query: str,
+        rows: Sequence[tuple],
+        visible: VisibilityPredicate,
+        expansions: tuple[SynonymExpansion, ...],
+    ) -> tuple[list[ScoredChunk], int]:
+        """ACL-filter and exactly score fetched lexical candidate rows (shared scorer).
+
+        Returns ``(candidates, acl_dropped)`` — the ACL-drop count is what decides whether a
+        truncated SQL pool can be trusted (see ``lexical_matches``); rows dropped for scoring
+        zero do NOT count against the pool.
+        """
         candidates: list[ScoredChunk] = []
+        acl_dropped = 0
         for row in rows:
             chunk = _row_to_chunk(row[:13])
             if not visible(chunk):
+                acl_dropped += 1
                 continue
             document_metadata = _load_jsonish(row[13]) or {}
             combined_metadata = {**document_metadata, **chunk.metadata}
@@ -651,8 +882,7 @@ class PostgresVectorStore(VectorStore):
             if score <= 0:
                 continue
             candidates.append(ScoredChunk(chunk=chunk, retrieval_score=score))
-        candidates.sort(key=lambda s: (-s.retrieval_score, s.chunk.position, s.chunk.chunk_id))
-        return candidates[:top_k]
+        return candidates, acl_dropped
 
     def set_tombstone(self, tenant_id: str, document_id: str, value: bool) -> int:
         _use_tenant(self._conn, tenant_id)
@@ -862,9 +1092,13 @@ class PostgresDocumentRegistry:
         with self._conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO documents (document_id, tenant_id, collection_id, source_id, version, "
-                "checksum, metadata, indexed_at, tombstone) VALUES (%s,%s,%s,%s,%s,%s,%s,now(),%s) "
+                "checksum, metadata, indexed_at, tombstone, identifier_compacts) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,now(),%s,%s::text[]) "
                 "ON CONFLICT (document_id) DO UPDATE SET source_id=EXCLUDED.source_id, "
                 "version=EXCLUDED.version, checksum=EXCLUDED.checksum, metadata=EXCLUDED.metadata, "
+                # metadata and its derived identifier compacts must move together (0026): a stale
+                # compact set would silently drop this document from the metadata-exact leg.
+                "identifier_compacts=EXCLUDED.identifier_compacts, "
                 "indexed_at=now(), tombstone=EXCLUDED.tombstone, updated_at=now()",
                 (
                     doc.document_id,
@@ -875,6 +1109,7 @@ class PostgresDocumentRegistry:
                     doc.checksum,
                     Json(doc.metadata),
                     doc.tombstone,
+                    metadata_hot_identifier_compacts(doc.metadata),
                 ),
             )
 

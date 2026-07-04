@@ -9,13 +9,18 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from raku_rag.core import hybrid_retrieval  # module ref: pool constants stay patchable in tests
 from raku_rag.core.hybrid_retrieval import (
+    lexical_candidate_tokens,
+    lexical_direct_match_count,
     lexical_match_score,
+    lexical_query_terms,
     METADATA_EXACT_MATCH_SCORE,
     metadata_identifier_match_count,
     query_identifiers,
     SynonymExpansion,
 )
+from raku_rag.core.text import retrieval_tokens
 from raku_rag.domain.models import Chunk, Modality, ScoredChunk
 from raku_rag.interfaces.base import VectorStore, Vector, VisibilityPredicate
 from raku_rag.providers.embeddings import cosine
@@ -110,6 +115,14 @@ class InMemoryVectorStore(VectorStore):
     ) -> list[ScoredChunk]:
         """Return ACL-visible chunks with direct lexical term overlap.
 
+        Wave 1d: mirrors the shared candidate-pool contract
+        (``core.hybrid_retrieval.LEXICAL_POOL_FACTOR``/``LEXICAL_POOL_MIN``) — only the top
+        ``max(top_k*factor, min)`` ACL-visible candidates by (distinct directly-matched query
+        terms DESC, position, chunk_id) are exactly scored, keeping this store behaviorally
+        aligned with the Postgres store's SQL pool at corpus scale. Every corpus smaller than the
+        pool floor (all Tier A fixtures) fetches the whole candidate set, i.e. the pre-1d
+        behavior byte-for-byte.
+
         ``expansions`` (Wave 1c): tenant-approved synonym groups from ``retrieval.synonyms``
         (see ``core.hybrid_retrieval.synonym_expansions``) — forwarded verbatim to the shared
         scorer so the in-memory and Postgres stores stay behaviorally aligned. Default () is
@@ -117,7 +130,14 @@ class InMemoryVectorStore(VectorStore):
         """
         if top_k <= 0:
             return []
-        matches: list[ScoredChunk] = []
+        terms = lexical_query_terms(query)
+        if not terms:
+            return []  # the shared scorer returns 0.0 for every chunk without query terms
+        candidate_tokens = lexical_candidate_tokens(terms, expansions)
+        pool_limit = max(
+            top_k * hybrid_retrieval.LEXICAL_POOL_FACTOR, hybrid_retrieval.LEXICAL_POOL_MIN
+        )
+        pool: list[tuple[int, Chunk]] = []
         for chunk, _vec in self._items.values():
             if chunk.tenant_id != tenant_id:
                 continue
@@ -125,6 +145,13 @@ class InMemoryVectorStore(VectorStore):
                 continue
             if not visible(chunk):
                 continue
+            text_term_set = set(retrieval_tokens(chunk.text))
+            if candidate_tokens.isdisjoint(text_term_set):
+                continue  # cannot score > 0 (necessary-condition check, same as the SQL &&)
+            pool.append((lexical_direct_match_count(terms, text_term_set), chunk))
+        pool.sort(key=lambda item: (-item[0], item[1].position, item[1].chunk_id))
+        matches: list[ScoredChunk] = []
+        for _count, chunk in pool[:pool_limit]:
             score = lexical_match_score(query, chunk.text, chunk.metadata, expansions=expansions)
             if score <= 0:
                 continue
