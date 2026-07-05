@@ -10670,6 +10670,22 @@ function ingestStatusLabel(status?: string): string {
   }
 }
 
+// 日本のサービスで一般的な「YYYY年M月D日 HH:mm」表示。保存値は UTC ISO(例: ...+00:00)なので、
+// 生ISOをそのまま出すと読めない/時差がずれる。JST(Asia/Tokyo)に変換して表示する。
+function formatDateTimeJa(value?: string): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Tokyo",
+  }).format(parsed);
+}
+
 // Admin-only document detail (screens.manifest document-detail; nav-rbac grants /documents to
 // ops_owner/tenant_admin). 0085: this used to expose a raw-JSON metadata editor whose dummy default
 // (`{"owner":"ops"}`) would clobber the real governance metadata on save, plus a raw processing-status
@@ -10760,7 +10776,7 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
     ["分類", summary?.equipment || summary?.safety_category || "—"],
     ["取り込み状態", ingestStatusLabel(proc.status)],
     ["チャンク数", typeof proc.chunk_count === "number" ? String(proc.chunk_count) : "—"],
-    ["最終取り込み", proc.last_indexed_at || "—"],
+    ["最終取り込み", formatDateTimeJa(proc.last_indexed_at)],
   ];
   if (proc.last_error) rows.push(["エラー", proc.last_error]);
 
