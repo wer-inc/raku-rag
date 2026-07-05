@@ -8,6 +8,7 @@ import SalesDemoDrawer from "./SalesDemoDrawer";
 import { getBrowserSessionState } from "../../lib/session";
 import { navAllowed, rolesForUser, type WorkspaceRole } from "../../lib/nav-rbac";
 import { ToastProvider } from "../../lib/toast";
+import { noteInAppNavigation } from "../../lib/nav-history";
 
 const AUTH_ROUTES = new Set(["/login", "/orgselect", "/onboarding"]);
 // B3: role-based navigation must hide unauthorized screens from the UI, not just from the sidebar —
@@ -80,6 +81,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     setNavOpen(false);
     setSalesDrawerOpen(false);
+  }, [pathname]);
+
+  // Record in-app navigations (skipping the initial mount / full page load) so a screen's "← 戻る"
+  // knows whether router.back() has a real destination or must fall back to a parent route.
+  const navInitialized = useRef(false);
+  useEffect(() => {
+    if (!navInitialized.current) {
+      navInitialized.current = true;
+      return;
+    }
+    if (!AUTH_ROUTES.has(pathname)) noteInAppNavigation();
   }, [pathname]);
 
   // Mobile off-canvas drawer a11y: Escape closes it, focus moves into the nav on open and
