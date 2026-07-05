@@ -146,6 +146,12 @@ import {
   type IngestedDoc,
 } from "../../lib/uploads";
 import {
+  DEFAULT_VOICE_PREFS,
+  loadVoicePrefs,
+  saveVoicePrefs,
+  type VoicePrefs,
+} from "../../lib/voice-prefs";
+import {
   loadDrafts,
   recordDraft,
   updateDraftRecord,
@@ -2382,7 +2388,7 @@ function PhoneBody() {
   );
   return (
     <>
-      <div className="screen-tabs" role="tablist" aria-label="電話AIの機能">
+      <div className="screen-tabs" role="tablist" aria-label="AI電話の機能">
         <button
           type="button"
           role="tab"
@@ -2446,6 +2452,10 @@ function PhoneSimulatorSection() {
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const voiceModeRef = useRef(false);
+  // Browser TTS voice picker (device-provided voices + rate/pitch), persisted per browser.
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [voicePrefs, setVoicePrefs] = useState<VoicePrefs>(DEFAULT_VOICE_PREFS);
+  const voicePrefsRef = useRef<VoicePrefs>(DEFAULT_VOICE_PREFS);
   // Browsers only allow microphone capture in a secure context (HTTPS or localhost); on plain
   // HTTP the Web Speech APIs exist but recognition.start() is rejected — surface WHY instead of
   // rendering a button that silently fails.
@@ -2471,7 +2481,57 @@ function PhoneSimulatorSection() {
     };
   }, []);
 
+  useEffect(() => {
+    setVoicePrefs(loadVoicePrefs());
+  }, []);
+  useEffect(() => {
+    voicePrefsRef.current = voicePrefs;
+  }, [voicePrefs]);
+  useEffect(() => {
+    if (!speechSynthesisSupported()) return;
+    // getVoices() is often empty on first paint; the browser fires "voiceschanged" once loaded.
+    const loadVoices = () => setVoices(window.speechSynthesis.getVoices());
+    loadVoices();
+    window.speechSynthesis.addEventListener?.("voiceschanged", loadVoices);
+    return () => window.speechSynthesis.removeEventListener?.("voiceschanged", loadVoices);
+  }, []);
+
   const terminal = ["transferred", "completed", "abandoned", "failed"].includes(callState);
+  // Japanese voices installed on this device; empty on some browsers (fall back to browser default).
+  const jaVoices = useMemo(
+    () => voices.filter((v) => (v.lang || "").toLowerCase().startsWith("ja")),
+    [voices],
+  );
+
+  function updateVoicePrefs(patch: Partial<VoicePrefs>) {
+    setVoicePrefs((prev) => {
+      const next = { ...prev, ...patch };
+      saveVoicePrefs(next);
+      return next;
+    });
+  }
+
+  // Apply the saved voice/rate/pitch to an utterance (read via ref so async callbacks aren't stale).
+  function applyVoicePrefs(utterance: SpeechSynthesisUtterance) {
+    const prefs = voicePrefsRef.current;
+    utterance.rate = prefs.rate;
+    utterance.pitch = prefs.pitch;
+    if (prefs.voiceURI) {
+      const chosen = window.speechSynthesis.getVoices().find((v) => v.voiceURI === prefs.voiceURI);
+      if (chosen) utterance.voice = chosen;
+    }
+  }
+
+  function previewVoice() {
+    if (!speechSynthesisSupported()) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(
+      "こんにちは。AI電話のテスト音声です。ご用件をお話しください。",
+    );
+    utterance.lang = "ja-JP";
+    applyVoicePrefs(utterance);
+    window.speechSynthesis.speak(utterance);
+  }
 
   function speakTurn(turn: PhoneTurnResponse | null | undefined) {
     if (!turn || !voiceModeRef.current || !speechSynthesisSupported()) return;
@@ -2480,6 +2540,7 @@ function PhoneSimulatorSection() {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "ja-JP";
+    applyVoicePrefs(utterance);
     utterance.onend = () => {
       // Conversational loop: after the AI finishes speaking, listen again — unless the
       // call ended or was handed off to a human.
@@ -2687,6 +2748,54 @@ function PhoneSimulatorSection() {
             </span>
           )}
         </div>
+        {voiceMode && speechSynthesisSupported() && (
+          <div className="phone-voice-settings" role="group" aria-label="読み上げ音声の設定">
+            <label className="phone-voice-field">
+              <span>声</span>
+              <select
+                value={voicePrefs.voiceURI ?? ""}
+                onChange={(event) => updateVoicePrefs({ voiceURI: event.target.value || null })}
+              >
+                <option value="">ブラウザ既定(日本語)</option>
+                {jaVoices.map((voice) => (
+                  <option key={voice.voiceURI} value={voice.voiceURI}>
+                    {voice.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="phone-voice-field">
+              <span>速度 {voicePrefs.rate.toFixed(1)}x</span>
+              <input
+                type="range"
+                min={0.5}
+                max={2}
+                step={0.1}
+                value={voicePrefs.rate}
+                onChange={(event) => updateVoicePrefs({ rate: Number(event.target.value) })}
+              />
+            </label>
+            <label className="phone-voice-field">
+              <span>高さ {voicePrefs.pitch.toFixed(1)}</span>
+              <input
+                type="range"
+                min={0}
+                max={2}
+                step={0.1}
+                value={voicePrefs.pitch}
+                onChange={(event) => updateVoicePrefs({ pitch: Number(event.target.value) })}
+              />
+            </label>
+            <button type="button" onClick={previewVoice}>
+              試聴
+            </button>
+            {jaVoices.length === 0 && (
+              <span role="status">
+                この端末には日本語音声が見つかりません(ブラウザ既定を使用)。
+              </span>
+            )}
+          </div>
+        )}
       </Section>
       <Section title="会話ログ">
         {lines.length === 0 && <p className="ops-empty">まだ通話がありません。発話を送信してください。</p>}

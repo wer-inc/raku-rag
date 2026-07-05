@@ -109,7 +109,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "回答",
     items: [
       { href: "/chatbot", label: "チャットボット", icon: "chatbot" },
-      { href: "/phone", label: "電話AI", icon: "phone" },
+      { href: "/phone", label: "AI電話", icon: "phone" },
     ],
   },
   {

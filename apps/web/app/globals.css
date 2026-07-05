@@ -779,6 +779,31 @@ textarea {
   gap: 10px;
 }
 
+/* AI電話 読み上げ音声の設定(通話シミュレータ・音声モード) */
+.phone-voice-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  background: var(--surface-muted, #f8fafc);
+}
+
+.phone-voice-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+
+.phone-voice-field select,
+.phone-voice-field input[type="range"] {
+  min-width: 160px;
+}
+
 .button-link,
 .screen-actions button,
 .review-decide button {
