@@ -50,6 +50,20 @@ class WebUploadReconcileContractTest(unittest.TestCase):
         self.assertLess(set_api, reconcile)
         self.assertLess(reconcile, catch)
 
+    def test_upload_cta_is_always_actionable(self) -> None:
+        # No file selected -> the primary button opens the file picker instead of sitting as a dead
+        # grey disabled button ("押しても何も起きない"); once files are chosen it becomes the ingest
+        # action. It only disables mid-upload (double-submit guard) or on a real block.
+        for marker in (
+            "ref={fileInputRef}",
+            "else fileInputRef.current?.click();",
+            "if (files.length > 0) void onUpload();",
+            '"📎 ファイルを選択"',
+            "⬆ アップロード取込 (${files.length}件)",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.full_saas)
+
 
 if __name__ == "__main__":
     unittest.main()

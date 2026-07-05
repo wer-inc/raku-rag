@@ -8583,6 +8583,8 @@ function FileBrowserBody() {
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
+  // Lets the primary CTA open the file picker when nothing is selected yet (always-actionable button).
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [uploadFailures, setUploadFailures] = useState<string[]>([]);
@@ -8897,6 +8899,7 @@ function FileBrowserBody() {
         <label className="upload-drop">
           <input
             key={fileInputKey}
+            ref={fileInputRef}
             type="file"
             multiple
             accept={ACCEPT_EXT}
@@ -8970,8 +8973,26 @@ function FileBrowserBody() {
           </div>
         )}
         <div className="screen-actions">
-          <button type="button" onClick={() => void onUpload()} disabled={files.length === 0 || uploading || Boolean(uploadSubmitBlocked)}>
-            {uploading ? "取込中..." : "アップロード取込"}
+          {/* Always-actionable primary CTA: with no file it opens the picker (never a dead grey
+              button); once files are chosen it becomes the ingest action; it only disables mid-upload
+              (double-submit guard) or when a real block (login/permission) applies. */}
+          <button
+            type="button"
+            onClick={() => {
+              if (uploading) return;
+              if (files.length > 0) void onUpload();
+              else fileInputRef.current?.click();
+            }}
+            disabled={
+              uploading ||
+              (files.length > 0 ? Boolean(uploadSubmitBlocked) : uploadSelectionDisabled)
+            }
+          >
+            {uploading
+              ? "取込中..."
+              : files.length > 0
+                ? `⬆ アップロード取込 (${files.length}件)`
+                : "📎 ファイルを選択"}
           </button>
           <button
             type="button"
