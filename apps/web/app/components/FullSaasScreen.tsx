@@ -8070,6 +8070,7 @@ type FileUploadIssue = {
   code: UploadRecoveryCode;
   message: string;
   fileNames: string[];
+  reauthAttempted?: boolean;
 };
 
 type FileUploadSuccess = {
@@ -8080,6 +8081,7 @@ type FileUploadSuccess = {
 type FileUploadRecoveryState = {
   folder_id: string | null;
   file_names: string[];
+  reauth_attempted?: boolean;
 };
 
 type FileBrowserFilter = "all" | "needs_review" | "approved" | "obsolete";
@@ -8135,6 +8137,7 @@ function loadFileUploadRecoveryState(): FileUploadRecoveryState | null {
       file_names: Array.isArray(fileNames)
         ? fileNames.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
         : [],
+      reauth_attempted: (parsed as { reauth_attempted?: unknown }).reauth_attempted === true,
     };
   } catch {
     return null;
@@ -8159,14 +8162,21 @@ function clearFileUploadRecoveryState(): void {
   }
 }
 
-function uploadIssueFromError(error: unknown, fileNames: string[]): FileUploadIssue {
+function uploadIssueFromError(
+  error: unknown,
+  fileNames: string[],
+  reauthAttempted = false,
+): FileUploadIssue {
   const code = uploadRecoveryCodeFromError(error);
   const message = isUploadFlowError(error) ? error.message : UPLOAD_RECOVERY_MESSAGES[code];
-  return { code, message: message || UPLOAD_RECOVERY_MESSAGES[code], fileNames };
+  return { code, message: message || UPLOAD_RECOVERY_MESSAGES[code], fileNames, reauthAttempted };
 }
 
 function uploadIssueDetail(issue: FileUploadIssue): string {
   if (issue.code === "reauth_required" || issue.code === "session_missing" || issue.code === "session_mismatch") {
+    if (issue.reauthAttempted) {
+      return "再ログイン後もセッション確認が通りませんでした。管理者に Cognito/API の認証設定を確認してください。ファイル本体は復元できないため、再選択してください。";
+    }
     return "ログイン後にこの画面へ戻ります。ファイル本体は復元できないため、再選択してください。";
   }
   if (issue.code === "tenant_not_configured") {
@@ -8190,6 +8200,10 @@ function uploadIssueNeedsLogin(issue: FileUploadIssue): boolean {
     issue.code === "session_missing" ||
     issue.code === "session_mismatch"
   );
+}
+
+function uploadIssueShouldAutoLogin(issue: FileUploadIssue): boolean {
+  return uploadIssueNeedsLogin(issue) && !issue.reauthAttempted;
 }
 
 function uploadIssueCanRetry(issue: FileUploadIssue): boolean {
@@ -8379,6 +8393,7 @@ function FileBrowserBody() {
   const [uploadFailures, setUploadFailures] = useState<string[]>([]);
   const [uploadIssue, setUploadIssue] = useState<FileUploadIssue | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<FileUploadSuccess | null>(null);
+  const [uploadReauthAttempted, setUploadReauthAttempted] = useState(false);
   const [rememberedFileNames, setRememberedFileNames] = useState<string[]>([]);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
@@ -8408,6 +8423,7 @@ function FileBrowserBody() {
     if (recovery) {
       setCurrentFolderId(recovery.folder_id);
       setRememberedFileNames(recovery.file_names);
+      setUploadReauthAttempted(recovery.reauth_attempted === true);
       setShowUploadForm(true);
       clearFileUploadRecoveryState();
     }
@@ -8583,7 +8599,7 @@ function FileBrowserBody() {
             ingested_at: new Date().toISOString(),
           });
         } catch (err) {
-          const issue = uploadIssueFromError(err, selectedFileNames);
+          const issue = uploadIssueFromError(err, selectedFileNames, uploadReauthAttempted);
           if (
             issue.code === "reauth_required" ||
             issue.code === "session_missing" ||
@@ -8596,7 +8612,7 @@ function FileBrowserBody() {
             blockingIssue = issue;
             setUploadIssue(issue);
             toast(issue.message, issue.code === "upload_failed" ? "warning" : "error");
-            if (uploadIssueNeedsLogin(issue)) {
+            if (uploadIssueShouldAutoLogin(issue)) {
               window.setTimeout(() => continueLoginForUpload(issue.fileNames), 0);
             }
             break;
@@ -8609,6 +8625,7 @@ function FileBrowserBody() {
       if (failures.length === 0 && !blockingIssue) {
         toast(`${files.length} 件を取込しました。`, "success");
         setUploadSuccess({ count: files.length, folderName: uploadTarget.name });
+        setUploadReauthAttempted(false);
         setFiles([]);
         setFileInputKey((key) => key + 1);
       } else {
@@ -8618,10 +8635,10 @@ function FileBrowserBody() {
         }
       }
     } catch (err) {
-      const issue = uploadIssueFromError(err, selectedFileNames);
+      const issue = uploadIssueFromError(err, selectedFileNames, uploadReauthAttempted);
       setUploadIssue(issue);
       toast(issue.message, issue.code === "upload_failed" ? "warning" : "error");
-      if (uploadIssueNeedsLogin(issue)) {
+      if (uploadIssueShouldAutoLogin(issue)) {
         window.setTimeout(() => continueLoginForUpload(issue.fileNames), 0);
       }
     } finally {
@@ -8640,8 +8657,10 @@ function FileBrowserBody() {
     saveFileUploadRecoveryState({
       folder_id: currentFolder?.id ?? null,
       file_names: fileNames,
+      reauth_attempted: true,
     });
     if (typeof window === "undefined") return;
+    setUploadReauthAttempted(true);
     clearSessionToken();
     const returnTo = `${window.location.pathname}${window.location.search}` || "/files";
     window.location.assign(`/login?return_to=${encodeURIComponent(returnTo)}`);
@@ -8651,6 +8670,7 @@ function FileBrowserBody() {
     setUploadFailures([]);
     setUploadIssue(null);
     setUploadSuccess(null);
+    setUploadReauthAttempted(false);
     setRememberedFileNames([]);
     setFiles([]);
     setFileInputKey((key) => key + 1);

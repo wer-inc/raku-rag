@@ -74,6 +74,18 @@ class UploadPresignRouteContractTest(unittest.TestCase):
         self.assertIn('claimString(claims, "custom:tenant_id")', self.source)
         self.assertNotIn("Cognito session is invalid", self.source)
 
+    def test_valid_looking_token_rejected_by_whoami_is_session_mismatch(self) -> None:
+        # If /v1/whoami rejects a JWT whose local claims are current and tenant-scoped, another
+        # login is unlikely to fix the server-side Cognito/API boundary. Do not label it as a
+        # recoverable reauth loop.
+        tenant_check = 'if (!claimString(claims, "custom:tenant_id")) return "tenant_not_configured";'
+        mismatch_fallback = 'return "session_mismatch";'
+        self.assertIn(tenant_check, self.source)
+        self.assertGreater(
+            self.source.find(mismatch_fallback, self.source.find(tenant_check)),
+            self.source.find(tenant_check),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

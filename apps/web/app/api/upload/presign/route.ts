@@ -158,7 +158,7 @@ function classifyBearerToken(authorization: string): PresignErrorCode {
   );
   if (clientId && !tokenClientMatches(claims, clientId)) return "session_mismatch";
   if (!claimString(claims, "custom:tenant_id")) return "tenant_not_configured";
-  return "reauth_required";
+  return "session_mismatch";
 }
 
 function publicOrigin(req: Request): string {
