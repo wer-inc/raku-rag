@@ -154,6 +154,25 @@ textarea {
   border-color: #d4d4d8;
 }
 
+.topbar-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Left-aligned "back to list" row above a state-based detail sub-view (e.g. phone queue/history). */
+.detail-back-row {
+  margin-bottom: 12px;
+}
+
+@media (max-width: 900px) {
+  /* Comfortable tap target for the back pill on touch devices. */
+  .topbar-back {
+    padding: 7px 14px;
+    font-size: 13px;
+    min-height: 40px;
+  }
+}
+
 .screen-header-actions {
   display: grid;
   justify-items: end;

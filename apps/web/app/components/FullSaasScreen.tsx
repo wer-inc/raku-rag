@@ -128,6 +128,7 @@ import {
 } from "../../lib/full-saas";
 import CitationViewer, { type CitationViewTarget } from "./CitationViewer";
 import { useDialog } from "../../lib/use-dialog";
+import { canGoBackInApp } from "../../lib/nav-history";
 import {
   clearAnswerHistory,
   loadAnswerHistory,
@@ -2821,6 +2822,11 @@ function PhoneHandoffSection() {
       </Section>
       {selected && (
         <Section title={`引き継ぎパッケージ ${selected.handoff_package_id}`}>
+          <div className="detail-back-row">
+            <button type="button" className="topbar-back" onClick={() => setSelected(null)}>
+              ← 転送キューに戻る
+            </button>
+          </div>
           <FieldGrid
             rows={[
               ["状態", <span key="status" title={selected.status}>{phoneLabel("handoffStatus", selected.status)}</span>],
@@ -2998,6 +3004,11 @@ function PhoneCallHistorySection() {
       {detail && (
         <>
           <Section title={`通話 ${detail.call_id}`}>
+            <div className="detail-back-row">
+              <button type="button" className="topbar-back" onClick={() => setDetail(null)}>
+                ← 通話履歴に戻る
+              </button>
+            </div>
             <FieldGrid
               rows={[
                 ["状態", <span key="state" title={detail.state}>{phoneLabel("callState", detail.state)}</span>],
@@ -3561,19 +3572,43 @@ function AddSourceCta({ className }: { className?: string }) {
   );
 }
 
-/** Detail-ish screens get a lightweight back affordance (list ↔ detail navigation). */
-const BACK_AFFORDANCE_SCREEN_IDS = new Set(["source-detail", "document-detail", "review-detail"]);
+// The home/landing screens are the navigation roots — everything else gets a "← 戻る" so the user
+// never has to reopen the sidebar (or the mobile drawer) just to leave a screen.
+const ROOT_SCREEN_IDS = new Set(["answers", "home-dashboard"]);
+
+// Where "← 戻る" lands when there is NO in-app history to pop (deep-link / hard refresh). The common
+// in-session case still uses router.back() to return exactly where the user came from; this map is
+// only the fallback so a back can never dead-end or eject the user from the app. Screens not listed
+// fall back to the home dashboard.
+const SCREEN_PARENT_HREF: Record<string, string> = {
+  "source-detail": "/sources/list",
+  "add-source": "/sources/list",
+  "source-search": "/sources/list",
+  "ingestion-runs": "/sources/list",
+  "document-detail": "/files",
+  "document-list": "/files",
+  "review-detail": "/reviews",
+  "answer-history": "/home",
+  "compliance-export": "/operations",
+  "retrieval-debug": "/admin/retrieval",
+  "api-keys-webhooks": "/admin/integrations",
+  support: "/home",
+};
 
 function ScreenShell({ screen, children }: { screen: ManifestScreen; children: ReactNode }) {
   const router = useRouter();
   const title = screenTitle(screen);
-  const showBack = BACK_AFFORDANCE_SCREEN_IDS.has(screen.id);
+  const showBack = !ROOT_SCREEN_IDS.has(screen.id);
+  const goBack = () => {
+    if (canGoBackInApp()) router.back();
+    else router.push(SCREEN_PARENT_HREF[screen.id] ?? "/home");
+  };
   return (
     <section className="workspace full-saas-workspace" aria-label={title}>
       <header className="topbar">
         <div>
           {showBack && (
-            <button type="button" className="topbar-back" onClick={() => router.back()}>
+            <button type="button" className="topbar-back" onClick={goBack}>
               ← 戻る
             </button>
           )}
