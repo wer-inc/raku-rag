@@ -113,10 +113,12 @@ import {
   DEMO_COLLECTION,
   DEMO_TENANT,
   getSessionToken,
+  isAppSessionError,
   loadAnswerCollection,
   loadSessionRoles,
   mintTokenFor,
   saveAnswerCollection,
+  type AppSessionErrorCode,
 } from "../../lib/session";
 import {
   APPROVAL_WORKFLOW_ENABLED,
@@ -7778,6 +7780,96 @@ interface UploadForIngestResult {
   upload_id?: string;
 }
 
+type UploadRecoveryCode =
+  | AppSessionErrorCode
+  | "permission_denied"
+  | "upload_unavailable"
+  | "upload_failed"
+  | "invalid_request";
+
+const UPLOAD_RECOVERY_MESSAGES: Record<UploadRecoveryCode, string> = {
+  reauth_required: "ログイン情報を更新してください",
+  session_mismatch: "ログイン設定が変更されました。ログインし直してください",
+  tenant_not_configured: "アカウント設定が未完了です。管理者に確認してください",
+  session_missing: "ログインしてください",
+  permission_denied: "この操作を行う権限がありません。閲覧のみ利用できます。",
+  upload_unavailable: "アップロード設定を確認してください",
+  upload_failed: "アップロードに失敗しました",
+  invalid_request: "アップロード内容を確認してください",
+};
+
+class UploadFlowError extends Error {
+  code: UploadRecoveryCode;
+  status?: number;
+
+  constructor(code: UploadRecoveryCode, message = UPLOAD_RECOVERY_MESSAGES[code], status?: number) {
+    super(message);
+    this.name = "UploadFlowError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+function isUploadFlowError(error: unknown): error is UploadFlowError {
+  return (
+    error instanceof UploadFlowError ||
+    (typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      (error as { name?: unknown }).name === "UploadFlowError" &&
+      "code" in error &&
+      typeof (error as { code?: unknown }).code === "string")
+  );
+}
+
+function uploadErrorCodeFromBody(body: unknown): UploadRecoveryCode | null {
+  if (!body || typeof body !== "object") return null;
+  const code = (body as { error_code?: unknown }).error_code;
+  if (typeof code !== "string") return null;
+  if (
+    code === "reauth_required" ||
+    code === "session_mismatch" ||
+    code === "tenant_not_configured" ||
+    code === "session_missing" ||
+    code === "permission_denied" ||
+    code === "upload_unavailable" ||
+    code === "invalid_request"
+  ) {
+    return code;
+  }
+  return null;
+}
+
+function uploadErrorMessageFromBody(body: unknown, code: UploadRecoveryCode): string {
+  if (body && typeof body === "object") {
+    const error = (body as { error?: unknown }).error;
+    if (typeof error === "string" && error.trim()) return error.trim();
+  }
+  return UPLOAD_RECOVERY_MESSAGES[code];
+}
+
+function statusToUploadRecoveryCode(status?: number): UploadRecoveryCode {
+  if (status === 401) return "reauth_required";
+  if (status === 403) return "permission_denied";
+  if (status !== undefined && status >= 400 && status < 500) return "invalid_request";
+  return "upload_failed";
+}
+
+function uploadRecoveryCodeFromError(error: unknown): UploadRecoveryCode {
+  if (isAppSessionError(error)) return error.code;
+  if (isUploadFlowError(error)) return error.code;
+  const status =
+    typeof error === "object" && error !== null && "status" in error
+      ? (error as { status?: unknown }).status
+      : undefined;
+  if (typeof status === "number") return statusToUploadRecoveryCode(status);
+  const raw = error instanceof Error ? error.message : "";
+  if (/401|unauthorized|session|token|auth|jwt|cognito/i.test(raw)) return "reauth_required";
+  if (/403|forbidden|権限/.test(raw)) return "permission_denied";
+  if (/failed to fetch|networkerror|load failed|s3/i.test(raw)) return "upload_failed";
+  return "upload_failed";
+}
+
 function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -7826,14 +7918,24 @@ function documentIdForUpload(params: {
   return `${base.slice(0, Math.max(1, 96 - suffix.length))}${suffix}`;
 }
 
-function selectedFilesTitle(files: File[]): string {
+function selectedFilesTitle(files: File[], rememberedFileNames: string[] = []): string {
+  if (rememberedFileNames.length === 1) return `前回選択: ${rememberedFileNames[0]}`;
+  if (rememberedFileNames.length > 1) return `前回選択: ${rememberedFileNames.length} 件`;
   if (files.length === 0) return "ファイルを選択（複数可・または、ここにドロップ）";
   if (files.length === 1) return files[0]?.name || "1 ファイルを選択";
   return `${files.length} 件のファイルを選択`;
 }
 
-function selectedFilesDetail(files: File[]): string {
+function selectedFilesDetail(files: File[], rememberedFileNames: string[] = []): string {
   if (files.length === 0) {
+    if (rememberedFileNames.length > 0) {
+      const sampleNames = rememberedFileNames.slice(0, 3);
+      const suffix =
+        rememberedFileNames.length > sampleNames.length
+          ? ` ほか${rememberedFileNames.length - sampleNames.length}件`
+          : "";
+      return `${sampleNames.join(" / ")}${suffix}・再ログイン後はファイルを再選択してください`;
+    }
     return ".txt / .md / .csv / .html / .docx / .xlsx / .pdf / .png / .jpg・各ファイル最大25MB";
   }
   const totalBytes = files.reduce((sum, item) => sum + item.size, 0);
@@ -7860,7 +7962,9 @@ async function fallbackInlineUpload(file: File): Promise<UploadForIngestResult> 
   form.append("file", file);
   const upRes = await fetch("/api/upload", { method: "POST", body: form });
   const up = await upRes.json().catch(() => ({}));
-  if (!upRes.ok) throw new Error(up.error ?? "アップロードに失敗しました");
+  if (!upRes.ok) {
+    throw new UploadFlowError(statusToUploadRecoveryCode(upRes.status), "アップロードに失敗しました", upRes.status);
+  }
   return up as UploadForIngestResult;
 }
 
@@ -7894,7 +7998,9 @@ async function uploadForIngest(file: File, token: string): Promise<UploadForInge
       headers: uploadHeaders,
       body: file,
     });
-    if (!uploadRes.ok) throw new Error(`S3 アップロードに失敗しました (HTTP ${uploadRes.status})`);
+    if (!uploadRes.ok) {
+      throw new UploadFlowError("upload_failed", UPLOAD_RECOVERY_MESSAGES.upload_failed, uploadRes.status);
+    }
     return {
       ref: presign.ref,
       filename: typeof presign.filename === "string" ? presign.filename : file.name || "upload.bin",
@@ -7910,16 +8016,19 @@ async function uploadForIngest(file: File, token: string): Promise<UploadForInge
     typeof presign.error === "string" &&
     presign.error.toLowerCase().includes("upload sink disabled")
   ) {
-    throw new Error("この環境ではファイルアップロードが無効です。管理者にアップロード設定を確認してください。");
+    throw new UploadFlowError(
+      "upload_unavailable",
+      "この環境ではファイルアップロードが無効です。管理者にアップロード設定を確認してください。",
+      presignRes.status,
+    );
   }
 
   if (presignRes.status === 501) {
     return fallbackInlineUpload(file);
   }
 
-  throw new Error(
-    typeof presign.error === "string" ? presign.error : "アップロード URL の発行に失敗しました",
-  );
+  const code = uploadErrorCodeFromBody(presign) ?? statusToUploadRecoveryCode(presignRes.status);
+  throw new UploadFlowError(code, uploadErrorMessageFromBody(presign, code), presignRes.status);
 }
 
 const GDRIVE_OAUTH_STATE_KEY = "raku.gdrive.oauth.state";
@@ -7932,6 +8041,7 @@ function makeOAuthNonce(): string {
 }
 
 const FILE_BROWSER_FOLDER_KEY = "raku.fileFolders";
+const FILE_UPLOAD_RECOVERY_KEY = "raku.fileUploadRecovery";
 const FILE_BROWSER_PAGE_SIZE = 24;
 const FILE_BROWSER_ROOT_FOLDER: FileBrowserFolder = {
   created_at: "",
@@ -7954,6 +8064,22 @@ type FileBrowserFileRow = {
   folder_id: string;
   ingested_at?: string;
   source: "local" | "server";
+};
+
+type FileUploadIssue = {
+  code: UploadRecoveryCode;
+  message: string;
+  fileNames: string[];
+};
+
+type FileUploadSuccess = {
+  count: number;
+  folderName: string;
+};
+
+type FileUploadRecoveryState = {
+  folder_id: string | null;
+  file_names: string[];
 };
 
 type FileBrowserFilter = "all" | "needs_review" | "approved" | "obsolete";
@@ -7995,6 +8121,79 @@ function saveFileBrowserFolders(folders: FileBrowserFolder[]): void {
   } catch {
     /* best-effort */
   }
+}
+
+function loadFileUploadRecoveryState(): FileUploadRecoveryState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(FILE_UPLOAD_RECOVERY_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return null;
+    const folderId = (parsed as { folder_id?: unknown }).folder_id;
+    const fileNames = (parsed as { file_names?: unknown }).file_names;
+    return {
+      folder_id: typeof folderId === "string" && folderId ? folderId : null,
+      file_names: Array.isArray(fileNames)
+        ? fileNames.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveFileUploadRecoveryState(state: FileUploadRecoveryState): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(FILE_UPLOAD_RECOVERY_KEY, JSON.stringify(state));
+  } catch {
+    /* best-effort */
+  }
+}
+
+function clearFileUploadRecoveryState(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(FILE_UPLOAD_RECOVERY_KEY);
+  } catch {
+    /* best-effort */
+  }
+}
+
+function uploadIssueFromError(error: unknown, fileNames: string[]): FileUploadIssue {
+  const code = uploadRecoveryCodeFromError(error);
+  const message = isUploadFlowError(error) ? error.message : UPLOAD_RECOVERY_MESSAGES[code];
+  return { code, message: message || UPLOAD_RECOVERY_MESSAGES[code], fileNames };
+}
+
+function uploadIssueDetail(issue: FileUploadIssue): string {
+  if (issue.code === "reauth_required" || issue.code === "session_missing" || issue.code === "session_mismatch") {
+    return "ログイン後にこの画面へ戻ります。ファイル本体は復元できないため、再選択してください。";
+  }
+  if (issue.code === "tenant_not_configured") {
+    return "Cognito ユーザーに tenant が設定されていない可能性があります。設定後に再ログインしてください。";
+  }
+  if (issue.code === "permission_denied") {
+    return "ファイル一覧の閲覧は続けられます。アップロード権限は管理者に確認してください。";
+  }
+  if (issue.code === "upload_unavailable") {
+    return "S3 バケット、アップロード機能、または一時的なサーバー状態を管理者が確認する必要があります。";
+  }
+  if (issue.code === "invalid_request") {
+    return "対応形式、ファイルサイズ、または選択内容を確認してください。";
+  }
+  return "回線状況を確認して、同じファイルでもう一度お試しください。";
+}
+
+function uploadIssueNeedsLogin(issue: FileUploadIssue): boolean {
+  return (
+    issue.code === "reauth_required" ||
+    issue.code === "session_missing" ||
+    issue.code === "session_mismatch"
+  );
+}
+
+function uploadIssueCanRetry(issue: FileUploadIssue): boolean {
+  return issue.code === "upload_failed";
 }
 
 function normalizeFolderName(value: string): string {
@@ -8178,6 +8377,9 @@ function FileBrowserBody() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState("");
   const [uploadFailures, setUploadFailures] = useState<string[]>([]);
+  const [uploadIssue, setUploadIssue] = useState<FileUploadIssue | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<FileUploadSuccess | null>(null);
+  const [rememberedFileNames, setRememberedFileNames] = useState<string[]>([]);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [folderError, setFolderError] = useState("");
@@ -8202,6 +8404,13 @@ function FileBrowserBody() {
 
   useEffect(() => {
     setFolders(loadFileBrowserFolders());
+    const recovery = loadFileUploadRecoveryState();
+    if (recovery) {
+      setCurrentFolderId(recovery.folder_id);
+      setRememberedFileNames(recovery.file_names);
+      setShowUploadForm(true);
+      clearFileUploadRecoveryState();
+    }
     void reloadFiles();
   }, []);
 
@@ -8266,6 +8475,7 @@ function FileBrowserBody() {
     row.approval_status === "pending_review" || row.approval_status === "draft"
   ).length;
   const totalApprovedCount = fileRows.filter((row) => row.approval_status === "approved").length;
+  const uploadPermissionDenied = uploadIssue?.code === "permission_denied";
 
   useEffect(() => {
     setPage(1);
@@ -8304,6 +8514,7 @@ function FileBrowserBody() {
     setShowNewFolder(false);
     setCurrentFolderId(null);
     setShowUploadForm(false);
+    resetUploadPanel();
     setRootQuery("");
     toast(`${name} を作成しました。`, "success");
   }
@@ -8320,9 +8531,13 @@ function FileBrowserBody() {
 
   async function onUpload() {
     if (!files.length || uploading) return;
+    const selectedFileNames = files.map((file) => file.name || "upload.bin");
     setUploading(true);
     setUploadFailures([]);
+    setUploadIssue(null);
+    setUploadSuccess(null);
     const failures: string[] = [];
+    let blockingIssue: FileUploadIssue | null = null;
     try {
       const token = await getSessionToken();
       const approvalStatus = defaultIngestApprovalStatus();
@@ -8368,27 +8583,76 @@ function FileBrowserBody() {
             ingested_at: new Date().toISOString(),
           });
         } catch (err) {
-          failures.push(`${file.name}: ${err instanceof Error ? err.message : "取込に失敗しました"}`);
+          const issue = uploadIssueFromError(err, selectedFileNames);
+          if (
+            issue.code === "reauth_required" ||
+            issue.code === "session_missing" ||
+            issue.code === "session_mismatch" ||
+            issue.code === "tenant_not_configured" ||
+            issue.code === "permission_denied" ||
+            issue.code === "upload_unavailable" ||
+            issue.code === "upload_failed"
+          ) {
+            blockingIssue = issue;
+            setUploadIssue(issue);
+            toast(issue.message, issue.code === "upload_failed" ? "warning" : "error");
+            break;
+          }
+          failures.push(`${file.name}: ${UPLOAD_RECOVERY_MESSAGES[issue.code]}`);
         }
       }
       setLocalDocs(loadIngestedDocs());
       void reloadFiles();
-      if (failures.length === 0) {
+      if (failures.length === 0 && !blockingIssue) {
         toast(`${files.length} 件を取込しました。`, "success");
+        setUploadSuccess({ count: files.length, folderName: uploadTarget.name });
         setFiles([]);
         setFileInputKey((key) => key + 1);
-        setShowUploadForm(false);
       } else {
         setUploadFailures(failures);
-        toast(`一部の取込に失敗しました: ${failures[0]}`, "warning");
+        if (failures.length > 0) {
+          toast(`一部の取込に失敗しました: ${failures[0]}`, "warning");
+        }
       }
+    } catch (err) {
+      const issue = uploadIssueFromError(err, selectedFileNames);
+      setUploadIssue(issue);
+      toast(issue.message, issue.code === "upload_failed" ? "warning" : "error");
     } finally {
       setUploadProgress("");
       setUploading(false);
     }
   }
 
+  function continueLoginForUpload() {
+    const fileNames = files.length > 0 ? files.map((file) => file.name || "upload.bin") : rememberedFileNames;
+    saveFileUploadRecoveryState({
+      folder_id: currentFolder?.id ?? null,
+      file_names: fileNames,
+    });
+    if (typeof window === "undefined") return;
+    const returnTo = `${window.location.pathname}${window.location.search}` || "/files";
+    window.location.assign(`/login?return_to=${encodeURIComponent(returnTo)}`);
+  }
+
+  function resetUploadPanel() {
+    setUploadFailures([]);
+    setUploadIssue(null);
+    setUploadSuccess(null);
+    setRememberedFileNames([]);
+    setFiles([]);
+    setFileInputKey((key) => key + 1);
+  }
+
   function renderUploadPanel(panelId: string) {
+    const uploadSubmitBlocked =
+      uploadIssue &&
+      (uploadIssueNeedsLogin(uploadIssue) ||
+        uploadIssue.code === "tenant_not_configured" ||
+        uploadIssue.code === "permission_denied" ||
+        uploadIssue.code === "upload_unavailable" ||
+        uploadIssue.code === "invalid_request");
+    const uploadSelectionDisabled = uploadIssue?.code === "permission_denied";
     return (
       <div id={panelId} className="fb-upload-panel">
         <div className="fb-upload-head">
@@ -8401,18 +8665,67 @@ function FileBrowserBody() {
             type="file"
             multiple
             accept={ACCEPT_EXT}
+            disabled={uploadSelectionDisabled}
             onChange={(event) => {
               setFiles(Array.from(event.target.files ?? []));
               setUploadFailures([]);
+              setUploadIssue(null);
+              setUploadSuccess(null);
+              setRememberedFileNames([]);
             }}
           />
-          <span className="upload-drop-main">{selectedFilesTitle(files)}</span>
-          <span className="upload-drop-sub">{selectedFilesDetail(files)}</span>
+          <span className="upload-drop-main">{selectedFilesTitle(files, rememberedFileNames)}</span>
+          <span className="upload-drop-sub">{selectedFilesDetail(files, rememberedFileNames)}</span>
         </label>
         {uploadProgress && (
           <p className="source-config-note" role="status" aria-live="polite">
             {uploadProgress}
           </p>
+        )}
+        {uploadIssue && (
+          <div className="fb-upload-recovery" role="alert" aria-live="assertive">
+            <div>
+              <strong>{uploadIssue.message}</strong>
+              <p>{uploadIssueDetail(uploadIssue)}</p>
+              {uploadIssue.fileNames.length > 0 && (
+                <p className="fb-upload-file-hint">
+                  対象: {uploadIssue.fileNames.slice(0, 3).join(" / ")}
+                  {uploadIssue.fileNames.length > 3 ? ` ほか${uploadIssue.fileNames.length - 3}件` : ""}
+                </p>
+              )}
+            </div>
+            <div className="screen-actions fb-upload-recovery-actions">
+              {uploadIssueNeedsLogin(uploadIssue) && (
+                <button type="button" className="button-link btn-approve" onClick={continueLoginForUpload}>
+                  ログインして続ける
+                </button>
+              )}
+              {uploadIssueCanRetry(uploadIssue) && (
+                <button type="button" className="button-link btn-approve" onClick={() => void onUpload()} disabled={uploading || files.length === 0}>
+                  再試行
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        {uploadSuccess && (
+          <div className="fb-upload-success" role="status" aria-live="polite">
+            <strong>取込を受け付けました</strong>
+            <p>
+              文書を読み取り中です。準備ができると根拠文書レビューに表示されます。承認されるまでAIの正式回答には使われません。
+            </p>
+            <p className="fb-upload-file-hint">
+              {uploadSuccess.folderName} / {uploadSuccess.count} 件
+            </p>
+            <div className="screen-actions fb-upload-recovery-actions">
+              <Link className="button-link btn-approve" href="/reviews/documents">
+                根拠文書レビューを見る
+              </Link>
+              <button type="button" className="button-link secondary" onClick={resetUploadPanel}>
+                続けてアップロード
+              </button>
+            </div>
+          </div>
         )}
         {uploadFailures.length > 0 && (
           <div className="fb-upload-errors" role="alert">
@@ -8422,7 +8735,7 @@ function FileBrowserBody() {
           </div>
         )}
         <div className="screen-actions">
-          <button type="button" onClick={() => void onUpload()} disabled={files.length === 0 || uploading}>
+          <button type="button" onClick={() => void onUpload()} disabled={files.length === 0 || uploading || Boolean(uploadSubmitBlocked)}>
             {uploading ? "取込中..." : "アップロード取込"}
           </button>
           <button
@@ -8430,9 +8743,7 @@ function FileBrowserBody() {
             className="button-link secondary"
             onClick={() => {
               setShowUploadForm(false);
-              setFiles([]);
-              setFileInputKey((key) => key + 1);
-              setUploadFailures([]);
+              resetUploadPanel();
             }}
           >
             キャンセル
@@ -8505,6 +8816,7 @@ function FileBrowserBody() {
               className="button-link btn-approve"
               aria-controls="root-file-upload-panel"
               aria-expanded={showUploadForm}
+              disabled={uploadPermissionDenied}
               onClick={() => {
                 setShowUploadForm((shown) => !shown);
                 setUploadFailures([]);
@@ -8573,7 +8885,7 @@ function FileBrowserBody() {
               <div className="standalone-empty-state">
                 <h4>ファイルはまだありません</h4>
                 <p>まずは業務手順書やFAQをアップロードすると、質問とチャットボットの根拠として使えます。</p>
-                <button type="button" className="standalone-empty-cta" onClick={() => setShowUploadForm(true)}>
+                <button type="button" className="standalone-empty-cta" onClick={() => setShowUploadForm(true)} disabled={uploadPermissionDenied}>
                   アップロード
                 </button>
               </div>
@@ -8614,6 +8926,7 @@ function FileBrowserBody() {
                         onClick={() => {
                           setCurrentFolderId(folder.id);
                           setShowUploadForm(false);
+                          resetUploadPanel();
                         }}
                       >
                         開く
@@ -8645,12 +8958,11 @@ function FileBrowserBody() {
           type="button"
           className="fb-bc-link"
           onClick={() => {
-            setCurrentFolderId(null);
-            setShowUploadForm(false);
-            setFiles([]);
-            setUploadFailures([]);
-          }}
-        >
+          setCurrentFolderId(null);
+          setShowUploadForm(false);
+          resetUploadPanel();
+        }}
+      >
           ファイル
         </button>
         <span className="fb-bc-sep" aria-hidden="true">›</span>
@@ -8668,6 +8980,7 @@ function FileBrowserBody() {
             className="button-link btn-approve"
             aria-controls="file-upload-panel"
             aria-expanded={showUploadForm}
+            disabled={uploadPermissionDenied}
             onClick={() => setShowUploadForm((shown) => !shown)}
           >
             アップロード
@@ -8717,7 +9030,7 @@ function FileBrowserBody() {
       ) : folderRows.length === 0 ? (
         <div className="standalone-empty-state">
           <h4>ファイルはまだありません</h4>
-          <button type="button" className="standalone-empty-cta" onClick={() => setShowUploadForm(true)}>
+          <button type="button" className="standalone-empty-cta" onClick={() => setShowUploadForm(true)} disabled={uploadPermissionDenied}>
             アップロード
           </button>
         </div>

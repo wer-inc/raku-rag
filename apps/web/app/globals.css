@@ -7040,6 +7040,50 @@ textarea:focus-visible,
   margin: 0;
 }
 
+.fb-upload-recovery,
+.fb-upload-success {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.fb-upload-recovery {
+  border: 1px solid #fedf89;
+  background: #fffcf5;
+  color: #7a2e0e;
+}
+
+.fb-upload-success {
+  border: 1px solid #abefc6;
+  background: #f6fef9;
+  color: #05603a;
+}
+
+.fb-upload-recovery strong,
+.fb-upload-success strong {
+  display: block;
+  margin-bottom: 2px;
+  color: inherit;
+  font-size: 13px;
+}
+
+.fb-upload-recovery p,
+.fb-upload-success p {
+  margin: 0;
+}
+
+.fb-upload-file-hint {
+  color: color-mix(in srgb, currentColor 75%, var(--muted));
+  font-size: 12px;
+}
+
+.fb-upload-recovery-actions {
+  justify-content: flex-start;
+}
+
 .fb-upload-panel {
   display: grid;
   gap: 12px;

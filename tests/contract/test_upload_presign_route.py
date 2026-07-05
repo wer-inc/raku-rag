@@ -49,7 +49,7 @@ class UploadPresignRouteContractTest(unittest.TestCase):
         presign_at = self.source.find("getSignedUrl(client, command")
         self.assertGreater(register_at, 0, "presign route must register the upload record")
         self.assertGreater(presign_at, register_at, "registration must precede URL signing")
-        self.assertIn("could not register upload before presigning", self.source)
+        self.assertIn("アップロード準備に失敗しました", self.source)
 
     def test_session_is_verified_before_any_presign_work(self) -> None:
         # Cognito/dev session validation (via /v1/whoami) gates the route; principal-derived
@@ -57,6 +57,22 @@ class UploadPresignRouteContractTest(unittest.TestCase):
         self.assertIn("assertAppSession(req)", self.source)
         self.assertIn("session.principal.tenant_id", self.source)
         self.assertNotIn("body.tenant_id", self.source)
+
+    def test_auth_failures_return_client_safe_error_codes(self) -> None:
+        # 0074: the browser must not surface raw "Cognito session is invalid" during file upload.
+        for code in (
+            "session_missing",
+            "reauth_required",
+            "session_mismatch",
+            "tenant_not_configured",
+            "permission_denied",
+        ):
+            with self.subTest(code=code):
+                self.assertIn(code, self.source)
+        self.assertIn("error_code", self.source)
+        self.assertIn("classifyBearerToken(authorization)", self.source)
+        self.assertIn('claimString(claims, "custom:tenant_id")', self.source)
+        self.assertNotIn("Cognito session is invalid", self.source)
 
 
 if __name__ == "__main__":

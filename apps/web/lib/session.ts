@@ -53,12 +53,47 @@ export interface BrowserSessionState {
   roles: WorkspaceRole[];
 }
 
+export type AppSessionErrorCode =
+  | "reauth_required"
+  | "session_mismatch"
+  | "tenant_not_configured"
+  | "session_missing";
+
+const APP_SESSION_ERROR_MESSAGES: Record<AppSessionErrorCode, string> = {
+  reauth_required: "ログイン情報を更新してください",
+  session_mismatch: "ログイン設定が変更されました。ログインし直してください",
+  tenant_not_configured: "アカウント設定が未完了です。管理者に確認してください",
+  session_missing: "ログインしてください",
+};
+
+export class AppSessionError extends Error {
+  code: AppSessionErrorCode;
+
+  constructor(code: AppSessionErrorCode, message = APP_SESSION_ERROR_MESSAGES[code]) {
+    super(message);
+    this.name = "AppSessionError";
+    this.code = code;
+  }
+}
+
+export function isAppSessionError(error: unknown): error is AppSessionError {
+  return (
+    error instanceof AppSessionError ||
+    (typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      (error as { name?: unknown }).name === "AppSessionError" &&
+      "code" in error &&
+      typeof (error as { code?: unknown }).code === "string")
+  );
+}
+
 export type CognitoPasswordLoginResult =
   | { status: "authenticated" }
   | { status: "new_password_required"; session: string; username: string };
 
 let authConfigPromise: Promise<AuthConfig> | null = null;
-let refreshInflight: Promise<string | null> | null = null;
+let refreshInflight: Promise<ValidatedCognitoToken | null> | null = null;
 
 function storageGet(storage: Storage, key: string): string | null {
   try {
@@ -244,8 +279,12 @@ function displayNameFromClaims(claims: Record<string, unknown> | null): string {
   return claimString(claims, "name") || userFromClaims(claims);
 }
 
+function cognitoTenantFromClaims(claims: Record<string, unknown> | null): string {
+  return claimString(claims, "custom:tenant_id");
+}
+
 function tenantFromClaims(claims: Record<string, unknown> | null): string {
-  return claimString(claims, "custom:tenant_id") || claimString(claims, "tenant_id") || DEMO_TENANT;
+  return cognitoTenantFromClaims(claims) || claimString(claims, "tenant_id") || DEMO_TENANT;
 }
 
 function unexpiredJwt(token: string): boolean {
@@ -262,8 +301,99 @@ function unexpiredStoredJwt(key: string): string | null {
   return null;
 }
 
-function loadCognitoToken(): string | null {
+function loadDisplayCognitoToken(): string | null {
   return unexpiredStoredJwt(COGNITO_ID_TOKEN_KEY) ?? unexpiredStoredJwt(COGNITO_ACCESS_TOKEN_KEY);
+}
+
+type CognitoStoredTokenKind = "id" | "access";
+
+type ValidatedCognitoToken = {
+  token: string;
+  claims: Record<string, unknown>;
+  kind: CognitoStoredTokenKind;
+};
+
+type CognitoTokenValidation =
+  | { ok: true; value: ValidatedCognitoToken }
+  | { ok: false; code: AppSessionErrorCode };
+
+function normalizedIssuer(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+function claimMatchesStringOrArray(value: unknown, expected: string): boolean {
+  if (!expected) return true;
+  if (typeof value === "string") return value === expected;
+  return Array.isArray(value) && value.includes(expected);
+}
+
+function tokenClientMatches(claims: Record<string, unknown>, clientId: string): boolean {
+  return claimMatchesStringOrArray(claims.aud, clientId) || claimString(claims, "client_id") === clientId;
+}
+
+function validateCognitoTokenForApp(
+  token: string,
+  config: AuthConfig,
+  kind: CognitoStoredTokenKind,
+): CognitoTokenValidation {
+  const claims = decodeJwtPayload(token);
+  if (!claims) return { ok: false, code: "reauth_required" };
+
+  const tokenUse = claimString(claims, "token_use");
+  if (tokenUse !== kind) return { ok: false, code: "reauth_required" };
+
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof claims.exp !== "number" || claims.exp <= now + 30) {
+    return { ok: false, code: "reauth_required" };
+  }
+  if (typeof claims.nbf === "number" && claims.nbf > now) {
+    return { ok: false, code: "reauth_required" };
+  }
+
+  const expectedIssuer = normalizedIssuer(config.cognito_issuer);
+  if (expectedIssuer && normalizedIssuer(claimString(claims, "iss")) !== expectedIssuer) {
+    return { ok: false, code: "session_mismatch" };
+  }
+  if (config.cognito_client_id && !tokenClientMatches(claims, config.cognito_client_id)) {
+    return { ok: false, code: "session_mismatch" };
+  }
+  if (!cognitoTenantFromClaims(claims)) {
+    return { ok: false, code: "tenant_not_configured" };
+  }
+  if (!claimString(claims, "sub")) {
+    return { ok: false, code: "reauth_required" };
+  }
+
+  return { ok: true, value: { token, claims, kind } };
+}
+
+function chooseSessionError(
+  sawToken: boolean,
+  failures: AppSessionErrorCode[],
+): AppSessionErrorCode {
+  if (!sawToken) return "session_missing";
+  if (failures.includes("tenant_not_configured")) return "tenant_not_configured";
+  if (failures.includes("session_mismatch")) return "session_mismatch";
+  if (failures.includes("reauth_required")) return "reauth_required";
+  return "session_missing";
+}
+
+function loadStoredAppCognitoToken(config: AuthConfig): CognitoTokenValidation {
+  const candidates: Array<{ key: string; kind: CognitoStoredTokenKind }> = [
+    { key: COGNITO_ID_TOKEN_KEY, kind: "id" },
+    { key: COGNITO_ACCESS_TOKEN_KEY, kind: "access" },
+  ];
+  const failures: AppSessionErrorCode[] = [];
+  let sawToken = false;
+  for (const candidate of candidates) {
+    const token = storedSessionValue(candidate.key);
+    if (!token) continue;
+    sawToken = true;
+    const validated = validateCognitoTokenForApp(token, config, candidate.kind);
+    if (validated.ok) return validated;
+    failures.push(validated.code);
+  }
+  return { ok: false, code: chooseSessionError(sawToken, failures) };
 }
 
 function loadCognitoRefreshToken(): string | null {
@@ -303,7 +433,12 @@ function storeCognitoTokens(
   if (user) {
     writeSessionValue(USER_KEY, user, remember);
   }
-  writeSessionValue(TENANT_KEY, tenantFromClaims(claims), remember);
+  const tenant = cognitoTenantFromClaims(claims);
+  if (tenant) {
+    writeSessionValue(TENANT_KEY, tenant, remember);
+  } else {
+    removeSessionValue(TENANT_KEY);
+  }
   writeSessionValue(DISPLAY_NAME_KEY, displayNameFromClaims(claims), remember);
   writeSessionValue(ROLES_KEY, JSON.stringify(rolesFromClaims(claims)), remember);
 }
@@ -406,14 +541,16 @@ function persistPasswordAuth(payload: Record<string, unknown>, remember = false,
   storeCognitoTokens(idToken, accessToken, refreshToken, remember);
 }
 
-async function refreshCognitoSession(): Promise<string | null> {
+async function refreshCognitoSession(config: AuthConfig): Promise<ValidatedCognitoToken | null> {
   const refreshToken = loadCognitoRefreshToken();
   if (!refreshToken) return null;
   if (!refreshInflight) {
     refreshInflight = postCognitoPassword({ action: "refresh", refresh_token: refreshToken })
       .then((payload) => {
         persistPasswordAuth(payload, rememberLoginEnabled(), refreshToken);
-        return loadCognitoToken();
+        const validated = loadStoredAppCognitoToken(config);
+        if (validated.ok) return validated.value;
+        throw new AppSessionError(validated.code);
       })
       .catch(() => {
         clearSessionToken();
@@ -427,7 +564,16 @@ async function refreshCognitoSession(): Promise<string | null> {
 }
 
 async function ensureCognitoToken(): Promise<string | null> {
-  return loadCognitoToken() ?? refreshCognitoSession();
+  const config = await loadAuthConfig();
+  if (config.auth_mode !== "cognito" || !config.cognito_domain || !config.cognito_client_id) {
+    return null;
+  }
+  const stored = loadStoredAppCognitoToken(config);
+  if (stored.ok) return stored.value.token;
+  const refreshed = await refreshCognitoSession(config);
+  if (refreshed) return refreshed.token;
+  clearSessionToken();
+  throw new AppSessionError(stored.code);
 }
 
 export async function signInWithCognitoPassword(
@@ -511,7 +657,7 @@ export async function getSessionToken(
   if (cognitoToken) return cognitoToken;
   const authConfig = await loadAuthConfig();
   if (authConfig.auth_mode === "cognito" && authConfig.cognito_domain && authConfig.cognito_client_id) {
-    throw new Error("Cognito session is missing; sign in again");
+    throw new AppSessionError("session_missing");
   }
   if (typeof window !== "undefined") {
     const cached = window.sessionStorage.getItem(STORAGE_KEY);
@@ -536,7 +682,7 @@ export async function getSessionToken(
 
 export function loadSessionUserId(): string | null {
   if (typeof window === "undefined") return null;
-  const token = loadCognitoToken();
+  const token = loadDisplayCognitoToken();
   if (token) {
     const user = userFromClaims(decodeJwtPayload(token));
     if (user) return user;
@@ -554,7 +700,7 @@ export function saveSessionUserId(userId: string): void {
 
 export function loadSessionTenantId(): string {
   if (typeof window === "undefined") return DEMO_TENANT;
-  const token = loadCognitoToken();
+  const token = loadDisplayCognitoToken();
   if (token) {
     return tenantFromClaims(decodeJwtPayload(token));
   }
@@ -563,7 +709,7 @@ export function loadSessionTenantId(): string {
 
 export function loadSessionRoles(): WorkspaceRole[] {
   if (typeof window === "undefined") return rolesForUser(DEMO_USER);
-  const token = loadCognitoToken();
+  const token = loadDisplayCognitoToken();
   if (token) {
     const roles = rolesFromClaims(decodeJwtPayload(token));
     return roles.length ? roles : ["field_user"];
@@ -585,7 +731,7 @@ export function loadSessionRoles(): WorkspaceRole[] {
 
 export function loadSessionDisplayName(): string {
   if (typeof window === "undefined") return DEMO_USER;
-  const token = loadCognitoToken();
+  const token = loadDisplayCognitoToken();
   if (token) {
     return displayNameFromClaims(decodeJwtPayload(token));
   }
@@ -596,7 +742,12 @@ export async function getBrowserSessionState(): Promise<BrowserSessionState> {
   const config = await loadAuthConfig();
   const isCognito = config.auth_mode === "cognito";
   const isConfigured = Boolean(config.cognito_domain && config.cognito_client_id);
-  const token = await ensureCognitoToken();
+  let token: string | null = null;
+  try {
+    token = await ensureCognitoToken();
+  } catch (err) {
+    if (!isAppSessionError(err)) throw err;
+  }
   const userId = loadSessionUserId() ?? DEMO_USER;
   const roles = loadSessionRoles();
   return {
