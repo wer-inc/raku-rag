@@ -123,7 +123,9 @@ import {
 } from "../../lib/session";
 import {
   APPROVAL_WORKFLOW_ENABLED,
+  HOME_NAV,
   missingApis,
+  navLabelFor,
   type ManifestScreen,
 } from "../../lib/full-saas";
 import CitationViewer, { type CitationViewTarget } from "./CitationViewer";
@@ -3595,10 +3597,27 @@ const SCREEN_PARENT_HREF: Record<string, string> = {
   support: "/home",
 };
 
+// Ancestor trail for the breadcrumb (the current screen is appended by ScreenShell as aria-current).
+// Home is the root for every non-root screen; detail/orphan screens also surface their parent list
+// so the user can jump straight to it instead of reopening the sidebar menu.
+function breadcrumbAncestors(screenId: string): Array<{ label: string; href: string }> {
+  if (ROOT_SCREEN_IDS.has(screenId)) return [];
+  const crumbs: Array<{ label: string; href: string }> = [
+    { label: HOME_NAV.label, href: HOME_NAV.href },
+  ];
+  const parent = SCREEN_PARENT_HREF[screenId];
+  if (parent && parent !== HOME_NAV.href) {
+    const label = navLabelFor(parent);
+    if (label) crumbs.push({ label, href: parent });
+  }
+  return crumbs;
+}
+
 function ScreenShell({ screen, children }: { screen: ManifestScreen; children: ReactNode }) {
   const router = useRouter();
   const title = screenTitle(screen);
   const showBack = !ROOT_SCREEN_IDS.has(screen.id);
+  const ancestors = breadcrumbAncestors(screen.id);
   const goBack = () => {
     if (canGoBackInApp()) router.back();
     else router.push(SCREEN_PARENT_HREF[screen.id] ?? "/home");
@@ -3608,9 +3627,23 @@ function ScreenShell({ screen, children }: { screen: ManifestScreen; children: R
       <header className="topbar">
         <div>
           {showBack && (
-            <button type="button" className="topbar-back" onClick={goBack}>
-              ← 戻る
-            </button>
+            <div className="topbar-nav">
+              <button type="button" className="topbar-back" onClick={goBack}>
+                ← 戻る
+              </button>
+              {ancestors.length > 0 && (
+                <nav className="topbar-breadcrumb" aria-label="パンくずリスト">
+                  <ol>
+                    {ancestors.map((crumb) => (
+                      <li key={crumb.href}>
+                        <Link href={crumb.href}>{crumb.label}</Link>
+                      </li>
+                    ))}
+                    <li aria-current="page">{title}</li>
+                  </ol>
+                </nav>
+              )}
+            </div>
           )}
           <h2>{title}</h2>
         </div>

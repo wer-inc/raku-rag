@@ -74,6 +74,19 @@ class WebBackNavigationContractTest(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.full_saas)
 
+    def test_breadcrumb_trail_lets_user_jump_to_an_ancestor(self) -> None:
+        # 0079: clickable ancestor trail (Home > parent list > current) so the user can jump to a
+        # parent screen directly instead of reopening the sidebar menu.
+        for marker in (
+            "function breadcrumbAncestors",
+            'className="topbar-breadcrumb"',
+            'aria-label="パンくずリスト"',
+            'aria-current="page"',
+            "navLabelFor(parent)",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.full_saas)
+
 
 if __name__ == "__main__":
     unittest.main()

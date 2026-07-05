@@ -131,6 +131,15 @@ export const ALL_NAV_HREFS: string[] = [
   ...NAV_GROUPS.flatMap((group) => group.items.map((item) => item.href)),
 ];
 
+// href -> sidebar display label, for breadcrumb trails (and anywhere a route needs its human name).
+const NAV_LABEL_BY_HREF: Record<string, string> = Object.fromEntries(
+  [HOME_NAV, ...NAV_GROUPS.flatMap((group) => group.items)].map((item) => [item.href, item.label]),
+);
+
+export function navLabelFor(href: string): string | null {
+  return NAV_LABEL_BY_HREF[href] ?? null;
+}
+
 export function activeNavHref(pathname: string): string | null {
   if (ALL_NAV_HREFS.includes(pathname)) return pathname;
   if (pathname.startsWith("/sources/")) return "/sources/list";
