@@ -99,6 +99,7 @@ import {
   phoneSimulateCall,
   phoneSubmitTurn,
   phoneUpsertScenarioVersion,
+  isApiClientError,
   listFeedback,
   qualityOperational,
   submitFeedback,
@@ -214,8 +215,46 @@ const MOCK_BILLING = {
   invoices: ["INV-2026-05 paid", "INV-2026-04 paid", "INV-2026-03 paid"],
 };
 
+const AUTH_RECOVERY_KEY = "raku.authRecovery";
+const AUTH_RECOVERY_TTL_MS = 5 * 60 * 1000;
+
+type AuthRecoveryState = {
+  return_to: string;
+  attempted_at: number;
+};
+
+type LoadErrorOptions = {
+  reauthAttempted?: boolean;
+};
+
+function errorStatus(error: unknown): number | undefined {
+  if (isApiClientError(error)) return error.status;
+  if (typeof error === "object" && error !== null && "status" in error) {
+    const status = (error as { status?: unknown }).status;
+    if (typeof status === "number") return status;
+  }
+  return undefined;
+}
+
+function errorCode(error: unknown): string {
+  if (isAppSessionError(error)) return error.code;
+  if (isApiClientError(error)) return error.errorCode ?? "";
+  if (typeof error === "object" && error !== null && "error_code" in error) {
+    const code = (error as { error_code?: unknown }).error_code;
+    return typeof code === "string" ? code : "";
+  }
+  return "";
+}
+
 function isAuthError(error: unknown): boolean {
-  return error instanceof Error && /401|unauthorized|session|token|auth|jwt|cognito/i.test(error.message);
+  const code = errorCode(error);
+  return (
+    errorStatus(error) === 401 ||
+    code === "reauth_required" ||
+    code === "session_missing" ||
+    code === "session_mismatch" ||
+    code === "tenant_not_configured"
+  );
 }
 
 async function runWithToken<T>(loader: (token: string) => Promise<T>): Promise<T> {
@@ -223,10 +262,77 @@ async function runWithToken<T>(loader: (token: string) => Promise<T>): Promise<T
   return loader(token);
 }
 
-function redirectToLoginAfterAuthError(): void {
+function currentReturnTo(): string {
+  if (typeof window === "undefined") return "/home";
+  return `${window.location.pathname}${window.location.search}` || "/home";
+}
+
+function loadAuthRecoveryState(): AuthRecoveryState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(AUTH_RECOVERY_KEY) || "null");
+    if (!parsed || typeof parsed !== "object") return null;
+    const returnTo = (parsed as { return_to?: unknown }).return_to;
+    const attemptedAt = (parsed as { attempted_at?: unknown }).attempted_at;
+    if (typeof returnTo !== "string" || typeof attemptedAt !== "number") return null;
+    return { return_to: returnTo, attempted_at: attemptedAt };
+  } catch {
+    return null;
+  }
+}
+
+function authRecoveryAttempted(returnTo = currentReturnTo()): boolean {
+  const recovery = loadAuthRecoveryState();
+  if (recovery && Date.now() - recovery.attempted_at > AUTH_RECOVERY_TTL_MS) {
+    clearAuthRecoveryState();
+    return false;
+  }
+  return recovery?.return_to === returnTo;
+}
+
+function saveAuthRecoveryState(returnTo = currentReturnTo()): void {
   if (typeof window === "undefined") return;
-  const returnTo = `${window.location.pathname}${window.location.search}`;
+  try {
+    window.sessionStorage.setItem(
+      AUTH_RECOVERY_KEY,
+      JSON.stringify({ return_to: returnTo, attempted_at: Date.now() }),
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+function clearAuthRecoveryState(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(AUTH_RECOVERY_KEY);
+  } catch {
+    /* best-effort */
+  }
+}
+
+function authErrorShouldAutoLogin(error: unknown): boolean {
+  const code = errorCode(error);
+  if (code === "reauth_required" || code === "session_missing") return true;
+  if (code === "session_mismatch" || code === "tenant_not_configured" || code === "permission_denied") {
+    return false;
+  }
+  return errorStatus(error) === 401;
+}
+
+function redirectToLogin(returnTo = currentReturnTo()): void {
+  if (typeof window === "undefined") return;
   window.location.assign(`/login?return_to=${encodeURIComponent(returnTo || "/home")}`);
+}
+
+function startLoginRecoveryForAuthError(error: unknown): boolean {
+  if (!isAuthError(error) || !authErrorShouldAutoLogin(error)) return false;
+  const returnTo = currentReturnTo();
+  if (authRecoveryAttempted(returnTo)) return false;
+  saveAuthRecoveryState(returnTo);
+  clearSessionToken();
+  redirectToLogin(returnTo);
+  return true;
 }
 
 const SYNC_POLL_MS = 5000;
@@ -249,16 +355,14 @@ function isAbortError(err: unknown): boolean {
 }
 
 function loadErrorStatus(err: unknown, message: string): number | undefined {
-  if (typeof err === "object" && err !== null && "status" in err) {
-    const status = (err as { status?: unknown }).status;
-    if (typeof status === "number") return status;
-  }
+  const status = errorStatus(err);
+  if (status !== undefined) return status;
   const match = /HTTP (\d{3})/.exec(message);
   return match ? Number(match[1]) : undefined;
 }
 
 /** U12: humanize load/submit errors; keep the raw technical detail available for ops. */
-function describeLoadError(err: unknown): LoadErrorView {
+function describeLoadError(err: unknown, options: LoadErrorOptions = {}): LoadErrorView {
   if (isAbortError(err)) {
     return { message: "応答がありませんでした。回線状況を確認して再試行してください。" };
   }
@@ -266,8 +370,30 @@ function describeLoadError(err: unknown): LoadErrorView {
   if (/failed to fetch|networkerror|load failed/i.test(raw)) {
     return { message: "バックエンド API に接続できません。API が起動しているか確認してください。" };
   }
+  const code = errorCode(err);
+  if (code === "tenant_not_configured") {
+    return { message: "アカウント設定が未完了です。管理者に確認してください。", detail: raw };
+  }
+  if (code === "session_mismatch") {
+    return {
+      message: "ログイン設定が一致しません。管理者に Cognito/API 設定を確認してください。",
+      detail: raw,
+    };
+  }
+  if (options.reauthAttempted && (code === "reauth_required" || code === "session_missing")) {
+    return {
+      message: "再ログイン後もセッション確認が通りませんでした。管理者に Cognito/API 設定を確認してください。",
+      detail: raw,
+    };
+  }
   const status = loadErrorStatus(err, raw);
   if (status === 401) {
+    if (options.reauthAttempted) {
+      return {
+        message: "再ログイン後もセッション確認が通りませんでした。管理者に Cognito/API 設定を確認してください。",
+        detail: raw,
+      };
+    }
     return { message: "認証の有効期限が切れています。再ログインしてください。", detail: raw };
   }
   if (status === 403) {
@@ -279,11 +405,14 @@ function describeLoadError(err: unknown): LoadErrorView {
       detail: raw,
     };
   }
+  if (isApiClientError(err) && err.errorText) {
+    return { message: err.errorText, detail: raw };
+  }
   return { message: raw };
 }
 
-function formatLoadError(err: unknown): string {
-  const described = describeLoadError(err);
+function formatLoadError(err: unknown, options: LoadErrorOptions = {}): string {
+  const described = describeLoadError(err, options);
   return described.detail && described.detail !== described.message
     ? `${described.message}(${described.detail})`
     : described.message;
@@ -311,11 +440,9 @@ function useLoad<T>(
         if (active) setState({ state: "ready", data });
       })
       .catch((err) => {
-        if (isAuthError(err)) {
-          clearSessionToken();
-          redirectToLoginAfterAuthError();
-        }
-        if (active) setState({ state: "error", error: formatLoadError(err) });
+        const reauthAttempted = authRecoveryAttempted();
+        if (startLoginRecoveryForAuthError(err)) return;
+        if (active) setState({ state: "error", error: formatLoadError(err, { reauthAttempted }) });
       });
     return () => {
       active = false;
@@ -1710,13 +1837,11 @@ function ChatBotBody() {
         await requestHandoffForSession(activeSessionId, token);
       }
     } catch (err) {
-      if (isAuthError(err)) {
-        clearSessionToken();
-        redirectToLoginAfterAuthError();
-      }
+      const reauthAttempted = authRecoveryAttempted();
+      if (startLoginRecoveryForAuthError(err)) return;
       setTurns((prev) => [
         ...prev,
-        { kind: "error", id: `${turnId}-e`, text: formatLoadError(err) },
+        { kind: "error", id: `${turnId}-e`, text: formatLoadError(err, { reauthAttempted }) },
       ]);
       pendingHandoffAfterResponse.current = false;
       setHandoffQueued(false);

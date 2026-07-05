@@ -70,13 +70,52 @@ import type {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:3000/v1";
 
+export class ApiClientError extends Error {
+  status: number;
+  errorCode?: string;
+  errorText?: string;
+  body: unknown;
+
+  constructor(message: string, init: { status: number; errorCode?: string; errorText?: string; body: unknown }) {
+    super(message);
+    this.name = "ApiClientError";
+    this.status = init.status;
+    this.errorCode = init.errorCode;
+    this.errorText = init.errorText;
+    this.body = init.body;
+  }
+}
+
+export function isApiClientError(error: unknown): error is ApiClientError {
+  return (
+    error instanceof ApiClientError ||
+    (typeof error === "object" &&
+      error !== null &&
+      "name" in error &&
+      (error as { name?: unknown }).name === "ApiClientError" &&
+      "status" in error &&
+      typeof (error as { status?: unknown }).status === "number")
+  );
+}
+
+function bodyString(body: unknown, key: string): string {
+  if (!body || typeof body !== "object") return "";
+  const value = (body as Record<string, unknown>)[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = typeof body?.message === "string" ? body.message : `HTTP ${res.status}`;
-    const error = new Error(msg) as Error & { status?: number };
-    error.status = res.status;
-    throw error;
+    const errorCode = bodyString(body, "error_code");
+    const errorText = bodyString(body, "error");
+    const message = bodyString(body, "message") || errorText || `HTTP ${res.status}`;
+    throw new ApiClientError(message, {
+      body,
+      errorCode: errorCode || undefined,
+      errorText: errorText || undefined,
+      status: res.status,
+    });
   }
   return body as T;
 }
