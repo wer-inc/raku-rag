@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   completeCognitoNewPassword,
+  clearSessionToken,
   getBrowserSessionState,
   loadRememberLoginPreference,
   signInWithCognitoPassword,
@@ -20,6 +21,12 @@ function returnTo(): string {
   if (typeof window === "undefined") return "/home";
   const value = new URLSearchParams(window.location.search).get("return_to") ?? "/home";
   return value.startsWith("/") && !value.startsWith("//") ? value : "/home";
+}
+
+function isReauthRequest(): boolean {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  return params.get("reauth") === "1" || params.has("return_to");
 }
 
 export default function LoginPage() {
@@ -39,11 +46,13 @@ export default function LoginPage() {
 
   useEffect(() => {
     let active = true;
+    const reauth = isReauthRequest();
     setRememberLogin(loadRememberLoginPreference());
+    if (reauth) clearSessionToken();
     getBrowserSessionState()
       .then((session) => {
         if (!active) return;
-        if (session.isCognito && session.isAuthenticated) {
+        if (!reauth && session.isCognito && session.isAuthenticated) {
           router.replace(returnTo());
           return;
         }

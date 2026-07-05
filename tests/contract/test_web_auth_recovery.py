@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 API_CLIENT = ROOT / "apps/web/lib/api-client.ts"
 FULL_SAAS = ROOT / "apps/web/app/components/FullSaasScreen.tsx"
+LOGIN_PAGE = ROOT / "apps/web/app/login/page.tsx"
 
 
 class WebAuthRecoveryContractTest(unittest.TestCase):
@@ -20,6 +21,7 @@ class WebAuthRecoveryContractTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.api_client = API_CLIENT.read_text(encoding="utf-8")
         cls.full_saas = FULL_SAAS.read_text(encoding="utf-8")
+        cls.login_page = LOGIN_PAGE.read_text(encoding="utf-8")
 
     def test_api_client_preserves_error_code_and_status(self) -> None:
         for marker in (
@@ -40,6 +42,7 @@ class WebAuthRecoveryContractTest(unittest.TestCase):
             "authRecoveryAttempted(returnTo)",
             "saveAuthRecoveryState(returnTo)",
             "clearAuthRecoveryState();",
+            'new URLSearchParams({ reauth: "1", return_to:',
             "formatLoadError(err, { reauthAttempted })",
         ):
             with self.subTest(marker=marker):
@@ -56,6 +59,25 @@ class WebAuthRecoveryContractTest(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.full_saas)
         self.assertNotIn("redirectToLoginAfterAuthError", self.full_saas)
+
+    def test_return_to_login_forces_fresh_credentials(self) -> None:
+        for marker in (
+            "function isReauthRequest",
+            'params.get("reauth") === "1" || params.has("return_to")',
+            "if (reauth) clearSessionToken();",
+            "if (!reauth && session.isCognito && session.isAuthenticated)",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.login_page)
+
+    def test_file_browser_loader_uses_auth_recovery(self) -> None:
+        for marker in (
+            "async function reloadFiles",
+            "startLoginRecoveryForAuthError(err)",
+            "setLoadError(formatLoadError(err, { reauthAttempted }))",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.full_saas)
 
 
 if __name__ == "__main__":

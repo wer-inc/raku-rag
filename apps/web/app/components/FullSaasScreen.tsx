@@ -322,7 +322,8 @@ function authErrorShouldAutoLogin(error: unknown): boolean {
 
 function redirectToLogin(returnTo = currentReturnTo()): void {
   if (typeof window === "undefined") return;
-  window.location.assign(`/login?return_to=${encodeURIComponent(returnTo || "/home")}`);
+  const params = new URLSearchParams({ reauth: "1", return_to: returnTo || "/home" });
+  window.location.assign(`/login?${params.toString()}`);
 }
 
 function startLoginRecoveryForAuthError(error: unknown): boolean {
@@ -8535,7 +8536,9 @@ function FileBrowserBody() {
       setApiDocs(await manufacturingDocuments(token));
       return true;
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "ファイル一覧を読み込めませんでした");
+      const reauthAttempted = authRecoveryAttempted();
+      if (startLoginRecoveryForAuthError(err)) return false;
+      setLoadError(formatLoadError(err, { reauthAttempted }));
       return false;
     } finally {
       if (showLoading) setLoading(false);
@@ -8788,7 +8791,8 @@ function FileBrowserBody() {
     setUploadReauthAttempted(true);
     clearSessionToken();
     const returnTo = `${window.location.pathname}${window.location.search}` || "/files";
-    window.location.assign(`/login?return_to=${encodeURIComponent(returnTo)}`);
+    const params = new URLSearchParams({ reauth: "1", return_to: returnTo });
+    window.location.assign(`/login?${params.toString()}`);
   }
 
   function resetUploadPanel() {
