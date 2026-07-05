@@ -82,7 +82,7 @@ class UploadPresignRouteContractTest(unittest.TestCase):
         for marker in (
             "function directHttpHost",
             '.endsWith(".elb.amazonaws.com")',
-            "directHttpHost(host) ? forwardedProto : \"https\"",
+            'directHttpHost(host) ? forwardedProto : "https"',
             "RAKU_UPLOAD_VERIFY_ORIGIN",
             "RAKU_INTERNAL_API_ORIGIN",
         ):
@@ -93,7 +93,9 @@ class UploadPresignRouteContractTest(unittest.TestCase):
         # If /v1/whoami rejects a JWT whose local claims are current and tenant-scoped, another
         # login is unlikely to fix the server-side Cognito/API boundary. Do not label it as a
         # recoverable reauth loop.
-        tenant_check = 'if (!claimString(claims, "custom:tenant_id")) return "tenant_not_configured";'
+        tenant_check = (
+            'if (!claimString(claims, "custom:tenant_id")) return "tenant_not_configured";'
+        )
         mismatch_fallback = 'return "session_mismatch";'
         self.assertIn(tenant_check, self.source)
         self.assertGreater(

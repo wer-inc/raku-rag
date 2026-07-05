@@ -21,7 +21,7 @@ class WebSessionCognitoContractTest(unittest.TestCase):
 
     def test_app_session_error_codes_are_typed(self) -> None:
         for marker in (
-            'export type AppSessionErrorCode',
+            "export type AppSessionErrorCode",
             '"reauth_required"',
             '"session_mismatch"',
             '"tenant_not_configured"',
@@ -35,8 +35,8 @@ class WebSessionCognitoContractTest(unittest.TestCase):
     def test_stored_cognito_token_validation_checks_current_auth_config(self) -> None:
         for marker in (
             "validateCognitoTokenForApp",
-            'normalizedIssuer(config.cognito_issuer)',
-            'tokenClientMatches(claims, config.cognito_client_id)',
+            "normalizedIssuer(config.cognito_issuer)",
+            "tokenClientMatches(claims, config.cognito_client_id)",
             'claimString(claims, "custom:tenant_id")',
             "loadStoredAppCognitoToken(config)",
         ):
@@ -51,11 +51,13 @@ class WebSessionCognitoContractTest(unittest.TestCase):
         )
         self.assertIn('{ key: COGNITO_ID_TOKEN_KEY, kind: "id" }', self.source)
         self.assertIn('{ key: COGNITO_ACCESS_TOKEN_KEY, kind: "access" }', self.source)
-        self.assertIn('if (!cognitoTenantFromClaims(claims))', self.source)
+        self.assertIn("if (!cognitoTenantFromClaims(claims))", self.source)
 
     def test_unrecoverable_cognito_session_is_cleared_before_typed_error(self) -> None:
         self.assertIn("const refreshed = await refreshCognitoSession(config)", self.source)
-        self.assertIn("clearSessionToken();\n  throw new AppSessionError(stored.code);", self.source)
+        self.assertIn(
+            "clearSessionToken();\n  throw new AppSessionError(stored.code);", self.source
+        )
 
 
 if __name__ == "__main__":
