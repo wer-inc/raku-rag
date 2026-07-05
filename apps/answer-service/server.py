@@ -2877,6 +2877,14 @@ def make_handler(system: ProductionSystem):
                     mfg_meta = _mfg_metadata_from_body(
                         body, principal.tenant_id, str(body["document_id"])
                     )
+                    # Original display filename (incl. Japanese): the registered upload record is the
+                    # server-authoritative source; fall back to a caller-supplied filename. Persisted to
+                    # Document.metadata so the /files list shows the real name, not the id (safeName_).
+                    doc_filename = ""
+                    if upload_record is not None:
+                        doc_filename = getattr(upload_record, "filename", "") or ""
+                    if not doc_filename:
+                        doc_filename = str(body.get("filename") or "")
                     staged_ref = _stage_visual_upload_ref(
                         connector,
                         tenant_id=principal.tenant_id,
@@ -2895,6 +2903,7 @@ def make_handler(system: ProductionSystem):
                         raw=raw,
                         content_type=content_type,
                         manufacturing_metadata=mfg_meta,
+                        filename=doc_filename,
                     )
                     # 0045: one-time consumption — a leaked ref/upload_id cannot be replayed.
                     # Failed jobs keep the record open so the same upload can be retried.

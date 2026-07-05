@@ -58,6 +58,12 @@ class UploadPresignRouteContractTest(unittest.TestCase):
         self.assertIn("session.principal.tenant_id", self.source)
         self.assertNotIn("body.tenant_id", self.source)
 
+    def test_filename_preserves_unicode_display_name(self) -> None:
+        # 0083: the display filename must keep Japanese (漢字/かな); the S3 key uses a UUID, so an
+        # ASCII-only scrub would needlessly turn a Japanese filename into underscores.
+        self.assertIn("function safeFilename", self.source)
+        self.assertNotIn('replace(/[^A-Za-z0-9._-]/g, "_")', self.source)
+
     def test_auth_failures_return_client_safe_error_codes(self) -> None:
         # 0074: the browser must not surface raw "Cognito session is invalid" during file upload.
         for code in (

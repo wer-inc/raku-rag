@@ -8577,7 +8577,9 @@ function fileRowsFromDocs(
       approval_status: doc.approval_status,
       document_id: doc.document_id,
       effective_date: doc.effective_date,
-      filename: doc.document_id,
+      // Prefer the server's display_title (persisted from the upload's real filename, incl. Japanese);
+      // fall back to the id only for older docs ingested before the filename was persisted.
+      filename: doc.display_title || doc.document_id,
       folder_id: doc.collection_id || DEMO_COLLECTION,
       source: "server" as const,
     }));
