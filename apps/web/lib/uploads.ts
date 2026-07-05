@@ -63,3 +63,37 @@ export function updateIngestedDoc(documentId: string, patch: Partial<IngestedDoc
 export function clearIngestedDocs(): void {
   if (typeof window !== "undefined") window.localStorage.removeItem(KEY);
 }
+
+// A local record is an optimistic bridge until the server document list reflects an upload. Keep a
+// just-uploaded doc visible for this long even if the server list hasn't surfaced it yet (an async
+// PDF/image ingest still landing); after that, absent-from-server means it was deleted/purged.
+const RECONCILE_GRACE_MS = 10 * 60 * 1000;
+
+/**
+ * Prune stale local upload records against an authoritative server document list.
+ *
+ * Call ONLY with a real, successful server response — never on a fetch error, where you cannot tell an
+ * empty tenant from an unreachable API. A local record that is (a) absent from `serverDocumentIds` and
+ * (b) older than the grace window is stale (typically the document was deleted/purged server-side) and
+ * is removed, so it can't linger forever as a phantom row (e.g. a permanent "レビュー待ち"). Returns the
+ * retained records; also rewrites localStorage when something was pruned.
+ */
+export function reconcileIngestedDocs(serverDocumentIds: Iterable<string>): IngestedDoc[] {
+  const all = loadIngestedDocs();
+  const known = new Set(serverDocumentIds);
+  const now = Date.now();
+  const kept = all.filter((doc) => {
+    if (known.has(doc.document_id)) return true;
+    const ingestedAt = Date.parse(doc.ingested_at || "");
+    if (Number.isNaN(ingestedAt)) return true; // no usable timestamp -> keep (cannot age it out)
+    return now - ingestedAt < RECONCILE_GRACE_MS;
+  });
+  if (typeof window !== "undefined" && kept.length !== all.length) {
+    try {
+      window.localStorage.setItem(KEY, JSON.stringify(kept));
+    } catch {
+      /* best-effort */
+    }
+  }
+  return kept;
+}

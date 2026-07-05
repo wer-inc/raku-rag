@@ -37,6 +37,20 @@ DEMO_USERS = ["alice", "misaki", "bob", "carol", "dave", "phone-gateway"]
 DEMO_ROLES = ["sales_demo"]
 
 
+def _seed_source_id(doc: dict) -> str:
+    """The source_id the seed itself writes for a doc (mirrors ingest()/register_trouble_case())."""
+    if doc.get("trouble_case"):
+        return "case"
+    return str(doc.get("document_kind") or "demo")
+
+
+# source_ids the demo seed OWNS. A live doc whose source_id is NOT one of these — a user upload
+# ("file-<collection>", see apps/web fileSourceId) or a connector sync (confluence/notion/...) — is
+# user data the seed must never tombstone, even though it shares the demo collection. This is the guard
+# that stops a re-seed on deploy from wiping uploaded files (see deploy-seed-wipes-user-uploads).
+SEED_SOURCE_IDS = {"demo", "case"} | {_seed_source_id(doc) for doc in DOCS}
+
+
 def _internal_headers(*, content_type: bool = False, principal: bool = False) -> dict[str, str]:
     headers: dict[str, str] = {}
     if content_type:
@@ -102,18 +116,48 @@ def list_existing_collection_docs() -> tuple[str, object]:
     try:
         res = json.load(urllib.request.urlopen(req, timeout=30))
         docs = res.get("documents") or []
-        document_ids = sorted(
-            {
-                str(doc.get("document_id") or "")
-                for doc in docs
-                if isinstance(doc, dict) and str(doc.get("document_id") or "")
-            }
-        )
-        return "listed", document_ids
+        # Return (document_id, source_id) so the caller can tell seed-owned docs from user data.
+        entries = []
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            document_id = str(doc.get("document_id") or "")
+            if not document_id:
+                continue
+            entries.append(
+                {"document_id": document_id, "source_id": str(doc.get("source_id") or "")}
+            )
+        entries.sort(key=lambda entry: entry["document_id"])
+        return "listed", entries
     except urllib.error.HTTPError as exc:
         return "ERROR", exc.read().decode("utf-8", "replace")[:160]
     except Exception as exc:  # noqa: BLE001
         return "ERROR", str(exc)[:160]
+
+
+def select_purge_ids(
+    existing_docs: list[dict], curated_ids: set[str]
+) -> tuple[list[str], list[dict]]:
+    """Decide which live docs the seed may tombstone before re-ingest.
+
+    Purge = the curated set (always, to keep the re-ingest / idempotency state aligned) PLUS any live
+    doc the seed itself owns (``source_id`` in ``SEED_SOURCE_IDS``) — i.e. a stale demo doc from an
+    earlier seed. User uploads (``source_id`` "file-*") and connector syncs are PRESERVED: the seed
+    must not destroy user data that merely shares the demo collection. Returns
+    ``(sorted purge ids, preserved docs)`` — the preserved list is for an auditable log line.
+    """
+    purge: set[str] = set(curated_ids)
+    preserved: list[dict] = []
+    for entry in existing_docs:
+        document_id = str(entry.get("document_id") or "")
+        if not document_id:
+            continue
+        source_id = str(entry.get("source_id") or "")
+        if document_id in curated_ids or source_id in SEED_SOURCE_IDS:
+            purge.add(document_id)
+        else:
+            preserved.append({"document_id": document_id, "source_id": source_id})
+    return sorted(purge), preserved
 
 
 def _context_extra(doc: dict) -> dict:
@@ -288,12 +332,14 @@ def main() -> None:
     curated_ids = {str(doc["document_id"]) for doc in DOCS}
     list_status, existing = list_existing_collection_docs()
     if list_status == "listed":
-        existing_ids = set(existing if isinstance(existing, list) else [])
-        purge_ids = sorted(existing_ids | curated_ids)
+        existing_docs = existing if isinstance(existing, list) else []
+        purge_ids, preserved = select_purge_ids(existing_docs, curated_ids)
         print(
-            f"[demo-seed] tombstoning {len(purge_ids)} live/curated documents "
-            f"in {TENANT}/{COLLECTION}"
+            f"[demo-seed] tombstoning {len(purge_ids)} seed-owned document(s); "
+            f"preserving {len(preserved)} user document(s) in {TENANT}/{COLLECTION}"
         )
+        for entry in preserved:
+            print(f"  PRESERVE   {entry['document_id']:22} source_id={entry['source_id']}")
     else:
         purge_ids = sorted(curated_ids)
         print(

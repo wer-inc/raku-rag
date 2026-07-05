@@ -140,6 +140,7 @@ import {
 import {
   clearIngestedDocs,
   loadIngestedDocs,
+  reconcileIngestedDocs,
   recordIngestedDoc,
   updateIngestedDoc,
   type IngestedDoc,
@@ -8601,7 +8602,12 @@ function FileBrowserBody() {
     setLocalDocs(loadIngestedDocs());
     try {
       const token = await getSessionToken();
-      setApiDocs(await manufacturingDocuments(token));
+      const serverDocuments = await manufacturingDocuments(token);
+      setApiDocs(serverDocuments);
+      // The server list is authoritative: prune local upload records it no longer has (e.g. a doc
+      // deleted/purged server-side) so a phantom "レビュー待ち" row can't linger forever. Reconcile
+      // only on this successful fetch — never in the catch, where empty and unreachable look alike.
+      setLocalDocs(reconcileIngestedDocs(serverDocuments.map((doc) => doc.document_id)));
       return true;
     } catch (err) {
       const reauthAttempted = authRecoveryAttempted();
