@@ -45,6 +45,12 @@ class WebDocumentDetailContractTest(unittest.TestCase):
         self.assertIn("setConfirmingDelete(true)", self.src)
         self.assertIn("この操作は取り消せません", self.src)
 
+    def test_last_indexed_uses_readable_jst_datetime(self) -> None:
+        # 最終取り込み must render a readable JST 年月日+時分, not the raw UTC ISO string. The stored
+        # value is UTC (…+00:00), so the formatter must convert to Asia/Tokyo.
+        self.assertIn("formatDateTimeJa(proc.last_indexed_at)", self.src)
+        self.assertIn('timeZone: "Asia/Tokyo"', self.src)
+
 
 if __name__ == "__main__":
     unittest.main()
