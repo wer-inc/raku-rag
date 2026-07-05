@@ -8596,6 +8596,9 @@ function FileBrowserBody() {
             blockingIssue = issue;
             setUploadIssue(issue);
             toast(issue.message, issue.code === "upload_failed" ? "warning" : "error");
+            if (uploadIssueNeedsLogin(issue)) {
+              window.setTimeout(() => continueLoginForUpload(issue.fileNames), 0);
+            }
             break;
           }
           failures.push(`${file.name}: ${UPLOAD_RECOVERY_MESSAGES[issue.code]}`);
@@ -8618,19 +8621,28 @@ function FileBrowserBody() {
       const issue = uploadIssueFromError(err, selectedFileNames);
       setUploadIssue(issue);
       toast(issue.message, issue.code === "upload_failed" ? "warning" : "error");
+      if (uploadIssueNeedsLogin(issue)) {
+        window.setTimeout(() => continueLoginForUpload(issue.fileNames), 0);
+      }
     } finally {
       setUploadProgress("");
       setUploading(false);
     }
   }
 
-  function continueLoginForUpload() {
-    const fileNames = files.length > 0 ? files.map((file) => file.name || "upload.bin") : rememberedFileNames;
+  function continueLoginForUpload(fileNamesOverride?: string[]) {
+    const fileNames =
+      fileNamesOverride && fileNamesOverride.length > 0
+        ? fileNamesOverride
+        : files.length > 0
+          ? files.map((file) => file.name || "upload.bin")
+          : rememberedFileNames;
     saveFileUploadRecoveryState({
       folder_id: currentFolder?.id ?? null,
       file_names: fileNames,
     });
     if (typeof window === "undefined") return;
+    clearSessionToken();
     const returnTo = `${window.location.pathname}${window.location.search}` || "/files";
     window.location.assign(`/login?return_to=${encodeURIComponent(returnTo)}`);
   }
@@ -8696,7 +8708,7 @@ function FileBrowserBody() {
             </div>
             <div className="screen-actions fb-upload-recovery-actions">
               {uploadIssueNeedsLogin(uploadIssue) && (
-                <button type="button" className="button-link btn-approve" onClick={continueLoginForUpload}>
+                <button type="button" className="button-link btn-approve" onClick={() => continueLoginForUpload()}>
                   ログインして続ける
                 </button>
               )}
