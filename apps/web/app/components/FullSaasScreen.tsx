@@ -8208,18 +8208,12 @@ function sourceDisplayName(params: {
   return params.fallback;
 }
 
-function documentIdForUpload(params: {
-  fileName: string;
-  index: number;
-  total: number;
-}): string {
-  const stem = cleanDocumentIdPart(params.fileName || "upload");
-  if (params.total <= 1) {
-    return stem || `doc-${Date.now().toString(36)}`;
-  }
-  const base = stem || `doc-${Date.now().toString(36)}`;
-  const suffix = `-${params.index + 1}`;
-  return `${base.slice(0, Math.max(1, 96 - suffix.length))}${suffix}`;
+function documentIdForUpload(): string {
+  // Opaque, collision-free document id (0084). The human-readable name is carried separately as the
+  // filename / display_title (0083), so the id never needs to be derived from the (possibly non-ASCII)
+  // filename: two uploads of the same name no longer produce the same id and silently overwrite each
+  // other, and the URL/id stays stable regardless of the filename. Users read the filename, not this id.
+  return crypto.randomUUID();
 }
 
 function selectedFilesTitle(files: File[], rememberedFileNames: string[] = []): string {
@@ -8878,7 +8872,7 @@ function FileBrowserBody() {
         setUploadProgress(`${files.length} 件中 ${i + 1} 件目: ${file.name}`);
         try {
           const up = await uploadForIngest(file, token);
-          const docId = documentIdForUpload({ fileName: up.filename, index: i, total: files.length });
+          const docId = documentIdForUpload();
           const ingest = await ingestDocument(
             {
               collection_id: uploadTarget.id,
@@ -9792,15 +9786,11 @@ function AddSourceBody() {
     const requestSourceId = sourceId.trim() || defaultSourceIdFor("text");
     try {
       const token = await getSessionToken();
-      for (const [index, payload] of payloads.entries()) {
+      for (const payload of payloads) {
         setUploadProgress("テキストを取込中...");
         try {
           const up = await uploadForIngest(payload, token);
-          const docId = documentIdForUpload({
-            fileName: up.filename,
-            index,
-            total: payloads.length,
-          });
+          const docId = documentIdForUpload();
 
           const ingest = await ingestDocument(
             {

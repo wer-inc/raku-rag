@@ -50,6 +50,13 @@ class WebUploadReconcileContractTest(unittest.TestCase):
         self.assertLess(set_api, reconcile)
         self.assertLess(reconcile, catch)
 
+    def test_upload_document_id_is_an_opaque_uuid(self) -> None:
+        # 0084: the upload document_id is an opaque UUID (crypto.randomUUID()), not a filename-derived
+        # slug — so two same-named uploads no longer collide/overwrite, and the id never carries a
+        # mangled filename. The human-readable name is carried by the filename/display_title (0083).
+        self.assertIn("function documentIdForUpload(): string", self.full_saas)
+        self.assertIn("return crypto.randomUUID();", self.full_saas)
+
     def test_file_row_uses_server_display_title(self) -> None:
         # 0083: server rows show the persisted display_title (the real filename incl. Japanese),
         # falling back to the id only for docs ingested before the filename was persisted.
