@@ -263,6 +263,7 @@ class ProductionSystem(MvpSystem):
         raw: bytes,
         content_type: str = "text/plain",
         manufacturing_metadata: "ManufacturingDocumentMetadata | None" = None,
+        filename: str = "",
     ) -> IngestionRun:
         """Run the ingestion service through the same status projection used by the worker.
 
@@ -306,6 +307,7 @@ class ProductionSystem(MvpSystem):
                 document_ref=document_ref,
                 content_type=content_type,
                 manufacturing_metadata=manufacturing_metadata,
+                filename=filename,
             )
             return run
 
@@ -338,6 +340,8 @@ class ProductionSystem(MvpSystem):
                 if doc is not None:
                     doc.metadata["document_ref"] = document_ref
                     doc.metadata["content_type"] = content_type
+                    if filename:
+                        doc.metadata["filename"] = filename
                     self.registry.put(doc)
                 if manufacturing_metadata is not None:
                     self.attach_manufacturing_metadata(
@@ -367,6 +371,8 @@ class ProductionSystem(MvpSystem):
             if doc is not None:
                 doc.metadata["document_ref"] = document_ref
                 doc.metadata["content_type"] = content_type
+                if filename:
+                    doc.metadata["filename"] = filename
                 self.registry.put(doc)
             if manufacturing_metadata is not None:
                 # Persist mfg approval metadata so the safety overlay (high-risk gate, draft/obsolete
@@ -411,11 +417,14 @@ class ProductionSystem(MvpSystem):
         document_ref: str,
         content_type: str,
         manufacturing_metadata: "ManufacturingDocumentMetadata | None",
+        filename: str = "",
     ) -> None:
         existing = self.registry.get(tenant_id, document_id)
         metadata = dict(existing.metadata) if existing else {}
         metadata["document_ref"] = document_ref
         metadata["content_type"] = content_type
+        if filename:
+            metadata["filename"] = filename
         if manufacturing_metadata is not None:
             from raku_rag.manufacturing.ingestion.metadata_enrichment import MFG_META_KEY
 

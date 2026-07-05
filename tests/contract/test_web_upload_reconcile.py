@@ -50,6 +50,11 @@ class WebUploadReconcileContractTest(unittest.TestCase):
         self.assertLess(set_api, reconcile)
         self.assertLess(reconcile, catch)
 
+    def test_file_row_uses_server_display_title(self) -> None:
+        # 0083: server rows show the persisted display_title (the real filename incl. Japanese),
+        # falling back to the id only for docs ingested before the filename was persisted.
+        self.assertIn("filename: doc.display_title || doc.document_id", self.full_saas)
+
     def test_upload_cta_is_always_actionable(self) -> None:
         # No file selected -> the primary button opens the file picker instead of sitting as a dead
         # grey disabled button ("押しても何も起きない"); once files are chosen it becomes the ingest

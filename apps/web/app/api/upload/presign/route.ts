@@ -80,7 +80,19 @@ function jsonError(
 }
 
 function safeFilename(rawName: string): string {
-  return (rawName || "upload.bin").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120);
+  // Keep Unicode letters (incl. Japanese 漢字/かな); only strip characters that are unsafe in a
+  // filename. The S3 object key uses a UUID (not this name), so this value is display-only — an
+  // ASCII-only scrub would needlessly turn a Japanese filename into underscores.
+  const cleaned = (rawName || "upload.bin")
+    .replace(/[\u0000-\u001f\u007f]/g, "") // control chars
+    .replace(/[\\/]/g, "_") // path separators
+    .replace(/[:*?"<>|]/g, "_") // Windows-illegal / risky
+    .replace(/\s+/g, " ")
+    .replace(/^\.+/, "") // no leading dots (hidden/relative-path tricks)
+    .trim()
+    .slice(0, 120)
+    .trim();
+  return cleaned || "upload.bin";
 }
 
 function safeObjectSegment(value: string): string {

@@ -169,3 +169,37 @@ class TestProductionIngestDocument(TestCase):
         self.assertIsNotNone(registry.doc)
         self.assertFalse(registry.doc.tombstone)
         self.assertEqual(registry.doc.metadata["document_ref"], "data:text/plain;base64,new")
+
+    def test_filename_is_persisted_to_document_metadata(self) -> None:
+        # The real (Japanese) upload filename is stored on the Document so the /files list can show it
+        # (via display_title) instead of the sanitized id. See 0083.
+        system, registry, _runs, ingestion = _fake_production(_doc(tombstone=True))
+
+        system.ingest_document(
+            tenant_id="demo",
+            collection_id="manuals",
+            source_id="standard",
+            document_id="doc-1",
+            document_ref="data:text/plain;base64,new",
+            raw=b"content",
+            content_type="text/plain",
+            filename="AK部品図面MD.xlsx",
+        )
+
+        self.assertEqual(ingestion.calls, 1)
+        self.assertEqual(registry.doc.metadata["filename"], "AK部品図面MD.xlsx")
+
+    def test_blank_filename_leaves_no_filename_key(self) -> None:
+        system, registry, _runs, _ingestion = _fake_production(_doc(tombstone=True))
+
+        system.ingest_document(
+            tenant_id="demo",
+            collection_id="manuals",
+            source_id="standard",
+            document_id="doc-1",
+            document_ref="data:text/plain;base64,new",
+            raw=b"content",
+            content_type="text/plain",
+        )
+
+        self.assertNotIn("filename", registry.doc.metadata)
