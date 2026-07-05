@@ -74,6 +74,21 @@ class UploadPresignRouteContractTest(unittest.TestCase):
         self.assertIn('claimString(claims, "custom:tenant_id")', self.source)
         self.assertNotIn("Cognito session is invalid", self.source)
 
+    def test_session_verify_origin_forces_https_behind_cloudfront(self) -> None:
+        # 0077: behind CloudFront the ALB hop is http, so a self-fetch to the reconstructed http
+        # origin hits redirect-to-https and fetch() drops Authorization -> whoami 401 -> upload
+        # wrongly reported as session_mismatch. The verify origin must be https for the public edge
+        # (only direct ALB DNS / localhost keep plain http), and must honor an internal override.
+        for marker in (
+            "function directHttpHost",
+            '.endsWith(".elb.amazonaws.com")',
+            "directHttpHost(host) ? forwardedProto : \"https\"",
+            "RAKU_UPLOAD_VERIFY_ORIGIN",
+            "RAKU_INTERNAL_API_ORIGIN",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.source)
+
     def test_valid_looking_token_rejected_by_whoami_is_session_mismatch(self) -> None:
         # If /v1/whoami rejects a JWT whose local claims are current and tenant-scoped, another
         # login is unlikely to fix the server-side Cognito/API boundary. Do not label it as a

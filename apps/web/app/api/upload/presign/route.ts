@@ -161,10 +161,38 @@ function classifyBearerToken(authorization: string): PresignErrorCode {
   return "session_mismatch";
 }
 
+// Origin used for the fail-closed session round-trip to /v1/whoami and /v1/uploads. Operators can
+// pin an internal API origin (avoids the public edge entirely); otherwise we derive it from the
+// request. IMPORTANT: behind CloudFront the ALB hop is plain HTTP (x-forwarded-proto=http) even
+// though the public edge is HTTPS, so naively self-fetching the http URL hits CloudFront's
+// redirect-to-https and fetch() STRIPS the Authorization header across the http->https scheme
+// change — /v1/whoami then 401s and a valid upload is wrongly reported as session_mismatch. The
+// public edge is always HTTPS (CloudFront, or ACM at the ALB for custom domains); only a direct
+// ALB DNS or localhost speaks plain HTTP. So force https unless we are talking straight to one of
+// those.
+function directHttpHost(host: string): boolean {
+  const bare = host.replace(/:\d+$/, "").replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    bare === "localhost" ||
+    bare === "::1" ||
+    bare.startsWith("127.") ||
+    bare.endsWith(".elb.amazonaws.com")
+  );
+}
+
 function publicOrigin(req: Request): string {
+  const override = (
+    process.env.RAKU_UPLOAD_VERIFY_ORIGIN ||
+    process.env.RAKU_INTERNAL_API_ORIGIN ||
+    ""
+  ).trim();
+  if (override) return override.replace(/\/+$/, "");
+
   const url = new URL(req.url);
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
-  const proto = req.headers.get("x-forwarded-proto") || url.protocol.replace(/:$/, "") || "http";
+  const forwardedProto =
+    req.headers.get("x-forwarded-proto") || url.protocol.replace(/:$/, "") || "http";
+  const proto = directHttpHost(host) ? forwardedProto : "https";
   return `${proto}://${host}`;
 }
 
