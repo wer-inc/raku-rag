@@ -84,7 +84,6 @@ import {
   manufacturingSafetyTelemetry,
   manufacturingSourceSyncStatus,
   manufacturingTroubleCaseSearch,
-  manufacturingUpdateDocumentMetadata,
   phoneAcceptHandoff,
   phoneCallDetail,
   phoneCreateQualityEvaluation,
@@ -10656,10 +10655,35 @@ function DocumentListBody() {
   );
 }
 
+function ingestStatusLabel(status?: string): string {
+  switch (status) {
+    case "succeeded":
+      return "取り込み完了";
+    case "running":
+      return "取り込み中";
+    case "queued":
+      return "待機中";
+    case "failed":
+      return "失敗";
+    default:
+      return status || "不明";
+  }
+}
+
+// Admin-only document detail (screens.manifest document-detail; nav-rbac grants /documents to
+// ops_owner/tenant_admin). 0085: this used to expose a raw-JSON metadata editor whose dummy default
+// (`{"owner":"ops"}`) would clobber the real governance metadata on save, plus a raw processing-status
+// JSON dump and two hardcoded placeholder fields. It is now a readable summary: real approval/source
+// come from the document summary, the internal processing JSON is collapsed behind a developer toggle,
+// and delete is a confirm-guarded destructive action. Governance edits belong to the /reviews workflow
+// and the ingest mapping, not a free-form JSON box (see issue 0085).
 function DocumentDetailBody({ documentId }: { documentId: string }) {
-  const [saving, setSaving] = useState(false);
-  const [metadata, setMetadata] = useState("{\n  \"owner\": \"ops\"\n}");
-  const [state, setState] = useState<ViewState<{ processing: Record<string, unknown> }>>({ state: "loading" });
+  const [deleting, setDeleting] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleted, setDeleted] = useState(false);
+  const [state, setState] = useState<
+    ViewState<{ processing: Record<string, unknown>; summary: ManufacturingDocumentSummary | null }>
+  >({ state: "loading" });
   const [actionError, setActionError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -10668,10 +10692,15 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
   useEffect(() => {
     let active = true;
     setState({ state: "loading" });
-    runWithToken((token) => apiGetJson(`/admin/documents/${encodeURIComponent(documentId)}/processing-status`, token))
-      .then((processing) =>
-        active && setState({ state: "ready", data: { processing: processing as Record<string, unknown> } }),
-      )
+    runWithToken(async (token) => {
+      const [processing, documents] = await Promise.all([
+        apiGetJson(`/admin/documents/${encodeURIComponent(documentId)}/processing-status`, token),
+        manufacturingDocuments(token).catch(() => [] as ManufacturingDocumentSummary[]),
+      ]);
+      const summary = documents.find((doc) => doc.document_id === documentId) ?? null;
+      return { processing: processing as Record<string, unknown>, summary };
+    })
+      .then((data) => active && setState({ state: "ready", data }))
       .catch((err) => {
         if (isAuthError(err)) clearSessionToken();
         if (active) setState({ state: "error", error: formatLoadError(err) });
@@ -10681,66 +10710,103 @@ function DocumentDetailBody({ documentId }: { documentId: string }) {
     };
   }, [documentId, refreshTick]);
 
-  async function onSave() {
-    setSaving(true);
-    setActionError(null);
-    try {
-      const parsed = JSON.parse(metadata) as Record<string, unknown>;
-      await runWithToken((token) => manufacturingUpdateDocumentMetadata(documentId, parsed, token));
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "リクエストに失敗しました");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function onDelete() {
-    setSaving(true);
+    setDeleting(true);
     setActionError(null);
     try {
       await runWithToken((token) => manufacturingDeleteDocument(documentId, token));
+      setConfirmingDelete(false);
+      setDeleted(true);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "リクエストに失敗しました");
     } finally {
-      setSaving(false);
+      setDeleting(false);
     }
   }
 
+  if (deleted) {
+    return (
+      <Section title="ドキュメント詳細">
+        <p className="ops-empty" role="status">
+          この文書を削除しました。
+        </p>
+      </Section>
+    );
+  }
+  if (state.state === "loading") {
+    return (
+      <p className="ops-empty" role="status" aria-live="polite">
+        ドキュメント情報を読み込み中…
+      </p>
+    );
+  }
+  if (state.state === "error") {
+    return <ScreenLoadError error={state.error} onRetry={reload} />;
+  }
+
+  const { processing, summary } = state.data;
+  const proc = processing as {
+    status?: string;
+    chunk_count?: number;
+    last_indexed_at?: string;
+    last_error?: string;
+  };
+  const approval = citeApproval(summary?.approval_status);
+  const displayName = summary?.display_title || documentId;
+  const rows: Array<[string, ReactNode]> = [
+    ["文書名", displayName],
+    ["利用状態", approval.label],
+    ["ソース", summary?.source_id || "—"],
+    ["分類", summary?.equipment || summary?.safety_category || "—"],
+    ["取り込み状態", ingestStatusLabel(proc.status)],
+    ["チャンク数", typeof proc.chunk_count === "number" ? String(proc.chunk_count) : "—"],
+    ["最終取り込み", proc.last_indexed_at || "—"],
+  ];
+  if (proc.last_error) rows.push(["エラー", proc.last_error]);
+
   return (
     <>
-      <Section title="ドキュメント詳細" note="文書の処理状態とメタデータを表示します。">
-        <FieldGrid
-          rows={[
-            ["文書 ID", documentId],
-            ["利用状態", APPROVAL_WORKFLOW_ENABLED ? "pending_review" : "利用可"],
-            ["ソース", "取り込みソース"],
-            [
-              "状態",
-              state.state === "ready"
-                ? String((state.data.processing as { status?: string }).status ?? "ready")
-                : "loading",
-            ],
-          ]}
-        />
+      <Section title="ドキュメント詳細" note="この文書の利用状態と取り込み状況です。">
+        <FieldGrid rows={rows} />
       </Section>
-      <Section title="メタデータ編集">
-        <textarea value={metadata} onChange={(e) => setMetadata(e.target.value)} rows={8} aria-label="メタデータ" />
-        <div className="screen-actions">
-          <button type="button" onClick={() => void onSave()} disabled={saving}>
-            メタデータを保存
-          </button>
-          <button type="button" className="btn-reject" onClick={() => void onDelete()} disabled={saving}>
-            文書を削除
-          </button>
-        </div>
+
+      <Section
+        title="処理状態(詳細)"
+        note="通常は上の要約で十分です。取り込みの内部メタデータを確認したい場合のみ展開してください。"
+      >
+        <details className="doc-processing-details">
+          <summary>処理メタデータ(開発者向け)を表示</summary>
+          <pre className="code-block">{JSON.stringify(processing, null, 2)}</pre>
+        </details>
       </Section>
-      {state.state === "loading" && <p className="ops-empty" role="status" aria-live="polite">処理状態を読み込み中…</p>}
-      {state.state === "error" && <ScreenLoadError error={state.error} onRetry={reload} />}
-      {state.state === "ready" && (
-        <Section title="処理状態">
-          <pre className="code-block">{JSON.stringify(state.data.processing, null, 2)}</pre>
-        </Section>
-      )}
+
+      <Section title="危険な操作">
+        {confirmingDelete ? (
+          <div className="screen-actions" role="alertdialog" aria-label="削除の確認">
+            <span className="ops-empty">
+              「{displayName}」を削除します。この操作は取り消せません。
+            </span>
+            <button
+              type="button"
+              className="btn-reject"
+              onClick={() => void onDelete()}
+              disabled={deleting}
+            >
+              削除する
+            </button>
+            <button type="button" onClick={() => setConfirmingDelete(false)} disabled={deleting}>
+              キャンセル
+            </button>
+          </div>
+        ) : (
+          <div className="screen-actions">
+            <button type="button" className="btn-reject" onClick={() => setConfirmingDelete(true)}>
+              文書を削除
+            </button>
+          </div>
+        )}
+      </Section>
+
       {actionError && <ScreenLoadError error={actionError} />}
     </>
   );

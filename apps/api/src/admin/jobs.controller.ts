@@ -24,7 +24,7 @@ import type {
   ReindexResponse,
   SourceSyncStatusResponse,
 } from "@raku-rag/shared";
-import { assertAdminMutationAllowed } from "../auth/roles";
+import { assertAdminMutationAllowed, assertAnyRoleAllowed } from "../auth/roles";
 import { internalAuthHeaders } from "../auth/internal-auth";
 import { stripTenantOverrides } from "../auth/strip-tenant";
 
@@ -244,6 +244,16 @@ export class AdminJobsController {
     @Req() req: Request,
     @Param("document_id") documentId: string,
   ): Promise<DocumentProcessingStatusResponse> {
+    // 0085 defense-in-depth: processing-status exposes internal ingest metadata (chunk counts, parser/
+    // embedding versions, run ids). The document-detail screen is nav-gated to ops_owner/tenant_admin,
+    // but this facade read had no server-side role check — a field/reader member with a valid token
+    // could fetch it directly. Gate it to the document-viewing roles (ops_owner is the documents
+    // manager, so it MUST be included or the very role that owns the screen would 403).
+    assertAnyRoleAllowed(
+      req,
+      ["ops_owner", "tenant_admin", "platform_admin", "admin", "owner"],
+      "document admin role required",
+    );
     return this.getFromCore(req, `/internal/documents/${encodeURIComponent(documentId)}/processing-status`);
   }
 

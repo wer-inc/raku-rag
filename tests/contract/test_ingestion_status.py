@@ -43,6 +43,14 @@ class IngestionStatusContractTest(unittest.TestCase):
         self.assertIn('@Delete("documents/:document_id")', controller)
         self.assertIn("x-raku-tenant-id", controller)
 
+        # 0085: the processing-status READ is role-gated server-side (defense-in-depth). ops_owner MUST
+        # be in the set — it is the documents manager and owns the /documents screen (see nav-rbac).
+        self.assertIn("assertAnyRoleAllowed", controller)
+        self.assertIn(
+            '["ops_owner", "tenant_admin", "platform_admin", "admin", "owner"]',
+            controller,
+        )
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

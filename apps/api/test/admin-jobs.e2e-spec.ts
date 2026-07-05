@@ -260,6 +260,18 @@ describe("admin ingestion status facade (e2e)", () => {
     expect(res.body.index_status).toBe("succeeded");
   });
 
+  it("rejects non-admin reads of processing-status (0085 defense-in-depth)", async () => {
+    const before = seen.length;
+    const res = await request(app.getHttpServer())
+      .get("/v1/admin/documents/doc1/processing-status")
+      .set("Authorization", "Bearer local-dev-key")
+      .set("X-User-Token", readerToken);
+
+    expect(res.status).toBe(403);
+    // The role check runs at the facade — the request must never reach the core.
+    expect(seen.length).toBe(before);
+  });
+
   it("rejects non-admin roles before forwarding job mutations", async () => {
     const before = seen.length;
 
