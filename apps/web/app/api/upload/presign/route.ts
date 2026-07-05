@@ -25,6 +25,25 @@ const EXT_CONTENT_TYPE: Record<string, string> = {
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
+type PresignErrorCode =
+  | "session_missing"
+  | "reauth_required"
+  | "session_mismatch"
+  | "tenant_not_configured"
+  | "permission_denied"
+  | "upload_unavailable"
+  | "invalid_request";
+
+const ERROR_MESSAGES: Record<PresignErrorCode, string> = {
+  session_missing: "ログインしてください",
+  reauth_required: "ログイン情報を更新してください",
+  session_mismatch: "ログイン設定が変更されました。ログインし直してください",
+  tenant_not_configured: "アカウント設定が未完了です。管理者に確認してください",
+  permission_denied: "この操作を行う権限がありません。管理者に確認してください",
+  upload_unavailable: "アップロード設定を確認してください",
+  invalid_request: "アップロード内容を確認してください",
+};
+
 function flagEnabled(value: string): boolean {
   return value === "1" || value.toLowerCase() === "true";
 }
@@ -52,8 +71,12 @@ function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function jsonError(message: string, status: number): NextResponse {
-  return NextResponse.json({ error: message }, { status });
+function jsonError(
+  message: string,
+  status: number,
+  errorCode: PresignErrorCode = "invalid_request",
+): NextResponse {
+  return NextResponse.json({ error_code: errorCode, error: message }, { status });
 }
 
 function safeFilename(rawName: string): string {
@@ -80,6 +103,64 @@ function principalFromWhoami(value: unknown): VerifiedPrincipal | null {
   return { tenant_id: tenantId.trim(), user_id: userId.trim() };
 }
 
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const [, payload] = token.split(".");
+    if (!payload) return null;
+    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function claimString(claims: Record<string, unknown> | null, key: string): string {
+  const value = claims?.[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizedIssuer(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+function first(...values: Array<string | undefined>): string {
+  return values.find((value) => value && value.trim()) ?? "";
+}
+
+function claimMatchesStringOrArray(value: unknown, expected: string): boolean {
+  if (!expected) return true;
+  if (typeof value === "string") return value === expected;
+  return Array.isArray(value) && value.includes(expected);
+}
+
+function tokenClientMatches(claims: Record<string, unknown>, clientId: string): boolean {
+  return claimMatchesStringOrArray(claims.aud, clientId) || claimString(claims, "client_id") === clientId;
+}
+
+function classifyBearerToken(authorization: string): PresignErrorCode {
+  const token = authorization.replace(/^bearer\s+/i, "").trim();
+  const claims = decodeJwtPayload(token);
+  if (!claims) return "reauth_required";
+
+  const now = Math.floor(Date.now() / 1000);
+  if (typeof claims.exp !== "number" || claims.exp <= now + 30) return "reauth_required";
+  if (typeof claims.nbf === "number" && claims.nbf > now) return "reauth_required";
+  const tokenUse = claimString(claims, "token_use");
+  if (tokenUse !== "id" && tokenUse !== "access") return "reauth_required";
+
+  const issuer = first(process.env.COGNITO_ISSUER, process.env.NEXT_PUBLIC_COGNITO_ISSUER);
+  if (issuer && normalizedIssuer(claimString(claims, "iss")) !== normalizedIssuer(issuer)) {
+    return "session_mismatch";
+  }
+  const clientId = first(
+    process.env.COGNITO_CLIENT_ID,
+    process.env.COGNITO_USER_POOL_CLIENT_ID,
+    process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID,
+  );
+  if (clientId && !tokenClientMatches(claims, clientId)) return "session_mismatch";
+  if (!claimString(claims, "custom:tenant_id")) return "tenant_not_configured";
+  return "reauth_required";
+}
+
 function publicOrigin(req: Request): string {
   const url = new URL(req.url);
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;
@@ -90,7 +171,7 @@ function publicOrigin(req: Request): string {
 async function assertAppSession(req: Request): Promise<{ principal: VerifiedPrincipal } | Response> {
   const authorization = req.headers.get("authorization") || "";
   if (!authorization.toLowerCase().startsWith("bearer ")) {
-    return jsonError("Cognito session is missing; sign in again", 401);
+    return jsonError(ERROR_MESSAGES.session_missing, 401, "session_missing");
   }
 
   const origin = publicOrigin(req);
@@ -105,25 +186,27 @@ async function assertAppSession(req: Request): Promise<{ principal: VerifiedPrin
       cache: "no-store",
     });
     if (!res.ok) {
-      return jsonError("Cognito session is invalid; sign in again", 401);
+      const code =
+        res.status === 403 ? "permission_denied" : classifyBearerToken(authorization);
+      return jsonError(ERROR_MESSAGES[code], res.status === 403 ? 403 : 401, code);
     }
     const principal = principalFromWhoami(await res.json().catch(() => null));
     if (!principal) {
-      return jsonError("could not resolve tenant before upload", 401);
+      return jsonError(ERROR_MESSAGES.tenant_not_configured, 401, "tenant_not_configured");
     }
     return { principal };
   } catch {
-    return jsonError("could not verify session before upload", 502);
+    return jsonError("セッション確認に失敗しました。少し待ってから再試行してください", 502, "upload_unavailable");
   }
 }
 
 export async function POST(req: Request) {
   if (!enabled()) {
-    return jsonError("upload sink disabled", 403);
+    return jsonError("この環境ではファイルアップロードが無効です", 403, "upload_unavailable");
   }
   const bucket = uploadBucket();
   if (!bucket) {
-    return jsonError("S3 upload bucket is not configured", 501);
+    return jsonError("S3 アップロードバケットが設定されていません", 501, "upload_unavailable");
   }
 
   const session = await assertAppSession(req);
@@ -131,16 +214,16 @@ export async function POST(req: Request) {
 
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) {
-    return jsonError("invalid JSON body", 400);
+    return jsonError("アップロード内容を確認してください", 400, "invalid_request");
   }
 
   const filename = safeFilename(text(body.filename));
   const size = Number(body.size);
   if (!Number.isFinite(size) || size <= 0) {
-    return jsonError("file size is required", 400);
+    return jsonError("ファイルサイズを確認してください", 400, "invalid_request");
   }
   if (size > MAX_BYTES) {
-    return jsonError("file too large (max 25MB)", 413);
+    return jsonError("ファイルが大きすぎます（最大25MB）", 413, "invalid_request");
   }
 
   const ext = path.extname(filename).toLowerCase();
@@ -181,7 +264,7 @@ export async function POST(req: Request) {
     }),
   }).catch(() => null);
   if (!registerRes || !registerRes.ok) {
-    return jsonError("could not register upload before presigning", 502);
+    return jsonError("アップロード準備に失敗しました。少し待って再試行してください", 502, "upload_unavailable");
   }
 
   const client = new S3Client({ region });
