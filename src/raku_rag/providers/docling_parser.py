@@ -48,6 +48,7 @@ from raku_rag.domain.parsed_document import (
     TableColumn,
 )
 from raku_rag.providers.ocr.pluggable import OcrProvider, select_ocr_provider
+from raku_rag.providers.page_routing import PAGE_CLEAN_DIGITAL, classify_page_route
 from raku_rag.providers.vlm_draft import VlmDraftProvider, select_vlm_draft_provider
 from raku_rag.services.quality_detectors import (
     VisualArtifactDetector,
@@ -284,7 +285,25 @@ class DoclingStructuredParser:
             result=("scanned_pages" if scanned else "all_digital"),
             reason=f"scanned={scanned}" if scanned else "text_layer_present",
         )
-        return replace(parsed, pages=pages, route_trace=(step,) + parsed.route_trace)
+        # §6.2: name the per-page route for any non-trivial page, so the routing decision is traceable
+        # (§6.3). Execution of exotic routes stays opt-in on the providers; this records the intent.
+        route_notes: list[str] = []
+        for page in pages:
+            route = classify_page_route(page.signals)
+            if route.page_type != PAGE_CLEAN_DIGITAL:
+                route_notes.append(f"p{page.page_no}:{route.page_type}->{route.primary}")
+        new_steps: tuple[RouteTraceStep, ...] = (step,)
+        if route_notes:
+            new_steps += (
+                RouteTraceStep(
+                    stage="page_route",
+                    provider=PROVIDER,
+                    result=f"{len(route_notes)}_pages_routed",
+                    reason="§6.2 per-page routing",
+                    signals=tuple(route_notes[:32]),
+                ),
+            )
+        return replace(parsed, pages=pages, route_trace=new_steps + parsed.route_trace)
 
     def _convert(self, raw: bytes, content_type: str, *, filename: str):
         from docling.datamodel.base_models import DocumentStream
