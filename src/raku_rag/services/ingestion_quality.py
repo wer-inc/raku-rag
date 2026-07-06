@@ -359,13 +359,17 @@ def extraction_quality_stats(store: object, *, tenant_id: str | None = None) -> 
     Surfaces the §18.1 status distribution + per-status rates (accepted / accepted_with_warnings /
     review_required / rejected / draft_visual / manual_approved) and the §18.2 quality-reason counts
     (mojibake / empty_extraction / low_table_structure_confidence / drawing_only_page /
-    handwriting_or_seal_detected / language_mismatch …). Feeds monitoring/alerting — a rising
-    quarantine rate flags an upstream extraction regression. Uses the ``iter_items`` scan; a Postgres
+    handwriting_or_seal_detected / language_mismatch …), plus the §18.1 provider distribution
+    (``by_provider``, the winning provider per chunk from the persisted route_trace) and ``fallback_rate``
+    (how often a fallback provider was needed). Feeds monitoring/alerting — a rising quarantine or
+    fallback rate flags an upstream extraction regression. Uses the ``iter_items`` scan; a Postgres
     GROUP BY variant is the scale version (future).
     """
 
     counts: dict[str, int] = {}
     by_reason: dict[str, int] = {}
+    by_provider: dict[str, int] = {}  # §18.1 provider distribution (the winning provider per chunk)
+    fallback_count = 0  # §18.1 fallback rate
     total = 0
     iter_items = getattr(store, "iter_items", None)
     if callable(iter_items):
@@ -379,6 +383,11 @@ def extraction_quality_stats(store: object, *, tenant_id: str | None = None) -> 
             for reason in values.get(EXTRACTION_QUALITY_REASONS_KEY) or ():
                 if reason:
                     by_reason[str(reason)] = by_reason.get(str(reason), 0) + 1
+            provider, had_fallback = _route_provider_and_fallback(values.get("route_trace"))
+            if provider:
+                by_provider[provider] = by_provider.get(provider, 0) + 1
+            if had_fallback:
+                fallback_count += 1
             total += 1
     quarantined = sum(counts.get(s, 0) for s in RETRIEVAL_BLOCKING_QUALITY_STATUSES)
     rates = {status: (count / total if total else 0.0) for status, count in counts.items()}
@@ -387,9 +396,29 @@ def extraction_quality_stats(store: object, *, tenant_id: str | None = None) -> 
         "by_status": counts,
         "rates": rates,
         "by_reason": by_reason,
+        "by_provider": by_provider,
+        "fallback_rate": (fallback_count / total) if total else 0.0,
         "quarantined": quarantined,
         "quarantine_rate": (quarantined / total) if total else 0.0,
     }
+
+
+def _route_provider_and_fallback(route_trace: object) -> tuple[str, bool]:
+    """From a persisted route_trace, return (winning provider, had a fallback step) for §18.1 metrics."""
+
+    if not isinstance(route_trace, (list, tuple)):
+        return "", False
+    provider = ""
+    had_fallback = False
+    for step in route_trace:
+        step_map = step if isinstance(step, Mapping) else {}
+        if step_map.get("stage") == "fallback":
+            had_fallback = True
+        if step_map.get("provider"):
+            provider = str(
+                step_map.get("provider")
+            )  # last named provider = the one that produced it
+    return provider, had_fallback
 
 
 def extraction_review_queue(

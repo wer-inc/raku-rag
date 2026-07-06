@@ -237,6 +237,34 @@ class ExtractionReviewQueueTest(unittest.TestCase):
         self.assertAlmostEqual(stats["rates"]["accepted"], 2 / 3)
         self.assertEqual(stats["by_reason"].get("x"), 1)
 
+    def test_stats_provider_distribution_and_fallback_rate(self) -> None:
+        # §18.1 — from the persisted route_trace: which provider won, and how often a fallback ran.
+        from raku_rag.services.ingestion_quality import extraction_quality_stats
+
+        def with_route(cid, steps):
+            meta = accepted_quality_metadata()
+            meta["route_trace"] = steps
+            return self._chunk(cid, meta)
+
+        native = with_route(
+            "a:0", [{"stage": "extract", "provider": "docling", "result": "accepted"}]
+        )
+        fell_back = with_route(
+            "b:0",
+            [
+                {"stage": "extract", "provider": "docling", "result": "partial"},
+                {"stage": "fallback", "provider": "rapidocr", "result": "accepted"},
+            ],
+        )
+
+        class _InMemStore:
+            def iter_items(self):
+                return ((native, None), (fell_back, None))
+
+        stats = extraction_quality_stats(_InMemStore())
+        self.assertEqual(stats["by_provider"], {"docling": 1, "rapidocr": 2 - 1})
+        self.assertAlmostEqual(stats["fallback_rate"], 1 / 2)
+
 
 if __name__ == "__main__":
     unittest.main()
