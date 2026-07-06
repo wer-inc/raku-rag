@@ -24,6 +24,14 @@ OCR_PROVIDER_ENV = "RAKU_OCR_PROVIDER"
 OCR_PROVIDER_NONE = "none"
 
 
+def _spec_exists(name: str) -> bool:
+    """find_spec that returns False (not raises) when a dotted parent package is absent."""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+
+
 @dataclass(frozen=True)
 class OcrResult:
     text: str = ""
@@ -142,13 +150,71 @@ class PaddleOcrProvider:
         return OcrResult(text="\n".join(lines).strip(), provider=self.name)
 
 
-# §9.4 candidate registry. Google Document AI / Azure DI / Azure Vision are cloud providers wired
-# behind tenant data-egress policy (§19) — added here as they land; NOT enabled by default.
+class GoogleDocumentAiOcrProvider:
+    """Google Document AI Enterprise OCR (§9.4) — 200+ langs incl. Japanese + handwriting. Cloud.
+
+    Opt-in; sends document bytes to Google, so it is gated by tenant data-egress policy (§19). Requires
+    google-cloud-documentai + GOOGLE_DOCAI_PROCESSOR (full processor resource name)."""
+
+    name = "google_docai"
+
+    def available(self) -> bool:
+        return (
+            _spec_exists("google.cloud.documentai")
+            and bool(os.environ.get("GOOGLE_DOCAI_PROCESSOR"))
+        )
+
+    def ocr_image(self, image_png: bytes) -> OcrResult:
+        if not self.available():
+            return OcrResult(provider=self.name)
+        from google.cloud import documentai  # lazy, opt-in
+
+        client = documentai.DocumentProcessorServiceClient()
+        raw = documentai.RawDocument(content=image_png, mime_type="image/png")
+        name = os.environ["GOOGLE_DOCAI_PROCESSOR"]
+        result = client.process_document(request=documentai.ProcessRequest(name=name, raw_document=raw))
+        return OcrResult(text=(result.document.text or "").strip(), provider=self.name)
+
+
+class AzureDocumentIntelligenceOcrProvider:
+    """Azure Document Intelligence layout/OCR (§9.4) — Japanese print + handwriting, tables. Cloud.
+
+    Opt-in; §19 data-egress policy applies. Requires azure-ai-documentintelligence +
+    AZURE_DOCINTEL_ENDPOINT + AZURE_DOCINTEL_KEY."""
+
+    name = "azure_docintel"
+
+    def available(self) -> bool:
+        return (
+            _spec_exists("azure.ai.documentintelligence")
+            and bool(os.environ.get("AZURE_DOCINTEL_ENDPOINT"))
+            and bool(os.environ.get("AZURE_DOCINTEL_KEY"))
+        )
+
+    def ocr_image(self, image_png: bytes) -> OcrResult:
+        if not self.available():
+            return OcrResult(provider=self.name)
+        from azure.ai.documentintelligence import DocumentIntelligenceClient  # lazy, opt-in
+        from azure.core.credentials import AzureKeyCredential
+
+        client = DocumentIntelligenceClient(
+            endpoint=os.environ["AZURE_DOCINTEL_ENDPOINT"],
+            credential=AzureKeyCredential(os.environ["AZURE_DOCINTEL_KEY"]),
+        )
+        poller = client.begin_analyze_document("prebuilt-read", body=image_png)
+        return OcrResult(text=(poller.result().content or "").strip(), provider=self.name)
+
+
+# §9.4 candidate registry. Cloud providers (Google Document AI / Azure DI) are opt-in and gated by
+# tenant data-egress policy (§19). Textract stays a supplementary, non-default provider (§9.5, wired
+# in providers/aws_visual.py). The default remains "none" — never Docling's built-in OCR (§4.2).
 OCR_PROVIDERS: dict[str, type] = {
     OCR_PROVIDER_NONE: NoOpOcrProvider,
     "rapidocr": RapidOcrProvider,
     "tesseract": TesseractOcrProvider,
     "paddleocr": PaddleOcrProvider,
+    "google_docai": GoogleDocumentAiOcrProvider,
+    "azure_docintel": AzureDocumentIntelligenceOcrProvider,
 }
 
 

@@ -60,6 +60,46 @@ class DoclingOfflineFallbackTest(unittest.TestCase):
         self.assertEqual(doc.blocks[0].provenance.route, "docling_unavailable_fallback")
 
 
+def _minimal_pdf(text: str) -> bytes:
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    ]
+    stream = b"BT /F1 24 Tf 72 700 Td (" + text.encode("latin-1") + b") Tj ET"
+    objs.append(b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream")
+    objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += str(i).encode() + b" 0 obj\n" + body + b"\nendobj\n"
+    xref_pos = len(out)
+    out += b"xref\n0 " + str(len(objs) + 1).encode() + b"\n0000000000 65535 f \n"
+    for off in offsets:
+        out += ("%010d 00000 n \n" % off).encode()
+    out += (
+        b"trailer\n<< /Size " + str(len(objs) + 1).encode() + b" /Root 1 0 R >>\n"
+        b"startxref\n" + str(xref_pos).encode() + b"\n%%EOF"
+    )
+    return bytes(out)
+
+
+class PreflightTest(unittest.TestCase):
+    def test_preflight_detects_text_layer(self) -> None:
+        from raku_rag.providers.docling_parser import preflight_pdf_pages
+
+        signals = preflight_pdf_pages(_minimal_pdf("Hello digital page"))
+        self.assertEqual(signals.get(1, {}).get("has_text_layer"), True)
+        self.assertEqual(signals.get(1, {}).get("is_scanned"), False)
+
+    def test_preflight_on_garbage_is_empty(self) -> None:
+        from raku_rag.providers.docling_parser import preflight_pdf_pages
+
+        self.assertEqual(preflight_pdf_pages(b"not a pdf"), {})
+
+
 class _FakeConfidence:
     def __init__(self, mean, low, layout) -> None:
         self.mean_score = mean

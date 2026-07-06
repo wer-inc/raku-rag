@@ -57,6 +57,16 @@ class SelectOcrProviderTest(unittest.TestCase):
     def test_unknown_name_falls_back_to_noop(self) -> None:
         self.assertIsInstance(select_ocr_provider("does-not-exist"), NoOpOcrProvider)
 
+    def test_cloud_providers_registered_and_unavailable_without_creds(self) -> None:
+        # §9.4 cloud candidates are selectable but report unavailable without SDK+creds (never crash
+        # on find_spec of a missing dotted parent, e.g. google.cloud).
+        g = select_ocr_provider("google_docai")
+        a = select_ocr_provider("azure_docintel")
+        self.assertEqual(g.name, "google_docai")
+        self.assertEqual(a.name, "azure_docintel")
+        self.assertFalse(g.available())
+        self.assertFalse(a.available())
+
     def test_noop_is_unavailable_and_empty(self) -> None:
         p = NoOpOcrProvider()
         self.assertFalse(p.available())

@@ -182,7 +182,38 @@ class DoclingStructuredParser:
             started_at=started_at,
             finished_at=_utcnow(),
         )
+        parsed = self._apply_preflight(parsed, raw, content_type)
         return self._apply_external_ocr(parsed, raw, content_type)
+
+    # --- preflight (§6.1/§6.2): classify digital vs scanned pages, record routing signals ---------
+    def _apply_preflight(
+        self, parsed: ParsedDocument, raw: bytes, content_type: str
+    ) -> ParsedDocument:
+        if content_type != "application/pdf" or not parsed.pages:
+            return parsed
+        signals = preflight_pdf_pages(raw)
+        if not signals:
+            return parsed
+        pages = tuple(
+            replace(
+                page,
+                signals={**dict(page.signals), **signals.get(page.page_no, {})},
+                page_type=(
+                    "scanned"
+                    if signals.get(page.page_no, {}).get("is_scanned")
+                    else (page.page_type or "digital")
+                ),
+            )
+            for page in parsed.pages
+        )
+        scanned = [no for no, s in signals.items() if s.get("is_scanned")]
+        step = RouteTraceStep(
+            stage="preflight",
+            provider=PROVIDER,
+            result=("scanned_pages" if scanned else "all_digital"),
+            reason=f"scanned={scanned}" if scanned else "text_layer_present",
+        )
+        return replace(parsed, pages=pages, route_trace=(step,) + parsed.route_trace)
 
     def _convert(self, raw: bytes, content_type: str, *, filename: str):
         from docling.datamodel.base_models import DocumentStream
@@ -513,6 +544,32 @@ def _table_from_item(item, order: int, prov) -> Table | None:
         cells=tuple(cells),
         provenance=prov,
     )
+
+
+def preflight_pdf_pages(raw: bytes) -> dict[int, dict]:
+    """ADR §6.1 preflight: per-page {has_text_layer, is_scanned} via the PDF text layer.
+
+    A page with no extractable text layer is treated as scanned (image-only) — the signal that routes
+    it to the external OCR provider (§6.2). Best-effort: returns {} if pypdfium2 is unavailable.
+    """
+    try:
+        import pypdfium2 as pdfium
+
+        out: dict[int, dict] = {}
+        pdf = pdfium.PdfDocument(raw)
+        try:
+            for idx in range(len(pdf)):
+                textpage = pdf[idx].get_textpage()
+                try:
+                    has_text = textpage.count_chars() > 0
+                finally:
+                    textpage.close()
+                out[idx + 1] = {"has_text_layer": has_text, "is_scanned": not has_text}
+        finally:
+            pdf.close()
+        return out
+    except Exception:  # pragma: no cover - preflight is best-effort
+        return {}
 
 
 def render_pdf_page_png(raw: bytes, page_no: int) -> bytes | None:
