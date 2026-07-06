@@ -355,6 +355,11 @@ def build_structured_ingestion_service(
 ) -> StructuredIngestionService:
     """App factory (ADR-018 B5 wiring) — used behind the ``structured_ingest_enabled`` flag."""
 
+    if raw_sink is None:
+        from raku_rag.services.raw_sink import build_raw_sink
+
+        raw_sink = build_raw_sink()  # §P2: fs/s3 via RAKU_RAW_SINK env; default None (no-op)
+
     return StructuredIngestionService(
         store=store,
         embedder=embedder,

@@ -279,6 +279,23 @@ def extraction_review_items(
     return queue
 
 
+def extraction_review_queue(store: object, *, tenant_id: str | None = None) -> list[ExtractionReviewItem]:
+    """Backend-agnostic review queue: an efficient JSONB filter on Postgres, else the in-mem projection.
+
+    Prefers ``store.list_extraction_review_chunks()`` (ADR-018 A9, a metadata WHERE) when the store
+    exposes it; otherwise projects over ``store.iter_items()``. Both read the same SSOT (stored quality
+    metadata), so the result is identical — only the cost differs.
+    """
+
+    efficient = getattr(store, "list_extraction_review_chunks", None)
+    if callable(efficient):
+        return extraction_review_items(efficient(), tenant_id=tenant_id)
+    iter_items = getattr(store, "iter_items", None)
+    if callable(iter_items):
+        return extraction_review_items(iter_items(), tenant_id=tenant_id)
+    return []
+
+
 def _metadata_mapping(value: Mapping[str, object] | object | None) -> Mapping[str, object]:
     if value is None:
         return {}

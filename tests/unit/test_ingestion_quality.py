@@ -156,6 +156,34 @@ class ExtractionReviewQueueTest(unittest.TestCase):
         self.assertEqual(len(extraction_review_items([chunk], tenant_id="t")), 1)
         self.assertEqual(len(extraction_review_items([chunk], tenant_id="other")), 0)
 
+    def test_extraction_review_queue_prefers_efficient_store_method(self) -> None:
+        from raku_rag.services.ingestion_quality import extraction_review_queue
+
+        rev = self._chunk("rev:0", review_required_quality_metadata(reasons=("x",)))
+
+        class _EfficientStore:
+            def list_extraction_review_chunks(self):
+                return (rev,)
+
+            def iter_items(self):  # must NOT be used when the efficient method exists
+                raise AssertionError("iter_items should not be called")
+
+        q = extraction_review_queue(_EfficientStore(), tenant_id="t")
+        self.assertEqual([it.document_id for it in q], ["rev"])
+
+    def test_extraction_review_queue_falls_back_to_iter_items(self) -> None:
+        from raku_rag.services.ingestion_quality import extraction_review_queue
+
+        rev = self._chunk("rev:0", review_required_quality_metadata())
+        acc = self._chunk("acc:0", accepted_quality_metadata())
+
+        class _InMemStore:
+            def iter_items(self):
+                return ((acc, None), (rev, None))
+
+        q = extraction_review_queue(_InMemStore())
+        self.assertEqual([it.document_id for it in q], ["rev"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -577,6 +577,24 @@ class PostgresVectorStore(VectorStore):
         empty: Vector = []
         return tuple((_row_to_chunk(r), empty) for r in rows)
 
+    def list_extraction_review_chunks(self) -> tuple[Chunk, ...]:
+        """ADR-018 A9 §12.1 — RLS-scoped chunks quarantined for extraction review, via a JSONB filter.
+
+        Efficient at scale (a WHERE on ``metadata`` instead of the full ``iter_items`` scan). RLS
+        scopes rows to the connection's current tenant; the caller may re-filter. Vector not needed.
+        """
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "
+                "token_count, position, heading_path, offset_mapping, metadata, "
+                "embedding_model_version, tombstone FROM chunks "
+                "WHERE metadata->>'extraction_quality_status' IN ('review_required', 'draft_visual') "
+                "OR (metadata->>'quality_review_required') = 'true' "
+                "ORDER BY chunk_id"
+            )
+            rows = cur.fetchall()
+        return tuple(_row_to_chunk(r) for r in rows)
+
     def search(
         self, tenant_id: str, query_vec: Vector, *, visible: VisibilityPredicate, top_k: int
     ) -> list[ScoredChunk]:
