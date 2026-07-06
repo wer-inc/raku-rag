@@ -208,6 +208,9 @@ class RouteTraceStep:
     result: str = ""
     reason: str = ""
     signals: tuple[str, ...] = ()
+    latency_ms: float | None = (
+        None  # §18.3: measured wall-clock for a real provider call (None if not timed)
+    )
 
 
 @dataclass(frozen=True)

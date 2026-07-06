@@ -265,6 +265,41 @@ class ExtractionReviewQueueTest(unittest.TestCase):
         self.assertEqual(stats["by_provider"], {"docling": 1, "rapidocr": 2 - 1})
         self.assertAlmostEqual(stats["fallback_rate"], 1 / 2)
 
+    def test_latency_cost_stats_dedupe_percentiles_and_cost(self) -> None:
+        # §18.3 — measured latency (per stage, p50/p95) + config cost, deduped by document.
+        from raku_rag.services.ingestion_quality import extraction_latency_cost_stats
+
+        def doc_chunk(cid, doc, route):
+            meta = accepted_quality_metadata()
+            meta["route_trace"] = route
+            return Chunk(**{**self._chunk(cid, meta).__dict__, "document_id": doc})
+
+        rt_a = [
+            {"stage": "extract", "provider": "docling", "latency_ms": 100.0},
+            {"stage": "ocr", "provider": "rapidocr", "latency_ms": 200.0},
+        ]
+        rt_b = [{"stage": "extract", "provider": "docling", "latency_ms": 150.0}]
+
+        class _InMemStore:
+            def iter_items(self):
+                # doc A has two chunks — its route_trace must be counted once.
+                return (
+                    (doc_chunk("a:0", "A", rt_a), None),
+                    (doc_chunk("a:1", "A", rt_a), None),
+                    (doc_chunk("b:0", "B", rt_b), None),
+                )
+
+        stats = extraction_latency_cost_stats(
+            _InMemStore(), cost_model={"rapidocr": 0.002, "docling": 0.0}
+        )
+        self.assertEqual(stats["documents"], 2)
+        self.assertEqual(stats["latency_ms_by_stage"]["extract"]["p50"], 125.0)
+        self.assertEqual(stats["latency_ms_by_stage"]["extract"]["count"], 2)
+        self.assertEqual(stats["latency_ms_by_stage"]["ocr"]["p50"], 200.0)
+        self.assertEqual(stats["provider_calls"], {"docling": 2, "rapidocr": 1})
+        self.assertAlmostEqual(stats["total_cost"], 0.002)
+        self.assertAlmostEqual(stats["cost_per_document"], 0.001)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1522,7 +1522,7 @@ VLM は難物 fallback として使うが、出力は `draft_visual` とし、�
 | §10/Phase D | VLM draft fallback → `draft_visual`（HITL 承認前提） | opt-in | `providers/vlm_draft.py`：`BedrockVlmDraftProvider`（実 Claude vision, `RAKU_VLM_DRAFT_PROVIDER=bedrock`）+ NoOp 既定 |
 | §8.4 | 手書き/印鑑/図面の vision 検出器 | opt-in | `quality_detectors.BedrockVisualArtifactDetector`（実 Claude vision, `RAKU_VISUAL_ARTIFACT_DETECTOR=bedrock`）+ NoOp 既定 |
 | §12.2/§10.3 | reviewer アクション（approve/edit/reject/reprocess/mark_non_content/escalate）+ `manual_approved` 昇格 | live | `services/review_actions.py`, `POST /internal/reviews/extraction/actions`, `apps/api ReviewsController`, `apps/web /reviews/extraction` |
-| §18 | 運用メトリクス（§18.1 status別レート + provider分布 + fallback率 / §18.2 reason別カウント + quarantine率） | live（§18.3 cost/latency と §18.4 RAG品質は既存 observability 側） | `ingestion_quality.extraction_quality_stats`（route_trace から by_provider/fallback_rate 算出）, `GET /internal/reviews/extraction/metrics` |
+| §18 | 運用メトリクス（§18.1 status別レート+provider分布+fallback率 / §18.2 reason別+quarantine率 / §18.3 stage別 latency p50/p95（実計測）+ provider別 call数・cost（config）） | live（§18.4 RAG品質は既存 eval/observability 側；§18.3 の queue待ち・worker memory は infra 側） | `ingestion_quality.extraction_quality_stats` + `extraction_latency_cost_stats`（route_trace の `latency_ms` を集計、docごと重複排除）+ `services/ingestion_cost.provider_cost_model`（`RAKU_INGEST_COST_MODEL`）; docling/OCR/VLM の実呼び出しを計時（`RouteTraceStep.latency_ms`）; `GET /internal/reviews/extraction/metrics.latency_cost` |
 | §13.2/§9.1 | worker が PDF を Docling 経路へ | live | `IngestionExecutor(structured_pdf=…)`（構造化ON時） |
 | 配線 | 構造化取り込みへのフラグ切替 | live | `RAKU_STRUCTURED_INGEST` → `app.py`/`production.py`（A1） |
 

@@ -403,6 +403,88 @@ def extraction_quality_stats(store: object, *, tenant_id: str | None = None) -> 
     }
 
 
+def _percentile(values: list[float], p: float) -> float | None:
+    """Linear-interpolation percentile (stdlib, no numpy). None on empty input."""
+
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    k = (len(ordered) - 1) * (p / 100.0)
+    lo = int(k)
+    hi = min(lo + 1, len(ordered) - 1)
+    if lo == hi:
+        return ordered[lo]
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
+
+
+def extraction_latency_cost_stats(
+    store: object,
+    *,
+    tenant_id: str | None = None,
+    cost_model: Mapping[str, float] | None = None,
+) -> dict[str, object]:
+    """ADR-018 §18.3 — latency (measured) + cost (config) from the persisted route_trace.
+
+    route_trace is document-level, so this dedupes by document_id (each document's trace counted once)
+    to avoid multiplying by chunk count. Reports per-stage latency p50/p95 (Docling ``extract`` / ``ocr``
+    / ``vlm``), per-provider call counts, and cost from the ``RAKU_INGEST_COST_MODEL`` cost map (0 when
+    unconfigured — honest rather than invented). Feeds the §18.3 dashboard.
+    """
+
+    if cost_model is None:
+        from raku_rag.services.ingestion_cost import provider_cost_model
+
+        cost_model = provider_cost_model()
+
+    seen_docs: set[str] = set()
+    latency_by_stage: dict[str, list[float]] = {}
+    provider_calls: dict[str, int] = {}
+    cost_by_provider: dict[str, float] = {}
+    total_cost = 0.0
+
+    iter_items = getattr(store, "iter_items", None)
+    if callable(iter_items):
+        for entry in iter_items():
+            chunk = entry[0] if isinstance(entry, tuple) else entry
+            if tenant_id is not None and getattr(chunk, "tenant_id", None) != tenant_id:
+                continue
+            doc_id = str(getattr(chunk, "document_id", "") or "")
+            if doc_id in seen_docs:
+                continue  # route_trace is document-level — count each document once
+            seen_docs.add(doc_id)
+            route = _metadata_mapping(getattr(chunk, "metadata", None)).get("route_trace")
+            if not isinstance(route, (list, tuple)):
+                continue
+            for step in route:
+                step_map = step if isinstance(step, Mapping) else {}
+                stage = str(step_map.get("stage") or "")
+                provider = str(step_map.get("provider") or "")
+                latency = step_map.get("latency_ms")
+                if isinstance(latency, (int, float)):
+                    latency_by_stage.setdefault(stage, []).append(float(latency))
+                if provider and stage in {"extract", "ocr", "vlm"}:
+                    provider_calls[provider] = provider_calls.get(provider, 0) + 1
+                    unit = float(cost_model.get(provider, 0.0) or 0.0)
+                    cost_by_provider[provider] = cost_by_provider.get(provider, 0.0) + unit
+                    total_cost += unit
+
+    docs = len(seen_docs)
+    latency = {
+        stage: {"p50": _percentile(vals, 50), "p95": _percentile(vals, 95), "count": len(vals)}
+        for stage, vals in latency_by_stage.items()
+    }
+    return {
+        "documents": docs,
+        "latency_ms_by_stage": latency,
+        "provider_calls": provider_calls,
+        "cost_by_provider": cost_by_provider,
+        "total_cost": total_cost,
+        "cost_per_document": (total_cost / docs) if docs else 0.0,
+    }
+
+
 def _route_provider_and_fallback(route_trace: object) -> tuple[str, bool]:
     """From a persisted route_trace, return (winning provider, had a fallback step) for §18.1 metrics."""
 

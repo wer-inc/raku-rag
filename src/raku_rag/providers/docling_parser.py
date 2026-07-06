@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import time
 import math
 import re
 import unicodedata
@@ -194,16 +195,19 @@ class DoclingStructuredParser:
         if not docling_available():
             return self._offline_fallback(raw, content_type, source)
         started_at = _utcnow()
+        convert_started = time.perf_counter()
         try:
             result = self._convert(raw, content_type, filename=filename)
         except Exception as exc:  # extraction failure is a normal state (§P4), not a crash
             return self._extraction_error(raw, content_type, source, reason=str(exc)[:200])
+        extract_latency_ms = (time.perf_counter() - convert_started) * 1000  # §18.3 Docling latency
         parsed = self._normalize(
             result.document,
             source,
             confidence=getattr(result, "confidence", None),
             started_at=started_at,
             finished_at=_utcnow(),
+            extract_latency_ms=extract_latency_ms,
         )
         parsed = self._apply_preflight(parsed, raw, content_type)
         parsed = self._apply_visual_detectors(parsed, raw, content_type)
@@ -322,7 +326,14 @@ class DoclingStructuredParser:
 
     # --- normalization: DoclingDocument -> ParsedDocument ---------------------------------------
     def _normalize(
-        self, doc, source, *, confidence=None, started_at: str = "", finished_at: str = ""
+        self,
+        doc,
+        source,
+        *,
+        confidence=None,
+        started_at: str = "",
+        finished_at: str = "",
+        extract_latency_ms: float | None = None,
     ) -> ParsedDocument:
         version = self._provider_version()
         prov = Provenance(provider=PROVIDER, provider_version=version, route="docling_first")
@@ -354,7 +365,13 @@ class DoclingStructuredParser:
                 result="docling_ocr_disabled",
                 reason=f"external_ocr={self._ocr.name}",
             ),
-            RouteTraceStep(stage="extract", provider=PROVIDER, result="accepted", reason="docling"),
+            RouteTraceStep(
+                stage="extract",
+                provider=PROVIDER,
+                result="accepted",
+                reason="docling",
+                latency_ms=extract_latency_ms,
+            ),
         )
         return ParsedDocument(
             source=source,
@@ -701,10 +718,17 @@ def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int, v
 
     for page_no in empty_pages:
         image = render(page_no) if (available or vlm_available) else None
-        result = ocr_provider.ocr_image(image) if (available and image) else None
+        ocr_latency_ms: float | None = None
+        result = None
+        if available and image:
+            ocr_started = time.perf_counter()
+            result = ocr_provider.ocr_image(image)
+            ocr_latency_ms = (time.perf_counter() - ocr_started) * 1000  # §18.3 OCR latency
         text = result.text.strip() if result else ""
         if not text and vlm_available and image:
+            vlm_started = time.perf_counter()
             draft = vlm_provider.draft_from_image(image, page_no=page_no)
+            vlm_latency_ms = (time.perf_counter() - vlm_started) * 1000  # §18.3 VLM latency
             draft_text = (draft.text or "").strip()
             if draft_text:
                 extra_blocks.append(
@@ -734,6 +758,7 @@ def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int, v
                         provider=draft.provider,
                         result="draft_visual",
                         reason=f"page_{page_no}",
+                        latency_ms=vlm_latency_ms,
                     )
                 )
                 order += 1
@@ -760,6 +785,7 @@ def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int, v
                     provider=ocr_provider.name,
                     result="ocr_filled",
                     reason=f"page_{page_no}",
+                    latency_ms=ocr_latency_ms,
                 )
             )
         else:

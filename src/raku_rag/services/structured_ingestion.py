@@ -445,6 +445,7 @@ def _route_trace_metadata(parsed: ParsedDocument) -> dict[str, object]:
                 "result": s.result,
                 "reason": s.reason,
                 "signals": list(s.signals),
+                "latency_ms": s.latency_ms,
             }
             for s in steps
         ]

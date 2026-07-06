@@ -208,11 +208,20 @@ class MvpSystem:
         ]
 
     def extraction_quality_metrics(self, tenant_id: str) -> dict:
-        """ADR-018 §18 — the extraction quality-gate ops metrics for a tenant."""
+        """ADR-018 §18 — the extraction quality-gate ops metrics for a tenant.
 
-        from raku_rag.services.ingestion_quality import extraction_quality_stats
+        §18.1/§18.2 status + reason + provider distribution, plus the §18.3 latency (measured) + cost
+        (config) snapshot under ``latency_cost``.
+        """
 
-        return extraction_quality_stats(self.store, tenant_id=tenant_id)
+        from raku_rag.services.ingestion_quality import (
+            extraction_latency_cost_stats,
+            extraction_quality_stats,
+        )
+
+        metrics = extraction_quality_stats(self.store, tenant_id=tenant_id)
+        metrics["latency_cost"] = extraction_latency_cost_stats(self.store, tenant_id=tenant_id)
+        return metrics
 
     def apply_extraction_review_action(
         self,
