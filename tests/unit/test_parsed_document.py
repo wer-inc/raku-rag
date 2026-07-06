@@ -116,8 +116,10 @@ class SpreadsheetParityTest(unittest.TestCase):
         self.assertTrue(all(b.kind == BLOCK_TABLE_CELL for b in doc.blocks))
         first = doc.blocks[0]
         self.assertEqual(first.source_anchor.type, ANCHOR_SPREADSHEET_CELL)
-        self.assertEqual((first.source_anchor.sheet, first.source_anchor.row, first.source_anchor.col),
-                         ("sheet1", 2, 1))
+        self.assertEqual(
+            (first.source_anchor.sheet, first.source_anchor.row, first.source_anchor.col),
+            ("sheet1", 2, 1),
+        )
         self.assertIn("sheet1!R2C1", first.text)
         # a structured Table is also produced with a header row
         self.assertEqual(len(doc.tables), 1)

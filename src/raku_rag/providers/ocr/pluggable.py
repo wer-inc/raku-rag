@@ -186,7 +186,9 @@ class GoogleDocumentAiOcrProvider:
         client = documentai.DocumentProcessorServiceClient()
         raw = documentai.RawDocument(content=image_png, mime_type="image/png")
         name = os.environ["GOOGLE_DOCAI_PROCESSOR"]
-        result = client.process_document(request=documentai.ProcessRequest(name=name, raw_document=raw))
+        result = client.process_document(
+            request=documentai.ProcessRequest(name=name, raw_document=raw)
+        )
         return OcrResult(text=(result.document.text or "").strip(), provider=self.name)
 
 

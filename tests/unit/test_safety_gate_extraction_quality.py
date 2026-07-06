@@ -55,9 +55,7 @@ class ExtractionQualityHighRiskGateTest(unittest.TestCase):
         )
 
     def test_legacy_citation_without_quality_metadata_still_satisfies(self) -> None:
-        self.assertTrue(
-            citation_is_approved_effective(_cite({}), _approved_meta(), today=_TODAY)
-        )
+        self.assertTrue(citation_is_approved_effective(_cite({}), _approved_meta(), today=_TODAY))
 
     def test_accepted_with_warnings_does_not_satisfy_high_risk(self) -> None:
         self.assertFalse(
@@ -77,9 +75,7 @@ class ExtractionQualityHighRiskGateTest(unittest.TestCase):
             [_approved_meta()],
         )
         self.assertTrue(decision.blocked)
-        self.assertEqual(
-            decision.safety_block_reason, SafetyBlockReason.APPROVED_CITATION_MISSING
-        )
+        self.assertEqual(decision.safety_block_reason, SafetyBlockReason.APPROVED_CITATION_MISSING)
 
     def test_gate_allows_high_risk_answer_backed_by_accepted_extraction(self) -> None:
         gate = ManufacturingSafetyGate(today=_TODAY)

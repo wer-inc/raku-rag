@@ -13,7 +13,6 @@ from raku_rag.domain.parsed_document import (
     Block,
     ParsedDocument,
     QualityInfo,
-    SourceAnchor,
 )
 from raku_rag.providers.structured_parsers import SpreadsheetStructuredParser
 from raku_rag.services.structured_chunking import (
@@ -30,7 +29,9 @@ class StructuredChunkingTest(unittest.TestCase):
             blocks=(
                 Block(block_id="t", kind=BLOCK_TITLE, text="Pump Manual", reading_order=0),
                 Block(block_id="h", kind=BLOCK_HEADING, text="Maintenance", reading_order=1),
-                Block(block_id="p", kind=BLOCK_PARAGRAPH, text="Interval is 90 days.", reading_order=2),
+                Block(
+                    block_id="p", kind=BLOCK_PARAGRAPH, text="Interval is 90 days.", reading_order=2
+                ),
             )
         )
         chunks = chunk_parsed_document(doc)

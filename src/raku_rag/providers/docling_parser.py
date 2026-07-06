@@ -139,7 +139,9 @@ class DoclingStructuredParser:
             from docling.document_converter import DocumentConverter
 
             opts = self._format_options()
-            self._converter = DocumentConverter(format_options=opts) if opts else DocumentConverter()
+            self._converter = (
+                DocumentConverter(format_options=opts) if opts else DocumentConverter()
+            )
         return self._converter
 
     def _format_options(self):
@@ -407,7 +409,9 @@ def _score(value) -> float | None:
         if value is None:
             return None
         f = float(value)
-        if math.isnan(f) or math.isinf(f):  # docling reports NaN for models that didn't run (e.g. HTML)
+        if math.isnan(f) or math.isinf(
+            f
+        ):  # docling reports NaN for models that didn't run (e.g. HTML)
             return None
         return f
     except (TypeError, ValueError):
@@ -538,9 +542,7 @@ def _table_from_item(item, order: int, prov) -> Table | None:
                 )
                 if is_header and r_idx == 1:
                     columns.append(TableColumn(index=c_idx - 1, text=cell_text))
-                cells.append(
-                    TableCell(row=r_idx, col=c_idx, text=cell_text, is_header=is_header)
-                )
+                cells.append(TableCell(row=r_idx, col=c_idx, text=cell_text, is_header=is_header))
     first = _first_prov(item)
     return Table(
         table_id=f"t_{order}",
@@ -614,7 +616,7 @@ def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int, v
     for page_no in empty_pages:
         image = render(page_no) if (available or vlm_available) else None
         result = ocr_provider.ocr_image(image) if (available and image) else None
-        text = (result.text.strip() if result else "")
+        text = result.text.strip() if result else ""
         if not text and vlm_available and image:
             draft = vlm_provider.draft_from_image(image, page_no=page_no)
             draft_text = (draft.text or "").strip()
@@ -642,7 +644,9 @@ def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int, v
                 )
                 steps.append(
                     RouteTraceStep(
-                        stage="vlm", provider=draft.provider, result="draft_visual",
+                        stage="vlm",
+                        provider=draft.provider,
+                        result="draft_visual",
                         reason=f"page_{page_no}",
                     )
                 )
@@ -666,7 +670,9 @@ def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int, v
             )
             steps.append(
                 RouteTraceStep(
-                    stage="ocr", provider=ocr_provider.name, result="ocr_filled",
+                    stage="ocr",
+                    provider=ocr_provider.name,
+                    result="ocr_filled",
                     reason=f"page_{page_no}",
                 )
             )
@@ -691,7 +697,9 @@ def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int, v
             )
             steps.append(
                 RouteTraceStep(
-                    stage="ocr", provider=ocr_provider.name, result="review_required",
+                    stage="ocr",
+                    provider=ocr_provider.name,
+                    result="review_required",
                     reason=f"page_{page_no}_no_external_ocr",
                 )
             )

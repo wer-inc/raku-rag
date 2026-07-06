@@ -32,7 +32,10 @@ class GoldenIngestionEvalTest(unittest.TestCase):
     def test_detects_a_weakened_classifier(self) -> None:
         # A degenerate classifier that always says "accepted" must be caught by the false-accept metric.
         _version, cases = load_golden_ingestion_corpus()
-        weak = lambda text, *, raw_size, content_type=None: {"extraction_quality_status": "accepted"}
+
+        def weak(text, *, raw_size, content_type=None):
+            return {"extraction_quality_status": "accepted"}
+
         report = evaluate_ingestion_quality(cases, classify=weak)
         self.assertGreater(report.false_accept_count, 0)
         self.assertGreater(report.false_accept_rate, 0.0)

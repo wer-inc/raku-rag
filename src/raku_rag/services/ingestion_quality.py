@@ -307,7 +307,9 @@ def extraction_quality_stats(store: object, *, tenant_id: str | None = None) -> 
     }
 
 
-def extraction_review_queue(store: object, *, tenant_id: str | None = None) -> list[ExtractionReviewItem]:
+def extraction_review_queue(
+    store: object, *, tenant_id: str | None = None
+) -> list[ExtractionReviewItem]:
     """Backend-agnostic review queue: an efficient JSONB filter on Postgres, else the in-mem projection.
 
     Prefers ``store.list_extraction_review_chunks()`` (ADR-018 A9, a metadata WHERE) when the store

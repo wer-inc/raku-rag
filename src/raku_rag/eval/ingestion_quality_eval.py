@@ -37,7 +37,9 @@ class GoldenIngestionCase:
 
     @property
     def effective_raw_size(self) -> int:
-        return self.raw_size if self.raw_size is not None else max(1, len(self.text.encode("utf-8")))
+        return (
+            self.raw_size if self.raw_size is not None else max(1, len(self.text.encode("utf-8")))
+        )
 
 
 @dataclass(frozen=True)
@@ -56,11 +58,17 @@ class IngestionQualityReport:
 
     @property
     def false_accept_rate(self) -> float:
-        return self.false_accept_count / self.gold_blocking_total if self.gold_blocking_total else 0.0
+        return (
+            self.false_accept_count / self.gold_blocking_total if self.gold_blocking_total else 0.0
+        )
 
     @property
     def over_quarantine_rate(self) -> float:
-        return len(self.over_quarantines) / self.gold_accepted_total if self.gold_accepted_total else 0.0
+        return (
+            len(self.over_quarantines) / self.gold_accepted_total
+            if self.gold_accepted_total
+            else 0.0
+        )
 
 
 def load_golden_ingestion_corpus(

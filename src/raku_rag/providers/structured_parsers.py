@@ -153,9 +153,7 @@ class SpreadsheetStructuredParser:
             if not rows:
                 continue
             header = rows[0]
-            columns = tuple(
-                TableColumn(index=c, text=_norm(str(h))) for c, h in enumerate(header)
-            )
+            columns = tuple(TableColumn(index=c, text=_norm(str(h))) for c, h in enumerate(header))
             cells: list[TableCell] = [
                 TableCell(row=1, col=c + 1, text=_norm(str(h)), is_header=True)
                 for c, h in enumerate(header)

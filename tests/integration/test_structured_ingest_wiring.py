@@ -47,9 +47,7 @@ class StructuredIngestWiringTest(unittest.TestCase):
         self.assertEqual(job.status, "succeeded", job.failure_reason)
 
         # chunk carries the structured contract metadata (proof it went through the structured path)
-        chunk = next(
-            c for c, _v in sys.store.iter_items() if c.document_id == "d1"
-        )
+        chunk = next(c for c, _v in sys.store.iter_items() if c.document_id == "d1")
         self.assertEqual(chunk.metadata.get("parser_contract_version"), "v1")
         self.assertIn("parsed_chunk_kind", chunk.metadata)
 

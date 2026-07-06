@@ -44,7 +44,9 @@ class ClassifyParsedDocumentQualityTest(unittest.TestCase):
         self.assertIn("low_overall_confidence", reasons)
 
     def test_low_table_structure_confidence_is_review_required(self) -> None:
-        table = Table(table_id="t", quality=QualityInfo(metrics={"table_structure_confidence": 0.2}))
+        table = Table(
+            table_id="t", quality=QualityInfo(metrics={"table_structure_confidence": 0.2})
+        )
         status, reasons = classify_parsed_document_quality(_doc({"overall": 0.9}, tables=[table]))
         self.assertEqual(status, QUALITY_STATUS_REVIEW_REQUIRED)
         self.assertIn("low_table_structure_confidence", reasons)

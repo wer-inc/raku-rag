@@ -49,7 +49,9 @@ class FilesystemRawSink:
 class S3RawSink:
     """Persist raw output to S3 (production, §P2). Lazy boto3 — opt-in, not imported by the gate."""
 
-    def __init__(self, bucket: str, *, prefix: str = "raw-parsed/", client: object | None = None) -> None:
+    def __init__(
+        self, bucket: str, *, prefix: str = "raw-parsed/", client: object | None = None
+    ) -> None:
         self._bucket = bucket
         self._prefix = prefix
         self._client = client

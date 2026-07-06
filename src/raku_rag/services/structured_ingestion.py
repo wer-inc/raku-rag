@@ -37,7 +37,6 @@ from raku_rag.services.ingestion import (
     _now,
 )
 from raku_rag.services.ingestion_quality import (
-    EXTRACTION_QUALITY_REASONS_KEY,
     EXTRACTION_QUALITY_STATUS_KEY,
     RETRIEVAL_BLOCKING_QUALITY_STATUSES,
     QUALITY_STATUS_ACCEPTED,
@@ -278,7 +277,11 @@ class StructuredIngestionService:
             detected = self._redactor.classify(sc.text_for_embedding)
             labels = sorted({label for label, _s, _e in detected})
             redaction_applied = bool(detected) and pre_index
-            text = self._redactor.redact(sc.text_for_embedding) if redaction_applied else sc.text_for_embedding
+            text = (
+                self._redactor.redact(sc.text_for_embedding)
+                if redaction_applied
+                else sc.text_for_embedding
+            )
 
             metadata: dict[str, object] = {
                 "sensitive_detected": bool(detected),
