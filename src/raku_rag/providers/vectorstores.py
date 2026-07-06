@@ -37,6 +37,39 @@ class InMemoryVectorStore(VectorStore):
         for chunk, vec in chunks:
             self._items[chunk.chunk_id] = (chunk, vec)
 
+    def update_chunk_review(
+        self,
+        tenant_id: str,
+        chunk_id: str,
+        *,
+        metadata: dict | None = None,
+        text: str | None = None,
+        vector: Vector | None = None,
+        tombstone: bool | None = None,
+    ) -> bool:
+        """ADR-018 §12.2 — apply a review decision to a single stored chunk in place.
+
+        Metadata is merged (so review fields add to, not replace, the chunk's provenance/anchors).
+        Returns True if the chunk existed for this tenant. Kept a store seam so both backends offer a
+        vector-preserving update (an upsert with an empty vector would fail PG's dim check)."""
+
+        item = self._items.get(chunk_id)
+        if item is None:
+            return False
+        chunk, vec = item
+        if chunk.tenant_id != tenant_id:
+            return False
+        if metadata:
+            chunk.metadata.update(metadata)
+        if text is not None:
+            chunk.text = text
+        if tombstone is not None:
+            chunk.tombstone = tombstone
+        if vector is not None:
+            vec = vector
+        self._items[chunk_id] = (chunk, vec)
+        return True
+
     def iter_items(self) -> tuple[tuple[Chunk, Vector], ...]:
         """All stored (chunk, vector) pairs — the in-memory bulk accessor.
 

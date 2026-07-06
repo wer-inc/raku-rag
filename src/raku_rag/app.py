@@ -201,6 +201,39 @@ class MvpSystem:
             for item in extraction_review_queue(self.store, tenant_id=tenant_id)
         ]
 
+    def apply_extraction_review_action(
+        self,
+        *,
+        tenant_id: str,
+        chunk_id: str,
+        action: str,
+        actor: str,
+        corrected_text: str | None = None,
+        reason: str = "",
+    ) -> dict:
+        """ADR-018 §12.2 — apply a reviewer decision to a quarantined chunk; returns the outcome."""
+
+        from raku_rag.services.review_actions import ReviewActionService
+
+        service = ReviewActionService(self.store, self.embedder, audit=self.audit)
+        decision = service.apply(
+            tenant_id=tenant_id,
+            chunk_id=chunk_id,
+            action=action,
+            actor=actor,
+            corrected_text=corrected_text,
+            reason=reason,
+        )
+        return {
+            "chunk_id": decision.chunk_id,
+            "action": decision.action,
+            "status": decision.status,
+            "reviewed_by": decision.reviewed_by,
+            "reviewed_at": decision.reviewed_at,
+            "high_risk_citation_eligible": decision.high_risk_citation_eligible,
+            "retrieval_eligible": decision.retrieval_eligible,
+        }
+
     def ingest_visual_fixture(
         self,
         *,

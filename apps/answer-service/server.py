@@ -2395,6 +2395,24 @@ def make_handler(system: ProductionSystem):
                     query = str(body.get("query") or "")
                     collection_id = body.get("collection_id")
                     self._send(200, _answer_json(system.answer(principal, query, collection_id)))
+                elif parts == ["internal", "reviews", "extraction", "actions"]:
+                    # ADR-018 §12.2 — apply a reviewer decision to a quarantined chunk.
+                    claims = _claims_from_headers(self.headers)
+                    try:
+                        result = system.apply_extraction_review_action(
+                            tenant_id=self._tenant_header(),
+                            chunk_id=str(body.get("chunk_id") or ""),
+                            action=str(body.get("action") or ""),
+                            actor=claims.user_id,
+                            corrected_text=body.get("corrected_text"),
+                            reason=str(body.get("reason") or ""),
+                        )
+                    except KeyError:
+                        self._send(404, {"error": "review_chunk_not_found"})
+                    except ValueError as exc:
+                        self._send(400, {"error": "invalid_review_action", "detail": str(exc)})
+                    else:
+                        self._send(200, result)
                 elif parts == ["internal", "chat", "sessions"]:
                     self._send_result(
                         chatbot.create_session(_claims_from_headers(self.headers), body)
