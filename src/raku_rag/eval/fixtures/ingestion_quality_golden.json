@@ -1,0 +1,43 @@
+{
+  "version": "golden_ingestion.v1",
+  "note": "ADR-018 §14 Phase-0 seed. Deterministic synthetic cases pinning the §8.4 extraction-quality gate. The PRIMARY release metric is false_accept_rate (§P5) = gold-blocking cases the classifier waved through as retrieval-eligible; it MUST stay 0. Real representative-document curation + threshold tuning (OQ#2) is future work that extends this pack.",
+  "cases": [
+    {
+      "case_id": "clean_en",
+      "text": "Stop the main power before servicing pump P-12. Torque the flange bolts to 45 Nm.",
+      "content_type": "text/plain",
+      "gold_status": "accepted"
+    },
+    {
+      "case_id": "clean_jp",
+      "text": "ポンプP-12の点検は90日ごとに実施し、主電源を遮断してから作業を開始する。",
+      "content_type": "text/plain",
+      "gold_status": "accepted"
+    },
+    {
+      "case_id": "mojibake_scan",
+      "text": "ポンプ ���������������������������������������������������������",
+      "content_type": "application/pdf",
+      "gold_status": "review_required"
+    },
+    {
+      "case_id": "cid_font_artifacts",
+      "text": "(cid:12)(cid:34)(cid:8)(cid:99)(cid:41)(cid:77)(cid:12)(cid:34)(cid:8)(cid:55)",
+      "content_type": "application/pdf",
+      "gold_status": "review_required"
+    },
+    {
+      "case_id": "empty_extraction_from_pdf",
+      "text": "",
+      "raw_size": 48000,
+      "content_type": "application/pdf",
+      "gold_status": "review_required"
+    },
+    {
+      "case_id": "minor_mojibake",
+      "text": "Maintenance interval ninety days for pump P-12 unit ��",
+      "content_type": "application/pdf",
+      "gold_status": "review_required"
+    }
+  ]
+}
