@@ -1913,6 +1913,9 @@ def make_handler(system: ProductionSystem):
                         200,
                         {"items": system.list_extraction_reviews(self._tenant_header())},
                     )
+                elif parts == ["internal", "reviews", "extraction", "metrics"]:
+                    # ADR-018 §18 — extraction quality-gate ops metrics for the tenant.
+                    self._send(200, system.extraction_quality_metrics(self._tenant_header()))
                 elif parts == ["internal", "industries"]:
                     self._send(200, industry_api.list_industries(tenant_id=self._tenant_header()))
                 elif (

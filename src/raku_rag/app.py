@@ -201,6 +201,13 @@ class MvpSystem:
             for item in extraction_review_queue(self.store, tenant_id=tenant_id)
         ]
 
+    def extraction_quality_metrics(self, tenant_id: str) -> dict:
+        """ADR-018 §18 — the extraction quality-gate ops metrics for a tenant."""
+
+        from raku_rag.services.ingestion_quality import extraction_quality_stats
+
+        return extraction_quality_stats(self.store, tenant_id=tenant_id)
+
     def apply_extraction_review_action(
         self,
         *,

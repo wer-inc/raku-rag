@@ -187,7 +187,7 @@ class ExtractionReviewQueueTest(unittest.TestCase):
     def test_extraction_quality_stats_counts_and_quarantine_rate(self) -> None:
         from raku_rag.services.ingestion_quality import extraction_quality_stats
 
-        rev = self._chunk("rev:0", review_required_quality_metadata())
+        rev = self._chunk("rev:0", review_required_quality_metadata(reasons=("x",)))
         acc1 = self._chunk("a:0", accepted_quality_metadata())
         acc2 = self._chunk("a:1", accepted_quality_metadata())
 
@@ -201,6 +201,9 @@ class ExtractionReviewQueueTest(unittest.TestCase):
         self.assertAlmostEqual(stats["quarantine_rate"], 1 / 3)
         self.assertEqual(stats["by_status"]["review_required"], 1)
         self.assertEqual(stats["by_status"]["accepted"], 2)
+        # §18: per-status rates + quality-reason counts
+        self.assertAlmostEqual(stats["rates"]["accepted"], 2 / 3)
+        self.assertEqual(stats["by_reason"].get("x"), 1)
 
 
 if __name__ == "__main__":

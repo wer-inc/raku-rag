@@ -280,13 +280,18 @@ def extraction_review_items(
 
 
 def extraction_quality_stats(store: object, *, tenant_id: str | None = None) -> dict[str, object]:
-    """ADR-018 §18 — ops snapshot: chunk counts per extraction-quality status + the quarantine rate.
+    """ADR-018 §18 — ops snapshot of the extraction quality gate, from stored chunk metadata.
 
-    Feeds monitoring/alerting (a rising quarantine rate flags an upstream extraction regression). Uses
-    the ``iter_items`` scan; a Postgres GROUP BY variant is the scale version (future).
+    Surfaces the §18.1 status distribution + per-status rates (accepted / accepted_with_warnings /
+    review_required / rejected / draft_visual / manual_approved) and the §18.2 quality-reason counts
+    (mojibake / empty_extraction / low_table_structure_confidence / drawing_only_page /
+    handwriting_or_seal_detected / language_mismatch …). Feeds monitoring/alerting — a rising
+    quarantine rate flags an upstream extraction regression. Uses the ``iter_items`` scan; a Postgres
+    GROUP BY variant is the scale version (future).
     """
 
     counts: dict[str, int] = {}
+    by_reason: dict[str, int] = {}
     total = 0
     iter_items = getattr(store, "iter_items", None)
     if callable(iter_items):
@@ -297,11 +302,17 @@ def extraction_quality_stats(store: object, *, tenant_id: str | None = None) -> 
             values = _metadata_mapping(getattr(chunk, "metadata", None))
             status = _quality_status(values) or QUALITY_STATUS_ACCEPTED
             counts[status] = counts.get(status, 0) + 1
+            for reason in values.get(EXTRACTION_QUALITY_REASONS_KEY) or ():
+                if reason:
+                    by_reason[str(reason)] = by_reason.get(str(reason), 0) + 1
             total += 1
     quarantined = sum(counts.get(s, 0) for s in RETRIEVAL_BLOCKING_QUALITY_STATUSES)
+    rates = {status: (count / total if total else 0.0) for status, count in counts.items()}
     return {
         "total": total,
         "by_status": counts,
+        "rates": rates,
+        "by_reason": by_reason,
         "quarantined": quarantined,
         "quarantine_rate": (quarantined / total) if total else 0.0,
     }
