@@ -301,5 +301,62 @@ class ExtractionReviewQueueTest(unittest.TestCase):
         self.assertAlmostEqual(stats["cost_per_document"], 0.001)
 
 
+class AnswerCitationQualitySignalsTest(unittest.TestCase):
+    class _Cite:
+        def __init__(self, metadata):
+            self.metadata = metadata
+
+    def test_projects_status_distribution_and_review_approved_usage(self) -> None:
+        from raku_rag.services.ingestion_quality import (
+            QUALITY_STATUS_MANUAL_APPROVED,
+            answer_citation_quality_signals,
+        )
+
+        cites = [
+            self._Cite(accepted_quality_metadata(status=QUALITY_STATUS_MANUAL_APPROVED)),
+            self._Cite(accepted_quality_metadata()),
+            self._Cite(accepted_with_warnings_quality_metadata()),
+        ]
+        s = answer_citation_quality_signals(cites, is_high_risk=True)
+        self.assertEqual(s["citations_total"], 3)
+        self.assertEqual(s["review_approved_chunk_usage"], 1)
+        self.assertAlmostEqual(s["review_approved_usage_rate"], 1 / 3)
+        # §11.4: manual_approved + accepted are high-risk eligible; accepted_with_warnings is not.
+        self.assertEqual(s["high_risk_citation_eligible"], 2)
+        self.assertEqual(s["by_status"]["accepted_with_warnings"], 1)
+
+    def test_high_risk_block_only_counts_invalid_citation_reason(self) -> None:
+        from raku_rag.services.ingestion_quality import answer_citation_quality_signals
+
+        blocked = answer_citation_quality_signals(
+            [], is_high_risk=True, blocked=True, block_reason="APPROVED_CITATION_MISSING"
+        )
+        self.assertEqual(blocked["high_risk_blocked_invalid_citation"], 1)
+        # A different block reason (or a non-high-risk answer) is not an invalid-citation block.
+        other = answer_citation_quality_signals(
+            [], is_high_risk=True, blocked=True, block_reason="INSUFFICIENT_EVIDENCE"
+        )
+        self.assertEqual(other["high_risk_blocked_invalid_citation"], 0)
+        not_hr = answer_citation_quality_signals(
+            [], is_high_risk=False, blocked=True, block_reason="APPROVED_CITATION_MISSING"
+        )
+        self.assertEqual(not_hr["high_risk_blocked_invalid_citation"], 0)
+
+    def test_aggregate_rolls_up_many_answers(self) -> None:
+        from raku_rag.services.ingestion_quality import (
+            aggregate_answer_quality_signals,
+            answer_citation_quality_signals,
+        )
+
+        a = answer_citation_quality_signals([self._Cite(accepted_quality_metadata())])
+        b = answer_citation_quality_signals(
+            [], is_high_risk=True, blocked=True, block_reason="APPROVED_CITATION_MISSING"
+        )
+        rolled = aggregate_answer_quality_signals([a, b])
+        self.assertEqual(rolled["answers"], 2)
+        self.assertEqual(rolled["citations_total"], 1)
+        self.assertEqual(rolled["high_risk_blocked_invalid_citation"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

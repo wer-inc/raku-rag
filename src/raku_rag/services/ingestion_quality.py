@@ -485,6 +485,83 @@ def extraction_latency_cost_stats(
     }
 
 
+_BLOCK_REASON_INVALID_CITATION = "APPROVED_CITATION_MISSING"
+
+
+def answer_citation_quality_signals(
+    citations: Iterable[object],
+    *,
+    is_high_risk: bool = False,
+    blocked: bool = False,
+    block_reason: str = "",
+) -> dict[str, object]:
+    """ADR-018 §18.4 — project extraction quality onto an answer's cited evidence.
+
+    From the citations an answer actually used (each carrying the extraction-quality metadata the safety
+    gate reads), report the quality-status distribution of the cited chunks, review-approved
+    (``manual_approved``) chunk usage, how many citations are high-risk-citation eligible (§11.4), and
+    whether THIS answer was a high-risk block due to a missing/ineligible approved citation. Pure over
+    ``citation.metadata`` — the same SSOT the gate enforces — so the metric can't drift from the answer.
+    """
+
+    by_status: dict[str, int] = {}
+    total = 0
+    high_risk_eligible = 0
+    for citation in citations:
+        meta = getattr(citation, "metadata", None)
+        status = _quality_status(_metadata_mapping(meta)) or QUALITY_STATUS_ACCEPTED
+        by_status[status] = by_status.get(status, 0) + 1
+        if is_high_risk_citation_quality_eligible(meta):
+            high_risk_eligible += 1
+        total += 1
+    manual_approved_used = by_status.get(QUALITY_STATUS_MANUAL_APPROVED, 0)
+    invalid_citation_block = (
+        is_high_risk
+        and blocked
+        and str(block_reason or "").strip().upper() == _BLOCK_REASON_INVALID_CITATION
+    )
+    return {
+        "citations_total": total,
+        "by_status": by_status,
+        "review_approved_chunk_usage": manual_approved_used,
+        "review_approved_usage_rate": (manual_approved_used / total) if total else 0.0,
+        "high_risk_citation_eligible": high_risk_eligible,
+        "high_risk_blocked_invalid_citation": 1 if invalid_citation_block else 0,
+    }
+
+
+def aggregate_answer_quality_signals(
+    signals: Iterable[Mapping[str, object]],
+) -> dict[str, object]:
+    """Roll up many per-answer §18.4 signal dicts into a dashboard snapshot (sums + rates)."""
+
+    answers = 0
+    citations_total = 0
+    review_approved_usage = 0
+    high_risk_eligible = 0
+    high_risk_blocked = 0
+    by_status: dict[str, int] = {}
+    for s in signals:
+        answers += 1
+        citations_total += int(s.get("citations_total") or 0)
+        review_approved_usage += int(s.get("review_approved_chunk_usage") or 0)
+        high_risk_eligible += int(s.get("high_risk_citation_eligible") or 0)
+        high_risk_blocked += int(s.get("high_risk_blocked_invalid_citation") or 0)
+        for status, count in (s.get("by_status") or {}).items():
+            by_status[str(status)] = by_status.get(str(status), 0) + int(count)
+    return {
+        "answers": answers,
+        "citations_total": citations_total,
+        "by_status": by_status,
+        "review_approved_chunk_usage": review_approved_usage,
+        "review_approved_usage_rate": (
+            (review_approved_usage / citations_total) if citations_total else 0.0
+        ),
+        "high_risk_citation_eligible": high_risk_eligible,
+        "high_risk_blocked_invalid_citation": high_risk_blocked,
+    }
+
+
 def _route_provider_and_fallback(route_trace: object) -> tuple[str, bool]:
     """From a persisted route_trace, return (winning provider, had a fallback step) for §18.1 metrics."""
 
