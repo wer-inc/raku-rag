@@ -10,9 +10,15 @@ from raku_rag.domain.parsed_document import (
     Figure,
     Page,
     ParsedDocument,
+    Table,
 )
 from raku_rag.providers import docling_parser
 from raku_rag.providers.docling_parser import DoclingStructuredParser
+from raku_rag.providers.page_routing import (
+    PAGE_DIGITAL_MOJIBAKE,
+    PAGE_TABLE_HEAVY,
+    classify_page_route,
+)
 from raku_rag.services.quality_detectors import (
     CallableVisualArtifactDetector,
     VisualArtifactSignals,
@@ -67,6 +73,70 @@ class ApplyVisualDetectorsTest(unittest.TestCase):
             self._doc(text="plain text", with_figure=False), b"", "application/pdf"
         )
         self.assertEqual(dict(out.pages[0].signals), {})
+
+    def test_standalone_image_upload_also_runs_the_vision_detector(self) -> None:
+        # §8.4 — a standalone photo/scan (写真・画像化された文書) IS a single-page document; the
+        # detector must run on it too, not just PDF pages.
+        detector = CallableVisualArtifactDetector(
+            lambda img, page: VisualArtifactSignals(seal_detected=True)
+        )
+        parser = DoclingStructuredParser(visual_artifact_detector=detector)
+        orig = docling_parser._standalone_image_to_png
+        docling_parser._standalone_image_to_png = lambda raw: b"PNGBYTES"
+        try:
+            out = parser._apply_visual_detectors(
+                self._doc(text="some text", with_figure=False), b"\x89PNG", "image/png"
+            )
+        finally:
+            docling_parser._standalone_image_to_png = orig
+        self.assertTrue(dict(out.pages[0].signals).get("seal_detected"))
+
+    def test_table_page_is_flagged_table_heavy_and_routes_accordingly(self) -> None:
+        # §6.2 — without this signal, PAGE_TABLE_HEAVY could never be selected by page_routing.
+        doc = ParsedDocument(
+            blocks=(Block(block_id="b", kind=BLOCK_PARAGRAPH, text="x", page_no=1),),
+            tables=(Table(table_id="t1", page_no=1),),
+            pages=(Page(page_id="p1", page_no=1),),
+        )
+        out = DoclingStructuredParser()._apply_visual_detectors(doc, b"", "application/pdf")
+        self.assertTrue(dict(out.pages[0].signals).get("table_heavy"))
+        self.assertEqual(classify_page_route(out.pages[0].signals).page_type, PAGE_TABLE_HEAVY)
+
+    def test_mojibake_heavy_page_is_flagged_and_routes_accordingly(self) -> None:
+        # §6.2 — without this signal, PAGE_DIGITAL_MOJIBAKE could never be selected by page_routing.
+        doc = ParsedDocument(
+            blocks=(
+                Block(block_id="b", kind=BLOCK_PARAGRAPH, text="garbled " + "�" * 20, page_no=1),
+            ),
+            pages=(Page(page_id="p1", page_no=1),),
+        )
+        out = DoclingStructuredParser()._apply_visual_detectors(doc, b"", "application/pdf")
+        self.assertTrue(dict(out.pages[0].signals).get("mojibake_suspected"))
+        self.assertEqual(classify_page_route(out.pages[0].signals).page_type, PAGE_DIGITAL_MOJIBAKE)
+
+    def test_clean_page_is_not_flagged_table_heavy_or_mojibake(self) -> None:
+        out = DoclingStructuredParser()._apply_visual_detectors(
+            self._doc(text="clean readable text here", with_figure=True), b"", "application/pdf"
+        )
+        signals = dict(out.pages[0].signals)
+        self.assertNotIn("table_heavy", signals)
+        self.assertNotIn("mojibake_suspected", signals)
+
+    def test_pdf_only_gate_no_longer_excludes_jpeg_or_tiff(self) -> None:
+        detector = CallableVisualArtifactDetector(
+            lambda img, page: VisualArtifactSignals(handwriting_detected=True)
+        )
+        for content_type in ("image/jpeg", "image/tiff"):
+            parser = DoclingStructuredParser(visual_artifact_detector=detector)
+            orig = docling_parser._standalone_image_to_png
+            docling_parser._standalone_image_to_png = lambda raw: b"PNGBYTES"
+            try:
+                out = parser._apply_visual_detectors(
+                    self._doc(text="some text", with_figure=False), b"raw", content_type
+                )
+            finally:
+                docling_parser._standalone_image_to_png = orig
+            self.assertTrue(dict(out.pages[0].signals).get("handwriting_detected"), content_type)
 
 
 if __name__ == "__main__":

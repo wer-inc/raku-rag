@@ -75,6 +75,13 @@ DOCLING_CONTENT_TYPES = frozenset(
     }
 )
 
+# §8.4 standalone-image uploads (写真・画像化された文書): these ARE single-page documents, so the
+# visual-artifact detector (handwriting/seal/drawing) must run on them too, not just PDF pages.
+_STANDALONE_IMAGE_CONTENT_TYPES = frozenset({"image/png", "image/jpeg", "image/tiff"})
+
+# §6.2 page-level "digital_mojibake_suspicious" routing signal threshold (replacement-char ratio).
+_PAGE_MOJIBAKE_RATIO = 0.02
+
 # DoclingDocument DocItemLabel value -> our block kind (§7.5). Unknown labels fall back to unknown.
 _LABEL_TO_KIND = {
     "title": BLOCK_TITLE,
@@ -232,28 +239,41 @@ class DoclingStructuredParser:
     ) -> ParsedDocument:
         if not parsed.pages:
             return parsed
-        text_by_page: dict[int, int] = {}
+        text_by_page: dict[int, str] = {}
         for block in parsed.blocks:
             if block.page_no:
-                text_by_page[block.page_no] = text_by_page.get(block.page_no, 0) + len(
+                text_by_page[block.page_no] = text_by_page.get(block.page_no, "") + (
                     block.text or ""
                 )
         figure_pages = {fig.page_no for fig in parsed.figures if fig.page_no}
+        table_pages = {t.page_no for t in parsed.tables if t.page_no}
         detector = self._visual_detector
-        detector_on = content_type == "application/pdf" and detector.available()
-        if not figure_pages and not detector_on:
-            return parsed
+        is_pdf = content_type == "application/pdf"
+        is_standalone_image = content_type in _STANDALONE_IMAGE_CONTENT_TYPES
+        detector_on = (is_pdf or is_standalone_image) and detector.available()
+        # The per-page stdlib signals (drawing_like/table_heavy/mojibake_suspected) are always cheap to
+        # compute; only the (potentially expensive) image render + vision-detector call is conditional.
 
         pages = []
         for page in parsed.pages:
             signals = dict(page.signals)
+            page_text = text_by_page.get(page.page_no, "")
             if is_drawing_like(
-                has_figures=page.page_no in figure_pages,
-                text_char_count=text_by_page.get(page.page_no, 0),
+                has_figures=page.page_no in figure_pages, text_char_count=len(page_text)
             ):
                 signals["drawing_like"] = True
+            # §6.2 routing signals the page-route table reads (table_heavy / digital-mojibake) —
+            # otherwise PAGE_TABLE_HEAVY/PAGE_DIGITAL_MOJIBAKE could never be selected (page_routing.py).
+            if page.page_no in table_pages:
+                signals["table_heavy"] = True
+            if page_text and (page_text.count("�") / len(page_text)) >= _PAGE_MOJIBAKE_RATIO:
+                signals["mojibake_suspected"] = True
             if detector_on:
-                image = render_pdf_page_png(raw, page.page_no)
+                image = (
+                    render_pdf_page_png(raw, page.page_no)
+                    if is_pdf
+                    else _standalone_image_to_png(raw)
+                )
                 if image:
                     found = detector.detect(image, page_no=page.page_no)
                     if found.handwriting_detected:
@@ -771,6 +791,19 @@ def preflight_pdf_pages(raw: bytes) -> dict[int, dict]:
         return out
     except Exception:  # pragma: no cover - preflight is best-effort
         return {}
+
+
+def _standalone_image_to_png(raw: bytes) -> bytes | None:
+    """Normalize a standalone image upload (png/jpeg/tiff) to PNG bytes for the vision detector."""
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(raw)).convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:  # pragma: no cover - best-effort, same pattern as render_pdf_page_png
+        return None
 
 
 def render_pdf_page_png(raw: bytes, page_no: int) -> bytes | None:
