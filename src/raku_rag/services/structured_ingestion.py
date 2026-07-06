@@ -40,7 +40,9 @@ from raku_rag.services.ingestion_quality import (
     EXTRACTION_QUALITY_REASONS_KEY,
     EXTRACTION_QUALITY_STATUS_KEY,
     RETRIEVAL_BLOCKING_QUALITY_STATUSES,
+    QUALITY_STATUS_ACCEPTED,
     QUALITY_STATUS_ACCEPTED_WITH_WARNINGS,
+    QUALITY_STATUS_REVIEW_REQUIRED,
     accepted_quality_metadata,
     accepted_with_warnings_quality_metadata,
     classify_text_extraction_quality,
@@ -62,9 +64,53 @@ class StructuredParser(Protocol):
 RawSink = Callable[[str, dict], None]
 
 
-def _chunk_quality_metadata(chunk: StructuredChunk) -> dict[str, object]:
-    """Combine the block-level quality verdict with the §8.4 text classifier (worst wins)."""
+# §8.4 document-level hard-fail thresholds over structured confidence signals. Conservative
+# (false-accept-first, §P5); final thresholds are eval-driven (OQ#2).
+_LOW_OVERALL_CONFIDENCE = 0.35
+_LOW_LAYOUT_CONFIDENCE = 0.30
+_LOW_TABLE_STRUCTURE_CONFIDENCE = 0.40
 
+
+def classify_parsed_document_quality(parsed: ParsedDocument) -> tuple[str, tuple[str, ...]]:
+    """ADR §8.4 document-level gate using structured signals (Docling confidence + table structure).
+
+    Returns (status, reasons). ``review_required`` when overall/layout confidence is below the floor,
+    or a table is present with low structure confidence — conditions the text classifier can't see.
+    """
+
+    metrics = dict(parsed.quality.metrics or {})
+    reasons: list[str] = []
+    status = parsed.quality.status or QUALITY_STATUS_ACCEPTED
+
+    overall = metrics.get("overall")
+    if overall is not None and overall < _LOW_OVERALL_CONFIDENCE:
+        reasons.append("low_overall_confidence")
+        status = QUALITY_STATUS_REVIEW_REQUIRED
+    layout = metrics.get("layout_confidence")
+    if layout is not None and layout < _LOW_LAYOUT_CONFIDENCE:
+        reasons.append("low_layout_confidence")
+        status = QUALITY_STATUS_REVIEW_REQUIRED
+    for table in parsed.tables:
+        tsc = dict(table.quality.metrics or {}).get("table_structure_confidence")
+        if tsc is not None and tsc < _LOW_TABLE_STRUCTURE_CONFIDENCE:
+            reasons.append("low_table_structure_confidence")
+            status = QUALITY_STATUS_REVIEW_REQUIRED
+            break
+    return status, tuple(reasons)
+
+
+def _chunk_quality_metadata(
+    chunk: StructuredChunk,
+    *,
+    doc_floor_status: str = QUALITY_STATUS_ACCEPTED,
+    doc_floor_reasons: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Worst of: the document-level §8.4 floor, the block verdict, and the §8.4 text classifier."""
+
+    if doc_floor_status in RETRIEVAL_BLOCKING_QUALITY_STATUSES:
+        return review_required_quality_metadata(
+            status=doc_floor_status, reasons=doc_floor_reasons or ("document_review_required",)
+        )
     if chunk.quality_status in RETRIEVAL_BLOCKING_QUALITY_STATUSES:
         return review_required_quality_metadata(
             status=chunk.quality_status,
@@ -75,8 +121,13 @@ def _chunk_quality_metadata(chunk: StructuredChunk) -> dict[str, object]:
     )
     if classified[EXTRACTION_QUALITY_STATUS_KEY] in RETRIEVAL_BLOCKING_QUALITY_STATUSES:
         return classified
-    if chunk.quality_status == QUALITY_STATUS_ACCEPTED_WITH_WARNINGS:
-        return accepted_with_warnings_quality_metadata(reasons=chunk.quality_reasons)
+    if (
+        chunk.quality_status == QUALITY_STATUS_ACCEPTED_WITH_WARNINGS
+        or doc_floor_status == QUALITY_STATUS_ACCEPTED_WITH_WARNINGS
+    ):
+        return accepted_with_warnings_quality_metadata(
+            reasons=chunk.quality_reasons or doc_floor_reasons
+        )
     return classified
 
 
@@ -134,8 +185,15 @@ class StructuredIngestionService:
                 self._raw_sink(document_id, parsed.to_dict())
 
             struct_chunks = chunk_parsed_document(parsed)
+            doc_floor_status, doc_floor_reasons = classify_parsed_document_quality(parsed)
             chunks = self._build_chunks(
-                tenant_id, collection_id, document_id, struct_chunks, chunking_metadata
+                tenant_id,
+                collection_id,
+                document_id,
+                struct_chunks,
+                chunking_metadata,
+                doc_floor_status=doc_floor_status,
+                doc_floor_reasons=doc_floor_reasons,
             )
 
             vectors = self._embedder.embed([c.text for c in chunks]) if chunks else []
@@ -210,6 +268,9 @@ class StructuredIngestionService:
         document_id: str,
         struct_chunks: list[StructuredChunk],
         chunking_metadata: Mapping[str, object] | None,
+        *,
+        doc_floor_status: str = QUALITY_STATUS_ACCEPTED,
+        doc_floor_reasons: tuple[str, ...] = (),
     ) -> list[Chunk]:
         pre_index = self._pii_redaction_mode == PII_REDACTION_PRE_INDEX
         chunks: list[Chunk] = []
@@ -231,7 +292,9 @@ class StructuredIngestionService:
                 "parsed_chunk_kind": sc.kind,
                 "source_block_ids": list(sc.source_block_ids),
                 **_anchor_metadata(sc),
-                **_chunk_quality_metadata(sc),
+                **_chunk_quality_metadata(
+                    sc, doc_floor_status=doc_floor_status, doc_floor_reasons=doc_floor_reasons
+                ),
                 **dict(chunking_metadata or {}),
             }
             chunks.append(
