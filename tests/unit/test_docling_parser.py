@@ -70,7 +70,15 @@ class DoclingRealConversionTest(unittest.TestCase):
         run = doc.provider_runs[0]
         self.assertEqual(run.provider, "docling")
         self.assertNotEqual(run.provider_version, "")
-        self.assertEqual(doc.route_trace[0].result, "accepted")
+        self.assertEqual(run.model_versions.get("ocr_provider"), "none")
+
+        # §4.2/§9.4: Docling's built-in OCR is disabled and OCR is owned by an independent provider,
+        # recorded in the route_trace.
+        config_steps = [s for s in doc.route_trace if s.stage == "config"]
+        self.assertTrue(config_steps)
+        self.assertEqual(config_steps[0].result, "docling_ocr_disabled")
+        self.assertEqual(config_steps[0].reason, "external_ocr=none")
+        self.assertTrue(any(s.result == "accepted" for s in doc.route_trace))
 
         # table structure preserved with header detection (§7.6)
         self.assertEqual(len(doc.tables), 1)

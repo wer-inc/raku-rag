@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
+from dataclasses import replace
 
 from raku_rag.domain.parsed_document import (
     ANCHOR_PAGE_BBOX,
@@ -33,12 +34,14 @@ from raku_rag.domain.parsed_document import (
     ParsedDocument,
     Provenance,
     ProviderRun,
+    QualityInfo,
     RouteTraceStep,
     SourceAnchor,
     Table,
     TableCell,
     TableColumn,
 )
+from raku_rag.providers.ocr.pluggable import OcrProvider, select_ocr_provider
 
 PROVIDER = "docling"
 
@@ -105,9 +108,17 @@ class DoclingStructuredParser:
 
     provider = PROVIDER
 
-    def __init__(self, *, content_types: frozenset[str] = DOCLING_CONTENT_TYPES) -> None:
+    def __init__(
+        self,
+        *,
+        content_types: frozenset[str] = DOCLING_CONTENT_TYPES,
+        ocr_provider: OcrProvider | None = None,
+    ) -> None:
         self._content_types = content_types
         self._converter = None  # lazy DocumentConverter (expensive to build)
+        # §4.2/§9.4: OCR is an INDEPENDENT provider, not Docling's built-in. Default is config-driven
+        # (RAKU_OCR_PROVIDER, default "none") — never Docling's internal OCR.
+        self._ocr = ocr_provider if ocr_provider is not None else select_ocr_provider()
 
     def supports(self, content_type: str) -> bool:
         return content_type in self._content_types
@@ -117,8 +128,27 @@ class DoclingStructuredParser:
         if self._converter is None:
             from docling.document_converter import DocumentConverter
 
-            self._converter = DocumentConverter()
+            opts = self._format_options()
+            self._converter = DocumentConverter(format_options=opts) if opts else DocumentConverter()
         return self._converter
+
+    def _format_options(self):
+        """PDF format options with Docling's built-in OCR DISABLED (§4.2) — structure only.
+
+        Defensive: if the pipeline-options API differs across Docling versions, fall back to defaults
+        rather than crashing (the external-OCR path still owns OCR either way).
+        """
+        try:
+            from docling.datamodel.base_models import InputFormat
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
+            from docling.document_converter import PdfFormatOption
+
+            opts = PdfPipelineOptions()
+            opts.do_ocr = False  # Docling does layout/table structure, NOT OCR (§4.2/§9.4)
+            opts.do_table_structure = True
+            return {InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
+        except Exception:  # pragma: no cover - version drift
+            return None
 
     def _provider_version(self) -> str:
         try:
@@ -139,7 +169,8 @@ class DoclingStructuredParser:
             docling_doc = self._convert(raw, content_type, filename=filename)
         except Exception as exc:  # extraction failure is a normal state (§P4), not a crash
             return self._extraction_error(raw, content_type, source, reason=str(exc)[:200])
-        return self._normalize(docling_doc, source)
+        parsed = self._normalize(docling_doc, source)
+        return self._apply_external_ocr(parsed, raw, content_type)
 
     def _convert(self, raw: bytes, content_type: str, *, filename: str):
         from docling.datamodel.base_models import DocumentStream
@@ -160,10 +191,21 @@ class DoclingStructuredParser:
         run = ProviderRun(
             provider=PROVIDER,
             provider_version=version,
-            model_versions={"layout": "docling-layout", "table": "docling-tableformer"},
+            model_versions={
+                "layout": "docling-layout",
+                "table": "docling-tableformer",
+                "ocr_provider": self._ocr.name,
+            },
             status="success",
         )
         route_trace = (
+            # §4.2/§9.4: record that Docling's own OCR is OFF and which independent provider owns OCR.
+            RouteTraceStep(
+                stage="config",
+                provider=PROVIDER,
+                result="docling_ocr_disabled",
+                reason=f"external_ocr={self._ocr.name}",
+            ),
             RouteTraceStep(stage="extract", provider=PROVIDER, result="accepted", reason="docling"),
         )
         return ParsedDocument(
@@ -174,6 +216,33 @@ class DoclingStructuredParser:
             blocks=blocks,
             tables=tables,
             route_trace=route_trace,
+        )
+
+    # --- external OCR (§4.2/§9.4): fill scanned/text-less pages via the independent provider -----
+    def _apply_external_ocr(
+        self, parsed: ParsedDocument, raw: bytes, content_type: str
+    ) -> ParsedDocument:
+        if content_type != "application/pdf" or not parsed.pages:
+            return parsed
+        pages_with_text = {
+            b.page_no for b in parsed.blocks if b.page_no is not None and b.embedding_text.strip()
+        }
+        empty_pages = [p.page_no for p in parsed.pages if p.page_no not in pages_with_text]
+        if not empty_pages:
+            return parsed
+
+        extra_blocks, steps = apply_external_ocr(
+            empty_pages,
+            ocr_provider=self._ocr,
+            render=lambda page_no: render_pdf_page_png(raw, page_no),
+            start_order=len(parsed.blocks),
+        )
+        if not extra_blocks:
+            return parsed
+        return replace(
+            parsed,
+            blocks=parsed.blocks + tuple(extra_blocks),
+            route_trace=parsed.route_trace + tuple(steps),
         )
 
     # --- degraded paths -------------------------------------------------------------------------
@@ -349,6 +418,90 @@ def _table_from_item(item, order: int, prov) -> Table | None:
         cells=tuple(cells),
         provenance=prov,
     )
+
+
+def render_pdf_page_png(raw: bytes, page_no: int) -> bytes | None:
+    """Render one PDF page (1-based) to PNG bytes for the OCR provider. None on any failure."""
+    try:
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(raw)
+        try:
+            bitmap = pdf[page_no - 1].render(scale=2.0)
+            buf = io.BytesIO()
+            bitmap.to_pil().save(buf, format="PNG")
+            return buf.getvalue()
+        finally:
+            pdf.close()
+    except Exception:  # pragma: no cover - rendering is best-effort
+        return None
+
+
+def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int):
+    """For each text-less page, OCR via the INDEPENDENT provider — or fail loud (§4.2/§9.4, §P4).
+
+    Returns (extra_blocks, route_trace_steps). When the provider is unavailable or yields nothing, the
+    page becomes a ``review_required`` block (quarantined + surfaced for HITL) rather than silently
+    empty — the ADR forbids leaning on Docling's built-in OCR to paper over this.
+    """
+    extra_blocks: list[Block] = []
+    steps: list[RouteTraceStep] = []
+    order = start_order
+    available = ocr_provider.available()
+
+    for page_no in empty_pages:
+        image = render(page_no) if available else None
+        result = ocr_provider.ocr_image(image) if (available and image) else None
+        text = (result.text.strip() if result else "")
+        if text:
+            extra_blocks.append(
+                Block(
+                    block_id=f"ocr_{page_no}",
+                    kind=BLOCK_PARAGRAPH,
+                    text=text,
+                    normalized_text=text,
+                    page_no=page_no,
+                    reading_order=order,
+                    confidence=result.confidence,
+                    source_anchor=SourceAnchor(type=ANCHOR_PAGE_BBOX, page_no=page_no),
+                    provenance=Provenance(
+                        provider=ocr_provider.name, method="external_ocr", route="external_ocr"
+                    ),
+                )
+            )
+            steps.append(
+                RouteTraceStep(
+                    stage="ocr", provider=ocr_provider.name, result="ocr_filled",
+                    reason=f"page_{page_no}",
+                )
+            )
+        else:
+            # Fail loud: no external OCR available/successful for a scanned page.
+            extra_blocks.append(
+                Block(
+                    block_id=f"ocr_{page_no}",
+                    kind=BLOCK_UNKNOWN,
+                    text=f"[未OCR: page {page_no} — 外部OCR provider '{ocr_provider.name}' で読取不可]",
+                    normalized_text="",
+                    page_no=page_no,
+                    reading_order=order,
+                    source_anchor=SourceAnchor(type=ANCHOR_PAGE_BBOX, page_no=page_no),
+                    provenance=Provenance(
+                        provider=ocr_provider.name, method="external_ocr", route="external_ocr"
+                    ),
+                    quality=QualityInfo(
+                        status="review_required", reasons=("scanned_no_external_ocr",)
+                    ),
+                )
+            )
+            steps.append(
+                RouteTraceStep(
+                    stage="ocr", provider=ocr_provider.name, result="review_required",
+                    reason=f"page_{page_no}_no_external_ocr",
+                )
+            )
+        order += 1
+    return extra_blocks, steps
 
 
 def _text_fallback(raw: bytes, source, *, result: str, reason: str, route: str) -> ParsedDocument:
