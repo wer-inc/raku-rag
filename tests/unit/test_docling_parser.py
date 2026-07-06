@@ -15,10 +15,15 @@ from raku_rag.domain.parsed_document import (
     BLOCK_TABLE,
     BLOCK_TITLE,
     PARSED_DOCUMENT_SCHEMA_VERSION,
+    Block,
+    Page,
+    ParsedDocument,
+    QualityInfo,
 )
 from raku_rag.providers import docling_parser
 from raku_rag.providers.docling_parser import (
     DoclingStructuredParser,
+    _finalize_page_quality,
     _normalize_figures,
     _quality_from_confidence,
     _table_from_item,
@@ -284,6 +289,53 @@ class DoclingRealConversionTest(unittest.TestCase):
         emb = doc.text_for_embedding()
         self.assertIn("Safety Procedure", emb)
         self.assertIn("Stop the main power before work.", emb)
+
+
+class FinalizePageQualityTest(unittest.TestCase):
+    """§7.3 — each Page gets its own quality verdict, not just the document-level aggregate."""
+
+    def test_clean_page_stays_accepted(self) -> None:
+        doc = ParsedDocument(
+            blocks=(Block(block_id="b1", kind=BLOCK_PARAGRAPH, text="ok", page_no=1),),
+            pages=(Page(page_id="p1", page_no=1),),
+        )
+        out = _finalize_page_quality(doc)
+        self.assertEqual(out.pages[0].quality.status, "accepted")
+
+    def test_page_inherits_worst_block_status(self) -> None:
+        doc = ParsedDocument(
+            blocks=(
+                Block(block_id="b1", kind=BLOCK_PARAGRAPH, text="ok", page_no=1),
+                Block(
+                    block_id="b2",
+                    kind=BLOCK_PARAGRAPH,
+                    text="bad",
+                    page_no=1,
+                    quality=QualityInfo(status="review_required", reasons=("x",)),
+                ),
+            ),
+            pages=(Page(page_id="p1", page_no=1),),
+        )
+        out = _finalize_page_quality(doc)
+        self.assertEqual(out.pages[0].quality.status, "review_required")
+        self.assertEqual(out.pages[0].quality.reasons, ("x",))
+
+    def test_page_with_no_blocks_but_a_seal_signal_is_flagged(self) -> None:
+        doc = ParsedDocument(
+            pages=(Page(page_id="p1", page_no=1, signals={"seal_detected": True}),)
+        )
+        out = _finalize_page_quality(doc)
+        self.assertEqual(out.pages[0].quality.status, "review_required")
+        self.assertEqual(out.pages[0].quality.reasons, ("handwriting_or_seal_detected",))
+
+    def test_page_with_no_blocks_and_no_signals_is_accepted(self) -> None:
+        doc = ParsedDocument(pages=(Page(page_id="p1", page_no=1),))
+        out = _finalize_page_quality(doc)
+        self.assertEqual(out.pages[0].quality.status, "accepted")
+
+    def test_no_pages_is_a_no_op(self) -> None:
+        doc = ParsedDocument(blocks=(Block(block_id="b1", kind=BLOCK_PARAGRAPH, text="x"),))
+        self.assertEqual(_finalize_page_quality(doc).pages, ())
 
 
 if __name__ == "__main__":

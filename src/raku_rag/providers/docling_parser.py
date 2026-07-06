@@ -215,6 +215,7 @@ class DoclingStructuredParser:
         parsed = self._apply_preflight(parsed, raw, content_type)
         parsed = self._apply_visual_detectors(parsed, raw, content_type)
         parsed = self._apply_external_ocr(parsed, raw, content_type)
+        parsed = _finalize_page_quality(parsed)
         return self._apply_quality_dimensions(parsed)
 
     def _apply_quality_dimensions(self, parsed: ParsedDocument) -> ParsedDocument:
@@ -616,6 +617,50 @@ def _page_anchor(prov) -> SourceAnchor | None:
     if page_no is None and bbox is None:
         return None
     return SourceAnchor(type=ANCHOR_PAGE_BBOX, page_no=page_no, bbox=bbox)
+
+
+_PAGE_QUALITY_RANK = {
+    "accepted": 0,
+    "accepted_with_warnings": 1,
+    "review_required": 2,
+    "draft_visual": 2,
+    "rejected": 3,
+}
+
+
+def _finalize_page_quality(parsed: ParsedDocument) -> ParsedDocument:
+    """§7.3 — give each Page its OWN quality verdict, not just the document-level aggregate.
+
+    A page inherits the worst status among the blocks anchored to it (so a scanned page that fell back
+    to a draft_visual/review_required block is reflected on the page itself); a page with no blocks of
+    its own but a handwriting/seal/drawing-like signal (opt-in detectors) is flagged too. Purely
+    additive — nothing reads Page.quality yet, so this cannot change existing behaviour.
+    """
+
+    if not parsed.pages:
+        return parsed
+    worst_by_page: dict[int, tuple[str, tuple[str, ...]]] = {}
+    for block in parsed.blocks:
+        if block.page_no is None:
+            continue
+        status = block.quality.status or "accepted"
+        current = worst_by_page.get(block.page_no)
+        if current is None or _PAGE_QUALITY_RANK.get(status, 0) > _PAGE_QUALITY_RANK.get(
+            current[0], 0
+        ):
+            worst_by_page[block.page_no] = (status, tuple(block.quality.reasons))
+
+    pages = []
+    for page in parsed.pages:
+        status, reasons = worst_by_page.get(page.page_no, ("accepted", ()))
+        signals = dict(page.signals or {})
+        if status == "accepted":
+            if signals.get("handwriting_detected") or signals.get("seal_detected"):
+                status, reasons = "review_required", ("handwriting_or_seal_detected",)
+            elif signals.get("drawing_like"):
+                status, reasons = "review_required", ("drawing_only_page",)
+        pages.append(replace(page, quality=QualityInfo(status=status, reasons=reasons)))
+    return replace(parsed, pages=tuple(pages))
 
 
 def _table_text(item, doc) -> str:

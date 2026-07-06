@@ -1507,8 +1507,9 @@ VLM は難物 fallback として使うが、出力は `draft_visual` とし、�
 | --- | --- | --- | --- |
 | §5/§7 | canonical `ParsedDocument`（DoclingDocument でも Markdown でもない） | live | `src/raku_rag/domain/parsed_document.py` |
 | §9.1 | Docling 構造パーサ（PDF/DOCX/PPTX/HTML/画像） | live | `providers/docling_parser.py`（Docling 2.110 で実変換検証） |
-| §7.6 | 表構造（ヘッダ検出つき）→ `Table`/`TableCell` | live | `docling_parser._table_from_item` |
-| §7 | 図（`Figure`：page/bbox/caption） | live | `docling_parser._normalize_figures`（A2） |
+| §7.6 | 表構造（ヘッダ検出つき、**rowspan/colspan含む**）→ `Table`/`TableCell` | live | `docling_parser._table_from_item`（`table_cells` 優先、`grid` はフォールバック） |
+| §7 | 図（`Figure`：page/bbox/caption）→ **caption付き figure はチャンク化され検索/引用に到達** | live | `docling_parser._normalize_figures`（A2）+ `structured_chunking.chunk_parsed_document`（figure_chunk, page_crop anchor） |
+| §7.3 | Page 単位の quality 判定（ブロック由来の worst-status + 手書き/印鑑/図面 signal） | live | `docling_parser._finalize_page_quality` |
 | §8.2/§8.3 | 品質は「次元ベクトル」（§8.3 の16次元すべて） | live | `docling_parser._quality_from_confidence`（layout/ocr_p10/p50/overall, A3）+ `quality_detectors.document_quality_dimensions`（text_yield/empty_page_risk/mojibake_risk/language_consistency/reading_order_risk/table_structure_confidence/cell_anchor_coverage/visual_coverage/provider_error/**vertical_text_suspected** + 検出器系 drawing_like/handwriting/seal） |
 | §13.3 | provider_version + config_hash + timestamps（再現/監査用） | live | `docling_parser._normalize`（A5） |
 | §8.4 | 文書レベル ハードフェイル（低信頼/表構造/図面/手書き・印鑑/期待言語不一致） | live（検出器）/opt-in（vision） | `services/structured_ingestion.classify_parsed_document_quality`（A7）+ `services/quality_detectors.py`（table_structure_confidence・is_language_mismatch・drawing_like は実 stdlib；handwriting/seal は `VisualArtifactDetector` seam, 既定 NoOp・`RAKU_VISUAL_ARTIFACT_DETECTOR` で有効化） |
