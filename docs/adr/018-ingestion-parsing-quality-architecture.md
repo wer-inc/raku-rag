@@ -1509,9 +1509,9 @@ VLM は難物 fallback として使うが、出力は `draft_visual` とし、�
 | §9.1 | Docling 構造パーサ（PDF/DOCX/PPTX/HTML/画像） | live | `providers/docling_parser.py`（Docling 2.110 で実変換検証） |
 | §7.6 | 表構造（ヘッダ検出つき）→ `Table`/`TableCell` | live | `docling_parser._table_from_item` |
 | §7 | 図（`Figure`：page/bbox/caption） | live | `docling_parser._normalize_figures`（A2） |
-| §8.2/§8.3 | 品質は「次元ベクトル」（layout/ocr_p10/p50/overall） | live | `docling_parser._quality_from_confidence`（A3） |
+| §8.2/§8.3 | 品質は「次元ベクトル」（layout/ocr_p10/p50/overall + table_structure_confidence） | live（部分：§8.3 全16次元のうち信頼度系+表構造を生成、手書き/印鑑/縦書き等は検出器依存） | `docling_parser._quality_from_confidence`（A3）, `quality_detectors.table_structure_confidence` |
 | §13.3 | provider_version + config_hash + timestamps（再現/監査用） | live | `docling_parser._normalize`（A5） |
-| §8.4 | 文書レベル ハードフェイル（低信頼/表構造） | live | `services/structured_ingestion.classify_parsed_document_quality`（A7） |
+| §8.4 | 文書レベル ハードフェイル（低信頼/表構造/図面/手書き・印鑑/期待言語不一致） | live（検出器）/opt-in（vision） | `services/structured_ingestion.classify_parsed_document_quality`（A7）+ `services/quality_detectors.py`（table_structure_confidence・is_language_mismatch・drawing_like は実 stdlib；handwriting/seal は `VisualArtifactDetector` seam, 既定 NoOp・`RAKU_VISUAL_ARTIFACT_DETECTOR` で有効化） |
 | Phase A | 抽出品質 contract + retrieval/high-risk ゲート | live | `services/ingestion_quality.py`, `retrieval.py`, `answer.py`, `manufacturing/safety/gate.py` |
 | §4.2/§9.4 | OCR は独立 provider（Docling 内蔵 OCR は不使用） | live(RapidOCR)/opt-in(cloud) | `providers/ocr/pluggable.py`（RapidOCR 実 OCR 検証; Google/Azure は opt-in, A10） |
 | §6.1/§6.2 | preflight（digital/scanned 判定）→ route_trace/page signals | live（判定）/ 部分（per-page 完全ルーティングは将来） | `docling_parser.preflight_pdf_pages` / `_apply_preflight`（A6） |
@@ -1521,7 +1521,9 @@ VLM は難物 fallback として使うが、出力は `draft_visual` とし、�
 | §10/Phase D | VLM draft fallback → `draft_visual`（HITL 承認前提） | scaffold | `providers/vlm_draft.py`, `docling_parser.apply_external_ocr`（A11; 実 VLM は opt-in） |
 | 配線 | 構造化取り込みへのフラグ切替 | live | `RAKU_STRUCTURED_INGEST` → `app.py`/`production.py`（A1） |
 
-**未了（外部依存または別レイヤ）**: §12 の `/reviews` HTTP エンドポイント + フロント UI（answer-service/apps/web）、
-async worker/Dagster への構造化パス完全配線、Phase 0 Golden Eval Pack（代表文書の実データ収集と閾値
-チューニング §14/OQ#2）、§18 運用メトリクス・§19 データ持ち出しポリシーの本番結線。これらは本 ADR の
-受理を妨げない（アーキテクチャは確定、差し込み口は用意済み）。
+**未了（外部依存または別レイヤ）**: §12 の `/reviews` **フロント UI** + reviewer 承認/却下アクション（§12.2、apps/web。
+backend の queue endpoint `GET /internal/reviews/extraction` は実装済み）、承認による `manual_approved` 昇格フロー
+（§10.3）、worker の PDF を Docling 経路へ（現状 text/office のみ；PDF は visual 経路）、Phase 0 Golden Eval Pack の
+**代表文書の実データ収集と閾値チューニング**（§14/OQ#2。ハーネスと synthetic seed は実装済み）、§18 運用メトリクスの
+本番ダッシュボード結線（quarantine 率ヘルパは実装済み）、手書き/印鑑の**実 vision 検出器**（seam は実装済み・既定 NoOp）。
+これらは本 ADR の受理を妨げない（アーキテクチャは確定、差し込み口は用意済み）。
