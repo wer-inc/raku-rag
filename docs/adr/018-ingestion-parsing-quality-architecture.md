@@ -1524,9 +1524,15 @@ VLM は難物 fallback として使うが、出力は `draft_visual` とし、�
 | §13.2/§9.1 | worker が PDF を Docling 経路へ | live | `IngestionExecutor(structured_pdf=…)`（構造化ON時） |
 | 配線 | 構造化取り込みへのフラグ切替 | live | `RAKU_STRUCTURED_INGEST` → `app.py`/`production.py`（A1） |
 
-**未了（外部リソースが必須で、コード実装では完了できない）**: (1) Phase 0 Golden Eval Pack の**代表文書の実データ収集と
-閾値チューニング**（§14/OQ#2 — 実顧客文書 + 人手ラベリングが必要。ハーネス + synthetic seed + false_accept ゲートは
-実装済み）、(2) 手書き/印鑑の**実 vision 検出器**（学習済みモデル/クラウド API が必要。`VisualArtifactDetector` seam +
-ゲート結線は実装済み・既定 NoOp）、(3) **クラウド OCR/VLM のライブ検証**（API 資格情報が必要。opt-in アダプタ + §19
-egress ゲートは実装済み）。これらは ADR 自身が opt-in（§13.1）/ Open Question（§20）として扱う項目であり、コード側の
-差し込み口はすべて用意済み。それ以外の設計項目は実装・検証済み（Tier A gate + 実 Docling + 実 Postgres + NestJS e2e）。
+**閾値チューニング機構（§OQ#2）は実装済み**: §8.4 の全ゲート閾値（mojibake/control-char 比率・空抽出バイト下限・
+overall/layout/table-structure 信頼度）は `services/quality_thresholds.py` の `RAKU_QT_*` env で**呼び出し時に再読込**され、
+デプロイや eval sweep がコード変更なしで再調整できる（既定は safety-first で不変）。Golden Eval Pack（`eval/fixtures/
+ingestion_quality_golden.json`）は 13 ケース（clean×4 / accepted_with_warnings×1 / blocking×8：mojibake・高置換率・
+制御文字混入・CID×2・空抽出 PDF/Office×2・軽微化け）に拡充し、false_accept_rate==0 を保ったまま網羅を広げた。
+
+**真の未了（外部リソースが必須で、コード実装では完了できない）**: (1) §OQ#2 の**代表文書の実データ収集と実測値の確定**
+（実顧客文書 + 人手ラベリングが必要。チューニング機構・synthetic seed・false_accept ゲートは上記の通り実装済み）、
+(2) 手書き/印鑑の**実 vision 検出器**（学習済みモデル/クラウド API が必要。`VisualArtifactDetector` seam + ゲート結線は
+実装済み・既定 NoOp）、(3) **クラウド OCR/VLM のライブ検証**（API 資格情報が必要。opt-in アダプタ + §19 egress ゲートは
+実装済み）。これらは ADR 自身が opt-in（§13.1）/ Open Question（§20）として扱う項目であり、コード側の差し込み口は
+すべて用意済み。それ以外の設計項目は実装・検証済み（Tier A gate 1875 GREEN + 実 Docling + 実 Postgres + NestJS e2e）。

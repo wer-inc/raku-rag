@@ -1,6 +1,6 @@
 {
-  "version": "golden_ingestion.v1",
-  "note": "ADR-018 §14 Phase-0 seed. Deterministic synthetic cases pinning the §8.4 extraction-quality gate. The PRIMARY release metric is false_accept_rate (§P5) = gold-blocking cases the classifier waved through as retrieval-eligible; it MUST stay 0. Real representative-document curation + threshold tuning (OQ#2) is future work that extends this pack.",
+  "version": "golden_ingestion.v2",
+  "note": "ADR-018 §14 Phase-0 seed. Deterministic synthetic cases pinning the §8.4 extraction-quality gate. The PRIMARY release metric is false_accept_rate (§P5) = gold-blocking cases the classifier waved through as retrieval-eligible; it MUST stay 0. Thresholds are env-tunable (RAKU_QT_*, services/quality_thresholds.py) so OQ#2 tuning is a config sweep over this pack. Real representative-document curation extends it later.",
   "cases": [
     {
       "case_id": "clean_en",
@@ -15,8 +15,38 @@
       "gold_status": "accepted"
     },
     {
+      "case_id": "clean_spec_table",
+      "text": "型式 KX-200 / 定格圧力 0.8 MPa / 使用温度 -10〜60°C / 質量 12.4 kg / 電源 AC100V 50/60Hz",
+      "content_type": "text/plain",
+      "gold_status": "accepted"
+    },
+    {
+      "case_id": "clean_mixed_jp_en",
+      "text": "Alarm code E152 は過負荷 (overload) を示す。Reset the breaker CB-3, then restart the conveyor.",
+      "content_type": "text/plain",
+      "gold_status": "accepted"
+    },
+    {
+      "case_id": "single_char_minor_mojibake",
+      "text": "The lubrication schedule for gearbox G-7 is every 500 operating hours; use ISO VG 220 oil and record the level �.",
+      "content_type": "application/pdf",
+      "gold_status": "accepted_with_warnings"
+    },
+    {
       "case_id": "mojibake_scan",
-      "text": "ポンプ ���������������������������������������������������������",
+      "text": "ポンプ ������������������������������������������������������������",
+      "content_type": "application/pdf",
+      "gold_status": "review_required"
+    },
+    {
+      "case_id": "high_replacement_ratio",
+      "text": "�������� 設備 �������� 点検 ��������",
+      "content_type": "application/pdf",
+      "gold_status": "review_required"
+    },
+    {
+      "case_id": "control_char_binary_leak",
+      "text": "Valve spec sheet\u0000\u0001\u0002\u0003\u0004\u0005 pressure rating",
       "content_type": "application/pdf",
       "gold_status": "review_required"
     },
@@ -27,10 +57,23 @@
       "gold_status": "review_required"
     },
     {
+      "case_id": "cid_mixed_with_text",
+      "text": "Torque spec (cid:41)(cid:77) for bolt M8 (cid:12)(cid:34) see table",
+      "content_type": "application/pdf",
+      "gold_status": "review_required"
+    },
+    {
       "case_id": "empty_extraction_from_pdf",
       "text": "",
       "raw_size": 48000,
       "content_type": "application/pdf",
+      "gold_status": "review_required"
+    },
+    {
+      "case_id": "empty_extraction_from_office",
+      "text": "   \n  \t  ",
+      "raw_size": 30000,
+      "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       "gold_status": "review_required"
     },
     {

@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
+from raku_rag.services.quality_thresholds import quality_thresholds
+
 EXTRACTION_QUALITY_SCHEMA_VERSION = "ingestion_quality.v1"
 EXTRACTION_QUALITY_SCHEMA_VERSION_KEY = "extraction_quality_schema_version"
 EXTRACTION_QUALITY_STATUS_KEY = "extraction_quality_status"
@@ -139,12 +141,15 @@ def classify_text_extraction_quality(
     the current signals are format-agnostic.
     """
 
+    thresholds = quality_thresholds()  # §OQ#2: env-tunable (RAKU_QT_*), safety-first defaults
     body = text or ""
     stripped = body.strip()
     hard_reasons: list[str] = []
     soft_reasons: list[str] = []
 
-    if (raw_size or 0) >= _EMPTY_YIELD_MIN_RAW_BYTES and len(stripped) < _MIN_TEXT_YIELD_CHARS:
+    if (raw_size or 0) >= thresholds.empty_yield_min_raw_bytes and len(
+        stripped
+    ) < _MIN_TEXT_YIELD_CHARS:
         hard_reasons.append(REASON_EMPTY_EXTRACTION)
 
     if "(cid:" in body:
@@ -154,7 +159,10 @@ def classify_text_extraction_quality(
         replacement_ratio = body.count("�") / len(body)
         control_chars = sum(1 for ch in body if ord(ch) < 32 and ch not in "\t\n\r")
         control_ratio = control_chars / len(body)
-        if replacement_ratio >= _MOJIBAKE_HARD_RATIO or control_ratio >= _CONTROL_CHAR_HARD_RATIO:
+        if (
+            replacement_ratio >= thresholds.mojibake_hard_ratio
+            or control_ratio >= thresholds.control_char_hard_ratio
+        ):
             hard_reasons.append(REASON_MOJIBAKE_SUSPECTED)
         elif "�" in body:
             soft_reasons.append(REASON_MINOR_MOJIBAKE)

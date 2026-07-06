@@ -49,6 +49,7 @@ from raku_rag.services.ingestion_quality import (
     review_required_quality_metadata,
 )
 from raku_rag.services.quality_detectors import is_language_mismatch
+from raku_rag.services.quality_thresholds import quality_thresholds
 from raku_rag.services.structured_chunking import StructuredChunk, chunk_parsed_document
 
 PARSER_CONTRACT_VERSION = "v1"
@@ -83,6 +84,7 @@ def classify_parsed_document_quality(
     see. (draft_visual pages keep their status via the per-block/chunk path, not here.)
     """
 
+    thresholds = quality_thresholds()  # §OQ#2: env-tunable (RAKU_QT_*)
     metrics = dict(parsed.quality.metrics or {})
     reasons: list[str] = []
     status = parsed.quality.status or QUALITY_STATUS_ACCEPTED
@@ -93,14 +95,14 @@ def classify_parsed_document_quality(
         status = QUALITY_STATUS_REVIEW_REQUIRED
 
     overall = metrics.get("overall")
-    if overall is not None and overall < _LOW_OVERALL_CONFIDENCE:
+    if overall is not None and overall < thresholds.low_overall_confidence:
         _flag("low_overall_confidence")
     layout = metrics.get("layout_confidence")
-    if layout is not None and layout < _LOW_LAYOUT_CONFIDENCE:
+    if layout is not None and layout < thresholds.low_layout_confidence:
         _flag("low_layout_confidence")
     for table in parsed.tables:
         tsc = dict(table.quality.metrics or {}).get("table_structure_confidence")
-        if tsc is not None and tsc < _LOW_TABLE_STRUCTURE_CONFIDENCE:
+        if tsc is not None and tsc < thresholds.low_table_structure_confidence:
             _flag("low_table_structure_confidence")
             break
     # §8.4 vision-detector signals recorded on pages (handwriting / seal / drawing-only).
