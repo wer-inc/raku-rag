@@ -791,6 +791,8 @@ def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int, v
                             method="vlm_draft",
                             model_version=draft.model,
                             route="vlm_draft",
+                            prompt_version=draft.prompt_version,
+                            generation_config=draft.generation_config,
                         ),
                         quality=QualityInfo(
                             status="draft_visual", reasons=("vlm_output_unapproved",)

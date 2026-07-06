@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from raku_rag.providers.ocr.pluggable import cloud_egress_allowed
@@ -24,9 +25,32 @@ _DEFAULT_BEDROCK_VLM_MODEL_ID = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
 _BEDROCK_VLM_PROMPT = (
     "You are a careful OCR transcriber for a manufacturing document. Transcribe ALL legible text in "
     "this page image exactly as printed, preserving line breaks and reading order. Do NOT translate, "
-    "summarize, correct, or invent any text; if a region is illegible write [illegible]. Output only "
-    "the transcribed text, nothing else."
+    "summarize, correct, or invent any text; if a region is illegible write [illegible]. After the "
+    "transcription, on its own final line, self-rate your transcription confidence as "
+    "'[CONFIDENCE: x.xx]' where x.xx is 0.00 (mostly illegible) to 1.00 (fully legible, certain). "
+    "Output only the transcribed text followed by that confidence line, nothing else."
 )
+
+_VLM_DRAFT_MAX_TOKENS = 1024
+_CONFIDENCE_TRAILER_RE = re.compile(r"\[CONFIDENCE:\s*([0-9]*\.?[0-9]+)\s*\]\s*$", re.IGNORECASE)
+
+
+def _split_confidence_trailer(raw: str) -> tuple[str, float | None]:
+    """Strip a trailing ``[CONFIDENCE: x.xx]`` self-rating (§10.2) from a VLM transcription.
+
+    Defensive: any malformed/missing trailer just yields the raw text unchanged with confidence=None
+    (an honest "not reported" rather than a guessed value) — it never corrupts the transcription itself.
+    """
+
+    match = _CONFIDENCE_TRAILER_RE.search(raw or "")
+    if not match:
+        return (raw or "").strip(), None
+    text = raw[: match.start()].strip()
+    try:
+        value = float(match.group(1))
+    except ValueError:
+        return text, None
+    return text, max(0.0, min(1.0, value))
 
 
 @dataclass(frozen=True)
@@ -36,6 +60,7 @@ class VlmDraftResult:
     prompt_version: str = VLM_DRAFT_PROMPT_VERSION
     confidence: float | None = None
     provider: str = "none"
+    generation_config: dict = field(default_factory=dict)
 
 
 class VlmDraftProvider(Protocol):
@@ -115,13 +140,23 @@ class BedrockVlmDraftProvider:
     def draft_from_image(self, image_png: bytes, *, page_no: int) -> VlmDraftResult:
         if not self.available():
             return VlmDraftResult(provider=self.name)
-        text = (
+        raw = (
             self._resolve_invoker()(
-                model_id=self._model_id, prompt=_BEDROCK_VLM_PROMPT, image=image_png
+                model_id=self._model_id,
+                prompt=_BEDROCK_VLM_PROMPT,
+                image=image_png,
+                max_tokens=_VLM_DRAFT_MAX_TOKENS,
             )
             or ""
-        ).strip()
-        return VlmDraftResult(text=text, model=self._model_id, provider=self.name)
+        )
+        text, confidence = _split_confidence_trailer(raw)
+        return VlmDraftResult(
+            text=text,
+            model=self._model_id,
+            provider=self.name,
+            confidence=confidence,
+            generation_config={"max_tokens": _VLM_DRAFT_MAX_TOKENS},
+        )
 
 
 VLM_DRAFT_PROVIDERS: dict[str, type] = {

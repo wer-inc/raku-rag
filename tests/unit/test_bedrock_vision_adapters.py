@@ -55,6 +55,30 @@ class BedrockVlmDraftTest(unittest.TestCase):
         self.assertEqual(result.provider, "bedrock")
         # The page image is actually forwarded to the VLM.
         self.assertEqual(seen["image"], b"PNGBYTES")
+        # §10.2: no confidence trailer in this mock reply -> honestly None, not a guessed value.
+        self.assertIsNone(result.confidence)
+        self.assertTrue(result.prompt_version)
+        self.assertIn("max_tokens", result.generation_config)
+
+    def test_confidence_trailer_is_parsed_and_stripped(self) -> None:
+        # §10.2 "confidence または self-rated uncertainty" — a self-rated trailer line is parsed out of
+        # the transcription and reported as a real (not fabricated) confidence value.
+        def fake(*, model_id, prompt, image=None, max_tokens=512, media_type="image/png"):
+            return "配管系統図の記載内容\n[CONFIDENCE: 0.62]"
+
+        provider = BedrockVlmDraftProvider(invoker=fake, model_id="test-model")
+        result = provider.draft_from_image(b"PNGBYTES", page_no=1)
+        self.assertEqual(result.text, "配管系統図の記載内容")
+        self.assertEqual(result.confidence, 0.62)
+
+    def test_malformed_confidence_trailer_is_ignored_not_guessed(self) -> None:
+        def fake(*, model_id, prompt, image=None, max_tokens=512, media_type="image/png"):
+            return "some transcription with no valid trailer"
+
+        provider = BedrockVlmDraftProvider(invoker=fake, model_id="test-model")
+        result = provider.draft_from_image(b"PNGBYTES", page_no=1)
+        self.assertIsNone(result.confidence)
+        self.assertEqual(result.text, "some transcription with no valid trailer")
 
     def test_unavailable_without_egress_optin(self) -> None:
         # No injected invoker + egress not opted in -> unavailable, and a no-op empty draft.

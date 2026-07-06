@@ -138,6 +138,10 @@ class VlmDraftFallbackTest(unittest.TestCase):
         self.assertIn("drawing summary", blocks[0].text)
         self.assertEqual(blocks[0].provenance.route, "vlm_draft")
         self.assertEqual(steps[0].result, "draft_visual")
+        # §10.2: prompt version must survive onto the persisted block provenance, not be dropped.
+        from raku_rag.providers.vlm_draft import VLM_DRAFT_PROMPT_VERSION
+
+        self.assertEqual(blocks[0].provenance.prompt_version, VLM_DRAFT_PROMPT_VERSION)
 
     def test_review_required_when_neither_ocr_nor_vlm(self) -> None:
         from raku_rag.providers.vlm_draft import NoOpVlmDraftProvider, select_vlm_draft_provider

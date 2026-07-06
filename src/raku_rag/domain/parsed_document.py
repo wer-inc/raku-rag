@@ -95,6 +95,10 @@ class Provenance:
     provider_version: str = ""
     model_version: str = ""
     route: str = ""
+    # §10.2/§13.3: VLM draft provenance — the prompt version + generation config (temperature etc) used
+    # to produce this block, so a reviewer/audit can reproduce or judge the generation that made it.
+    prompt_version: str = ""
+    generation_config: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
