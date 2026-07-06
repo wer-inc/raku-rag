@@ -7,6 +7,7 @@ crashes ingestion.
 
 from __future__ import annotations
 
+import importlib.util
 import unittest
 
 from raku_rag.domain.parsed_document import (
@@ -22,6 +23,8 @@ from raku_rag.providers.docling_parser import (
     _quality_from_confidence,
     docling_available,
 )
+
+_HAS_PYPDFIUM = importlib.util.find_spec("pypdfium2") is not None
 
 _HTML = (
     b"<html><body><h1>Safety Procedure</h1>"
@@ -89,6 +92,7 @@ def _minimal_pdf(text: str) -> bytes:
 
 
 class PreflightTest(unittest.TestCase):
+    @unittest.skipUnless(_HAS_PYPDFIUM, "pypdfium2 not installed")
     def test_preflight_detects_text_layer(self) -> None:
         from raku_rag.providers.docling_parser import preflight_pdf_pages
 
