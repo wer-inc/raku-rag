@@ -18,6 +18,10 @@ DEFAULT_EMPTY_YIELD_MIN_RAW_BYTES = 512
 DEFAULT_LOW_OVERALL_CONFIDENCE = 0.35
 DEFAULT_LOW_LAYOUT_CONFIDENCE = 0.30
 DEFAULT_LOW_TABLE_STRUCTURE_CONFIDENCE = 0.40
+# §8.4 additional document-level gates (over the §8.3 dimension vector).
+DEFAULT_LOW_OCR_CONFIDENCE_P10 = 0.40
+DEFAULT_HIGH_EMPTY_PAGE_RISK = 0.20
+DEFAULT_HIGH_READING_ORDER_RISK = 0.25
 
 
 def _env_float(name: str, default: float) -> float:
@@ -38,6 +42,9 @@ class QualityThresholds:
     low_overall_confidence: float
     low_layout_confidence: float
     low_table_structure_confidence: float
+    low_ocr_confidence_p10: float
+    high_empty_page_risk: float
+    high_reading_order_risk: float
 
 
 def quality_thresholds() -> QualityThresholds:
@@ -59,5 +66,14 @@ def quality_thresholds() -> QualityThresholds:
         ),
         low_table_structure_confidence=_env_float(
             "RAKU_QT_LOW_TABLE_STRUCTURE_CONFIDENCE", DEFAULT_LOW_TABLE_STRUCTURE_CONFIDENCE
+        ),
+        low_ocr_confidence_p10=_env_float(
+            "RAKU_QT_LOW_OCR_CONFIDENCE_P10", DEFAULT_LOW_OCR_CONFIDENCE_P10
+        ),
+        high_empty_page_risk=_env_float(
+            "RAKU_QT_HIGH_EMPTY_PAGE_RISK", DEFAULT_HIGH_EMPTY_PAGE_RISK
+        ),
+        high_reading_order_risk=_env_float(
+            "RAKU_QT_HIGH_READING_ORDER_RISK", DEFAULT_HIGH_READING_ORDER_RISK
         ),
     )

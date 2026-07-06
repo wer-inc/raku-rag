@@ -81,6 +81,7 @@ class TestAnswerFollowupEndpoint(unittest.TestCase):
         )
         for collection in ("manuals", "safety"):
             system.grant(T, ScopeType.COLLECTION, collection, SubjectType.USER, "alice")
+        cls.system = system
         cls.httpd = HTTPServer(("127.0.0.1", 0), srv.make_handler(system))
         cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
         cls.thread.start()
@@ -178,6 +179,15 @@ class TestAnswerFollowupEndpoint(unittest.TestCase):
         self.assertEqual(out["citations"], [])
         # The rewrite itself is reported transparently even when the answer is blocked.
         self.assertIs(out["context_carried"], True)
+        # ADR-018 §18.4: a high-risk block due to a missing/ineligible approved citation is observable
+        # telemetry (over the already-decided answer — the safety gate's decision itself is unchanged).
+        self.assertGreaterEqual(
+            self.system.metrics.counter(
+                "manufacturing_answer_high_risk_blocked_invalid_citation_total",
+                labels={"tenant_id": T},
+            ),
+            1.0,
+        )
 
 
 if __name__ == "__main__":

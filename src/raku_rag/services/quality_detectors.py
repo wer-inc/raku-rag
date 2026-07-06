@@ -213,7 +213,9 @@ def document_quality_dimensions(parsed, *, expected_language: str = "") -> dict[
         if tscs:
             dims["table_structure_confidence"] = min(tscs)
 
-    error_results = {"unavailable", "review_required", "rejected"}
+    # "error" = a hard extraction exception (docling_parser._extraction_error); "unavailable" = no
+    # provider could run; "review_required"/"rejected" = an explicit route-level failure verdict.
+    error_results = {"error", "unavailable", "review_required", "rejected"}
     dims["provider_error"] = (
         1.0
         if any(

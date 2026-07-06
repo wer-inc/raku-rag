@@ -71,6 +71,60 @@ class IngestionQualityMetadataTest(unittest.TestCase):
         self.assertFalse(is_high_risk_citation_quality_eligible(metadata))
 
 
+class StructuredChunkHighRiskAnchorTraceTest(unittest.TestCase):
+    """§11.4 — a structured-pipeline chunk with no anchor or no provider/version trace is not
+    high-risk evidence-grade. Legacy (pre-ADR-018) content, which never sets parser_contract_version,
+    must be unaffected — this is the scoping guard that keeps the check additive."""
+
+    def test_structured_chunk_missing_anchor_is_not_high_risk_eligible(self) -> None:
+        metadata = accepted_quality_metadata()
+        metadata.update(
+            {
+                "parser_contract_version": "v1",
+                "embedding_model_version": "v",
+                "parsed_chunk_kind": "text_chunk",
+                # no anchor_type / cell_sheet
+            }
+        )
+        self.assertTrue(is_retrieval_eligible(metadata))
+        self.assertFalse(is_high_risk_citation_quality_eligible(metadata))
+
+    def test_structured_chunk_missing_provider_trace_is_not_high_risk_eligible(self) -> None:
+        metadata = accepted_quality_metadata()
+        metadata.update({"parser_contract_version": "v1", "anchor_type": "page_bbox"})
+        # embedding_model_version / parsed_chunk_kind missing.
+        self.assertFalse(is_high_risk_citation_quality_eligible(metadata))
+
+    def test_structured_chunk_with_anchor_and_trace_is_eligible(self) -> None:
+        metadata = accepted_quality_metadata()
+        metadata.update(
+            {
+                "parser_contract_version": "v1",
+                "anchor_type": "page_bbox",
+                "embedding_model_version": "v",
+                "parsed_chunk_kind": "text_chunk",
+            }
+        )
+        self.assertTrue(is_high_risk_citation_quality_eligible(metadata))
+
+    def test_spreadsheet_anchor_via_cell_sheet_counts(self) -> None:
+        metadata = accepted_quality_metadata()
+        metadata.update(
+            {
+                "parser_contract_version": "v1",
+                "cell_sheet": "Sheet1",
+                "embedding_model_version": "v",
+                "parsed_chunk_kind": "spreadsheet_cell",
+            }
+        )
+        self.assertTrue(is_high_risk_citation_quality_eligible(metadata))
+
+    def test_legacy_content_with_no_parser_contract_version_is_unaffected(self) -> None:
+        # Pre-ADR-018 content: has quality metadata but never sets parser_contract_version at all.
+        metadata = accepted_quality_metadata()
+        self.assertTrue(is_high_risk_citation_quality_eligible(metadata))
+
+
 class ClassifyTextExtractionQualityTest(unittest.TestCase):
     def test_clean_text_is_accepted(self) -> None:
         metadata = classify_text_extraction_quality("作業前に主電源を停止すること。", raw_size=64)

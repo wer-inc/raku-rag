@@ -216,6 +216,18 @@ def is_high_risk_citation_quality_eligible(metadata: Mapping[str, object] | obje
         return False
     if _is_explicit_false(values.get(HIGH_RISK_CITATION_ELIGIBLE_KEY)):
         return False
+    # §11.4: "anchor がない chunk" / "provider・model・version trace がない chunk" are not high-risk
+    # evidence-grade. Scoped to content produced by the ADR-018 structured pipeline (the presence of
+    # ``parser_contract_version`` — set ONLY by structured_ingestion._build_chunks — is what tells us
+    # this chunk is in-scope for the check); other pipelines' provenance conventions are untouched, so
+    # this is additive and cannot regress pre-existing (pre-ADR-018) high-risk citations.
+    if values.get("parser_contract_version"):
+        has_anchor = bool(values.get("anchor_type") or values.get("cell_sheet"))
+        has_trace = bool(values.get("embedding_model_version")) and bool(
+            values.get("parsed_chunk_kind")
+        )
+        if not (has_anchor and has_trace):
+            return False
     return True
 
 

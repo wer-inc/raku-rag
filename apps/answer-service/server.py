@@ -873,6 +873,38 @@ def _answer_json(ans) -> dict:
     }
 
 
+def _emit_manufacturing_citation_quality_metrics(metrics, tenant_id: str, ans) -> None:
+    """ADR-018 §18.4 — the manufacturing-overlay counterpart of the base-answer emission.
+
+    Purely observational: reads fields the safety gate already finalized on ``ans`` (high_risk,
+    safety_block_reason, citations) and reports them via the same §18.4 projection the base 001 answer
+    path uses. Never touches the gate's decision — this is telemetry over an already-decided answer, so
+    it cannot affect the safety boundary.
+    """
+
+    if metrics is None:
+        return
+    from raku_rag.services.ingestion_quality import answer_citation_quality_signals
+
+    signals = answer_citation_quality_signals(
+        ans.citations,
+        is_high_risk=bool(ans.high_risk),
+        blocked=bool(ans.safety_block_reason),
+        block_reason=ans.safety_block_reason or "",
+    )
+    labels = {"tenant_id": tenant_id}
+    metrics.increment(
+        "manufacturing_answer_high_risk_blocked_invalid_citation_total",
+        float(signals["high_risk_blocked_invalid_citation"]),
+        labels=labels,
+    )
+    metrics.increment(
+        "manufacturing_answer_review_approved_citations_total",
+        float(signals["review_approved_chunk_usage"]),
+        labels=labels,
+    )
+
+
 def _manufacturing_answer_json(ans) -> dict:
     """Serialize a ManufacturingAnswer: base answer fields + the safety extension nested under
     ``manufacturing`` (P1-1 deployment exposure; GAP-M02 nesting). Citations carry approval provenance.
@@ -2582,6 +2614,9 @@ def make_handler(system: ProductionSystem):
                         manufacturing_filters=body.get("manufacturing_filters"),
                         factory_id=body.get("factory_id"),
                         intent_query=intent_query,
+                    )
+                    _emit_manufacturing_citation_quality_metrics(
+                        getattr(system, "metrics", None), principal.tenant_id, mfg_ans
                     )
                     payload = _manufacturing_answer_json(mfg_ans)
                     if intent_query is not None:

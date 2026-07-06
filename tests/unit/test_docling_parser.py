@@ -62,6 +62,15 @@ class DoclingOfflineFallbackTest(unittest.TestCase):
         self.assertEqual(doc.provider_runs[0].provider, "docling")
         self.assertEqual(doc.blocks[0].provenance.route, "docling_unavailable_fallback")
 
+    def test_fallback_is_review_required_not_silently_accepted(self) -> None:
+        # §8.4 "provider がすべて失敗" (§P4/§P5) — a raw byte-decode is not a real extraction; it must
+        # never read as "accepted" downstream just because the fallback produced plausible-looking text.
+        doc = DoclingStructuredParser().parse_structured(
+            b"line one\n\nline two", "application/pdf", document_id="d1"
+        )
+        self.assertEqual(doc.quality.status, "review_required")
+        self.assertIn("provider_error", doc.quality.reasons)
+
 
 def _minimal_pdf(text: str) -> bytes:
     objs = [

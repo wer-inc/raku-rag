@@ -85,6 +85,44 @@ class ClassifyParsedDocumentQualityTest(unittest.TestCase):
         self.assertIn("language_mismatch", reasons)
 
 
+class AdditionalDimensionGatesTest(unittest.TestCase):
+    """§8.4 gates over dimensions that were previously computed but not enforced."""
+
+    def test_low_ocr_confidence_p10_is_review_required(self) -> None:
+        status, reasons = classify_parsed_document_quality(
+            _doc({"overall": 0.8, "ocr_confidence_p10": 0.1})
+        )
+        self.assertEqual(status, QUALITY_STATUS_REVIEW_REQUIRED)
+        self.assertIn("low_ocr_confidence_p10", reasons)
+
+    def test_healthy_ocr_confidence_p10_is_accepted(self) -> None:
+        status, _ = classify_parsed_document_quality(
+            _doc({"overall": 0.8, "ocr_confidence_p10": 0.9})
+        )
+        self.assertEqual(status, QUALITY_STATUS_ACCEPTED)
+
+    def test_high_empty_page_risk_is_review_required(self) -> None:
+        status, reasons = classify_parsed_document_quality(
+            _doc({"overall": 0.8, "empty_page_risk": 0.5})
+        )
+        self.assertEqual(status, QUALITY_STATUS_REVIEW_REQUIRED)
+        self.assertIn("high_empty_page_risk", reasons)
+
+    def test_high_reading_order_risk_is_review_required(self) -> None:
+        status, reasons = classify_parsed_document_quality(
+            _doc({"overall": 0.8, "reading_order_risk": 0.6})
+        )
+        self.assertEqual(status, QUALITY_STATUS_REVIEW_REQUIRED)
+        self.assertIn("high_reading_order_risk", reasons)
+
+    def test_provider_error_dimension_is_review_required(self) -> None:
+        status, reasons = classify_parsed_document_quality(
+            _doc({"overall": 0.8, "provider_error": 1.0})
+        )
+        self.assertEqual(status, QUALITY_STATUS_REVIEW_REQUIRED)
+        self.assertIn("provider_error", reasons)
+
+
 class ChunkQualityFloorTest(unittest.TestCase):
     def _chunk(self) -> StructuredChunk:
         return StructuredChunk(

@@ -131,9 +131,12 @@ class DoclingStructuredParser:
         ocr_provider: OcrProvider | None = None,
         vlm_provider: VlmDraftProvider | None = None,
         visual_artifact_detector: VisualArtifactDetector | None = None,
+        expected_language: str = "",
     ) -> None:
         self._content_types = content_types
         self._converter = None  # lazy DocumentConverter (expensive to build)
+        # §8.3 language_consistency dimension (opt-in per deployment, default "" => not computed).
+        self._expected_language = expected_language
         # §4.2/§9.4: OCR is an INDEPENDENT provider, not Docling's built-in. Default is config-driven
         # (RAKU_OCR_PROVIDER, default "none") — never Docling's internal OCR.
         self._ocr = ocr_provider if ocr_provider is not None else select_ocr_provider()
@@ -216,7 +219,7 @@ class DoclingStructuredParser:
 
     def _apply_quality_dimensions(self, parsed: ParsedDocument) -> ParsedDocument:
         """§8.3: merge the derived dimension vector into the provider-confidence metrics."""
-        derived = document_quality_dimensions(parsed)
+        derived = document_quality_dimensions(parsed, expected_language=self._expected_language)
         if not derived:
             return parsed
         metrics = {**dict(parsed.quality.metrics or {}), **derived}
@@ -840,10 +843,14 @@ def _text_fallback(raw: bytes, source, *, result: str, reason: str, route: str) 
     route_trace = (
         RouteTraceStep(stage="extract", provider=PROVIDER, result=result, reason=reason),
     )
+    # §8.4 "provider がすべて失敗" (§P4/§P5): the canonical parser could not run (unavailable) or raised
+    # (error), so this is a raw byte-decode, not a real extraction — never let it read as "accepted".
+    quality = QualityInfo(status="review_required", reasons=("provider_error",))
     return ParsedDocument(
         source=source,
         ingestion=IngestionInfo(),
         provider_runs=(run,),
         blocks=blocks,
         route_trace=route_trace,
+        quality=quality,
     )

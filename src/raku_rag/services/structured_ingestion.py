@@ -100,6 +100,10 @@ def classify_parsed_document_quality(
     layout = metrics.get("layout_confidence")
     if layout is not None and layout < thresholds.low_layout_confidence:
         _flag("low_layout_confidence")
+    # §8.4 "OCR confidence 下位 percentile が低い" — the p10 dimension, not just the mean/overall.
+    ocr_p10 = metrics.get("ocr_confidence_p10")
+    if ocr_p10 is not None and ocr_p10 < thresholds.low_ocr_confidence_p10:
+        _flag("low_ocr_confidence_p10")
     for table in parsed.tables:
         tsc = dict(table.quality.metrics or {}).get("table_structure_confidence")
         if tsc is not None and tsc < thresholds.low_table_structure_confidence:
@@ -115,6 +119,19 @@ def classify_parsed_document_quality(
         if dict(page.signals or {}).get("drawing_like"):
             _flag("drawing_only_page")
             break
+    # §8.4 "非空ページなのに抽出テキストがほぼ空" at the document level (the per-chunk text classifier
+    # can't see this — a chunk's own emptiness is circular). empty_page_risk is the fraction of pages
+    # that have some layout content but yielded no text.
+    empty_page_risk = metrics.get("empty_page_risk")
+    if empty_page_risk is not None and empty_page_risk > thresholds.high_empty_page_risk:
+        _flag("high_empty_page_risk")
+    # §9.3 "表や段組の読み順が壊れていないか" — a high reading-order-inversion rate is a layout failure.
+    reading_order_risk = metrics.get("reading_order_risk")
+    if reading_order_risk is not None and reading_order_risk > thresholds.high_reading_order_risk:
+        _flag("high_reading_order_risk")
+    # §8.4 "provider がすべて失敗" — the route_trace recorded a hard provider error/exception.
+    if metrics.get("provider_error"):
+        _flag("provider_error")
     # §8.4 expected-ja-but-de-japanized (opt-in per source).
     if expected_language and is_language_mismatch(parsed.text_for_embedding(), expected_language):
         _flag("language_mismatch")
@@ -350,7 +367,7 @@ class StructuredIngestionService:
         return chunks
 
 
-def build_structured_parser() -> StructuredParser:
+def build_structured_parser(*, expected_language: str = "") -> StructuredParser:
     """Compose the app's structured parser: existing parsers first (parity), Docling for the rest.
 
     Text / DOCX / CSV / XLSX / HTML keep the existing structured parsers (text_for_embedding parity
@@ -371,7 +388,7 @@ def build_structured_parser() -> StructuredParser:
             TextStructuredParser(),
             DocxStructuredParser(),
             SpreadsheetStructuredParser(),
-            DoclingStructuredParser(),
+            DoclingStructuredParser(expected_language=expected_language),
         )
     )
 
@@ -394,17 +411,19 @@ def build_structured_ingestion_service(
 
         raw_sink = build_raw_sink()  # §P2: fs/s3 via RAKU_RAW_SINK env; default None (no-op)
 
+    # §8.4/§8.3 language-consistency: opt-in per deployment (default "" => no check/dimension).
+    expected_language = os.environ.get("RAKU_EXPECTED_LANGUAGE", "")
     return StructuredIngestionService(
         store=store,
         embedder=embedder,
-        structured_parser=structured_parser or build_structured_parser(),
+        structured_parser=structured_parser
+        or build_structured_parser(expected_language=expected_language),
         registry=registry,
         metrics=metrics,
         tracer=tracer,
         pii_redaction_mode=pii_redaction_mode,
         raw_sink=raw_sink,
-        # §8.4 language-consistency: opt-in per deployment (default "" => no check).
-        expected_language=os.environ.get("RAKU_EXPECTED_LANGUAGE", ""),
+        expected_language=expected_language,
     )
 
 
