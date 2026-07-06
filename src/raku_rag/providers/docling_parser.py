@@ -12,10 +12,14 @@ Crucially (§P1) the output is normalized into our canonical ``ParsedDocument``;
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
+import math
 import re
 import unicodedata
 from dataclasses import replace
+from datetime import datetime, timezone
 
 from raku_rag.domain.parsed_document import (
     ANCHOR_PAGE_BBOX,
@@ -29,6 +33,7 @@ from raku_rag.domain.parsed_document import (
     BLOCK_TITLE,
     BLOCK_UNKNOWN,
     Block,
+    Figure,
     IngestionInfo,
     Page,
     ParsedDocument,
@@ -165,11 +170,18 @@ class DoclingStructuredParser:
         source = _source_info(raw, content_type, document_id=document_id, filename=filename)
         if not docling_available():
             return self._offline_fallback(raw, content_type, source)
+        started_at = _utcnow()
         try:
-            docling_doc = self._convert(raw, content_type, filename=filename)
+            result = self._convert(raw, content_type, filename=filename)
         except Exception as exc:  # extraction failure is a normal state (§P4), not a crash
             return self._extraction_error(raw, content_type, source, reason=str(exc)[:200])
-        parsed = self._normalize(docling_doc, source)
+        parsed = self._normalize(
+            result.document,
+            source,
+            confidence=getattr(result, "confidence", None),
+            started_at=started_at,
+            finished_at=_utcnow(),
+        )
         return self._apply_external_ocr(parsed, raw, content_type)
 
     def _convert(self, raw: bytes, content_type: str, *, filename: str):
@@ -177,25 +189,40 @@ class DoclingStructuredParser:
 
         name = filename or f"upload{_ext_for(content_type)}"
         stream = DocumentStream(name=name, stream=io.BytesIO(raw))
-        result = self._get_converter().convert(stream)
-        return result.document
+        return self._get_converter().convert(stream)  # full ConversionResult (doc + confidence)
+
+    def _config_hash(self) -> str:
+        """Stable hash of the extraction config (§13.3) for reindex/regression/audit."""
+        payload = json.dumps(
+            {"do_ocr": False, "do_table_structure": True, "ocr_provider": self._ocr.name},
+            sort_keys=True,
+        )
+        return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
     # --- normalization: DoclingDocument -> ParsedDocument ---------------------------------------
-    def _normalize(self, doc, source) -> ParsedDocument:
+    def _normalize(
+        self, doc, source, *, confidence=None, started_at: str = "", finished_at: str = ""
+    ) -> ParsedDocument:
         version = self._provider_version()
         prov = Provenance(provider=PROVIDER, provider_version=version, route="docling_first")
 
         pages = _normalize_pages(doc)
         blocks, tables = _normalize_items(doc, prov)
+        figures = _normalize_figures(doc, prov)  # A2 §7: capture pictures/figures
+        quality = _quality_from_confidence(confidence)  # A3 §8.3: Docling confidence dimensions
 
         run = ProviderRun(
             provider=PROVIDER,
             provider_version=version,
             model_versions={
-                "layout": "docling-layout",
-                "table": "docling-tableformer",
+                # A5 §13.3: record the real docling package version behind each model role.
+                "layout": f"docling-layout@{version}",
+                "table": f"docling-tableformer@{version}",
                 "ocr_provider": self._ocr.name,
             },
+            config_hash=self._config_hash(),
+            started_at=started_at,
+            finished_at=finished_at,
             status="success",
         )
         route_trace = (
@@ -215,6 +242,8 @@ class DoclingStructuredParser:
             pages=pages,
             blocks=blocks,
             tables=tables,
+            figures=figures,
+            quality=quality,
             route_trace=route_trace,
         )
 
@@ -280,6 +309,72 @@ def _ext_for(content_type: str) -> str:
         "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
     }.get(content_type, ".bin")
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_figures(doc, prov) -> tuple[Figure, ...]:
+    """Capture Docling pictures as Figure objects (A2 §7); empty when the document has none."""
+    figures: list[Figure] = []
+    for idx, pic in enumerate(getattr(doc, "pictures", ()) or ()):
+        first = _first_prov(pic)
+        caption = ""
+        caption_fn = getattr(pic, "caption_text", None)
+        if callable(caption_fn):
+            try:
+                caption = _norm(caption_fn(doc) or "")
+            except Exception:  # pragma: no cover - caption API drift
+                caption = ""
+        figures.append(
+            Figure(
+                figure_id=f"fig_{idx}",
+                page_no=getattr(first, "page_no", None),
+                bbox=_bbox_tuple(first),
+                caption=caption,
+                provenance=prov,
+            )
+        )
+    return tuple(figures)
+
+
+def _quality_from_confidence(confidence) -> QualityInfo:
+    """Map Docling's ConfidenceReport onto the §8.3 quality-dimension vector (A3).
+
+    Records dimensions (never a single scalar, §8.2). Status stays informational/conservative here —
+    hard thresholds are eval-driven (OQ#2); retrieval gating stays per-chunk in StructuredIngestion.
+    """
+    if confidence is None:
+        return QualityInfo()
+    mean = _score(getattr(confidence, "mean_score", None))
+    low = _score(getattr(confidence, "low_score", None))
+    layout = _score(getattr(confidence, "layout_score", None))
+    metrics: dict[str, float] = {}
+    if layout is not None:
+        metrics["layout_confidence"] = layout
+    if mean is not None:
+        metrics["ocr_confidence_p50"] = mean
+        metrics["overall"] = mean
+    if low is not None:
+        metrics["ocr_confidence_p10"] = low
+    reasons: tuple[str, ...] = ()
+    status = "accepted"
+    if low is not None and low < 0.3:
+        status, reasons = "accepted_with_warnings", ("low_confidence_regions",)
+    return QualityInfo(status=status, reasons=reasons, metrics=metrics)
+
+
+def _score(value) -> float | None:
+    try:
+        if value is None:
+            return None
+        f = float(value)
+        if math.isnan(f) or math.isinf(f):  # docling reports NaN for models that didn't run (e.g. HTML)
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_pages(doc) -> tuple[Page, ...]:

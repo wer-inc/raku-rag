@@ -16,7 +16,12 @@ from raku_rag.domain.parsed_document import (
     PARSED_DOCUMENT_SCHEMA_VERSION,
 )
 from raku_rag.providers import docling_parser
-from raku_rag.providers.docling_parser import DoclingStructuredParser, docling_available
+from raku_rag.providers.docling_parser import (
+    DoclingStructuredParser,
+    _normalize_figures,
+    _quality_from_confidence,
+    docling_available,
+)
 
 _HTML = (
     b"<html><body><h1>Safety Procedure</h1>"
@@ -55,6 +60,53 @@ class DoclingOfflineFallbackTest(unittest.TestCase):
         self.assertEqual(doc.blocks[0].provenance.route, "docling_unavailable_fallback")
 
 
+class _FakeConfidence:
+    def __init__(self, mean, low, layout) -> None:
+        self.mean_score = mean
+        self.low_score = low
+        self.layout_score = layout
+
+
+class _FakePicture:
+    def __init__(self) -> None:
+        self.prov = ()
+
+    def caption_text(self, doc) -> str:
+        return "Figure 1: pump assembly"
+
+
+class _FakeDocWithPicture:
+    pictures = (_FakePicture(),)
+
+
+class DoclingQualityAndFiguresTest(unittest.TestCase):
+    def test_quality_from_confidence_builds_dimension_vector(self) -> None:
+        q = _quality_from_confidence(_FakeConfidence(0.78, 0.58, 0.55))
+        self.assertEqual(q.metrics["ocr_confidence_p50"], 0.78)
+        self.assertEqual(q.metrics["ocr_confidence_p10"], 0.58)
+        self.assertEqual(q.metrics["layout_confidence"], 0.55)
+        self.assertEqual(q.status, "accepted")
+
+    def test_quality_nan_scores_are_dropped(self) -> None:
+        q = _quality_from_confidence(_FakeConfidence(float("nan"), float("nan"), float("nan")))
+        self.assertEqual(dict(q.metrics), {})
+
+    def test_low_confidence_flags_warnings(self) -> None:
+        q = _quality_from_confidence(_FakeConfidence(0.5, 0.1, 0.4))
+        self.assertEqual(q.status, "accepted_with_warnings")
+        self.assertIn("low_confidence_regions", q.reasons)
+
+    def test_none_confidence_is_plain_accepted(self) -> None:
+        self.assertEqual(_quality_from_confidence(None).status, "accepted")
+
+    def test_normalize_figures_captures_pictures(self) -> None:
+        from raku_rag.domain.parsed_document import Provenance
+
+        figs = _normalize_figures(_FakeDocWithPicture(), Provenance(provider="docling"))
+        self.assertEqual(len(figs), 1)
+        self.assertEqual(figs[0].caption, "Figure 1: pump assembly")
+
+
 @unittest.skipUnless(docling_available(), "docling not installed")
 class DoclingRealConversionTest(unittest.TestCase):
     def test_html_normalizes_to_parsed_document_with_structure(self) -> None:
@@ -71,6 +123,10 @@ class DoclingRealConversionTest(unittest.TestCase):
         self.assertEqual(run.provider, "docling")
         self.assertNotEqual(run.provider_version, "")
         self.assertEqual(run.model_versions.get("ocr_provider"), "none")
+        # A5 §13.3: real version + config hash + timestamps recorded for reindex/audit.
+        self.assertIn(run.provider_version, run.model_versions["layout"])
+        self.assertTrue(run.config_hash.startswith("sha256:"))
+        self.assertTrue(run.started_at and run.finished_at)
 
         # §4.2/§9.4: Docling's built-in OCR is disabled and OCR is owned by an independent provider,
         # recorded in the route_trace.
