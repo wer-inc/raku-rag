@@ -17,6 +17,7 @@ stdlib only; the heavy Docling provider is injected (opt-in), never imported her
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from typing import Callable, Mapping, Protocol
 
@@ -47,6 +48,7 @@ from raku_rag.services.ingestion_quality import (
     classify_text_extraction_quality,
     review_required_quality_metadata,
 )
+from raku_rag.services.quality_detectors import is_language_mismatch
 from raku_rag.services.structured_chunking import StructuredChunk, chunk_parsed_document
 
 PARSER_CONTRACT_VERSION = "v1"
@@ -70,32 +72,51 @@ _LOW_LAYOUT_CONFIDENCE = 0.30
 _LOW_TABLE_STRUCTURE_CONFIDENCE = 0.40
 
 
-def classify_parsed_document_quality(parsed: ParsedDocument) -> tuple[str, tuple[str, ...]]:
-    """ADR §8.4 document-level gate using structured signals (Docling confidence + table structure).
+def classify_parsed_document_quality(
+    parsed: ParsedDocument, *, expected_language: str = ""
+) -> tuple[str, tuple[str, ...]]:
+    """ADR §8.4 document-level gate using structured signals (Docling confidence + §8.4 detectors).
 
-    Returns (status, reasons). ``review_required`` when overall/layout confidence is below the floor,
-    or a table is present with low structure confidence — conditions the text classifier can't see.
+    Returns (status, reasons). ``review_required`` for: low overall/layout confidence; a table with
+    low structure confidence; a page flagged handwriting/seal or drawing-only; or an expected-Japanese
+    document whose extraction came out abnormally non-Japanese — conditions the text classifier can't
+    see. (draft_visual pages keep their status via the per-block/chunk path, not here.)
     """
 
     metrics = dict(parsed.quality.metrics or {})
     reasons: list[str] = []
     status = parsed.quality.status or QUALITY_STATUS_ACCEPTED
 
+    def _flag(reason: str) -> None:
+        nonlocal status
+        reasons.append(reason)
+        status = QUALITY_STATUS_REVIEW_REQUIRED
+
     overall = metrics.get("overall")
     if overall is not None and overall < _LOW_OVERALL_CONFIDENCE:
-        reasons.append("low_overall_confidence")
-        status = QUALITY_STATUS_REVIEW_REQUIRED
+        _flag("low_overall_confidence")
     layout = metrics.get("layout_confidence")
     if layout is not None and layout < _LOW_LAYOUT_CONFIDENCE:
-        reasons.append("low_layout_confidence")
-        status = QUALITY_STATUS_REVIEW_REQUIRED
+        _flag("low_layout_confidence")
     for table in parsed.tables:
         tsc = dict(table.quality.metrics or {}).get("table_structure_confidence")
         if tsc is not None and tsc < _LOW_TABLE_STRUCTURE_CONFIDENCE:
-            reasons.append("low_table_structure_confidence")
-            status = QUALITY_STATUS_REVIEW_REQUIRED
+            _flag("low_table_structure_confidence")
             break
-    return status, tuple(reasons)
+    # §8.4 vision-detector signals recorded on pages (handwriting / seal / drawing-only).
+    for page in parsed.pages:
+        signals = dict(page.signals or {})
+        if signals.get("handwriting_detected") or signals.get("seal_detected"):
+            _flag("handwriting_or_seal_detected")
+            break
+    for page in parsed.pages:
+        if dict(page.signals or {}).get("drawing_like"):
+            _flag("drawing_only_page")
+            break
+    # §8.4 expected-ja-but-de-japanized (opt-in per source).
+    if expected_language and is_language_mismatch(parsed.text_for_embedding(), expected_language):
+        _flag("language_mismatch")
+    return status, tuple(dict.fromkeys(reasons))
 
 
 def _chunk_quality_metadata(
@@ -142,6 +163,7 @@ class StructuredIngestionService:
         redactor: Redactor | None = None,
         pii_redaction_mode: str = PII_REDACTION_PRE_INDEX,
         raw_sink: RawSink | None = None,
+        expected_language: str = "",
     ) -> None:
         self._store = store
         self._embedder = embedder
@@ -152,6 +174,8 @@ class StructuredIngestionService:
         self._redactor = redactor or Redactor()
         self._pii_redaction_mode = _normalize_pii_redaction_mode(pii_redaction_mode)
         self._raw_sink = raw_sink
+        # §8.4 language-consistency: opt-in per source (default "" => no check).
+        self._expected_language = expected_language
 
     def ingest(
         self,
@@ -184,7 +208,9 @@ class StructuredIngestionService:
                 self._raw_sink(document_id, parsed.to_dict())
 
             struct_chunks = chunk_parsed_document(parsed)
-            doc_floor_status, doc_floor_reasons = classify_parsed_document_quality(parsed)
+            doc_floor_status, doc_floor_reasons = classify_parsed_document_quality(
+                parsed, expected_language=self._expected_language
+            )
             chunks = self._build_chunks(
                 tenant_id,
                 collection_id,
@@ -372,6 +398,8 @@ def build_structured_ingestion_service(
         tracer=tracer,
         pii_redaction_mode=pii_redaction_mode,
         raw_sink=raw_sink,
+        # §8.4 language-consistency: opt-in per deployment (default "" => no check).
+        expected_language=os.environ.get("RAKU_EXPECTED_LANGUAGE", ""),
     )
 
 

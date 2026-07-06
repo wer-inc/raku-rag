@@ -7,6 +7,7 @@ import unittest
 from raku_rag.domain.parsed_document import (
     BLOCK_PARAGRAPH,
     Block,
+    Page,
     ParsedDocument,
     QualityInfo,
     Table,
@@ -54,6 +55,34 @@ class ClassifyParsedDocumentQualityTest(unittest.TestCase):
     def test_no_metrics_is_accepted(self) -> None:
         status, _ = classify_parsed_document_quality(_doc({}))
         self.assertEqual(status, QUALITY_STATUS_ACCEPTED)
+
+    def test_handwriting_or_seal_page_signal_is_review_required(self) -> None:
+        doc = ParsedDocument(
+            blocks=(Block(block_id="b", kind=BLOCK_PARAGRAPH, text="x"),),
+            pages=(Page(page_id="p1", page_no=1, signals={"seal_detected": True}),),
+        )
+        status, reasons = classify_parsed_document_quality(doc)
+        self.assertEqual(status, QUALITY_STATUS_REVIEW_REQUIRED)
+        self.assertIn("handwriting_or_seal_detected", reasons)
+
+    def test_drawing_only_page_signal_is_review_required(self) -> None:
+        doc = ParsedDocument(
+            blocks=(Block(block_id="b", kind=BLOCK_PARAGRAPH, text="x"),),
+            pages=(Page(page_id="p1", page_no=1, signals={"drawing_like": True}),),
+        )
+        status, reasons = classify_parsed_document_quality(doc)
+        self.assertEqual(status, QUALITY_STATUS_REVIEW_REQUIRED)
+        self.assertIn("drawing_only_page", reasons)
+
+    def test_language_mismatch_is_review_required_only_when_expected_language_set(self) -> None:
+        corrupt = "Pmp P-12 mntnc ntrvl nnty dys fr th mchn nt xyzq abcd efgh ijkl mnop"
+        doc = ParsedDocument(blocks=(Block(block_id="b", kind=BLOCK_PARAGRAPH, text=corrupt),))
+        # no expected language => not judged
+        self.assertEqual(classify_parsed_document_quality(doc)[0], QUALITY_STATUS_ACCEPTED)
+        # expected ja but de-japanized => review
+        status, reasons = classify_parsed_document_quality(doc, expected_language="ja")
+        self.assertEqual(status, QUALITY_STATUS_REVIEW_REQUIRED)
+        self.assertIn("language_mismatch", reasons)
 
 
 class ChunkQualityFloorTest(unittest.TestCase):

@@ -49,6 +49,12 @@ from raku_rag.domain.parsed_document import (
 )
 from raku_rag.providers.ocr.pluggable import OcrProvider, select_ocr_provider
 from raku_rag.providers.vlm_draft import VlmDraftProvider, select_vlm_draft_provider
+from raku_rag.services.quality_detectors import (
+    VisualArtifactDetector,
+    is_drawing_like,
+    select_visual_artifact_detector,
+    table_structure_confidence,
+)
 
 PROVIDER = "docling"
 
@@ -121,6 +127,7 @@ class DoclingStructuredParser:
         content_types: frozenset[str] = DOCLING_CONTENT_TYPES,
         ocr_provider: OcrProvider | None = None,
         vlm_provider: VlmDraftProvider | None = None,
+        visual_artifact_detector: VisualArtifactDetector | None = None,
     ) -> None:
         self._content_types = content_types
         self._converter = None  # lazy DocumentConverter (expensive to build)
@@ -129,6 +136,13 @@ class DoclingStructuredParser:
         self._ocr = ocr_provider if ocr_provider is not None else select_ocr_provider()
         # §10/Phase D: VLM draft fallback for pages OCR can't read. Default NoOp; output is draft_visual.
         self._vlm = vlm_provider if vlm_provider is not None else select_vlm_draft_provider()
+        # §8.4 handwriting/seal detection is a pluggable vision provider (default NoOp); drawing-like is
+        # a stdlib heuristic computed unconditionally.
+        self._visual_detector = (
+            visual_artifact_detector
+            if visual_artifact_detector is not None
+            else select_visual_artifact_detector()
+        )
 
     def supports(self, content_type: str) -> bool:
         return content_type in self._content_types
@@ -190,7 +204,47 @@ class DoclingStructuredParser:
             finished_at=_utcnow(),
         )
         parsed = self._apply_preflight(parsed, raw, content_type)
+        parsed = self._apply_visual_detectors(parsed, raw, content_type)
         return self._apply_external_ocr(parsed, raw, content_type)
+
+    # --- §8.4 visual detectors: drawing-like (stdlib heuristic) + handwriting/seal (pluggable) ------
+    def _apply_visual_detectors(
+        self, parsed: ParsedDocument, raw: bytes, content_type: str
+    ) -> ParsedDocument:
+        if not parsed.pages:
+            return parsed
+        text_by_page: dict[int, int] = {}
+        for block in parsed.blocks:
+            if block.page_no:
+                text_by_page[block.page_no] = text_by_page.get(block.page_no, 0) + len(
+                    block.text or ""
+                )
+        figure_pages = {fig.page_no for fig in parsed.figures if fig.page_no}
+        detector = self._visual_detector
+        detector_on = content_type == "application/pdf" and detector.available()
+        if not figure_pages and not detector_on:
+            return parsed
+
+        pages = []
+        for page in parsed.pages:
+            signals = dict(page.signals)
+            if is_drawing_like(
+                has_figures=page.page_no in figure_pages,
+                text_char_count=text_by_page.get(page.page_no, 0),
+            ):
+                signals["drawing_like"] = True
+            if detector_on:
+                image = render_pdf_page_png(raw, page.page_no)
+                if image:
+                    found = detector.detect(image, page_no=page.page_no)
+                    if found.handwriting_detected:
+                        signals["handwriting_detected"] = True
+                    if found.seal_detected:
+                        signals["seal_detected"] = True
+                    if found.drawing_like:
+                        signals["drawing_like"] = True
+            pages.append(replace(page, signals=signals))
+        return replace(parsed, pages=tuple(pages))
 
     # --- preflight (§6.1/§6.2): classify digital vs scanned pages, record routing signals ---------
     def _apply_preflight(
@@ -544,12 +598,15 @@ def _table_from_item(item, order: int, prov) -> Table | None:
                     columns.append(TableColumn(index=c_idx - 1, text=cell_text))
                 cells.append(TableCell(row=r_idx, col=c_idx, text=cell_text, is_header=is_header))
     first = _first_prov(item)
+    # §8.3/§8.4: record a table-structure confidence so a ragged/misdetected table can be gated.
+    tsc = table_structure_confidence(cells)
     return Table(
         table_id=f"t_{order}",
         page_no=getattr(first, "page_no", None),
         bbox=_bbox_tuple(first),
         columns=tuple(columns),
         cells=tuple(cells),
+        quality=QualityInfo(metrics={"table_structure_confidence": tsc}),
         provenance=prov,
     )
 
