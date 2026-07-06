@@ -1519,11 +1519,14 @@ VLM は難物 fallback として使うが、出力は `draft_visual` とし、�
 | §12.1 | レビューキュー一覧（Postgres 効率クエリ + in-mem 射影） | live | `persistence/postgres.list_extraction_review_chunks`, `ingestion_quality.extraction_review_queue`（A9） |
 | Phase E | reindex 時の品質再評価（低品質を quarantine） | live | `services/reindex.py`（A12） |
 | §10/Phase D | VLM draft fallback → `draft_visual`（HITL 承認前提） | scaffold | `providers/vlm_draft.py`, `docling_parser.apply_external_ocr`（A11; 実 VLM は opt-in） |
+| §12.2/§10.3 | reviewer アクション（approve/edit/reject/reprocess/mark_non_content/escalate）+ `manual_approved` 昇格 | live | `services/review_actions.py`, `POST /internal/reviews/extraction/actions`, `apps/api ReviewsController`, `apps/web /reviews/extraction` |
+| §18 | 運用メトリクス（status別レート + reason別カウント + quarantine率） | live | `ingestion_quality.extraction_quality_stats`, `GET /internal/reviews/extraction/metrics` |
+| §13.2/§9.1 | worker が PDF を Docling 経路へ | live | `IngestionExecutor(structured_pdf=…)`（構造化ON時） |
 | 配線 | 構造化取り込みへのフラグ切替 | live | `RAKU_STRUCTURED_INGEST` → `app.py`/`production.py`（A1） |
 
-**未了（外部依存または別レイヤ）**: §12 の `/reviews` **フロント UI** + reviewer 承認/却下アクション（§12.2、apps/web。
-backend の queue endpoint `GET /internal/reviews/extraction` は実装済み）、承認による `manual_approved` 昇格フロー
-（§10.3）、worker の PDF を Docling 経路へ（現状 text/office のみ；PDF は visual 経路）、Phase 0 Golden Eval Pack の
-**代表文書の実データ収集と閾値チューニング**（§14/OQ#2。ハーネスと synthetic seed は実装済み）、§18 運用メトリクスの
-本番ダッシュボード結線（quarantine 率ヘルパは実装済み）、手書き/印鑑の**実 vision 検出器**（seam は実装済み・既定 NoOp）。
-これらは本 ADR の受理を妨げない（アーキテクチャは確定、差し込み口は用意済み）。
+**未了（外部リソースが必須で、コード実装では完了できない）**: (1) Phase 0 Golden Eval Pack の**代表文書の実データ収集と
+閾値チューニング**（§14/OQ#2 — 実顧客文書 + 人手ラベリングが必要。ハーネス + synthetic seed + false_accept ゲートは
+実装済み）、(2) 手書き/印鑑の**実 vision 検出器**（学習済みモデル/クラウド API が必要。`VisualArtifactDetector` seam +
+ゲート結線は実装済み・既定 NoOp）、(3) **クラウド OCR/VLM のライブ検証**（API 資格情報が必要。opt-in アダプタ + §19
+egress ゲートは実装済み）。これらは ADR 自身が opt-in（§13.1）/ Open Question（§20）として扱う項目であり、コード側の
+差し込み口はすべて用意済み。それ以外の設計項目は実装・検証済み（Tier A gate + 実 Docling + 実 Postgres + NestJS e2e）。
