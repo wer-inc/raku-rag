@@ -123,6 +123,20 @@ class ReviewActionsTest(unittest.TestCase):
         actions = [e.action for e in self.m.audit.events(tenant_id=T)]
         self.assertIn("extraction_review.approve", actions)
 
+    def test_reversed_decision_surfaces_as_a_review_overturn_in_metrics(self) -> None:
+        # ADR-018 §18.2 review_overturn_rate, end-to-end through the real audit trail (not a fake).
+        cid = self._quarantine("d11")
+        self.m.apply_extraction_review_action(
+            tenant_id=T, chunk_id=cid, action="approve", actor="reviewer1"
+        )
+        self.m.apply_extraction_review_action(
+            tenant_id=T, chunk_id=cid, action="reject", actor="reviewer2", reason="re-review"
+        )
+        review = self.m.extraction_quality_metrics(T)["review"]
+        self.assertEqual(review["reviewed_multiple_times"], 1)
+        self.assertEqual(review["overturned"], 1)
+        self.assertEqual(review["review_overturn_rate"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

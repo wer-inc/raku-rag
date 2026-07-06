@@ -238,7 +238,10 @@ class StructuredIngestionService:
                 chunking_metadata,
                 doc_floor_status=doc_floor_status,
                 doc_floor_reasons=doc_floor_reasons,
-                route_trace_meta=_route_trace_metadata(parsed),
+                route_trace_meta={
+                    **_route_trace_metadata(parsed),
+                    **_page_route_metadata(parsed),
+                },
             )
 
             vectors = self._embedder.embed([c.text for c in chunks]) if chunks else []
@@ -470,4 +473,36 @@ def _route_trace_metadata(parsed: ParsedDocument) -> dict[str, object]:
             }
             for s in steps
         ]
+    }
+
+
+def _page_route_metadata(parsed: ParsedDocument) -> dict[str, object]:
+    """§18.1/§18.2 — persist per-document page stats onto the chunk (document-level, deduped in stats):
+    page_count, the §6.2 page_route_distribution, and separate per-artefact page counts (handwriting /
+    seal / vertical-text / drawing), rather than only the combined §8.4 gate reason.
+    """
+
+    pages = getattr(parsed, "pages", ()) or ()
+    if not pages:
+        return {}
+    from raku_rag.providers.page_routing import classify_page_route
+
+    route_distribution: dict[str, int] = {}
+    artefact_counts = {
+        "handwriting_detected": 0,
+        "seal_detected": 0,
+        "vertical_text_suspected": 0,
+        "drawing_like": 0,
+    }
+    for page in pages:
+        signals = dict(getattr(page, "signals", None) or {})
+        route = classify_page_route(signals)
+        route_distribution[route.page_type] = route_distribution.get(route.page_type, 0) + 1
+        for key in artefact_counts:
+            if signals.get(key):
+                artefact_counts[key] += 1
+    return {
+        "page_count": len(pages),
+        "page_route_distribution": route_distribution,
+        **{f"{key}_pages": count for key, count in artefact_counts.items()},
     }

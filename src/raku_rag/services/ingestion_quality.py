@@ -410,6 +410,9 @@ def extraction_quality_stats(store: object, *, tenant_id: str | None = None) -> 
         "by_reason": by_reason,
         "by_provider": by_provider,
         "fallback_rate": (fallback_count / total) if total else 0.0,
+        # §18.1 provider failure rate — a hard provider error/exception/unavailability (the
+        # "provider_error" §8.4 gate reason), distinct from a fallback that still produced content.
+        "provider_failure_rate": (by_reason.get("provider_error", 0) / total) if total else 0.0,
         "quarantined": quarantined,
         "quarantine_rate": (quarantined / total) if total else 0.0,
     }
@@ -455,6 +458,14 @@ def extraction_latency_cost_stats(
     provider_calls: dict[str, int] = {}
     cost_by_provider: dict[str, float] = {}
     total_cost = 0.0
+    pages_processed = 0
+    route_distribution: dict[str, int] = {}
+    artefact_pages = {
+        "handwriting_detected_pages": 0,
+        "seal_detected_pages": 0,
+        "vertical_text_suspected_pages": 0,
+        "drawing_like_pages": 0,
+    }
 
     iter_items = getattr(store, "iter_items", None)
     if callable(iter_items):
@@ -464,9 +475,23 @@ def extraction_latency_cost_stats(
                 continue
             doc_id = str(getattr(chunk, "document_id", "") or "")
             if doc_id in seen_docs:
-                continue  # route_trace is document-level — count each document once
+                continue  # this document's page/route stats are document-level — count once
             seen_docs.add(doc_id)
-            route = _metadata_mapping(getattr(chunk, "metadata", None)).get("route_trace")
+            values = _metadata_mapping(getattr(chunk, "metadata", None))
+            # §18.1 pages processed + §6.2 route distribution (document-level, from _page_route_metadata).
+            page_count = values.get("page_count")
+            if isinstance(page_count, (int, float)):
+                pages_processed += int(page_count)
+            for page_type, count in (values.get("page_route_distribution") or {}).items():
+                if isinstance(count, (int, float)):
+                    route_distribution[str(page_type)] = route_distribution.get(
+                        str(page_type), 0
+                    ) + int(count)
+            for key in artefact_pages:
+                count = values.get(key)
+                if isinstance(count, (int, float)):
+                    artefact_pages[key] += int(count)
+            route = values.get("route_trace")
             if not isinstance(route, (list, tuple)):
                 continue
             for step in route:
@@ -489,11 +514,62 @@ def extraction_latency_cost_stats(
     }
     return {
         "documents": docs,
+        "pages_processed": pages_processed,
+        "route_distribution": route_distribution,
+        **artefact_pages,
+        "cost_per_page": (total_cost / pages_processed) if pages_processed else 0.0,
         "latency_ms_by_stage": latency,
         "provider_calls": provider_calls,
         "cost_by_provider": cost_by_provider,
         "total_cost": total_cost,
         "cost_per_document": (total_cost / docs) if docs else 0.0,
+    }
+
+
+_REVIEW_ACTION_PREFIX = "extraction_review."
+# A definitive reversal of the accept/reject decision — the only overturn that needs no interpretation
+# of intent (an escalate/reprocess in between doesn't itself count; it's the accept<->reject flip).
+_OVERTURN_PAIR = frozenset({QUALITY_STATUS_MANUAL_APPROVED, QUALITY_STATUS_REJECTED})
+
+
+def review_overturn_stats(
+    events: Iterable[object], *, tenant_id: str | None = None
+) -> dict[str, object]:
+    """ADR-018 §18.2 — review overturn rate: chunks whose review history was reversed.
+
+    Reads audit events (``AuditSink.events()``-shaped: ``.action``, ``.decision``, ``.chunk_ids`` or
+    ``.resource_id``, ``.tenant_id``) for ``extraction_review.*`` actions, groups them by chunk, and
+    flags a chunk as "overturned" when its history contains BOTH manual_approved and rejected at
+    different points — a reviewer's accept/reject verdict was later reversed by another review action.
+    """
+
+    by_chunk: dict[str, list[str]] = {}
+    for event in events:
+        if tenant_id is not None and str(getattr(event, "tenant_id", "") or "") != tenant_id:
+            continue
+        action = str(getattr(event, "action", "") or "")
+        if not action.startswith(_REVIEW_ACTION_PREFIX):
+            continue
+        chunk_ids = getattr(event, "chunk_ids", None) or ()
+        chunk_id = str(chunk_ids[0]) if chunk_ids else str(getattr(event, "resource_id", "") or "")
+        if not chunk_id:
+            continue
+        by_chunk.setdefault(chunk_id, []).append(str(getattr(event, "decision", "") or ""))
+
+    reviewed_multiple_times = 0
+    overturned = 0
+    for decisions in by_chunk.values():
+        if len(decisions) < 2:
+            continue
+        reviewed_multiple_times += 1
+        if _OVERTURN_PAIR <= set(decisions):
+            overturned += 1
+    return {
+        "reviewed_multiple_times": reviewed_multiple_times,
+        "overturned": overturned,
+        "review_overturn_rate": (
+            (overturned / reviewed_multiple_times) if reviewed_multiple_times else 0.0
+        ),
     }
 
 

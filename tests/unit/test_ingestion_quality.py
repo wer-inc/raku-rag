@@ -319,6 +319,20 @@ class ExtractionReviewQueueTest(unittest.TestCase):
         self.assertEqual(stats["by_provider"], {"docling": 1, "rapidocr": 2 - 1})
         self.assertAlmostEqual(stats["fallback_rate"], 1 / 2)
 
+    def test_stats_provider_failure_rate(self) -> None:
+        # §18.1 — distinct from fallback_rate: a hard provider_error reason, not a successful fallback.
+        from raku_rag.services.ingestion_quality import extraction_quality_stats
+
+        failed = self._chunk("a:0", review_required_quality_metadata(reasons=("provider_error",)))
+        ok = self._chunk("b:0", accepted_quality_metadata())
+
+        class _InMemStore:
+            def iter_items(self):
+                return ((failed, None), (ok, None))
+
+        stats = extraction_quality_stats(_InMemStore())
+        self.assertAlmostEqual(stats["provider_failure_rate"], 1 / 2)
+
     def test_latency_cost_stats_dedupe_percentiles_and_cost(self) -> None:
         # §18.3 — measured latency (per stage, p50/p95) + config cost, deduped by document.
         from raku_rag.services.ingestion_quality import extraction_latency_cost_stats
@@ -353,6 +367,164 @@ class ExtractionReviewQueueTest(unittest.TestCase):
         self.assertEqual(stats["provider_calls"], {"docling": 2, "rapidocr": 1})
         self.assertAlmostEqual(stats["total_cost"], 0.002)
         self.assertAlmostEqual(stats["cost_per_document"], 0.001)
+
+    def test_latency_cost_stats_pages_processed_and_route_distribution(self) -> None:
+        # §18.1/§18.2/§18.3 — page-level stats persisted by _page_route_metadata, document-deduped.
+        from raku_rag.services.ingestion_quality import extraction_latency_cost_stats
+
+        def doc_chunk(cid, doc, *, page_count, route_dist, extra=None):
+            meta = accepted_quality_metadata()
+            meta["page_count"] = page_count
+            meta["page_route_distribution"] = route_dist
+            meta.update(extra or {})
+            return Chunk(**{**self._chunk(cid, meta).__dict__, "document_id": doc})
+
+        class _InMemStore:
+            def iter_items(self):
+                return (
+                    # doc A: 2 chunks, same document-level page stats — must be counted ONCE.
+                    (
+                        doc_chunk(
+                            "a:0",
+                            "A",
+                            page_count=3,
+                            route_dist={"clean_digital_text": 2, "scanned": 1},
+                            extra={"seal_detected_pages": 1},
+                        ),
+                        None,
+                    ),
+                    (
+                        doc_chunk(
+                            "a:1",
+                            "A",
+                            page_count=3,
+                            route_dist={"clean_digital_text": 2, "scanned": 1},
+                            extra={"seal_detected_pages": 1},
+                        ),
+                        None,
+                    ),
+                    (
+                        doc_chunk(
+                            "b:0",
+                            "B",
+                            page_count=1,
+                            route_dist={"drawing_cad": 1},
+                            extra={"drawing_like_pages": 1},
+                        ),
+                        None,
+                    ),
+                )
+
+        stats = extraction_latency_cost_stats(_InMemStore())
+        self.assertEqual(stats["pages_processed"], 4)  # 3 (doc A, once) + 1 (doc B)
+        self.assertEqual(
+            stats["route_distribution"],
+            {"clean_digital_text": 2, "scanned": 1, "drawing_cad": 1},
+        )
+        self.assertEqual(stats["seal_detected_pages"], 1)
+        self.assertEqual(stats["drawing_like_pages"], 1)
+
+    def test_cost_per_page(self) -> None:
+        from raku_rag.services.ingestion_quality import extraction_latency_cost_stats
+
+        meta = accepted_quality_metadata()
+        meta["page_count"] = 2
+        meta["route_trace"] = [{"stage": "extract", "provider": "google_docai"}]
+        chunk = self._chunk("a:0", meta)
+
+        class _InMemStore:
+            def iter_items(self):
+                return ((chunk, None),)
+
+        stats = extraction_latency_cost_stats(_InMemStore(), cost_model={"google_docai": 0.01})
+        self.assertAlmostEqual(stats["cost_per_page"], 0.01 / 2)
+
+
+class ReviewOverturnStatsTest(unittest.TestCase):
+    class _Event:
+        def __init__(self, *, tenant_id, action, decision, chunk_id):
+            self.tenant_id = tenant_id
+            self.action = action
+            self.decision = decision
+            self.chunk_ids = (chunk_id,)
+            self.resource_id = chunk_id
+
+    def test_approve_then_reject_is_an_overturn(self) -> None:
+        from raku_rag.services.ingestion_quality import review_overturn_stats
+
+        events = [
+            self._Event(
+                tenant_id="t",
+                action="extraction_review.approve",
+                decision="manual_approved",
+                chunk_id="c1",
+            ),
+            self._Event(
+                tenant_id="t", action="extraction_review.reject", decision="rejected", chunk_id="c1"
+            ),
+        ]
+        stats = review_overturn_stats(events, tenant_id="t")
+        self.assertEqual(stats["reviewed_multiple_times"], 1)
+        self.assertEqual(stats["overturned"], 1)
+        self.assertEqual(stats["review_overturn_rate"], 1.0)
+
+    def test_single_review_is_not_counted_as_reviewed_multiple_times(self) -> None:
+        from raku_rag.services.ingestion_quality import review_overturn_stats
+
+        events = [
+            self._Event(
+                tenant_id="t",
+                action="extraction_review.approve",
+                decision="manual_approved",
+                chunk_id="c1",
+            )
+        ]
+        stats = review_overturn_stats(events, tenant_id="t")
+        self.assertEqual(stats["reviewed_multiple_times"], 0)
+        self.assertEqual(stats["review_overturn_rate"], 0.0)
+
+    def test_escalate_then_approve_is_not_an_overturn(self) -> None:
+        # Two review actions on the same chunk, but never both manual_approved AND rejected.
+        from raku_rag.services.ingestion_quality import review_overturn_stats
+
+        events = [
+            self._Event(
+                tenant_id="t",
+                action="extraction_review.escalate",
+                decision="review_required",
+                chunk_id="c1",
+            ),
+            self._Event(
+                tenant_id="t",
+                action="extraction_review.approve",
+                decision="manual_approved",
+                chunk_id="c1",
+            ),
+        ]
+        stats = review_overturn_stats(events, tenant_id="t")
+        self.assertEqual(stats["reviewed_multiple_times"], 1)
+        self.assertEqual(stats["overturned"], 0)
+
+    def test_other_tenants_and_non_review_events_are_ignored(self) -> None:
+        from raku_rag.services.ingestion_quality import review_overturn_stats
+
+        events = [
+            self._Event(
+                tenant_id="other",
+                action="extraction_review.approve",
+                decision="manual_approved",
+                chunk_id="c1",
+            ),
+            self._Event(
+                tenant_id="other",
+                action="extraction_review.reject",
+                decision="rejected",
+                chunk_id="c1",
+            ),
+            self._Event(tenant_id="t", action="answer", decision="ok", chunk_id="c2"),
+        ]
+        stats = review_overturn_stats(events, tenant_id="t")
+        self.assertEqual(stats["reviewed_multiple_times"], 0)
 
 
 class AnswerCitationQualitySignalsTest(unittest.TestCase):

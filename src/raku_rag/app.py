@@ -211,16 +211,18 @@ class MvpSystem:
         """ADR-018 §18 — the extraction quality-gate ops metrics for a tenant.
 
         §18.1/§18.2 status + reason + provider distribution, plus the §18.3 latency (measured) + cost
-        (config) snapshot under ``latency_cost``.
+        (config) snapshot under ``latency_cost``, plus the §18.2 review-overturn rate under ``review``.
         """
 
         from raku_rag.services.ingestion_quality import (
             extraction_latency_cost_stats,
             extraction_quality_stats,
+            review_overturn_stats,
         )
 
         metrics = extraction_quality_stats(self.store, tenant_id=tenant_id)
         metrics["latency_cost"] = extraction_latency_cost_stats(self.store, tenant_id=tenant_id)
+        metrics["review"] = review_overturn_stats(self.audit.events(tenant_id), tenant_id=tenant_id)
         return metrics
 
     def apply_extraction_review_action(
