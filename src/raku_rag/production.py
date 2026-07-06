@@ -230,8 +230,12 @@ class ProductionSystem(MvpSystem):
             cost=self.cost,
             crops=self.crops,
         )
+        # ADR-018 A1: route the async worker's executor through the structured (Docling) ingestion
+        # service when RAKU_STRUCTURED_INGEST is on — `_ingest` returns structured_ingestion or the
+        # legacy service, and both share the same .ingest() signature. (The executor still routes
+        # PDF/image content to the visual path; text/office types now take the structured path.)
         self.ingestion_executor = IngestionExecutor(
-            self.ingestion,
+            self._ingest,
             visual_executor=self.visual_ingestion_executor,
             async_document_analyzer=self.async_document_analyzer,
         )

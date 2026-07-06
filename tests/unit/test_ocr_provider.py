@@ -67,6 +67,25 @@ class SelectOcrProviderTest(unittest.TestCase):
         self.assertFalse(g.available())
         self.assertFalse(a.available())
 
+    def test_cloud_egress_gate_default_denied(self) -> None:
+        import os
+
+        from raku_rag.providers.ocr.pluggable import CLOUD_EGRESS_ENV, cloud_egress_allowed
+
+        prev = os.environ.get(CLOUD_EGRESS_ENV)
+        try:
+            os.environ.pop(CLOUD_EGRESS_ENV, None)
+            self.assertFalse(cloud_egress_allowed())
+            os.environ[CLOUD_EGRESS_ENV] = "1"
+            self.assertTrue(cloud_egress_allowed())
+            os.environ[CLOUD_EGRESS_ENV] = "false"
+            self.assertFalse(cloud_egress_allowed())
+        finally:
+            if prev is None:
+                os.environ.pop(CLOUD_EGRESS_ENV, None)
+            else:
+                os.environ[CLOUD_EGRESS_ENV] = prev
+
     def test_noop_is_unavailable_and_empty(self) -> None:
         p = NoOpOcrProvider()
         self.assertFalse(p.available())

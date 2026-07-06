@@ -279,6 +279,34 @@ def extraction_review_items(
     return queue
 
 
+def extraction_quality_stats(store: object, *, tenant_id: str | None = None) -> dict[str, object]:
+    """ADR-018 §18 — ops snapshot: chunk counts per extraction-quality status + the quarantine rate.
+
+    Feeds monitoring/alerting (a rising quarantine rate flags an upstream extraction regression). Uses
+    the ``iter_items`` scan; a Postgres GROUP BY variant is the scale version (future).
+    """
+
+    counts: dict[str, int] = {}
+    total = 0
+    iter_items = getattr(store, "iter_items", None)
+    if callable(iter_items):
+        for entry in iter_items():
+            chunk = entry[0] if isinstance(entry, tuple) else entry
+            if tenant_id is not None and getattr(chunk, "tenant_id", None) != tenant_id:
+                continue
+            values = _metadata_mapping(getattr(chunk, "metadata", None))
+            status = _quality_status(values) or QUALITY_STATUS_ACCEPTED
+            counts[status] = counts.get(status, 0) + 1
+            total += 1
+    quarantined = sum(counts.get(s, 0) for s in RETRIEVAL_BLOCKING_QUALITY_STATUSES)
+    return {
+        "total": total,
+        "by_status": counts,
+        "quarantined": quarantined,
+        "quarantine_rate": (quarantined / total) if total else 0.0,
+    }
+
+
 def extraction_review_queue(store: object, *, tenant_id: str | None = None) -> list[ExtractionReviewItem]:
     """Backend-agnostic review queue: an efficient JSONB filter on Postgres, else the in-mem projection.
 

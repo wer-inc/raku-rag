@@ -24,12 +24,25 @@ OCR_PROVIDER_ENV = "RAKU_OCR_PROVIDER"
 OCR_PROVIDER_NONE = "none"
 
 
+CLOUD_EGRESS_ENV = "RAKU_ALLOW_CLOUD_EGRESS"
+
+
 def _spec_exists(name: str) -> bool:
     """find_spec that returns False (not raises) when a dotted parent package is absent."""
     try:
         return importlib.util.find_spec(name) is not None
     except (ImportError, ModuleNotFoundError, ValueError):
         return False
+
+
+def cloud_egress_allowed() -> bool:
+    """ADR-018 §19 — cloud providers may send document bytes off-box ONLY when explicitly opted in.
+
+    Defense-in-depth: even with SDK + credentials present, a cloud OCR/VLM provider stays unavailable
+    unless RAKU_ALLOW_CLOUD_EGRESS is truthy, so a misconfiguration can't silently exfiltrate customer
+    documents to a third party.
+    """
+    return (os.environ.get(CLOUD_EGRESS_ENV) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -160,7 +173,8 @@ class GoogleDocumentAiOcrProvider:
 
     def available(self) -> bool:
         return (
-            _spec_exists("google.cloud.documentai")
+            cloud_egress_allowed()  # §19 egress gate
+            and _spec_exists("google.cloud.documentai")
             and bool(os.environ.get("GOOGLE_DOCAI_PROCESSOR"))
         )
 
@@ -186,7 +200,8 @@ class AzureDocumentIntelligenceOcrProvider:
 
     def available(self) -> bool:
         return (
-            _spec_exists("azure.ai.documentintelligence")
+            cloud_egress_allowed()  # §19 egress gate
+            and _spec_exists("azure.ai.documentintelligence")
             and bool(os.environ.get("AZURE_DOCINTEL_ENDPOINT"))
             and bool(os.environ.get("AZURE_DOCINTEL_KEY"))
         )

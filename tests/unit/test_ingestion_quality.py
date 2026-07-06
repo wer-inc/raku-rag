@@ -184,6 +184,24 @@ class ExtractionReviewQueueTest(unittest.TestCase):
         q = extraction_review_queue(_InMemStore())
         self.assertEqual([it.document_id for it in q], ["rev"])
 
+    def test_extraction_quality_stats_counts_and_quarantine_rate(self) -> None:
+        from raku_rag.services.ingestion_quality import extraction_quality_stats
+
+        rev = self._chunk("rev:0", review_required_quality_metadata())
+        acc1 = self._chunk("a:0", accepted_quality_metadata())
+        acc2 = self._chunk("a:1", accepted_quality_metadata())
+
+        class _InMemStore:
+            def iter_items(self):
+                return ((acc1, None), (acc2, None), (rev, None))
+
+        stats = extraction_quality_stats(_InMemStore())
+        self.assertEqual(stats["total"], 3)
+        self.assertEqual(stats["quarantined"], 1)
+        self.assertAlmostEqual(stats["quarantine_rate"], 1 / 3)
+        self.assertEqual(stats["by_status"]["review_required"], 1)
+        self.assertEqual(stats["by_status"]["accepted"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
