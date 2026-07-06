@@ -51,6 +51,14 @@ class TestAnswerObservability(unittest.TestCase):
             ),
             1.0,
         )
+        # ADR-018 §18.4: the OK answer emits the extraction-quality signal for its citations.
+        self.assertGreaterEqual(
+            self.sys.metrics.counter(
+                "answer_citation_quality_total",
+                labels={"tenant_id": T, "profile_id": "default", "quality_status": "accepted"},
+            ),
+            1.0,
+        )
         spans = self.sys.tracer.spans(correlation_id=ans.correlation_id)
         self.assertEqual(
             {span.name for span in spans},
