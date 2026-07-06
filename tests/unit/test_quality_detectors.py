@@ -63,6 +63,74 @@ class DrawingLikeTest(unittest.TestCase):
         self.assertFalse(is_drawing_like(has_figures=False, text_char_count=0))
 
 
+class DocumentQualityDimensionsTest(unittest.TestCase):
+    def _parsed(self):
+        from raku_rag.domain.parsed_document import (
+            BLOCK_PARAGRAPH,
+            Block,
+            Figure,
+            Page,
+            ParsedDocument,
+            QualityInfo,
+            RouteTraceStep,
+            Table,
+            TableCell,
+        )
+
+        return ParsedDocument(
+            blocks=(
+                Block(
+                    block_id="b1",
+                    kind=BLOCK_PARAGRAPH,
+                    text="clean text",
+                    page_no=1,
+                    reading_order=0,
+                ),
+                Block(
+                    block_id="b2",
+                    kind=BLOCK_PARAGRAPH,
+                    text="more text",
+                    page_no=1,
+                    reading_order=1,
+                ),
+            ),
+            tables=(
+                Table(
+                    table_id="t",
+                    cells=(TableCell(row=1, col=1, text="a"),),
+                    quality=QualityInfo(metrics={"table_structure_confidence": 0.8}),
+                ),
+            ),
+            figures=(Figure(figure_id="f", page_no=2, caption="Fig 1"),),
+            pages=(
+                Page(page_id="p1", page_no=1),
+                Page(page_id="p2", page_no=2, signals={"drawing_like": True}),
+            ),
+            route_trace=(RouteTraceStep(stage="extract", result="accepted"),),
+        )
+
+    def test_dimensions_are_populated(self):
+        from raku_rag.services.quality_detectors import document_quality_dimensions
+
+        dims = document_quality_dimensions(self._parsed())
+        self.assertEqual(dims["mojibake_risk"], 0.0)
+        self.assertEqual(dims["reading_order_risk"], 0.0)
+        self.assertEqual(dims["text_yield"], 0.5)  # page 1 has text, page 2 (figure) does not
+        self.assertEqual(dims["empty_page_risk"], 0.5)
+        self.assertEqual(dims["drawing_like"], 1.0)
+        self.assertEqual(dims["visual_coverage"], 1.0)  # the one figure has a caption
+        self.assertEqual(dims["cell_anchor_coverage"], 1.0)
+        self.assertEqual(dims["table_structure_confidence"], 0.8)
+        self.assertEqual(dims["provider_error"], 0.0)
+
+    def test_provider_error_flagged_on_unavailable_route(self):
+        from raku_rag.domain.parsed_document import ParsedDocument, RouteTraceStep
+        from raku_rag.services.quality_detectors import document_quality_dimensions
+
+        parsed = ParsedDocument(route_trace=(RouteTraceStep(stage="config", result="unavailable"),))
+        self.assertEqual(document_quality_dimensions(parsed)["provider_error"], 1.0)
+
+
 class VisualArtifactDetectorTest(unittest.TestCase):
     def test_default_is_noop_and_unavailable(self) -> None:
         det = select_visual_artifact_detector()

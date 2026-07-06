@@ -114,6 +114,86 @@ def is_drawing_like(*, has_figures: bool, text_char_count: int) -> bool:
     return bool(has_figures) and text_char_count <= _DRAWING_MAX_TEXT_CHARS
 
 
+# --- §8.3 derived quality dimension vector --------------------------------------------------------
+
+
+def _page_signal(pages, key: str) -> float:
+    return 1.0 if any(dict(getattr(p, "signals", {}) or {}).get(key) for p in pages) else 0.0
+
+
+def document_quality_dimensions(parsed, *, expected_language: str = "") -> dict[str, float]:
+    """Compute the deterministic subset of the §8.3 dimension vector from a ParsedDocument.
+
+    Complements the provider-confidence dims (layout/ocr from Docling) with signals derivable from the
+    normalized document: text_yield, empty_page_risk, mojibake_risk, reading_order_risk,
+    cell_anchor_coverage, visual_coverage, provider_error, and the 0/1 detector dims
+    (drawing_like / handwriting_detected / seal_detected). Values are heuristic; thresholds are
+    eval-driven (§OQ#2).
+    """
+
+    blocks = list(getattr(parsed, "blocks", ()) or ())
+    pages = list(getattr(parsed, "pages", ()) or ())
+    figures = list(getattr(parsed, "figures", ()) or ())
+    tables = list(getattr(parsed, "tables", ()) or ())
+    dims: dict[str, float] = {}
+
+    doc_text = parsed.text_for_embedding() if hasattr(parsed, "text_for_embedding") else ""
+    if doc_text:
+        replacement = doc_text.count("�")
+        control = sum(1 for ch in doc_text if ord(ch) < 32 and ch not in "\t\n\r")
+        dims["mojibake_risk"] = round((replacement + control) / len(doc_text), 4)
+    if expected_language:
+        dims["language_consistency"] = (
+            round(japanese_char_ratio(doc_text), 4)
+            if expected_language.strip().lower() in _JA_LANG_ALIASES
+            else 1.0
+        )
+
+    orders = [b.reading_order for b in blocks if getattr(b, "reading_order", None) is not None]
+    if len(orders) >= 2:
+        inversions = sum(1 for a, b in zip(orders, orders[1:]) if b < a)
+        dims["reading_order_risk"] = round(inversions / (len(orders) - 1), 4)
+
+    if pages:
+        text_pages = {
+            b.page_no for b in blocks if b.page_no and str(getattr(b, "text", "") or "").strip()
+        }
+        dims["text_yield"] = round(len(text_pages) / len(pages), 4)
+        dims["empty_page_risk"] = round(
+            sum(1 for p in pages if p.page_no not in text_pages) / len(pages), 4
+        )
+        dims["drawing_like"] = _page_signal(pages, "drawing_like")
+        dims["handwriting_detected"] = _page_signal(pages, "handwriting_detected")
+        dims["seal_detected"] = _page_signal(pages, "seal_detected")
+
+    if figures:
+        captioned = sum(1 for f in figures if str(getattr(f, "caption", "") or "").strip())
+        dims["visual_coverage"] = round(captioned / len(figures), 4)
+
+    if tables:
+        dims["cell_anchor_coverage"] = round(
+            sum(1 for t in tables if getattr(t, "cells", ())) / len(tables), 4
+        )
+        tscs = [
+            dict(getattr(t, "quality", None).metrics or {}).get("table_structure_confidence")
+            for t in tables
+            if getattr(t, "quality", None) is not None
+        ]
+        tscs = [x for x in tscs if x is not None]
+        if tscs:
+            dims["table_structure_confidence"] = min(tscs)
+
+    error_results = {"unavailable", "review_required", "rejected"}
+    dims["provider_error"] = (
+        1.0
+        if any(
+            getattr(s, "result", "") in error_results for s in getattr(parsed, "route_trace", ())
+        )
+        else 0.0
+    )
+    return dims
+
+
 # --- visual artifact detector seam (§8.4 handwriting / seal — needs vision, opt-in) ----------------
 
 VISUAL_ARTIFACT_DETECTOR_ENV = "RAKU_VISUAL_ARTIFACT_DETECTOR"

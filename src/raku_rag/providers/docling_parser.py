@@ -51,6 +51,7 @@ from raku_rag.providers.ocr.pluggable import OcrProvider, select_ocr_provider
 from raku_rag.providers.vlm_draft import VlmDraftProvider, select_vlm_draft_provider
 from raku_rag.services.quality_detectors import (
     VisualArtifactDetector,
+    document_quality_dimensions,
     is_drawing_like,
     select_visual_artifact_detector,
     table_structure_confidence,
@@ -205,7 +206,16 @@ class DoclingStructuredParser:
         )
         parsed = self._apply_preflight(parsed, raw, content_type)
         parsed = self._apply_visual_detectors(parsed, raw, content_type)
-        return self._apply_external_ocr(parsed, raw, content_type)
+        parsed = self._apply_external_ocr(parsed, raw, content_type)
+        return self._apply_quality_dimensions(parsed)
+
+    def _apply_quality_dimensions(self, parsed: ParsedDocument) -> ParsedDocument:
+        """§8.3: merge the derived dimension vector into the provider-confidence metrics."""
+        derived = document_quality_dimensions(parsed)
+        if not derived:
+            return parsed
+        metrics = {**dict(parsed.quality.metrics or {}), **derived}
+        return replace(parsed, quality=replace(parsed.quality, metrics=metrics))
 
     # --- §8.4 visual detectors: drawing-like (stdlib heuristic) + handwriting/seal (pluggable) ------
     def _apply_visual_detectors(
