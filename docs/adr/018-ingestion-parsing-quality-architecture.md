@@ -1518,7 +1518,8 @@ VLM は難物 fallback として使うが、出力は `draft_visual` とし、�
 | §P2 | raw provider 出力の保管（再現/監査） | live(fs)/opt-in(s3) | `services/raw_sink.py`（A4） |
 | §12.1 | レビューキュー一覧（Postgres 効率クエリ + in-mem 射影） | live | `persistence/postgres.list_extraction_review_chunks`, `ingestion_quality.extraction_review_queue`（A9） |
 | Phase E | reindex 時の品質再評価（低品質を quarantine） | live | `services/reindex.py`（A12） |
-| §10/Phase D | VLM draft fallback → `draft_visual`（HITL 承認前提） | scaffold | `providers/vlm_draft.py`, `docling_parser.apply_external_ocr`（A11; 実 VLM は opt-in） |
+| §10/Phase D | VLM draft fallback → `draft_visual`（HITL 承認前提） | opt-in | `providers/vlm_draft.py`：`BedrockVlmDraftProvider`（実 Claude vision, `RAKU_VLM_DRAFT_PROVIDER=bedrock`）+ NoOp 既定 |
+| §8.4 | 手書き/印鑑/図面の vision 検出器 | opt-in | `quality_detectors.BedrockVisualArtifactDetector`（実 Claude vision, `RAKU_VISUAL_ARTIFACT_DETECTOR=bedrock`）+ NoOp 既定 |
 | §12.2/§10.3 | reviewer アクション（approve/edit/reject/reprocess/mark_non_content/escalate）+ `manual_approved` 昇格 | live | `services/review_actions.py`, `POST /internal/reviews/extraction/actions`, `apps/api ReviewsController`, `apps/web /reviews/extraction` |
 | §18 | 運用メトリクス（status別レート + reason別カウント + quarantine率） | live | `ingestion_quality.extraction_quality_stats`, `GET /internal/reviews/extraction/metrics` |
 | §13.2/§9.1 | worker が PDF を Docling 経路へ | live | `IngestionExecutor(structured_pdf=…)`（構造化ON時） |
@@ -1530,9 +1531,13 @@ overall/layout/table-structure 信頼度）は `services/quality_thresholds.py` 
 ingestion_quality_golden.json`）は 13 ケース（clean×4 / accepted_with_warnings×1 / blocking×8：mojibake・高置換率・
 制御文字混入・CID×2・空抽出 PDF/Office×2・軽微化け）に拡充し、false_accept_rate==0 を保ったまま網羅を広げた。
 
-**真の未了（外部リソースが必須で、コード実装では完了できない）**: (1) §OQ#2 の**代表文書の実データ収集と実測値の確定**
-（実顧客文書 + 人手ラベリングが必要。チューニング機構・synthetic seed・false_accept ゲートは上記の通り実装済み）、
-(2) 手書き/印鑑の**実 vision 検出器**（学習済みモデル/クラウド API が必要。`VisualArtifactDetector` seam + ゲート結線は
-実装済み・既定 NoOp）、(3) **クラウド OCR/VLM のライブ検証**（API 資格情報が必要。opt-in アダプタ + §19 egress ゲートは
-実装済み）。これらは ADR 自身が opt-in（§13.1）/ Open Question（§20）として扱う項目であり、コード側の差し込み口は
-すべて用意済み。それ以外の設計項目は実装・検証済み（Tier A gate 1875 GREEN + 実 Docling + 実 Postgres + NestJS e2e）。
+**vision/VLM 系も実アダプタを実装済み（opt-in・§19 egress-gated・オフライン mock 検証）**: 手書き/印鑑/図面検出は
+`BedrockVisualArtifactDetector`、難ページの draft OCR は `BedrockVlmDraftProvider`（いずれも既存の `build_bedrock_vision_invoker`
+= 実 Claude vision を実バックエンドに、`RAKU_ALLOW_CLOUD_EGRESS` + boto3 が揃うまで unavailable）。クラウド OCR は
+Google DocAI / Azure DI が既に実装済み。全て注入 invoker で request/parse をオフライン検証（`tests/unit/test_bedrock_vision_adapters.py`）。
+
+**真に残るのは「外部リソースでのライブ検証」だけ（コードは完了）**: (1) §OQ#2 の**代表文書での実測閾値の確定**
+（実顧客文書 + 人手ラベリングが必要。チューニング機構・synthetic seed・false_accept ゲートは実装済み）、(2)(3) 上記
+vision/VLM/クラウド OCR アダプタの**本番資格情報でのライブ実行確認**（アダプタ・egress ゲート・mock テストは実装済み；
+Bedrock/Google/Azure の creds を与えれば即動作）。これらは ADR 自身が opt-in（§13.1）/ Open Question（§20）として扱う
+項目。それ以外の設計項目は実装・検証済み（Tier A gate 1883 GREEN + 実 Docling + 実 Postgres + NestJS e2e + web build）。

@@ -9,12 +9,24 @@ policy). The draft carries crop/bbox + prompt/model version so a reviewer can ve
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from dataclasses import dataclass
 from typing import Protocol
 
+from raku_rag.providers.ocr.pluggable import cloud_egress_allowed
+
 VLM_PROVIDER_ENV = "RAKU_VLM_DRAFT_PROVIDER"
 VLM_DRAFT_PROMPT_VERSION = "visual_draft.v1"
+
+BEDROCK_VLM_MODEL_ENV = "RAKU_BEDROCK_VLM_MODEL_ID"
+_DEFAULT_BEDROCK_VLM_MODEL_ID = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
+_BEDROCK_VLM_PROMPT = (
+    "You are a careful OCR transcriber for a manufacturing document. Transcribe ALL legible text in "
+    "this page image exactly as printed, preserving line breaks and reading order. Do NOT translate, "
+    "summarize, correct, or invent any text; if a region is illegible write [illegible]. Output only "
+    "the transcribed text, nothing else."
+)
 
 
 @dataclass(frozen=True)
@@ -64,8 +76,57 @@ class CallableVlmDraftProvider:
         return VlmDraftResult(text=text, model=self._model, provider=self.name)
 
 
+class BedrockVlmDraftProvider:
+    """Real VLM draft via Amazon Bedrock (Claude vision). Opt-in, §19 cloud-egress-gated.
+
+    Its output is always a DRAFT (``draft_visual``) — never canonical (§10.1) — so a difficult page is
+    transcribed for a human to verify, never silently indexed. Stays unavailable unless boto3 is present
+    and ``RAKU_ALLOW_CLOUD_EGRESS`` is set, so a misconfiguration cannot exfiltrate document bytes.
+    Tests inject ``invoker`` (a ``build_bedrock_vision_invoker``-shaped callable) to validate offline.
+    """
+
+    name = "bedrock"
+
+    def __init__(
+        self, *, invoker=None, model_id: str | None = None, region: str | None = None
+    ) -> None:
+        self._invoker = invoker
+        self._model_id = (
+            model_id or os.environ.get(BEDROCK_VLM_MODEL_ENV) or _DEFAULT_BEDROCK_VLM_MODEL_ID
+        )
+        self._region = region
+
+    def available(self) -> bool:
+        if self._invoker is not None:
+            return True
+        return cloud_egress_allowed() and importlib.util.find_spec("boto3") is not None
+
+    def _resolve_invoker(self):
+        if self._invoker is None:
+            from raku_rag.providers.aws_visual import build_bedrock_vision_invoker
+
+            self._invoker = (
+                build_bedrock_vision_invoker(region_name=self._region)
+                if self._region
+                else build_bedrock_vision_invoker()
+            )
+        return self._invoker
+
+    def draft_from_image(self, image_png: bytes, *, page_no: int) -> VlmDraftResult:
+        if not self.available():
+            return VlmDraftResult(provider=self.name)
+        text = (
+            self._resolve_invoker()(
+                model_id=self._model_id, prompt=_BEDROCK_VLM_PROMPT, image=image_png
+            )
+            or ""
+        ).strip()
+        return VlmDraftResult(text=text, model=self._model_id, provider=self.name)
+
+
 VLM_DRAFT_PROVIDERS: dict[str, type] = {
     "none": NoOpVlmDraftProvider,
+    "bedrock": BedrockVlmDraftProvider,
 }
 
 

@@ -14,6 +14,8 @@ Everything is stdlib-only so the Tier A gate stays fast; the vision detector is 
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
 from dataclasses import dataclass
 from typing import Iterable, Protocol
@@ -245,7 +247,88 @@ class CallableVisualArtifactDetector:
         return self._fn(image_png, page_no) or VisualArtifactSignals()
 
 
-VISUAL_ARTIFACT_DETECTORS: dict[str, type] = {"none": NoOpVisualArtifactDetector}
+BEDROCK_VISION_MODEL_ENV = "RAKU_BEDROCK_VISION_MODEL_ID"
+_DEFAULT_BEDROCK_VISION_MODEL_ID = "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
+_ARTIFACT_PROMPT = (
+    "Classify this document page image for extraction-quality triage. Respond with ONLY a compact JSON "
+    'object with three boolean fields: {"handwriting": <bool>, "seal": <bool>, "drawing": <bool>}. '
+    "handwriting = handwritten text or annotations are present; seal = a stamp / hanko / inkan seal is "
+    "present; drawing = the page is primarily a technical drawing, diagram, or schematic with little "
+    "body text. Output only the JSON object, no prose."
+)
+
+
+def _parse_artifact_signals(raw: str) -> VisualArtifactSignals:
+    """Parse the VLM's JSON reply into signals. Any parse failure yields no flags (safe additive default)."""
+
+    text = raw or ""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return VisualArtifactSignals()
+    try:
+        obj = json.loads(text[start : end + 1])
+    except (ValueError, TypeError):
+        return VisualArtifactSignals()
+    if not isinstance(obj, dict):
+        return VisualArtifactSignals()
+    return VisualArtifactSignals(
+        handwriting_detected=bool(obj.get("handwriting")),
+        seal_detected=bool(obj.get("seal")),
+        drawing_like=bool(obj.get("drawing")),
+    )
+
+
+class BedrockVisualArtifactDetector:
+    """Real handwriting/seal/drawing detector via Amazon Bedrock (Claude vision). Opt-in, §19 gated.
+
+    A positive signal routes the page to ``review_required`` (§8.4), so this only ever *adds* review
+    items — it never waves anything through. Stays unavailable unless boto3 is present and
+    ``RAKU_ALLOW_CLOUD_EGRESS`` is set. Tests inject ``invoker`` to validate parsing offline.
+    """
+
+    name = "bedrock"
+
+    def __init__(
+        self, *, invoker=None, model_id: str | None = None, region: str | None = None
+    ) -> None:
+        self._invoker = invoker
+        self._model_id = (
+            model_id or os.environ.get(BEDROCK_VISION_MODEL_ENV) or _DEFAULT_BEDROCK_VISION_MODEL_ID
+        )
+        self._region = region
+
+    def available(self) -> bool:
+        if self._invoker is not None:
+            return True
+        from raku_rag.providers.ocr.pluggable import cloud_egress_allowed
+
+        return cloud_egress_allowed() and importlib.util.find_spec("boto3") is not None
+
+    def _resolve_invoker(self):
+        if self._invoker is None:
+            from raku_rag.providers.aws_visual import build_bedrock_vision_invoker
+
+            self._invoker = (
+                build_bedrock_vision_invoker(region_name=self._region)
+                if self._region
+                else build_bedrock_vision_invoker()
+            )
+        return self._invoker
+
+    def detect(self, image_png: bytes, *, page_no: int) -> VisualArtifactSignals:
+        if not self.available():
+            return VisualArtifactSignals()
+        raw = self._resolve_invoker()(
+            model_id=self._model_id, prompt=_ARTIFACT_PROMPT, image=image_png, max_tokens=200
+        )
+        return _parse_artifact_signals(raw)
+
+
+VISUAL_ARTIFACT_DETECTORS: dict[str, type] = {
+    "none": NoOpVisualArtifactDetector,
+    "bedrock": BedrockVisualArtifactDetector,
+}
 
 
 def select_visual_artifact_detector(name: str | None = None) -> VisualArtifactDetector:
