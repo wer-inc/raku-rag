@@ -1515,7 +1515,9 @@ VLM は難物 fallback として使うが、出力は `draft_visual` とし、�
 | §8.4 | 文書レベル ハードフェイル（低信頼/表構造/図面/手書き・印鑑/期待言語不一致） | live（検出器）/opt-in（vision） | `services/structured_ingestion.classify_parsed_document_quality`（A7）+ `services/quality_detectors.py`（table_structure_confidence・is_language_mismatch・drawing_like は実 stdlib；handwriting/seal は `VisualArtifactDetector` seam, 既定 NoOp・`RAKU_VISUAL_ARTIFACT_DETECTOR` で有効化） |
 | Phase A | 抽出品質 contract + retrieval/high-risk ゲート | live | `services/ingestion_quality.py`, `retrieval.py`, `answer.py`, `manufacturing/safety/gate.py` |
 | §4.2/§9.4 | OCR は独立 provider（Docling 内蔵 OCR は不使用） | live(RapidOCR)/opt-in(cloud) | `providers/ocr/pluggable.py`（RapidOCR 実 OCR 検証; Google/Azure は opt-in, A10） |
-| §6.1/§6.2 | preflight（digital/scanned 判定）+ **per-page ルート決定**（§6.2 決定表：clean/scanned/table/vertical/handwriting/seal/drawing → primary+fallback）を route_trace に記録 | live（判定+ルート決定+記録）/ opt-in（exotic ルートの実行は各 provider） | `docling_parser.preflight_pdf_pages` / `_apply_preflight`（A6）+ `providers/page_routing.classify_page_route` |
+| §6.1/§6.2 | preflight（digital/scanned 判定）+ **per-page ルート決定**（§6.2 決定表：clean/scanned/table/vertical/handwriting/seal/drawing/**digital_mojibake**/**table_heavy** 全8種、各シグナルの生産者を実装し全ルート到達可能）を route_trace に記録 | live（判定+ルート決定+記録）/ opt-in（exotic ルートの実行は各 provider） | `docling_parser.preflight_pdf_pages` / `_apply_preflight`（A6）+ `_apply_visual_detectors`（table_heavy/mojibake_suspected シグナル生成）+ `providers/page_routing.classify_page_route` |
+| §8.4 | 手書き/印鑑/図面検出は **PDF だけでなく単体画像（png/jpeg/tiff）でも動作**（写真・画像化された文書） | live（判定）/ opt-in（vision detector 実行） | `docling_parser._apply_visual_detectors`（`_standalone_image_to_png` で png/jpeg/tiff を正規化） |
+| §11.4 | 「anchor がない chunk」除外は **text_parser/docx_parser（アンカー概念が存在しない parser）を除外対象から正しく除外**（誤って全 DOCX/plain-text コンテンツを高リスク引用不可にするリグレッションを再監査で発見・修正） | live | `ingestion_quality.is_high_risk_citation_quality_eligible`（`parser_provider` でスコープ） |
 | §6.3 | provider 実行を `route_trace`（preflight/extract/fallback + signals/result/reason）に記録し**チャンク metadata に永続化**→ review/debug/再処理/顧客説明で参照可 | live | `docling_parser`（生成）→ `structured_ingestion._route_trace_metadata`（永続）→ `ExtractionReviewItem.route_trace` → API/web |
 | §P2 | raw provider 出力の保管（再現/監査） | live(fs)/opt-in(s3) | `services/raw_sink.py`（A4） |
 | §12.1 | レビューキュー一覧（Postgres 効率クエリ + in-mem 射影）+ 各項目に page_no/anchor(bbox)/抽出テキスト/quality reasons/suggested_action/**route_trace** | live | `persistence/postgres.list_extraction_review_chunks`, `ingestion_quality.extraction_review_queue`/`ExtractionReviewItem`（A9）, web に page/snippet/推奨アクション/経路表示 |
@@ -1538,8 +1540,31 @@ ingestion_quality_golden.json`）は 13 ケース（clean×4 / accepted_with_war
 = 実 Claude vision を実バックエンドに、`RAKU_ALLOW_CLOUD_EGRESS` + boto3 が揃うまで unavailable）。クラウド OCR は
 Google DocAI / Azure DI が既に実装済み。全て注入 invoker で request/parse をオフライン検証（`tests/unit/test_bedrock_vision_adapters.py`）。
 
-**真に残るのは「外部リソースでのライブ検証」だけ（コードは完了）**: (1) §OQ#2 の**代表文書での実測閾値の確定**
-（実顧客文書 + 人手ラベリングが必要。チューニング機構・synthetic seed・false_accept ゲートは実装済み）、(2)(3) 上記
-vision/VLM/クラウド OCR アダプタの**本番資格情報でのライブ実行確認**（アダプタ・egress ゲート・mock テストは実装済み；
-Bedrock/Google/Azure の creds を与えれば即動作）。これらは ADR 自身が opt-in（§13.1）/ Open Question（§20）として扱う
-項目。それ以外の設計項目は実装・検証済み（Tier A gate 1883 GREEN + 実 Docling + 実 Postgres + NestJS e2e + web build）。
+**独立4系統の再監査（§5-§7/§8-§9/§10-§13/§14-§18）を実施し、見つかった実ギャップを全てコードで解消**（2026-07-06）:
+§8.4 の計算済みだが未強制だったゲート（ocr_confidence_p10/empty_page_risk/reading_order_risk/provider_error）、
+docling 不在/例外時の `_text_fallback` が無条件 accepted になっていた安全ギャップ、§7.5 figure がチャンク化されず検索
+到達不能だった件、§7.6 の結合セル（rowspan/colspan）欠落、§7.3 Page 単位 quality 未設定、§10.2 VLM の
+prompt_version/generation_config 欠落と confidence 未取得（自己申告 `[CONFIDENCE: x.xx]` トレーラーで解消）、
+§18.1/§18.2/§18.3 の pages_processed・route_distribution・provider_failure_rate・cost_per_page・
+review_overturn_rate 欠落、§8.4 手書き/印鑑検出が PDF 限定で単体画像に効かなかった件、§6.2 table_heavy/
+digital_mojibake ルートが生産者不在で到達不能だった件——**を全て修正・テスト・Tier A gate 検証済み（1945 GREEN）**。
+
+**さらに、この再監査自体が導入した回帰も検出・修正**: §11.4 の「anchor がない chunk は高リスク引用不可」ゲートを
+実装した際、text_parser/docx_parser（plain text/markdown/html/DOCX）にはページ/bbox アンカー概念が存在しないため、
+**構造化パイプライン経由の全 DOCX/plain-text コンテンツが品質に関わらず永久に高リスク引用不可になる**という実際の
+リグレッションを作り込んでいた。`parser_provider` をチャンクメタデータに配線し、アンカー概念が存在しない parser を
+チェック対象から除外することで修正（docling/spreadsheet_parser には引き続きアンカー必須を強制）。end-to-end
+統合テストで実文書ingestion→高リスク適格性を確認。§18.4 の manufacturing overlay 経由メトリクスも、直接
+endpoint のみで chatbot/phone 経路は未計装だった点を発見・追加配線。
+
+**真に残るのは「外部リソースでのライブ検証」と少数の意図的スコープ限定のみ（コードは完了）**: (1) §OQ#2 の
+**代表文書での実測閾値の確定**（実顧客文書 + 人手ラベリングが必要。チューニング機構・synthetic seed・false_accept
+ゲートは実装済み）、(2) vision/VLM/クラウド OCR アダプタの**本番資格情報でのライブ実行確認**（アダプタ・egress
+ゲート・mock テストは実装済み；Bedrock/Google/Azure の creds を与えれば即動作）、(3) §19 のクラウド egress ポリシーは
+**プロセス全体で1つの env フラグ**（`RAKU_ALLOW_CLOUD_EGRESS`）——マルチテナント環境でテナントごとに異なる許可設定は
+未対応（シングルテナント・プロセスのデプロイモデルでは妥当だが、ADR の「tenant / environment policy」という文言を
+文字通りには満たさない、既知の限定事項）、(4) レビュー項目は route_trace 経由で provider 名は見えるが、
+block 単位の model_version/prompt_version/config_hash までは reviewer UI に投影していない（軽微な context 不足、
+安全上のブロッキング要因ではない）。(1)(2) は ADR 自身が opt-in（§13.1）/ Open Question（§20）として扱う項目。
+それ以外の設計項目は実装・検証済み（Tier A gate 1945 GREEN + 実 Docling + 実 Postgres + NestJS e2e + web build +
+manufacturing safety suite 56件 unchanged）。
