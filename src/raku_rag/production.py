@@ -238,6 +238,7 @@ class ProductionSystem(MvpSystem):
             self._ingest,
             visual_executor=self.visual_ingestion_executor,
             async_document_analyzer=self.async_document_analyzer,
+            structured_pdf=self.settings.structured_ingest_enabled,
         )
         self.answer_service = AnswerService(
             self.retrieval,

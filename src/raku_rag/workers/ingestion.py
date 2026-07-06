@@ -1333,12 +1333,16 @@ class IngestionExecutor:
         *,
         visual_executor: VisualIngestionExecutor | None = None,
         async_document_analyzer: AsyncDocumentAnalyzer | None = None,
+        structured_pdf: bool = False,
     ) -> None:
         self.ingestion = ingestion
         self.visual_executor = visual_executor or VisualIngestionExecutor(
             visual_embedder=HashingVisualEmbeddingProvider(dim=_embedding_dim(ingestion))
         )
         self.async_document_analyzer = async_document_analyzer
+        # ADR-018 §13.2/§9.1: when structured (Docling) ingestion is on, PDFs go through the Docling
+        # structured parser (text/tables/figures + quality gate) instead of the visual/OCR path.
+        self._structured_pdf = structured_pdf
 
     def execute_document(
         self,
@@ -1362,7 +1366,7 @@ class IngestionExecutor:
                 raw=raw,
                 content_type=content_type,
             )
-        if _is_pdf_content_type(content_type):
+        if _is_pdf_content_type(content_type) and not self._structured_pdf:
             return self.execute_visual_document(
                 tenant_id=tenant_id,
                 collection_id=collection_id,
@@ -1374,6 +1378,25 @@ class IngestionExecutor:
                 async_provider=async_provider,
                 async_job_id=async_job_id,
             )
+        return self._execute_structured_or_text(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            raw=raw,
+            content_type=content_type,
+        )
+
+    def _execute_structured_or_text(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_id: str,
+        document_id: str,
+        raw: bytes,
+        content_type: str,
+    ) -> IngestionExecutionResult:
         content_checksum = hashlib.sha256(raw).hexdigest()
         job = self.ingestion.ingest(
             tenant_id=tenant_id,
