@@ -202,6 +202,7 @@ class MvpSystem:
                 "bbox": list(item.bbox) if item.bbox is not None else None,
                 "text_snippet": item.text_snippet,
                 "suggested_action": item.suggested_action,
+                "route_trace": [dict(step) for step in item.route_trace],
             }
             for item in extraction_review_queue(self.store, tenant_id=tenant_id)
         ]

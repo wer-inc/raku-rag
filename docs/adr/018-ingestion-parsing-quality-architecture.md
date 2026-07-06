@@ -1515,8 +1515,9 @@ VLM は難物 fallback として使うが、出力は `draft_visual` とし、�
 | Phase A | 抽出品質 contract + retrieval/high-risk ゲート | live | `services/ingestion_quality.py`, `retrieval.py`, `answer.py`, `manufacturing/safety/gate.py` |
 | §4.2/§9.4 | OCR は独立 provider（Docling 内蔵 OCR は不使用） | live(RapidOCR)/opt-in(cloud) | `providers/ocr/pluggable.py`（RapidOCR 実 OCR 検証; Google/Azure は opt-in, A10） |
 | §6.1/§6.2 | preflight（digital/scanned 判定）→ route_trace/page signals | live（判定）/ 部分（per-page 完全ルーティングは将来） | `docling_parser.preflight_pdf_pages` / `_apply_preflight`（A6） |
+| §6.3 | provider 実行を `route_trace`（preflight/extract/fallback + signals/result/reason）に記録し**チャンク metadata に永続化**→ review/debug/再処理/顧客説明で参照可 | live | `docling_parser`（生成）→ `structured_ingestion._route_trace_metadata`（永続）→ `ExtractionReviewItem.route_trace` → API/web |
 | §P2 | raw provider 出力の保管（再現/監査） | live(fs)/opt-in(s3) | `services/raw_sink.py`（A4） |
-| §12.1 | レビューキュー一覧（Postgres 効率クエリ + in-mem 射影）+ 各項目に page_no/anchor(bbox)/抽出テキスト/quality reasons/suggested_action | live | `persistence/postgres.list_extraction_review_chunks`, `ingestion_quality.extraction_review_queue`/`ExtractionReviewItem`（A9）, web に page/snippet/推奨アクション表示 |
+| §12.1 | レビューキュー一覧（Postgres 効率クエリ + in-mem 射影）+ 各項目に page_no/anchor(bbox)/抽出テキスト/quality reasons/suggested_action/**route_trace** | live | `persistence/postgres.list_extraction_review_chunks`, `ingestion_quality.extraction_review_queue`/`ExtractionReviewItem`（A9）, web に page/snippet/推奨アクション/経路表示 |
 | Phase E | reindex 時の品質再評価（低品質を quarantine） | live | `services/reindex.py`（A12） |
 | §10/Phase D | VLM draft fallback → `draft_visual`（HITL 承認前提） | opt-in | `providers/vlm_draft.py`：`BedrockVlmDraftProvider`（実 Claude vision, `RAKU_VLM_DRAFT_PROVIDER=bedrock`）+ NoOp 既定 |
 | §8.4 | 手書き/印鑑/図面の vision 検出器 | opt-in | `quality_detectors.BedrockVisualArtifactDetector`（実 Claude vision, `RAKU_VISUAL_ARTIFACT_DETECTOR=bedrock`）+ NoOp 既定 |

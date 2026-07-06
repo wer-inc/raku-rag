@@ -145,6 +145,14 @@ export default function ExtractionReviewPage() {
                       推奨: <strong>{ACTION_LABELS[item.suggested_action]}</strong>
                     </div>
                   )}
+                  {item.route_trace && item.route_trace.length > 0 && (
+                    <div style={{ fontSize: 11, color: "#889", marginTop: 6, fontFamily: "monospace" }}>
+                      経路:{" "}
+                      {item.route_trace
+                        .map((s) => [s.stage, s.provider, s.result].filter(Boolean).join(":"))
+                        .join(" → ")}
+                    </div>
+                  )}
                 </div>
                 <span
                   style={{ alignSelf: "start", fontSize: 12, background: "#eef1f6", color: "#334", padding: "3px 8px", borderRadius: 999 }}

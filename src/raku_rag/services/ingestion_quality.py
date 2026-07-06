@@ -246,6 +246,7 @@ class ExtractionReviewItem:
     bbox: tuple[float, ...] | None = None
     text_snippet: str = ""
     suggested_action: str = ""
+    route_trace: tuple[Mapping[str, object], ...] = ()
 
 
 # §12.1 "suggested action" — reasons that flag a *provider* problem (garbled/empty/wrong OCR) suggest a
@@ -324,6 +325,7 @@ def extraction_review_items(
         )
         page_raw = meta.get("page_number")
         bbox_raw = meta.get("bbox")
+        route_raw = meta.get("route_trace")
         text = str(getattr(chunk, "text", "") or "")
         queue.append(
             ExtractionReviewItem(
@@ -341,6 +343,11 @@ def extraction_review_items(
                 ),
                 text_snippet=text[:240],
                 suggested_action=_suggest_review_action(status, reasons),
+                route_trace=(
+                    tuple(dict(s) for s in route_raw if isinstance(s, Mapping))
+                    if isinstance(route_raw, (list, tuple))
+                    else ()
+                ),
             )
         )
     return queue

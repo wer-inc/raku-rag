@@ -221,6 +221,7 @@ class StructuredIngestionService:
                 chunking_metadata,
                 doc_floor_status=doc_floor_status,
                 doc_floor_reasons=doc_floor_reasons,
+                route_trace_meta=_route_trace_metadata(parsed),
             )
 
             vectors = self._embedder.embed([c.text for c in chunks]) if chunks else []
@@ -298,6 +299,7 @@ class StructuredIngestionService:
         *,
         doc_floor_status: str = QUALITY_STATUS_ACCEPTED,
         doc_floor_reasons: tuple[str, ...] = (),
+        route_trace_meta: Mapping[str, object] | None = None,
     ) -> list[Chunk]:
         pre_index = self._pii_redaction_mode == PII_REDACTION_PRE_INDEX
         chunks: list[Chunk] = []
@@ -323,6 +325,7 @@ class StructuredIngestionService:
                 "parsed_chunk_kind": sc.kind,
                 "source_block_ids": list(sc.source_block_ids),
                 **_anchor_metadata(sc),
+                **dict(route_trace_meta or {}),
                 **_chunk_quality_metadata(
                     sc, doc_floor_status=doc_floor_status, doc_floor_reasons=doc_floor_reasons
                 ),
@@ -425,3 +428,24 @@ def _anchor_metadata(sc: StructuredChunk) -> dict[str, object]:
     if anchor.bbox is not None:
         meta["bbox"] = list(anchor.bbox)
     return meta
+
+
+def _route_trace_metadata(parsed: ParsedDocument) -> dict[str, object]:
+    """§6.3 — persist the provider route_trace onto the chunk so review / debug / reprocess / customer
+    explanation can see how the extraction was produced. Document-level and small (a few steps)."""
+
+    steps = getattr(parsed, "route_trace", ()) or ()
+    if not steps:
+        return {}
+    return {
+        "route_trace": [
+            {
+                "stage": s.stage,
+                "provider": s.provider,
+                "result": s.result,
+                "reason": s.reason,
+                "signals": list(s.signals),
+            }
+            for s in steps
+        ]
+    }

@@ -176,6 +176,18 @@ class ExtractionReviewQueueTest(unittest.TestCase):
         )
         self.assertEqual(extraction_review_items([chunk])[0].suggested_action, "approve")
 
+    def test_review_item_surfaces_route_trace(self) -> None:
+        # §6.3 / §12.1 — the persisted route_trace reaches the reviewer.
+        quality = review_required_quality_metadata(reasons=("low_ocr_confidence",))
+        quality["route_trace"] = [
+            {"stage": "preflight", "result": "scanned_japanese", "signals": ["no_text_layer"]},
+            {"stage": "extract", "provider": "docling", "result": "partial"},
+        ]
+        item = extraction_review_items([self._chunk("rev:0", quality)])[0]
+        self.assertEqual(len(item.route_trace), 2)
+        self.assertEqual(item.route_trace[0]["stage"], "preflight")
+        self.assertEqual(item.route_trace[-1]["provider"], "docling")
+
     def test_extraction_review_queue_prefers_efficient_store_method(self) -> None:
         from raku_rag.services.ingestion_quality import extraction_review_queue
 

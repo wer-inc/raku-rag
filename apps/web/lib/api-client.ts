@@ -886,6 +886,13 @@ export interface ExtractionReviewItem {
   bbox?: number[] | null;
   text_snippet?: string;
   suggested_action?: string;
+  route_trace?: Array<{
+    stage?: string;
+    provider?: string;
+    result?: string;
+    reason?: string;
+    signals?: string[];
+  }>;
 }
 
 export interface ExtractionReviewQueueResponse {
