@@ -206,6 +206,22 @@ class ProductionSystem(MvpSystem):
             self.tracer,
             pii_redaction_mode=self.settings.pii_redaction_mode,
         )
+        # ADR-018 B5: opt-in Docling-first structured ingestion (mirrors MvpSystem; ProductionSystem
+        # does not call super().__init__ so the flag wiring is repeated here). Default OFF. The worker
+        # IngestionExecutor still uses the legacy self.ingestion (visual/OCR internals) — only the
+        # ingest_text entrypoint is switched.
+        self.structured_ingestion = None
+        if self.settings.structured_ingest_enabled:
+            from raku_rag.services.structured_ingestion import build_structured_ingestion_service
+
+            self.structured_ingestion = build_structured_ingestion_service(
+                store=self.store,
+                embedder=self.embedder,
+                registry=self.registry,
+                metrics=self.metrics,
+                tracer=self.tracer,
+                pii_redaction_mode=self.settings.pii_redaction_mode,
+            )
         self.visual_ingestion_executor = VisualIngestionExecutor(
             ocr=self.ocr,
             layout=self.layout,

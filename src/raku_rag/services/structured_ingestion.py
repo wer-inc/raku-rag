@@ -253,6 +253,57 @@ class StructuredIngestionService:
         return chunks
 
 
+def build_structured_parser() -> StructuredParser:
+    """Compose the app's structured parser: existing parsers first (parity), Docling for the rest.
+
+    Text / DOCX / CSV / XLSX / HTML keep the existing structured parsers (text_for_embedding parity
+    with the legacy path); PDF / PPTX / images fall through to the opt-in DoclingStructuredParser
+    (which itself owns OCR-provider selection per §4.2/§9.4 and degrades gracefully without docling).
+    """
+
+    from raku_rag.providers.docling_parser import DoclingStructuredParser
+    from raku_rag.providers.structured_parsers import (
+        CompositeStructuredParser,
+        DocxStructuredParser,
+        SpreadsheetStructuredParser,
+        TextStructuredParser,
+    )
+
+    return CompositeStructuredParser(
+        (
+            TextStructuredParser(),
+            DocxStructuredParser(),
+            SpreadsheetStructuredParser(),
+            DoclingStructuredParser(),
+        )
+    )
+
+
+def build_structured_ingestion_service(
+    *,
+    store: VectorStore,
+    embedder: EmbeddingProvider,
+    registry: DocumentRegistry,
+    metrics: MetricsRecorder | None = None,
+    tracer: InMemoryTracer | None = None,
+    pii_redaction_mode: str = PII_REDACTION_PRE_INDEX,
+    structured_parser: StructuredParser | None = None,
+    raw_sink: RawSink | None = None,
+) -> StructuredIngestionService:
+    """App factory (ADR-018 B5 wiring) — used behind the ``structured_ingest_enabled`` flag."""
+
+    return StructuredIngestionService(
+        store=store,
+        embedder=embedder,
+        structured_parser=structured_parser or build_structured_parser(),
+        registry=registry,
+        metrics=metrics,
+        tracer=tracer,
+        pii_redaction_mode=pii_redaction_mode,
+        raw_sink=raw_sink,
+    )
+
+
 def _anchor_metadata(sc: StructuredChunk) -> dict[str, object]:
     """Surface the first citation anchor as flat metadata (page+bbox or spreadsheet cell)."""
 

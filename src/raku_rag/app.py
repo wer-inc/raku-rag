@@ -109,6 +109,20 @@ class MvpSystem:
             self.tracer,
             pii_redaction_mode=self.settings.pii_redaction_mode,
         )
+        # ADR-018 B5: opt-in Docling-first structured ingestion. Legacy self.ingestion is left intact
+        # (visual executor / reindex reach into it); only the ingest ENTRYPOINT is switched.
+        self.structured_ingestion = None
+        if self.settings.structured_ingest_enabled:
+            from raku_rag.services.structured_ingestion import build_structured_ingestion_service
+
+            self.structured_ingestion = build_structured_ingestion_service(
+                store=self.store,
+                embedder=self.embedder,
+                registry=self.registry,
+                metrics=self.metrics,
+                tracer=self.tracer,
+                pii_redaction_mode=self.settings.pii_redaction_mode,
+            )
         self.answer_service = AnswerService(
             self.retrieval,
             self.llm,
@@ -142,6 +156,15 @@ class MvpSystem:
     ) -> None:
         self.acl.add(ACLGrant(tenant_id, scope_type, scope_id, subject_type, subject_id))
 
+    @property
+    def _ingest(self):
+        """Active ingest service: the opt-in structured one when enabled, else the legacy one.
+
+        Resolved dynamically (not cached) so callers/tests that swap ``self.ingestion`` still take
+        effect when structured ingestion is off (the default).
+        """
+        return self.structured_ingestion or self.ingestion
+
     def ingest_text(
         self,
         *,
@@ -152,7 +175,7 @@ class MvpSystem:
         source_id: str = "src",
         chunking_metadata: dict | None = None,
     ):
-        return self.ingestion.ingest(
+        return self._ingest.ingest(
             tenant_id=tenant_id,
             collection_id=collection_id,
             source_id=source_id,
