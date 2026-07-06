@@ -123,11 +123,28 @@ export default function ExtractionReviewPage() {
             >
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                 <div>
-                  <div style={{ fontWeight: 600 }}>{item.document_id}</div>
+                  <div style={{ fontWeight: 600 }}>
+                    {item.document_id}
+                    {typeof item.page_no === "number" && (
+                      <span style={{ fontWeight: 400, color: "#667", fontSize: 13 }}> ・ P.{item.page_no}</span>
+                    )}
+                  </div>
                   <div style={{ fontSize: 13, color: "#667", marginTop: 2 }}>
                     <code style={{ fontSize: 12 }}>{item.chunk_id}</code>
                   </div>
                   <div style={{ fontSize: 13, color: "#a12", marginTop: 4 }}>{reasonText(item.reasons)}</div>
+                  {item.text_snippet && (
+                    <div
+                      style={{ fontSize: 12, color: "#556", marginTop: 6, background: "#f6f7f9", padding: "6px 8px", borderRadius: 6, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 76, overflow: "hidden" }}
+                    >
+                      {item.text_snippet}
+                    </div>
+                  )}
+                  {item.suggested_action && ACTION_LABELS[item.suggested_action] && (
+                    <div style={{ fontSize: 12, color: "#334", marginTop: 6 }}>
+                      推奨: <strong>{ACTION_LABELS[item.suggested_action]}</strong>
+                    </div>
+                  )}
                 </div>
                 <span
                   style={{ alignSelf: "start", fontSize: 12, background: "#eef1f6", color: "#334", padding: "3px 8px", borderRadius: 999 }}

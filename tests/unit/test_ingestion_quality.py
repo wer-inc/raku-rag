@@ -156,6 +156,26 @@ class ExtractionReviewQueueTest(unittest.TestCase):
         self.assertEqual(len(extraction_review_items([chunk], tenant_id="t")), 1)
         self.assertEqual(len(extraction_review_items([chunk], tenant_id="other")), 0)
 
+    def test_review_item_carries_page_anchor_and_suggested_action(self) -> None:
+        # §12.1 — the review item exposes enough to locate + triage the extraction.
+        quality = review_required_quality_metadata(reasons=("mojibake_suspected",))
+        quality.update({"anchor_type": "page_bbox", "page_number": 4, "bbox": [1, 2, 3, 4]})
+        chunk = self._chunk("rev:0", quality)
+        chunk = Chunk(**{**chunk.__dict__, "text": "ポンプ " + "�" * 30})
+        item = extraction_review_items([chunk])[0]
+        self.assertEqual(item.page_no, 4)
+        self.assertEqual(item.anchor_type, "page_bbox")
+        self.assertEqual(item.bbox, (1.0, 2.0, 3.0, 4.0))
+        self.assertTrue(item.text_snippet.startswith("ポンプ"))
+        # mojibake is a provider problem -> suggest a reprocess with a different provider.
+        self.assertEqual(item.suggested_action, "reprocess")
+
+    def test_draft_visual_suggests_approve(self) -> None:
+        chunk = self._chunk(
+            "vis:0", review_required_quality_metadata(status=QUALITY_STATUS_DRAFT_VISUAL)
+        )
+        self.assertEqual(extraction_review_items([chunk])[0].suggested_action, "approve")
+
     def test_extraction_review_queue_prefers_efficient_store_method(self) -> None:
         from raku_rag.services.ingestion_quality import extraction_review_queue
 

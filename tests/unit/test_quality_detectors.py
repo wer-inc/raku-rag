@@ -11,6 +11,7 @@ from raku_rag.services.quality_detectors import (
     VisualArtifactSignals,
     is_drawing_like,
     is_language_mismatch,
+    is_vertical_text_suspected,
     japanese_char_ratio,
     select_visual_artifact_detector,
     table_structure_confidence,
@@ -61,6 +62,25 @@ class DrawingLikeTest(unittest.TestCase):
     def test_text_page_is_not_drawing_like(self) -> None:
         self.assertFalse(is_drawing_like(has_figures=True, text_char_count=400))
         self.assertFalse(is_drawing_like(has_figures=False, text_char_count=0))
+
+
+class VerticalTextTest(unittest.TestCase):
+    def test_many_one_char_japanese_lines_is_suspected(self) -> None:
+        self.assertTrue(is_vertical_text_suspected("\n".join("点検手順書項目一覧")))
+
+    def test_normal_japanese_prose_is_not_suspected(self) -> None:
+        self.assertFalse(
+            is_vertical_text_suspected(
+                "ポンプP-12の点検は90日ごとに実施し、主電源を遮断してから作業を開始する。次に安全弁を確認する。"
+            )
+        )
+
+    def test_english_short_lines_are_not_suspected(self) -> None:
+        # The Japanese-majority guard keeps English bullet lists from tripping the heuristic.
+        self.assertFalse(is_vertical_text_suspected("\n".join(["a", "b", "c", "d", "e", "f", "g"])))
+
+    def test_too_few_lines_is_not_judged(self) -> None:
+        self.assertFalse(is_vertical_text_suspected("点\n検\n手"))
 
 
 class DocumentQualityDimensionsTest(unittest.TestCase):
@@ -119,6 +139,7 @@ class DocumentQualityDimensionsTest(unittest.TestCase):
         self.assertEqual(dims["empty_page_risk"], 0.5)
         self.assertEqual(dims["drawing_like"], 1.0)
         self.assertEqual(dims["visual_coverage"], 1.0)  # the one figure has a caption
+        self.assertIn("vertical_text_suspected", dims)  # §8.3 dimension is always present
         self.assertEqual(dims["cell_anchor_coverage"], 1.0)
         self.assertEqual(dims["table_structure_confidence"], 0.8)
         self.assertEqual(dims["provider_error"], 0.0)

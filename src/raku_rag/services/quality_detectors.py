@@ -116,6 +116,29 @@ def is_drawing_like(*, has_figures: bool, text_char_count: int) -> bool:
     return bool(has_figures) and text_char_count <= _DRAWING_MAX_TEXT_CHARS
 
 
+# --- vertical-text suspicion (§8.3 vertical_text_suspected) ----------------------------------------
+
+_VERTICAL_MIN_LINES = 6
+_VERTICAL_SHORT_LINE_CHARS = 2
+_VERTICAL_SHORT_LINE_RATIO = 0.6
+
+
+def is_vertical_text_suspected(text: str) -> bool:
+    """§8.3 — Japanese vertical text (縦書き) mis-extracted as horizontal shatters into many ultra-short
+    lines (one glyph column becomes one line). Stdlib heuristic (no vision): enough lines, a Japanese
+    majority, and most lines only 1-2 chars. The Japanese-majority guard keeps English bullet lists /
+    numbered steps from tripping it — a legitimately English document simply won't match.
+    """
+
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    if len(lines) < _VERTICAL_MIN_LINES:
+        return False
+    if japanese_char_ratio(text) < 0.5:
+        return False
+    short = sum(1 for ln in lines if len(ln) <= _VERTICAL_SHORT_LINE_CHARS)
+    return short / len(lines) >= _VERTICAL_SHORT_LINE_RATIO
+
+
 # --- §8.3 derived quality dimension vector --------------------------------------------------------
 
 
@@ -128,8 +151,8 @@ def document_quality_dimensions(parsed, *, expected_language: str = "") -> dict[
 
     Complements the provider-confidence dims (layout/ocr from Docling) with signals derivable from the
     normalized document: text_yield, empty_page_risk, mojibake_risk, reading_order_risk,
-    cell_anchor_coverage, visual_coverage, provider_error, and the 0/1 detector dims
-    (drawing_like / handwriting_detected / seal_detected). Values are heuristic; thresholds are
+    cell_anchor_coverage, visual_coverage, provider_error, vertical_text_suspected, and the 0/1 detector
+    dims (drawing_like / handwriting_detected / seal_detected). Values are heuristic; thresholds are
     eval-driven (§OQ#2).
     """
 
@@ -144,6 +167,11 @@ def document_quality_dimensions(parsed, *, expected_language: str = "") -> dict[
         replacement = doc_text.count("�")
         control = sum(1 for ch in doc_text if ord(ch) < 32 and ch not in "\t\n\r")
         dims["mojibake_risk"] = round((replacement + control) / len(doc_text), 4)
+    # Always present: from the doc text heuristic, else a page-provided vision signal (max of the two).
+    dims["vertical_text_suspected"] = max(
+        1.0 if (doc_text and is_vertical_text_suspected(doc_text)) else 0.0,
+        _page_signal(pages, "vertical_text_suspected"),
+    )
     if expected_language:
         dims["language_consistency"] = (
             round(japanese_char_ratio(doc_text), 4)

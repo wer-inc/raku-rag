@@ -881,6 +881,11 @@ export interface ExtractionReviewItem {
   chunk_id: string;
   status: string;
   reasons: string[];
+  page_no?: number | null;
+  anchor_type?: string;
+  bbox?: number[] | null;
+  text_snippet?: string;
+  suggested_action?: string;
 }
 
 export interface ExtractionReviewQueueResponse {

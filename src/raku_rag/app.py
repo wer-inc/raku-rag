@@ -197,6 +197,11 @@ class MvpSystem:
                 "chunk_id": item.chunk_id,
                 "status": item.status,
                 "reasons": list(item.reasons),
+                "page_no": item.page_no,
+                "anchor_type": item.anchor_type,
+                "bbox": list(item.bbox) if item.bbox is not None else None,
+                "text_snippet": item.text_snippet,
+                "suggested_action": item.suggested_action,
             }
             for item in extraction_review_queue(self.store, tenant_id=tenant_id)
         ]

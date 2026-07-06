@@ -238,6 +238,50 @@ class ExtractionReviewItem:
     chunk_id: str
     status: str
     reasons: tuple[str, ...]
+    # §12.1 review-item context — enough for a reviewer to locate + judge the extraction. The page
+    # image itself is fetched by the client from (document_id, page_no, bbox); route trace lives in the
+    # ingestion run.
+    page_no: int | None = None
+    anchor_type: str = ""
+    bbox: tuple[float, ...] | None = None
+    text_snippet: str = ""
+    suggested_action: str = ""
+
+
+# §12.1 "suggested action" — reasons that flag a *provider* problem (garbled/empty/wrong OCR) suggest a
+# reprocess with a different provider; visual artefacts go to a specialist; low-confidence structure is
+# usually a quick human edit. Ordered by precedence.
+_REPROCESS_REASONS = frozenset(
+    {
+        REASON_EMPTY_EXTRACTION,
+        REASON_CID_ARTIFACTS,
+        REASON_MOJIBAKE_SUSPECTED,
+        REASON_LOW_OCR_CONFIDENCE,
+        "language_mismatch",
+    }
+)
+_ESCALATE_REASONS = frozenset({"drawing_only_page", "handwriting_or_seal_detected"})
+_EDIT_REASONS = frozenset(
+    {
+        "low_overall_confidence",
+        "low_layout_confidence",
+        "low_table_structure_confidence",
+        REASON_MINOR_MOJIBAKE,
+    }
+)
+
+
+def _suggest_review_action(status: str, reasons: tuple[str, ...]) -> str:
+    if status == QUALITY_STATUS_DRAFT_VISUAL:
+        return "approve"  # reviewer verifies the crop, then approves/edits
+    rset = set(reasons)
+    if rset & _REPROCESS_REASONS:
+        return "reprocess"
+    if rset & _ESCALATE_REASONS:
+        return "escalate"
+    if rset & _EDIT_REASONS:
+        return "edit_and_approve"
+    return "review"
 
 
 def extraction_review_status(metadata: Mapping[str, object] | object | None) -> str:
@@ -274,14 +318,29 @@ def extraction_review_items(
         status = extraction_review_status(metadata)
         if not status:
             continue
-        reasons = _metadata_mapping(metadata).get(EXTRACTION_QUALITY_REASONS_KEY) or ()
+        meta = _metadata_mapping(metadata)
+        reasons = tuple(
+            str(reason) for reason in (meta.get(EXTRACTION_QUALITY_REASONS_KEY) or ()) if reason
+        )
+        page_raw = meta.get("page_number")
+        bbox_raw = meta.get("bbox")
+        text = str(getattr(chunk, "text", "") or "")
         queue.append(
             ExtractionReviewItem(
                 tenant_id=str(getattr(chunk, "tenant_id", "") or ""),
                 document_id=str(getattr(chunk, "document_id", "") or ""),
                 chunk_id=str(getattr(chunk, "chunk_id", "") or ""),
                 status=status,
-                reasons=tuple(str(reason) for reason in reasons if reason),
+                reasons=reasons,
+                page_no=int(page_raw) if isinstance(page_raw, (int, float)) else None,
+                anchor_type=str(meta.get("anchor_type") or ""),
+                bbox=(
+                    tuple(float(x) for x in bbox_raw)
+                    if isinstance(bbox_raw, (list, tuple))
+                    else None
+                ),
+                text_snippet=text[:240],
+                suggested_action=_suggest_review_action(status, reasons),
             )
         )
     return queue

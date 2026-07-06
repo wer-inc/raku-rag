@@ -1509,14 +1509,14 @@ VLM は難物 fallback として使うが、出力は `draft_visual` とし、�
 | §9.1 | Docling 構造パーサ（PDF/DOCX/PPTX/HTML/画像） | live | `providers/docling_parser.py`（Docling 2.110 で実変換検証） |
 | §7.6 | 表構造（ヘッダ検出つき）→ `Table`/`TableCell` | live | `docling_parser._table_from_item` |
 | §7 | 図（`Figure`：page/bbox/caption） | live | `docling_parser._normalize_figures`（A2） |
-| §8.2/§8.3 | 品質は「次元ベクトル」（layout/ocr_p10/p50/overall + table_structure_confidence） | live（部分：§8.3 全16次元のうち信頼度系+表構造を生成、手書き/印鑑/縦書き等は検出器依存） | `docling_parser._quality_from_confidence`（A3）, `quality_detectors.table_structure_confidence` |
+| §8.2/§8.3 | 品質は「次元ベクトル」（§8.3 の16次元すべて） | live | `docling_parser._quality_from_confidence`（layout/ocr_p10/p50/overall, A3）+ `quality_detectors.document_quality_dimensions`（text_yield/empty_page_risk/mojibake_risk/language_consistency/reading_order_risk/table_structure_confidence/cell_anchor_coverage/visual_coverage/provider_error/**vertical_text_suspected** + 検出器系 drawing_like/handwriting/seal） |
 | §13.3 | provider_version + config_hash + timestamps（再現/監査用） | live | `docling_parser._normalize`（A5） |
 | §8.4 | 文書レベル ハードフェイル（低信頼/表構造/図面/手書き・印鑑/期待言語不一致） | live（検出器）/opt-in（vision） | `services/structured_ingestion.classify_parsed_document_quality`（A7）+ `services/quality_detectors.py`（table_structure_confidence・is_language_mismatch・drawing_like は実 stdlib；handwriting/seal は `VisualArtifactDetector` seam, 既定 NoOp・`RAKU_VISUAL_ARTIFACT_DETECTOR` で有効化） |
 | Phase A | 抽出品質 contract + retrieval/high-risk ゲート | live | `services/ingestion_quality.py`, `retrieval.py`, `answer.py`, `manufacturing/safety/gate.py` |
 | §4.2/§9.4 | OCR は独立 provider（Docling 内蔵 OCR は不使用） | live(RapidOCR)/opt-in(cloud) | `providers/ocr/pluggable.py`（RapidOCR 実 OCR 検証; Google/Azure は opt-in, A10） |
 | §6.1/§6.2 | preflight（digital/scanned 判定）→ route_trace/page signals | live（判定）/ 部分（per-page 完全ルーティングは将来） | `docling_parser.preflight_pdf_pages` / `_apply_preflight`（A6） |
 | §P2 | raw provider 出力の保管（再現/監査） | live(fs)/opt-in(s3) | `services/raw_sink.py`（A4） |
-| §12.1 | レビューキュー一覧（Postgres 効率クエリ + in-mem 射影） | live | `persistence/postgres.list_extraction_review_chunks`, `ingestion_quality.extraction_review_queue`（A9） |
+| §12.1 | レビューキュー一覧（Postgres 効率クエリ + in-mem 射影）+ 各項目に page_no/anchor(bbox)/抽出テキスト/quality reasons/suggested_action | live | `persistence/postgres.list_extraction_review_chunks`, `ingestion_quality.extraction_review_queue`/`ExtractionReviewItem`（A9）, web に page/snippet/推奨アクション表示 |
 | Phase E | reindex 時の品質再評価（低品質を quarantine） | live | `services/reindex.py`（A12） |
 | §10/Phase D | VLM draft fallback → `draft_visual`（HITL 承認前提） | opt-in | `providers/vlm_draft.py`：`BedrockVlmDraftProvider`（実 Claude vision, `RAKU_VLM_DRAFT_PROVIDER=bedrock`）+ NoOp 既定 |
 | §8.4 | 手書き/印鑑/図面の vision 検出器 | opt-in | `quality_detectors.BedrockVisualArtifactDetector`（実 Claude vision, `RAKU_VISUAL_ARTIFACT_DETECTOR=bedrock`）+ NoOp 既定 |
