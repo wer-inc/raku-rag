@@ -32,6 +32,7 @@ from raku_rag.domain.parsed_document import (
     BLOCK_TABLE,
     BLOCK_TITLE,
     BLOCK_UNKNOWN,
+    BLOCK_VISUAL_SUMMARY,
     Block,
     Figure,
     IngestionInfo,
@@ -47,6 +48,7 @@ from raku_rag.domain.parsed_document import (
     TableColumn,
 )
 from raku_rag.providers.ocr.pluggable import OcrProvider, select_ocr_provider
+from raku_rag.providers.vlm_draft import VlmDraftProvider, select_vlm_draft_provider
 
 PROVIDER = "docling"
 
@@ -118,12 +120,15 @@ class DoclingStructuredParser:
         *,
         content_types: frozenset[str] = DOCLING_CONTENT_TYPES,
         ocr_provider: OcrProvider | None = None,
+        vlm_provider: VlmDraftProvider | None = None,
     ) -> None:
         self._content_types = content_types
         self._converter = None  # lazy DocumentConverter (expensive to build)
         # §4.2/§9.4: OCR is an INDEPENDENT provider, not Docling's built-in. Default is config-driven
         # (RAKU_OCR_PROVIDER, default "none") — never Docling's internal OCR.
         self._ocr = ocr_provider if ocr_provider is not None else select_ocr_provider()
+        # §10/Phase D: VLM draft fallback for pages OCR can't read. Default NoOp; output is draft_visual.
+        self._vlm = vlm_provider if vlm_provider is not None else select_vlm_draft_provider()
 
     def supports(self, content_type: str) -> bool:
         return content_type in self._content_types
@@ -296,6 +301,7 @@ class DoclingStructuredParser:
             ocr_provider=self._ocr,
             render=lambda page_no: render_pdf_page_png(raw, page_no),
             start_order=len(parsed.blocks),
+            vlm_provider=self._vlm,
         )
         if not extra_blocks:
             return parsed
@@ -589,22 +595,59 @@ def render_pdf_page_png(raw: bytes, page_no: int) -> bytes | None:
         return None
 
 
-def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int):
-    """For each text-less page, OCR via the INDEPENDENT provider — or fail loud (§4.2/§9.4, §P4).
+def apply_external_ocr(empty_pages, *, ocr_provider, render, start_order: int, vlm_provider=None):
+    """For each text-less page: external OCR -> VLM draft -> fail loud (§4.2/§9.4, §10, §P4).
 
-    Returns (extra_blocks, route_trace_steps). When the provider is unavailable or yields nothing, the
-    page becomes a ``review_required`` block (quarantined + surfaced for HITL) rather than silently
-    empty — the ADR forbids leaning on Docling's built-in OCR to paper over this.
+    Returns (extra_blocks, route_trace_steps). Order of attempts per page:
+    1) the INDEPENDENT OCR provider (accepted text);
+    2) if OCR yields nothing and a VLM provider is available, a ``draft_visual`` block (§10 — never
+       retrieval/high-risk eligible until a human approves it);
+    3) otherwise a ``review_required`` block.
+    Never leans on Docling's built-in OCR to paper over a scan.
     """
     extra_blocks: list[Block] = []
     steps: list[RouteTraceStep] = []
     order = start_order
     available = ocr_provider.available()
+    vlm_available = bool(vlm_provider is not None and vlm_provider.available())
 
     for page_no in empty_pages:
-        image = render(page_no) if available else None
+        image = render(page_no) if (available or vlm_available) else None
         result = ocr_provider.ocr_image(image) if (available and image) else None
         text = (result.text.strip() if result else "")
+        if not text and vlm_available and image:
+            draft = vlm_provider.draft_from_image(image, page_no=page_no)
+            draft_text = (draft.text or "").strip()
+            if draft_text:
+                extra_blocks.append(
+                    Block(
+                        block_id=f"vlm_{page_no}",
+                        kind=BLOCK_VISUAL_SUMMARY,
+                        text=draft_text,
+                        normalized_text=draft_text,
+                        page_no=page_no,
+                        reading_order=order,
+                        confidence=draft.confidence,
+                        source_anchor=SourceAnchor(type=ANCHOR_PAGE_BBOX, page_no=page_no),
+                        provenance=Provenance(
+                            provider=draft.provider,
+                            method="vlm_draft",
+                            model_version=draft.model,
+                            route="vlm_draft",
+                        ),
+                        quality=QualityInfo(
+                            status="draft_visual", reasons=("vlm_output_unapproved",)
+                        ),
+                    )
+                )
+                steps.append(
+                    RouteTraceStep(
+                        stage="vlm", provider=draft.provider, result="draft_visual",
+                        reason=f"page_{page_no}",
+                    )
+                )
+                order += 1
+                continue
         if text:
             extra_blocks.append(
                 Block(

@@ -101,6 +101,39 @@ class ApplyExternalOcrTest(unittest.TestCase):
         self.assertEqual(steps[0].result, "review_required")
 
 
+class VlmDraftFallbackTest(unittest.TestCase):
+    def test_vlm_draft_used_when_ocr_yields_nothing(self) -> None:
+        from raku_rag.providers.vlm_draft import CallableVlmDraftProvider
+
+        vlm = CallableVlmDraftProvider(lambda img, page: f"drawing summary page {page}")
+        blocks, steps = apply_external_ocr(
+            [2],
+            ocr_provider=NoOpOcrProvider(),
+            render=lambda page_no: b"PNG",
+            start_order=0,
+            vlm_provider=vlm,
+        )
+        self.assertEqual(blocks[0].kind, "visual_summary")
+        self.assertEqual(blocks[0].quality.status, "draft_visual")
+        self.assertIn("vlm_output_unapproved", blocks[0].quality.reasons)
+        self.assertIn("drawing summary", blocks[0].text)
+        self.assertEqual(blocks[0].provenance.route, "vlm_draft")
+        self.assertEqual(steps[0].result, "draft_visual")
+
+    def test_review_required_when_neither_ocr_nor_vlm(self) -> None:
+        from raku_rag.providers.vlm_draft import NoOpVlmDraftProvider, select_vlm_draft_provider
+
+        self.assertIsInstance(select_vlm_draft_provider(), NoOpVlmDraftProvider)
+        blocks, _ = apply_external_ocr(
+            [2],
+            ocr_provider=NoOpOcrProvider(),
+            render=lambda page_no: b"PNG",
+            start_order=0,
+            vlm_provider=NoOpVlmDraftProvider(),
+        )
+        self.assertEqual(blocks[0].quality.status, "review_required")
+
+
 @unittest.skipUnless(_RAPIDOCR_READY and _HAS_PIL, "rapidocr backend/PIL not installed")
 class RapidOcrRealTest(unittest.TestCase):
     def _text_png(self, text: str) -> bytes:
