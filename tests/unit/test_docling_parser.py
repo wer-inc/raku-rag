@@ -21,6 +21,7 @@ from raku_rag.providers.docling_parser import (
     DoclingStructuredParser,
     _normalize_figures,
     _quality_from_confidence,
+    _table_from_item,
     docling_available,
 )
 
@@ -160,6 +161,85 @@ class DoclingQualityAndFiguresTest(unittest.TestCase):
         figs = _normalize_figures(_FakeDocWithPicture(), Provenance(provider="docling"))
         self.assertEqual(len(figs), 1)
         self.assertEqual(figs[0].caption, "Figure 1: pump assembly")
+
+
+class _FakeCell:
+    def __init__(
+        self,
+        *,
+        text,
+        start_row,
+        start_col,
+        row_span=1,
+        col_span=1,
+        column_header=False,
+        row_header=False,
+        bbox=None,
+    ) -> None:
+        self.text = text
+        self.start_row_offset_idx = start_row
+        self.start_col_offset_idx = start_col
+        self.row_span = row_span
+        self.col_span = col_span
+        self.column_header = column_header
+        self.row_header = row_header
+        self.bbox = bbox
+
+
+class _FakeTableData:
+    def __init__(self, table_cells) -> None:
+        self.table_cells = table_cells
+
+
+class _FakeTableItem:
+    def __init__(self, table_cells) -> None:
+        self.data = _FakeTableData(table_cells)
+        self.prov = ()
+
+
+class TableFromItemMergedCellsTest(unittest.TestCase):
+    """§7.6 — merged cells (rowspan/colspan) via docling's deduplicated ``table_cells`` list."""
+
+    def test_extracts_rowspan_and_colspan_without_duplicating_the_merged_cell(self) -> None:
+        item = _FakeTableItem(
+            [
+                _FakeCell(text="Item", start_row=0, start_col=0, column_header=True),
+                _FakeCell(text="Spec", start_row=0, start_col=1, col_span=2, column_header=True),
+                _FakeCell(text="Pump", start_row=1, start_col=0),
+                _FakeCell(text="Valve", start_row=2, start_col=0, row_span=2),
+                _FakeCell(text="Type", start_row=2, start_col=1),
+            ]
+        )
+        table = _table_from_item(item, 0, None)
+        self.assertEqual(len(table.cells), 5)  # deduplicated — not repeated at every span position
+        by_text = {c.text: c for c in table.cells}
+        self.assertEqual(by_text["Spec"].colspan, 2)
+        self.assertEqual(by_text["Spec"].rowspan, 1)
+        self.assertEqual(by_text["Valve"].rowspan, 2)
+        self.assertEqual(by_text["Valve"].colspan, 1)
+        self.assertEqual(by_text["Valve"].row, 3)  # 1-indexed
+        self.assertEqual(by_text["Valve"].col, 1)
+        self.assertTrue(by_text["Item"].is_header)
+        self.assertEqual(table.columns[0].text, "Item")
+
+    def test_falls_back_to_grid_when_table_cells_absent(self) -> None:
+        class _GridCell:
+            def __init__(self, text) -> None:
+                self.text = text
+                self.column_header = False
+                self.row_header = False
+
+        class _GridData:
+            table_cells = None
+            grid = [[_GridCell("a"), _GridCell("b")]]
+
+        class _GridItem:
+            data = _GridData()
+            prov = ()
+
+        table = _table_from_item(_GridItem(), 0, None)
+        self.assertEqual(len(table.cells), 2)
+        self.assertEqual(table.cells[0].rowspan, 1)  # defaults preserved on the fallback path
 
 
 @unittest.skipUnless(docling_available(), "docling not installed")

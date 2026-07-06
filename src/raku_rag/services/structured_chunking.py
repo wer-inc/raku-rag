@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from raku_rag.domain.parsed_document import (
+    ANCHOR_PAGE_CROP,
     BLOCK_CAPTION,
     BLOCK_FORM_FIELD,
     BLOCK_HEADING,
@@ -31,6 +32,7 @@ CHUNK_CELL = "cell_chunk"
 CHUNK_TABLE = "table_chunk"
 CHUNK_LIST = "list_chunk"
 CHUNK_FORM = "form_chunk"
+CHUNK_FIGURE = "figure_chunk"
 
 _HEADING_KINDS = frozenset({BLOCK_TITLE, BLOCK_HEADING})
 _CELL_KINDS = frozenset({BLOCK_TABLE_CELL})
@@ -105,6 +107,33 @@ def chunk_parsed_document(parsed: ParsedDocument) -> list[StructuredChunk]:
                 quality_reasons=tuple(block.quality.reasons),
                 heading_path=heading_path,
                 min_block_confidence=block.confidence,
+            )
+        )
+
+    # §11.2 "figure → caption + crop ref + visual summary": figures live in ``parsed.figures``, not
+    # ``blocks`` — without this they never reach retrieval/citation (they'd be captured but unusable).
+    # A figure with no caption has no text to embed, so it is skipped here (matches §11.2's own wording
+    # "caption + crop ref"): captionless figures are covered by the display/crop path (visual RAG),
+    # a deferred stub, not this text-embedding chunker.
+    for figure in parsed.figures:
+        caption = (figure.caption or "").strip()
+        if not caption:
+            continue
+        anchor = SourceAnchor(
+            type=ANCHOR_PAGE_CROP,
+            page_no=figure.page_no,
+            bbox=figure.bbox,
+            image_ref=figure.image_ref or None,
+        )
+        chunks.append(
+            StructuredChunk(
+                text_for_embedding=caption,
+                display_text=caption,
+                kind=CHUNK_FIGURE,
+                source_block_ids=(figure.figure_id,),
+                source_anchors=(anchor,),
+                quality_status=figure.quality.status,
+                quality_reasons=tuple(figure.quality.reasons),
             )
         )
     return chunks

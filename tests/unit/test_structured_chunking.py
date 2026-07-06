@@ -5,18 +5,21 @@ from __future__ import annotations
 import unittest
 
 from raku_rag.domain.parsed_document import (
+    ANCHOR_PAGE_CROP,
     ANCHOR_SPREADSHEET_CELL,
     BLOCK_HEADING,
     BLOCK_PARAGRAPH,
     BLOCK_TABLE,
     BLOCK_TITLE,
     Block,
+    Figure,
     ParsedDocument,
     QualityInfo,
 )
 from raku_rag.providers.structured_parsers import SpreadsheetStructuredParser
 from raku_rag.services.structured_chunking import (
     CHUNK_CELL,
+    CHUNK_FIGURE,
     CHUNK_PARAGRAPH,
     CHUNK_TABLE,
     chunk_parsed_document,
@@ -92,6 +95,52 @@ class StructuredChunkingTest(unittest.TestCase):
         self.assertEqual(anchor.type, ANCHOR_SPREADSHEET_CELL)
         self.assertEqual((anchor.sheet, anchor.row, anchor.col), ("sheet1", 2, 1))
         self.assertIn("sheet1!R2C1", first.text_for_embedding)
+
+    def test_captioned_figure_becomes_a_chunk_with_crop_anchor(self) -> None:
+        # §7.5/§11.2: figures live in parsed.figures, not blocks — without this they never reach
+        # retrieval/citation.
+        doc = ParsedDocument(
+            blocks=(Block(block_id="p", kind=BLOCK_PARAGRAPH, text="body text", reading_order=0),),
+            figures=(
+                Figure(
+                    figure_id="fig1",
+                    page_no=2,
+                    bbox=(10.0, 20.0, 30.0, 40.0),
+                    caption="配管系統図: 主弁と分岐弁の位置関係",
+                    image_ref="s3://bucket/doc1/fig1.png",
+                ),
+            ),
+        )
+        chunks = chunk_parsed_document(doc)
+        fig_chunks = [c for c in chunks if c.kind == CHUNK_FIGURE]
+        self.assertEqual(len(fig_chunks), 1)
+        fig = fig_chunks[0]
+        self.assertEqual(fig.text_for_embedding, "配管系統図: 主弁と分岐弁の位置関係")
+        self.assertEqual(fig.source_block_ids, ("fig1",))
+        self.assertEqual(len(fig.source_anchors), 1)
+        anchor = fig.source_anchors[0]
+        self.assertEqual(anchor.type, ANCHOR_PAGE_CROP)
+        self.assertEqual(anchor.page_no, 2)
+        self.assertEqual(anchor.bbox, (10.0, 20.0, 30.0, 40.0))
+        self.assertEqual(anchor.image_ref, "s3://bucket/doc1/fig1.png")
+
+    def test_captionless_figure_is_skipped(self) -> None:
+        doc = ParsedDocument(figures=(Figure(figure_id="fig1", page_no=1),))
+        self.assertEqual(chunk_parsed_document(doc), [])
+
+    def test_figure_quality_status_propagates(self) -> None:
+        doc = ParsedDocument(
+            figures=(
+                Figure(
+                    figure_id="fig1",
+                    caption="draft caption",
+                    quality=QualityInfo(status="draft_visual", reasons=("vlm_output_unapproved",)),
+                ),
+            )
+        )
+        chunks = chunk_parsed_document(doc)
+        self.assertEqual(chunks[0].quality_status, "draft_visual")
+        self.assertEqual(chunks[0].quality_reasons, ("vlm_output_unapproved",))
 
 
 if __name__ == "__main__":

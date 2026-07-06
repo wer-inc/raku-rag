@@ -629,23 +629,65 @@ def _table_text(item, doc) -> str:
     return ""
 
 
+def _cell_bbox(cell) -> tuple[float, float, float, float] | None:
+    """Extract a docling TableCell's own bbox (not a ProvenanceItem's), defensively across versions."""
+    bbox = getattr(cell, "bbox", None)
+    if bbox is None:
+        return None
+    try:
+        return (float(bbox.l), float(bbox.t), float(bbox.r), float(bbox.b))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def _table_from_item(item, order: int, prov) -> Table | None:
     data = getattr(item, "data", None)
     if data is None:
         return None
-    grid = getattr(data, "grid", None)
     columns: list[TableColumn] = []
     cells: list[TableCell] = []
-    if grid:
-        for r_idx, row in enumerate(grid, start=1):
-            for c_idx, cell in enumerate(row, start=1):
-                cell_text = _norm(getattr(cell, "text", "") or "")
-                is_header = bool(
-                    getattr(cell, "column_header", False) or getattr(cell, "row_header", False)
+    # §7.6 "行・列・ヘッダ・セル構造の信頼度" incl. merged cells (§3.3): ``table_cells`` is docling's
+    # DEDUPLICATED logical-cell list (one entry per merged cell, with span info) — prefer it over the
+    # dense ``grid`` (which repeats a merged cell's text at every grid position it occupies, so span
+    # would be lost and the cell double-counted). Fall back to ``grid`` for older docling / fixtures.
+    table_cells = getattr(data, "table_cells", None)
+    if table_cells:
+        for cell in table_cells:
+            r_idx = int(getattr(cell, "start_row_offset_idx", 0)) + 1
+            c_idx = int(getattr(cell, "start_col_offset_idx", 0)) + 1
+            cell_text = _norm(getattr(cell, "text", "") or "")
+            is_header = bool(
+                getattr(cell, "column_header", False) or getattr(cell, "row_header", False)
+            )
+            rowspan = max(1, int(getattr(cell, "row_span", 1) or 1))
+            colspan = max(1, int(getattr(cell, "col_span", 1) or 1))
+            if is_header and r_idx == 1:
+                columns.append(TableColumn(index=c_idx - 1, text=cell_text))
+            cells.append(
+                TableCell(
+                    row=r_idx,
+                    col=c_idx,
+                    text=cell_text,
+                    rowspan=rowspan,
+                    colspan=colspan,
+                    bbox=_cell_bbox(cell),
+                    is_header=is_header,
                 )
-                if is_header and r_idx == 1:
-                    columns.append(TableColumn(index=c_idx - 1, text=cell_text))
-                cells.append(TableCell(row=r_idx, col=c_idx, text=cell_text, is_header=is_header))
+            )
+    else:
+        grid = getattr(data, "grid", None)
+        if grid:
+            for r_idx, row in enumerate(grid, start=1):
+                for c_idx, cell in enumerate(row, start=1):
+                    cell_text = _norm(getattr(cell, "text", "") or "")
+                    is_header = bool(
+                        getattr(cell, "column_header", False) or getattr(cell, "row_header", False)
+                    )
+                    if is_header and r_idx == 1:
+                        columns.append(TableColumn(index=c_idx - 1, text=cell_text))
+                    cells.append(
+                        TableCell(row=r_idx, col=c_idx, text=cell_text, is_header=is_header)
+                    )
     first = _first_prov(item)
     # §8.3/§8.4: record a table-structure confidence so a ragged/misdetected table can be gated.
     tsc = table_structure_confidence(cells)

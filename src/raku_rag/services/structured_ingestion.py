@@ -446,6 +446,8 @@ def _anchor_metadata(sc: StructuredChunk) -> dict[str, object]:
         meta["page_number"] = anchor.page_no
     if anchor.bbox is not None:
         meta["bbox"] = list(anchor.bbox)
+    if anchor.image_ref:
+        meta["image_ref"] = anchor.image_ref
     return meta
 
 
