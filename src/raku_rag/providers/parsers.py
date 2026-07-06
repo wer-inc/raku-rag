@@ -46,6 +46,35 @@ def parse_cell_anchor(text: str) -> tuple[str, int, int] | None:
     return m.group(1), int(m.group(2)), int(m.group(3))
 
 
+def read_xlsx_sheets(raw: bytes) -> list[tuple[str, list[list[str]]]]:
+    """(sheet_name, rows-as-strings) for every worksheet. Shared by SpreadsheetParser + structured."""
+    from openpyxl import load_workbook  # local import: optional [manufacturing] dep
+
+    wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    sheets: list[tuple[str, list[list[str]]]] = []
+    for ws in wb.worksheets:
+        rows: list[list[str]] = []
+        for row in ws.iter_rows(values_only=True):
+            rows.append(["" if v is None else str(v) for v in row])
+        sheets.append((ws.title, rows))
+    wb.close()
+    return sheets
+
+
+def read_csv_sheets(raw: bytes) -> list[tuple[str, list[list[str]]]]:
+    """CSV rows under a single stable logical sheet name (CSV has no sheet)."""
+    text = raw.decode("utf-8", errors="replace")
+    rows = [list(r) for r in csv.reader(io.StringIO(text))]
+    return [("sheet1", rows)]
+
+
+def read_spreadsheet_sheets(raw: bytes, content_type: str) -> list[tuple[str, list[list[str]]]]:
+    """Dispatch XLSX/CSV to the matching reader."""
+    if content_type == XLSX_CONTENT_TYPE:
+        return read_xlsx_sheets(raw)
+    return read_csv_sheets(raw)
+
+
 class TextParser(Parser):
     def supports(self, content_type: str) -> bool:
         return content_type in _SUPPORTED
@@ -108,31 +137,8 @@ class SpreadsheetParser(Parser):
         return content_type == XLSX_CONTENT_TYPE or content_type in CSV_CONTENT_TYPES
 
     def parse(self, raw: bytes, content_type: str) -> str:
-        if content_type == XLSX_CONTENT_TYPE:
-            sheets = self._read_xlsx(raw)
-        else:
-            sheets = self._read_csv(raw)
+        sheets = read_spreadsheet_sheets(raw, content_type)
         return "\n\n".join(self._emit_cells(sheets))
-
-    # --- readers ---------------------------------------------------------------------------------
-    def _read_xlsx(self, raw: bytes) -> list[tuple[str, list[list[str]]]]:
-        from openpyxl import load_workbook  # local import: optional [manufacturing] dep
-
-        wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-        sheets: list[tuple[str, list[list[str]]]] = []
-        for ws in wb.worksheets:
-            rows: list[list[str]] = []
-            for row in ws.iter_rows(values_only=True):
-                rows.append(["" if v is None else str(v) for v in row])
-            sheets.append((ws.title, rows))
-        wb.close()
-        return sheets
-
-    def _read_csv(self, raw: bytes) -> list[tuple[str, list[list[str]]]]:
-        text = raw.decode("utf-8", errors="replace")
-        rows = [list(r) for r in csv.reader(io.StringIO(text))]
-        # CSV has no sheet name; use a stable logical sheet name for the anchor.
-        return [("sheet1", rows)]
 
     # --- emit ------------------------------------------------------------------------------------
     def _emit_cells(self, sheets: list[tuple[str, list[list[str]]]]):

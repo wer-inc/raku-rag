@@ -96,6 +96,10 @@ class Settings:
     logging_raw_user_query_storage: str = "disabled"
     telemetry_export_enabled: bool = False
     pii_redaction_mode: str = "pre_index_redact"
+    # ADR-018 Phase B5: route ingestion through the Docling-first StructuredIngestionService
+    # (ParsedDocument -> structure-aware chunks). Default OFF — the legacy str-parser path is
+    # unchanged unless explicitly enabled. Docling/OCR remain opt-in heavy providers (§13.1).
+    structured_ingest_enabled: bool = False
     extra: dict = field(default_factory=dict)
 
     def should_store_raw(self, kind: str) -> bool:
@@ -276,4 +280,7 @@ def settings_from_env(env: dict | None = None) -> Settings:
             "RAKU_TELEMETRY_EXPORT_ENABLED", Settings.telemetry_export_enabled
         ),
         pii_redaction_mode=_get("RAKU_PII_REDACTION_MODE", Settings.pii_redaction_mode),
+        structured_ingest_enabled=_bool(
+            "RAKU_STRUCTURED_INGEST", Settings.structured_ingest_enabled
+        ),
     )

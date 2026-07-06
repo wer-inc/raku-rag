@@ -577,6 +577,86 @@ class PostgresVectorStore(VectorStore):
         empty: Vector = []
         return tuple((_row_to_chunk(r), empty) for r in rows)
 
+    def _get_chunk(self, tenant_id: str, chunk_id: str) -> Chunk | None:
+        _use_tenant(self._conn, tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "
+                "token_count, position, heading_path, offset_mapping, metadata, "
+                "embedding_model_version, tombstone FROM chunks WHERE chunk_id=%s",
+                (chunk_id,),
+            )
+            row = cur.fetchone()
+        return _row_to_chunk(row) if row else None
+
+    def update_chunk_review(
+        self,
+        tenant_id: str,
+        chunk_id: str,
+        *,
+        metadata: dict | None = None,
+        text: str | None = None,
+        vector: Vector | None = None,
+        tombstone: bool | None = None,
+    ) -> bool:
+        """ADR-018 §12.2 — apply a review decision to one chunk (RLS-scoped), preserving the embedding.
+
+        Metadata is merged (JSONB ``||``). A text change (edit_and_approve) re-fetches the row and
+        re-upserts with the caller's new vector so every derived column (lexical/identifier) moves with
+        it; metadata/tombstone-only actions use a targeted UPDATE that never touches the embedding.
+        """
+
+        _use_tenant(self._conn, tenant_id)
+        if text is not None:
+            chunk = self._get_chunk(tenant_id, chunk_id)
+            if chunk is None:
+                return False
+            if metadata:
+                chunk.metadata.update(metadata)
+            chunk.text = text
+            if tombstone is not None:
+                chunk.tombstone = tombstone
+            if vector is None or len(vector) != self._embedding_dim:
+                raise ValueError("edit_and_approve requires a re-embedded vector")
+            self.upsert([(chunk, vector)])
+            return True
+
+        sets: list[str] = []
+        params: list[object] = []
+        if metadata:
+            sets.append("metadata = metadata || %s::jsonb")
+            params.append(Json(metadata))
+        if tombstone is not None:
+            sets.append("tombstone = %s")
+            params.append(tombstone)
+        if not sets:
+            return False
+        params.extend([chunk_id])
+        with self._conn.cursor() as cur:
+            cur.execute(f"UPDATE chunks SET {', '.join(sets)} WHERE chunk_id=%s", params)
+            return cur.rowcount > 0
+
+    def list_extraction_review_chunks(self, tenant_id: str | None = None) -> tuple[Chunk, ...]:
+        """ADR-018 A9 §12.1 — RLS-scoped chunks quarantined for extraction review, via a JSONB filter.
+
+        Efficient at scale (a WHERE on ``metadata`` instead of the full ``iter_items`` scan). When a
+        ``tenant_id`` is given, the RLS session tenant is set here so the endpoint can call this as a
+        standalone read; otherwise it relies on the connection's current tenant. Vector not needed.
+        """
+        if tenant_id is not None:
+            _use_tenant(self._conn, tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "
+                "token_count, position, heading_path, offset_mapping, metadata, "
+                "embedding_model_version, tombstone FROM chunks "
+                "WHERE metadata->>'extraction_quality_status' IN ('review_required', 'draft_visual') "
+                "OR (metadata->>'quality_review_required') = 'true' "
+                "ORDER BY chunk_id"
+            )
+            rows = cur.fetchall()
+        return tuple(_row_to_chunk(r) for r in rows)
+
     def search(
         self, tenant_id: str, query_vec: Vector, *, visible: VisibilityPredicate, top_k: int
     ) -> list[ScoredChunk]:

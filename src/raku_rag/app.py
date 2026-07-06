@@ -109,6 +109,20 @@ class MvpSystem:
             self.tracer,
             pii_redaction_mode=self.settings.pii_redaction_mode,
         )
+        # ADR-018 B5: opt-in Docling-first structured ingestion. Legacy self.ingestion is left intact
+        # (visual executor / reindex reach into it); only the ingest ENTRYPOINT is switched.
+        self.structured_ingestion = None
+        if self.settings.structured_ingest_enabled:
+            from raku_rag.services.structured_ingestion import build_structured_ingestion_service
+
+            self.structured_ingestion = build_structured_ingestion_service(
+                store=self.store,
+                embedder=self.embedder,
+                registry=self.registry,
+                metrics=self.metrics,
+                tracer=self.tracer,
+                pii_redaction_mode=self.settings.pii_redaction_mode,
+            )
         self.answer_service = AnswerService(
             self.retrieval,
             self.llm,
@@ -142,6 +156,15 @@ class MvpSystem:
     ) -> None:
         self.acl.add(ACLGrant(tenant_id, scope_type, scope_id, subject_type, subject_id))
 
+    @property
+    def _ingest(self):
+        """Active ingest service: the opt-in structured one when enabled, else the legacy one.
+
+        Resolved dynamically (not cached) so callers/tests that swap ``self.ingestion`` still take
+        effect when structured ingestion is off (the default).
+        """
+        return self.structured_ingestion or self.ingestion
+
     def ingest_text(
         self,
         *,
@@ -152,7 +175,7 @@ class MvpSystem:
         source_id: str = "src",
         chunking_metadata: dict | None = None,
     ):
-        return self.ingestion.ingest(
+        return self._ingest.ingest(
             tenant_id=tenant_id,
             collection_id=collection_id,
             source_id=source_id,
@@ -161,6 +184,79 @@ class MvpSystem:
             content_type="text/plain",
             chunking_metadata=chunking_metadata,
         )
+
+    def list_extraction_reviews(self, tenant_id: str) -> list[dict]:
+        """ADR-018 §12.1 — the extraction review queue for a tenant (quarantined chunks) as dicts."""
+
+        from raku_rag.services.ingestion_quality import extraction_review_queue
+
+        return [
+            {
+                "tenant_id": item.tenant_id,
+                "document_id": item.document_id,
+                "chunk_id": item.chunk_id,
+                "status": item.status,
+                "reasons": list(item.reasons),
+                "page_no": item.page_no,
+                "anchor_type": item.anchor_type,
+                "bbox": list(item.bbox) if item.bbox is not None else None,
+                "text_snippet": item.text_snippet,
+                "suggested_action": item.suggested_action,
+                "route_trace": [dict(step) for step in item.route_trace],
+            }
+            for item in extraction_review_queue(self.store, tenant_id=tenant_id)
+        ]
+
+    def extraction_quality_metrics(self, tenant_id: str) -> dict:
+        """ADR-018 §18 — the extraction quality-gate ops metrics for a tenant.
+
+        §18.1/§18.2 status + reason + provider distribution, plus the §18.3 latency (measured) + cost
+        (config) snapshot under ``latency_cost``, plus the §18.2 review-overturn rate under ``review``.
+        """
+
+        from raku_rag.services.ingestion_quality import (
+            extraction_latency_cost_stats,
+            extraction_quality_stats,
+            review_overturn_stats,
+        )
+
+        metrics = extraction_quality_stats(self.store, tenant_id=tenant_id)
+        metrics["latency_cost"] = extraction_latency_cost_stats(self.store, tenant_id=tenant_id)
+        metrics["review"] = review_overturn_stats(self.audit.events(tenant_id), tenant_id=tenant_id)
+        return metrics
+
+    def apply_extraction_review_action(
+        self,
+        *,
+        tenant_id: str,
+        chunk_id: str,
+        action: str,
+        actor: str,
+        corrected_text: str | None = None,
+        reason: str = "",
+    ) -> dict:
+        """ADR-018 §12.2 — apply a reviewer decision to a quarantined chunk; returns the outcome."""
+
+        from raku_rag.services.review_actions import ReviewActionService
+
+        service = ReviewActionService(self.store, self.embedder, audit=self.audit)
+        decision = service.apply(
+            tenant_id=tenant_id,
+            chunk_id=chunk_id,
+            action=action,
+            actor=actor,
+            corrected_text=corrected_text,
+            reason=reason,
+        )
+        return {
+            "chunk_id": decision.chunk_id,
+            "action": decision.action,
+            "status": decision.status,
+            "reviewed_by": decision.reviewed_by,
+            "reviewed_at": decision.reviewed_at,
+            "high_risk_citation_eligible": decision.high_risk_citation_eligible,
+            "retrieval_eligible": decision.retrieval_eligible,
+        }
 
     def ingest_visual_fixture(
         self,

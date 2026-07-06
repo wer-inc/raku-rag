@@ -206,6 +206,22 @@ class ProductionSystem(MvpSystem):
             self.tracer,
             pii_redaction_mode=self.settings.pii_redaction_mode,
         )
+        # ADR-018 B5: opt-in Docling-first structured ingestion (mirrors MvpSystem; ProductionSystem
+        # does not call super().__init__ so the flag wiring is repeated here). Default OFF. The worker
+        # IngestionExecutor still uses the legacy self.ingestion (visual/OCR internals) — only the
+        # ingest_text entrypoint is switched.
+        self.structured_ingestion = None
+        if self.settings.structured_ingest_enabled:
+            from raku_rag.services.structured_ingestion import build_structured_ingestion_service
+
+            self.structured_ingestion = build_structured_ingestion_service(
+                store=self.store,
+                embedder=self.embedder,
+                registry=self.registry,
+                metrics=self.metrics,
+                tracer=self.tracer,
+                pii_redaction_mode=self.settings.pii_redaction_mode,
+            )
         self.visual_ingestion_executor = VisualIngestionExecutor(
             ocr=self.ocr,
             layout=self.layout,
@@ -214,10 +230,15 @@ class ProductionSystem(MvpSystem):
             cost=self.cost,
             crops=self.crops,
         )
+        # ADR-018 A1: route the async worker's executor through the structured (Docling) ingestion
+        # service when RAKU_STRUCTURED_INGEST is on — `_ingest` returns structured_ingestion or the
+        # legacy service, and both share the same .ingest() signature. (The executor still routes
+        # PDF/image content to the visual path; text/office types now take the structured path.)
         self.ingestion_executor = IngestionExecutor(
-            self.ingestion,
+            self._ingest,
             visual_executor=self.visual_ingestion_executor,
             async_document_analyzer=self.async_document_analyzer,
+            structured_pdf=self.settings.structured_ingest_enabled,
         )
         self.answer_service = AnswerService(
             self.retrieval,

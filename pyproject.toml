@@ -32,6 +32,13 @@ prod = [
 dev = ["pytest", "ruff", "black", "mypy", "schemathesis"]
 # 002 manufacturing solution layer parsers (T002). CSV uses the stdlib; DOCX/XLSX need these.
 manufacturing = ["python-docx", "openpyxl"]
+# ADR-018 §9.1/§13.1 Docling-first structured parser. HEAVY (torch + layout/table models):
+# opt-in only, imported lazily by providers/docling_parser.py — never pulled into the Tier A gate
+# or the default runtime. Absent => DoclingStructuredParser degrades to a deterministic fallback.
+docling = ["docling>=2,<3"]
+# ADR-018 §4.2/§9.4 independent OCR provider (NOT Docling's built-in). Opt-in, lazy-imported by
+# providers/ocr/pluggable.py; pdf page render via pypdfium2 + Pillow. Default provider is "none".
+ocr = ["rapidocr", "onnxruntime", "pypdfium2>=4", "Pillow>=10"]
 
 [tool.ruff]
 target-version = "py311"

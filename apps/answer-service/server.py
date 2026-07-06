@@ -873,6 +873,51 @@ def _answer_json(ans) -> dict:
     }
 
 
+def _emit_manufacturing_citation_quality_metrics(metrics, tenant_id: str, ans) -> None:
+    """ADR-018 §18.4 — the manufacturing-overlay counterpart of the base-answer emission.
+
+    Purely observational: reads fields the safety gate already finalized on ``ans`` (high_risk,
+    safety_block_reason, citations) and reports them via the same §18.4 projection the base 001 answer
+    path uses. Never touches the gate's decision — this is telemetry over an already-decided answer, so
+    it cannot affect the safety boundary.
+    """
+
+    if metrics is None:
+        return
+    from raku_rag.services.ingestion_quality import answer_citation_quality_signals
+
+    signals = answer_citation_quality_signals(
+        ans.citations,
+        is_high_risk=bool(ans.high_risk),
+        blocked=bool(ans.safety_block_reason),
+        block_reason=ans.safety_block_reason or "",
+    )
+    labels = {"tenant_id": tenant_id}
+    metrics.increment(
+        "manufacturing_answer_high_risk_blocked_invalid_citation_total",
+        float(signals["high_risk_blocked_invalid_citation"]),
+        labels=labels,
+    )
+    metrics.increment(
+        "manufacturing_answer_review_approved_citations_total",
+        float(signals["review_approved_chunk_usage"]),
+        labels=labels,
+    )
+
+
+def _emit_and_return(system, principal, ans):
+    """Emit the §18.4 manufacturing citation-quality telemetry, then pass ``ans`` through unchanged.
+
+    A thin wrapper so every ``manufacturing_system.answer(...)`` call site (direct API, chatbot, phone)
+    gets the same observability, not just the one endpoint that happened to be instrumented first.
+    """
+
+    _emit_manufacturing_citation_quality_metrics(
+        getattr(system, "metrics", None), principal.tenant_id, ans
+    )
+    return ans
+
+
 def _manufacturing_answer_json(ans) -> dict:
     """Serialize a ManufacturingAnswer: base answer fields + the safety extension nested under
     ``manufacturing`` (P1-1 deployment exposure; GAP-M02 nesting). Citations carry approval provenance.
@@ -1743,7 +1788,13 @@ def make_handler(system: ProductionSystem):
         # classification + approved-citation gate to that raw intent while retrieving with the
         # enriched query. Omitted (None) on every non-rewriting turn => unchanged behavior.
         lambda principal, query, collection_id, *, intent_query=None: _manufacturing_answer_json(
-            manufacturing_system.answer(principal, query, collection_id, intent_query=intent_query)
+            _emit_and_return(
+                system,
+                principal,
+                manufacturing_system.answer(
+                    principal, query, collection_id, intent_query=intent_query
+                ),
+            )
         ),
         source_policy_repository=_chatbot_source_policy_repository_for(system),
         # Reuse the same LLMProvider instance the manufacturing/base answer path already built
@@ -1786,7 +1837,9 @@ def make_handler(system: ProductionSystem):
     phone = PhoneCallService(
         CallableAnswerGateway(
             lambda principal, query, collection_id: _manufacturing_answer_json(
-                manufacturing_system.answer(principal, query, collection_id)
+                _emit_and_return(
+                    system, principal, manufacturing_system.answer(principal, query, collection_id)
+                )
             )
         ),
         repository=_phone_call_repository_for(system),
@@ -1907,6 +1960,15 @@ def make_handler(system: ProductionSystem):
                     self._send_result(phone.retention_policy(_claims_from_headers(self.headers)))
                 elif parts == ["internal", "phone", "scenarios"]:
                     self._send_result(phone.list_scenarios(_claims_from_headers(self.headers)))
+                elif parts == ["internal", "reviews", "extraction"]:
+                    # ADR-018 §12.1 — extraction review queue (quarantined chunks) for the tenant.
+                    self._send(
+                        200,
+                        {"items": system.list_extraction_reviews(self._tenant_header())},
+                    )
+                elif parts == ["internal", "reviews", "extraction", "metrics"]:
+                    # ADR-018 §18 — extraction quality-gate ops metrics for the tenant.
+                    self._send(200, system.extraction_quality_metrics(self._tenant_header()))
                 elif parts == ["internal", "industries"]:
                     self._send(200, industry_api.list_industries(tenant_id=self._tenant_header()))
                 elif (
@@ -2389,6 +2451,24 @@ def make_handler(system: ProductionSystem):
                     query = str(body.get("query") or "")
                     collection_id = body.get("collection_id")
                     self._send(200, _answer_json(system.answer(principal, query, collection_id)))
+                elif parts == ["internal", "reviews", "extraction", "actions"]:
+                    # ADR-018 §12.2 — apply a reviewer decision to a quarantined chunk.
+                    claims = _claims_from_headers(self.headers)
+                    try:
+                        result = system.apply_extraction_review_action(
+                            tenant_id=self._tenant_header(),
+                            chunk_id=str(body.get("chunk_id") or ""),
+                            action=str(body.get("action") or ""),
+                            actor=claims.user_id,
+                            corrected_text=body.get("corrected_text"),
+                            reason=str(body.get("reason") or ""),
+                        )
+                    except KeyError:
+                        self._send(404, {"error": "review_chunk_not_found"})
+                    except ValueError as exc:
+                        self._send(400, {"error": "invalid_review_action", "detail": str(exc)})
+                    else:
+                        self._send(200, result)
                 elif parts == ["internal", "chat", "sessions"]:
                     self._send_result(
                         chatbot.create_session(_claims_from_headers(self.headers), body)
@@ -2555,6 +2635,9 @@ def make_handler(system: ProductionSystem):
                         manufacturing_filters=body.get("manufacturing_filters"),
                         factory_id=body.get("factory_id"),
                         intent_query=intent_query,
+                    )
+                    _emit_manufacturing_citation_quality_metrics(
+                        getattr(system, "metrics", None), principal.tenant_id, mfg_ans
                     )
                     payload = _manufacturing_answer_json(mfg_ans)
                     if intent_query is not None:

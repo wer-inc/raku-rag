@@ -23,6 +23,7 @@ from raku_rag.interfaces.base import (
 from raku_rag.services.cache import CacheService
 from raku_rag.services.deletion import DeletionResult, DeletionService
 from raku_rag.services.ingestion import DocumentRegistry
+from raku_rag.services.ingestion_quality import accepted_quality_metadata
 from raku_rag.services.sync import (
     DiffAction,
     DiffDecision,
@@ -277,6 +278,7 @@ def chunks(
                         modality=Modality.TEXT,
                         embedding_model_version=versions.embedding_model_version,
                         offset_mapping=(span, span[0]),
+                        metadata=accepted_quality_metadata(),
                     ),
                 )
             )
@@ -323,7 +325,7 @@ def materialize_vector_index_entries(
                 source_id=manifest.source_id,
                 version=(existing.version + 1) if existing else 1,
                 checksum=content_checksums.get(doc_id, manifest.content_checksum),
-                metadata=dict(manifest.metadata),
+                metadata={**accepted_quality_metadata(), **dict(manifest.metadata)},
                 created_at=existing.created_at if existing else "",
                 updated_at="",
                 indexed_at="",

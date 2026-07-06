@@ -20,6 +20,7 @@ from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.services.cache import CacheService
 from raku_rag.services.cost import CostService
+from raku_rag.services.ingestion_quality import is_retrieval_eligible, quality_exclusion_reason
 
 MAX_RERANK_CANDIDATES = 80
 QUERY_PLAN_DOCUMENT_KIND_BOOST = 0.06
@@ -85,6 +86,17 @@ def _embedder_cache_identity(embedder: EmbeddingProvider) -> str:
         or 0
     )
     return f"{provider}:{model_version}:{dims}"
+
+
+def _filter_quality_eligible(scored: list[ScoredChunk]) -> tuple[list[ScoredChunk], int]:
+    eligible: list[ScoredChunk] = []
+    filtered = 0
+    for item in scored:
+        if is_retrieval_eligible(item.chunk):
+            eligible.append(item)
+        else:
+            filtered += 1
+    return eligible, filtered
 
 
 def _merge_hybrid_results(
@@ -278,6 +290,20 @@ class RetrievalService:
                         visible=visible,
                         top_k=search_top_k,
                     )
+            quality_filtered_count = 0
+            scored, removed = _filter_quality_eligible(scored)
+            quality_filtered_count += removed
+            metadata_exact_matches, removed = _filter_quality_eligible(metadata_exact_matches)
+            quality_filtered_count += removed
+            lexical_matches, removed = _filter_quality_eligible(lexical_matches)
+            quality_filtered_count += removed
+            if quality_filtered_count:
+                log(
+                    "retrieval.quality_filtered",
+                    correlation_id=correlation_id,
+                    tenant=principal.tenant_id,
+                    filtered_count=quality_filtered_count,
+                )
             hybrid_ranks: _HybridRanks | None = None
             if metadata_exact_matches or lexical_matches:
                 scored, hybrid_ranks = _merge_hybrid_results(
@@ -342,6 +368,8 @@ class RetrievalService:
             # P1-8 root-cause attribution for an empty retrieval (PR-006): never a silent zero.
             if result:
                 outcome = "ok"
+            elif quality_filtered_count:
+                outcome = "quality_filter_empty"
             elif prefiltered_count and prefiltered_count > 0:
                 outcome = "post_filter_empty"  # candidates passed the pre-filter but none survived
             else:
@@ -368,6 +396,11 @@ class RetrievalService:
                 self._metrics.observe(
                     "retrieval_lexical_match_count",
                     len(lexical_matches),
+                    labels=metric_labels,
+                )
+                self._metrics.observe(
+                    "retrieval_quality_filtered_count",
+                    quality_filtered_count,
                     labels=metric_labels,
                 )
                 self._metrics.observe(
@@ -398,6 +431,7 @@ class RetrievalService:
                     rerank_error=rerank_error,
                     metadata_exact_match_count=len(metadata_exact_matches),
                     lexical_match_count=len(lexical_matches),
+                    quality_filtered_count=quality_filtered_count,
                     retrieval_outcome=outcome,
                     prefiltered_count=(prefiltered_count if prefiltered_count is not None else -1),
                     query_intent=query_plan.intent,
@@ -519,6 +553,15 @@ class RetrievalService:
         if chunk.tenant_id != principal.tenant_id:
             return False
         if getattr(chunk, "tombstone", False):
+            return False
+        if not is_retrieval_eligible(chunk):
+            log(
+                "retrieval.quality_visibility_denied",
+                tenant=principal.tenant_id,
+                document_id=chunk.document_id,
+                chunk_id=chunk.chunk_id,
+                reason=quality_exclusion_reason(chunk),
+            )
             return False
         try:
             self._acl.assert_visible(principal, chunk)

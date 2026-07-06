@@ -872,3 +872,67 @@ export async function manufacturingDocumentApprovalBatch(
 ): Promise<DocumentApprovalBatchResult> {
   return mfgPost<DocumentApprovalBatchResult>("documents/approval-batch", req, userToken);
 }
+
+// --- ADR-018 §12 extraction review queue --------------------------------------------------------
+
+export interface ExtractionReviewItem {
+  tenant_id: string;
+  document_id: string;
+  chunk_id: string;
+  status: string;
+  reasons: string[];
+  page_no?: number | null;
+  anchor_type?: string;
+  bbox?: number[] | null;
+  text_snippet?: string;
+  suggested_action?: string;
+  route_trace?: Array<{
+    stage?: string;
+    provider?: string;
+    result?: string;
+    reason?: string;
+    signals?: string[];
+  }>;
+}
+
+export interface ExtractionReviewQueueResponse {
+  items: ExtractionReviewItem[];
+}
+
+export interface ExtractionReviewMetrics {
+  total: number;
+  by_status: Record<string, number>;
+  rates?: Record<string, number>;
+  by_reason?: Record<string, number>;
+  quarantined: number;
+  quarantine_rate: number;
+}
+
+export interface ExtractionReviewActionResult {
+  chunk_id: string;
+  action: string;
+  status: string;
+  reviewed_by: string;
+  reviewed_at?: string;
+  high_risk_citation_eligible?: boolean;
+  retrieval_eligible?: boolean;
+}
+
+export async function listExtractionReviews(
+  userToken: string,
+): Promise<ExtractionReviewQueueResponse> {
+  return apiGetJson<ExtractionReviewQueueResponse>("/reviews/extraction", userToken);
+}
+
+export async function extractionReviewMetrics(
+  userToken: string,
+): Promise<ExtractionReviewMetrics> {
+  return apiGetJson<ExtractionReviewMetrics>("/reviews/extraction/metrics", userToken);
+}
+
+export async function applyExtractionReviewAction(
+  body: { chunk_id: string; action: string; corrected_text?: string; reason?: string },
+  userToken: string,
+): Promise<ExtractionReviewActionResult> {
+  return apiPostJson<ExtractionReviewActionResult>("/reviews/extraction/actions", body, userToken);
+}

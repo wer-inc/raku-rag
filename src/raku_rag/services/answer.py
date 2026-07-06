@@ -44,6 +44,7 @@ from raku_rag.manufacturing.safety.visual_verify import (
 from raku_rag.services.cost import CostService
 from raku_rag.services.groundedness import GateDecision, GroundednessGate
 from raku_rag.services.injection import PromptInjectionGuard
+from raku_rag.services.ingestion_quality import is_retrieval_eligible
 from raku_rag.services.retrieval import RetrievalService
 from raku_rag.services.structured_query import classify_structured_query
 
@@ -722,6 +723,7 @@ class AnswerService:
             self._record_metric(
                 principal.tenant_id, profile.profile_id, AnswerStatus.OK.value, len(used)
             )
+            self._record_citation_quality(principal.tenant_id, profile.profile_id, citations)
             self._record_audit(
                 principal,
                 cid,
@@ -934,6 +936,8 @@ class AnswerService:
         if doc.tombstone:
             return False
         if chunk.tombstone:
+            return False
+        if not is_retrieval_eligible(chunk):
             return False
         is_visible = getattr(self._retrieval, "is_visible", None)
         if callable(is_visible):
@@ -1215,6 +1219,37 @@ class AnswerService:
             used_chunks,
             labels={"tenant_id": tenant_id, "profile_id": profile_id, "status": status},
         )
+
+    def _record_citation_quality(self, tenant_id: str, profile_id: str, citations: list) -> None:
+        """ADR-018 §18.4 — emit the extraction-quality signals for the citations this answer used.
+
+        Additive telemetry: the review-approved (manual_approved) chunk usage, the count of
+        high-risk-citation-eligible citations (§11.4), and the per-status citation distribution. Pure
+        over citation.metadata, so it never changes answer behaviour.
+        """
+
+        if not self._metrics or not citations:
+            return
+        from raku_rag.services.ingestion_quality import answer_citation_quality_signals
+
+        signals = answer_citation_quality_signals(citations)
+        labels = {"tenant_id": tenant_id, "profile_id": profile_id}
+        self._metrics.increment(
+            "answer_review_approved_citations_total",
+            float(signals["review_approved_chunk_usage"]),
+            labels=labels,
+        )
+        self._metrics.increment(
+            "answer_high_risk_eligible_citations_total",
+            float(signals["high_risk_citation_eligible"]),
+            labels=labels,
+        )
+        for status, count in signals["by_status"].items():
+            self._metrics.increment(
+                "answer_citation_quality_total",
+                float(count),
+                labels={**labels, "quality_status": str(status)},
+            )
 
     def _record_audit(
         self,

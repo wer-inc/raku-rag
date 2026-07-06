@@ -26,6 +26,7 @@ from typing import Mapping, Sequence
 
 from raku_rag.domain.models import Citation, PROMOTABLE_EXTRACTION_SOURCES
 from raku_rag.manufacturing.domain.metadata import ApprovalStatus, ManufacturingDocumentMetadata
+from raku_rag.services.ingestion_quality import is_high_risk_citation_quality_eligible
 from raku_rag.manufacturing.domain.safety import (
     HighRiskClassification,
     SafetyBlockReason,
@@ -101,9 +102,16 @@ def citation_is_approved_effective(
     Text citations keep the existing approved/effective rule. Non-text citations must carry
     promotable transcription provenance, and pixel-derived citations also need the visual verifier
     path when promotion is explicitly enabled.
+
+    Extraction quality is an independent AND-gate (ADR §11.4): content whose extraction is only
+    ``accepted_with_warnings`` (or otherwise not high-risk-citation-eligible) can be retrieved but can
+    never satisfy the high-risk approved-citation requirement. Citations with no extraction-quality
+    metadata (legacy / pre-ADR-018) default to eligible, so this is purely additive.
     """
 
     if not is_approved_effective(meta, today=today):
+        return False
+    if not is_high_risk_citation_quality_eligible(getattr(citation, "metadata", None)):
         return False
     if citation.kind == "text":
         return True

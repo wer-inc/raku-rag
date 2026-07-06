@@ -11,6 +11,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Mapping, Protocol, Sequence
 
+from raku_rag.services.ingestion_quality import accepted_quality_metadata
 from workers.ingest.provider_policy import (
     ProviderCapability,
     ProviderPolicy,
@@ -128,7 +129,11 @@ class ParserProviderAdapter:
             provider=self.provider,
             parser_version=self.parser_version,
             content_type=content_type,
-            metadata={"provider_family": self.provider_family, "region": self.region},
+            metadata={
+                "provider_family": self.provider_family,
+                "region": self.region,
+                **accepted_quality_metadata(),
+            },
         )
 
     def _parse_text(self, raw: bytes, content_type: str) -> str:

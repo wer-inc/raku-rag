@@ -37,6 +37,10 @@ from raku_rag.providers.visual_embeddings import HashingVisualEmbeddingProvider
 from raku_rag.services.cost import CostService
 from raku_rag.services.crop import CropService
 from raku_rag.services.ingestion import IngestionService, PII_REDACTION_POLICY_REF
+from raku_rag.services.ingestion_quality import (
+    quality_metadata_from_ocr_metadata,
+    with_quality_metadata,
+)
 
 VISUAL_REGION_REDACTION_REQUIRED_REF = "visual-region-redaction-required"
 ASYNC_ANALYSIS_RETRY_DELAY_SECONDS = 300
@@ -1329,12 +1333,16 @@ class IngestionExecutor:
         *,
         visual_executor: VisualIngestionExecutor | None = None,
         async_document_analyzer: AsyncDocumentAnalyzer | None = None,
+        structured_pdf: bool = False,
     ) -> None:
         self.ingestion = ingestion
         self.visual_executor = visual_executor or VisualIngestionExecutor(
             visual_embedder=HashingVisualEmbeddingProvider(dim=_embedding_dim(ingestion))
         )
         self.async_document_analyzer = async_document_analyzer
+        # ADR-018 §13.2/§9.1: when structured (Docling) ingestion is on, PDFs go through the Docling
+        # structured parser (text/tables/figures + quality gate) instead of the visual/OCR path.
+        self._structured_pdf = structured_pdf
 
     def execute_document(
         self,
@@ -1358,7 +1366,7 @@ class IngestionExecutor:
                 raw=raw,
                 content_type=content_type,
             )
-        if _is_pdf_content_type(content_type):
+        if _is_pdf_content_type(content_type) and not self._structured_pdf:
             return self.execute_visual_document(
                 tenant_id=tenant_id,
                 collection_id=collection_id,
@@ -1370,6 +1378,25 @@ class IngestionExecutor:
                 async_provider=async_provider,
                 async_job_id=async_job_id,
             )
+        return self._execute_structured_or_text(
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            source_id=source_id,
+            document_id=document_id,
+            raw=raw,
+            content_type=content_type,
+        )
+
+    def _execute_structured_or_text(
+        self,
+        *,
+        tenant_id: str,
+        collection_id: str,
+        source_id: str,
+        document_id: str,
+        raw: bytes,
+        content_type: str,
+    ) -> IngestionExecutionResult:
         content_checksum = hashlib.sha256(raw).hexdigest()
         job = self.ingestion.ingest(
             tenant_id=tenant_id,
@@ -1657,8 +1684,12 @@ class IngestionExecutor:
     ) -> int:
         from raku_rag.services.visual import visual_chunks_from_ingestion
 
+        ocr_quality = _ocr_quality_metadata(results)
+        quality_metadata = quality_metadata_from_ocr_metadata(ocr_quality)
         chunks = tuple(
-            chunk for result in results for chunk in visual_chunks_from_ingestion(result)
+            replace(chunk, metadata=with_quality_metadata(chunk.metadata, quality_metadata))
+            for result in results
+            for chunk in visual_chunks_from_ingestion(result)
         )
         vectors = tuple(vector for result in results for vector in result.visual_vectors)
         self.ingestion._store.purge(tenant_id, document_id)
@@ -1677,7 +1708,8 @@ class IngestionExecutor:
                 # ★V1 取込品質ゲート: aggregate the per-region Textract confidences the pipeline
                 # already captures into a document-level verdict, so "ingested but unreadable"
                 # scans are FLAGGED instead of silently answering from garbage OCR.
-                **_ocr_quality_metadata(results),
+                **ocr_quality,
+                **quality_metadata,
                 "async_provider": async_provider,
                 "async_job_id": async_job_id,
                 "async_job_status": async_job_status,
