@@ -230,6 +230,7 @@ class StructuredIngestionService:
             doc_floor_status, doc_floor_reasons = classify_parsed_document_quality(
                 parsed, expected_language=self._expected_language
             )
+            parser_provider = parsed.provider_runs[0].provider if parsed.provider_runs else ""
             chunks = self._build_chunks(
                 tenant_id,
                 collection_id,
@@ -241,6 +242,10 @@ class StructuredIngestionService:
                 route_trace_meta={
                     **_route_trace_metadata(parsed),
                     **_page_route_metadata(parsed),
+                    # §11.4 anchor-eligibility scoping: which parser produced this chunk (some, like
+                    # text/docx, structurally have no page/bbox anchor concept — see is_high_risk_
+                    # citation_quality_eligible).
+                    "parser_provider": parser_provider,
                 },
             )
 
@@ -254,7 +259,6 @@ class StructuredIngestionService:
                 if c.metadata.get(EXTRACTION_QUALITY_STATUS_KEY)
                 in RETRIEVAL_BLOCKING_QUALITY_STATUSES
             )
-            provider = parsed.provider_runs[0].provider if parsed.provider_runs else ""
             doc = Document(
                 tenant_id=tenant_id,
                 collection_id=collection_id,
@@ -267,7 +271,7 @@ class StructuredIngestionService:
                     **dict(chunking_metadata or {}),
                     "parser_contract_version": PARSER_CONTRACT_VERSION,
                     "parsed_document_schema_version": parsed.schema_version,
-                    "parser_provider": provider,
+                    "parser_provider": parser_provider,
                     "embedding_model_version": self._embedder.model_version,
                     "embedding_dimension": embedding_dimension(self._embedder),
                     "review_required_chunk_count": review_count,

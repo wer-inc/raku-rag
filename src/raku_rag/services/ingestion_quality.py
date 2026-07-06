@@ -208,6 +208,9 @@ def is_retrieval_eligible(metadata: Mapping[str, object] | object | None) -> boo
     return True
 
 
+_UNANCHORED_STRUCTURED_PROVIDERS = frozenset({"text_parser", "docx_parser"})
+
+
 def is_high_risk_citation_quality_eligible(metadata: Mapping[str, object] | object | None) -> bool:
     """Return whether extraction quality allows a chunk to be high-risk manufacturing evidence."""
 
@@ -222,12 +225,21 @@ def is_high_risk_citation_quality_eligible(metadata: Mapping[str, object] | obje
     # this chunk is in-scope for the check); other pipelines' provenance conventions are untouched, so
     # this is additive and cannot regress pre-existing (pre-ADR-018) high-risk citations.
     if values.get("parser_contract_version"):
-        has_anchor = bool(values.get("anchor_type") or values.get("cell_sheet"))
         has_trace = bool(values.get("embedding_model_version")) and bool(
             values.get("parsed_chunk_kind")
         )
-        if not (has_anchor and has_trace):
+        if not has_trace:
             return False
+        # The anchor check only applies where an anchor mechanism actually exists. text_parser/
+        # docx_parser (plain text/markdown/html/DOCX) have no page/bbox concept in this schema — a
+        # clean DOCX/text chunk must not be permanently disqualified for lacking something it
+        # structurally cannot produce. docling (page/bbox) and spreadsheet_parser (cell) chunks DO
+        # have an anchor whenever extraction actually succeeded, so the check still applies to them.
+        parser_provider = str(values.get("parser_provider") or "")
+        if parser_provider not in _UNANCHORED_STRUCTURED_PROVIDERS:
+            has_anchor = bool(values.get("anchor_type") or values.get("cell_sheet"))
+            if not has_anchor:
+                return False
     return True
 
 

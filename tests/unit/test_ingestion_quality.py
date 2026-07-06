@@ -124,6 +124,42 @@ class StructuredChunkHighRiskAnchorTraceTest(unittest.TestCase):
         metadata = accepted_quality_metadata()
         self.assertTrue(is_high_risk_citation_quality_eligible(metadata))
 
+    def test_text_and_docx_parser_chunks_are_not_penalized_for_having_no_anchor(self) -> None:
+        # Regression: text_parser/docx_parser (plain text/markdown/html/DOCX) have no page/bbox
+        # concept in this schema at all — a clean chunk from them must not be permanently
+        # disqualified from high-risk citation just because it can't produce something it
+        # structurally never could. The anchor check only applies to parsers that CAN anchor
+        # (docling, spreadsheet_parser).
+        for provider in ("text_parser", "docx_parser"):
+            metadata = accepted_quality_metadata()
+            metadata.update(
+                {
+                    "parser_contract_version": "v1",
+                    "parser_provider": provider,
+                    "embedding_model_version": "v",
+                    "parsed_chunk_kind": "paragraph_chunk",
+                    # no anchor_type / cell_sheet — genuinely none available for this provider.
+                }
+            )
+            self.assertTrue(
+                is_high_risk_citation_quality_eligible(metadata),
+                f"{provider} chunk should not be excluded for a structurally-absent anchor",
+            )
+
+    def test_docling_chunk_missing_anchor_is_still_excluded(self) -> None:
+        # The exemption above must NOT swallow the real docling/spreadsheet case — those parsers DO
+        # produce an anchor when extraction succeeds, so a missing one still means "not evidence-grade".
+        metadata = accepted_quality_metadata()
+        metadata.update(
+            {
+                "parser_contract_version": "v1",
+                "parser_provider": "docling",
+                "embedding_model_version": "v",
+                "parsed_chunk_kind": "paragraph_chunk",
+            }
+        )
+        self.assertFalse(is_high_risk_citation_quality_eligible(metadata))
+
 
 class ClassifyTextExtractionQualityTest(unittest.TestCase):
     def test_clean_text_is_accepted(self) -> None:

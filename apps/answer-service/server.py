@@ -905,6 +905,19 @@ def _emit_manufacturing_citation_quality_metrics(metrics, tenant_id: str, ans) -
     )
 
 
+def _emit_and_return(system, principal, ans):
+    """Emit the §18.4 manufacturing citation-quality telemetry, then pass ``ans`` through unchanged.
+
+    A thin wrapper so every ``manufacturing_system.answer(...)`` call site (direct API, chatbot, phone)
+    gets the same observability, not just the one endpoint that happened to be instrumented first.
+    """
+
+    _emit_manufacturing_citation_quality_metrics(
+        getattr(system, "metrics", None), principal.tenant_id, ans
+    )
+    return ans
+
+
 def _manufacturing_answer_json(ans) -> dict:
     """Serialize a ManufacturingAnswer: base answer fields + the safety extension nested under
     ``manufacturing`` (P1-1 deployment exposure; GAP-M02 nesting). Citations carry approval provenance.
@@ -1775,7 +1788,13 @@ def make_handler(system: ProductionSystem):
         # classification + approved-citation gate to that raw intent while retrieving with the
         # enriched query. Omitted (None) on every non-rewriting turn => unchanged behavior.
         lambda principal, query, collection_id, *, intent_query=None: _manufacturing_answer_json(
-            manufacturing_system.answer(principal, query, collection_id, intent_query=intent_query)
+            _emit_and_return(
+                system,
+                principal,
+                manufacturing_system.answer(
+                    principal, query, collection_id, intent_query=intent_query
+                ),
+            )
         ),
         source_policy_repository=_chatbot_source_policy_repository_for(system),
         # Reuse the same LLMProvider instance the manufacturing/base answer path already built
@@ -1818,7 +1837,9 @@ def make_handler(system: ProductionSystem):
     phone = PhoneCallService(
         CallableAnswerGateway(
             lambda principal, query, collection_id: _manufacturing_answer_json(
-                manufacturing_system.answer(principal, query, collection_id)
+                _emit_and_return(
+                    system, principal, manufacturing_system.answer(principal, query, collection_id)
+                )
             )
         ),
         repository=_phone_call_repository_for(system),

@@ -16,6 +16,7 @@ from raku_rag.providers.structured_parsers import CompositeStructuredParser
 from raku_rag.services.ingestion_quality import (
     EXTRACTION_QUALITY_STATUS_KEY,
     QUALITY_STATUS_REVIEW_REQUIRED,
+    is_high_risk_citation_quality_eligible,
 )
 from raku_rag.services.structured_ingestion import StructuredIngestionService
 from tests.helpers import claims
@@ -111,6 +112,23 @@ class StructuredIngestionTest(unittest.TestCase):
         docs = {item.chunk.document_id for item in result}
         self.assertIn("good", docs)
         self.assertNotIn("broken", docs)
+
+    def test_clean_text_ingest_stays_high_risk_eligible(self) -> None:
+        # Regression: text_parser has no page/bbox anchor concept at all, so a clean plain-text chunk
+        # must not be permanently excluded from high-risk citation for lacking one (§11.4 anchor check
+        # is scoped to parsers that CAN produce an anchor — docling/spreadsheet — not text/docx).
+        self.svc.ingest(
+            tenant_id=T,
+            collection_id="c",
+            source_id="s",
+            document_id="clean_text",
+            raw=b"Stop the main power before servicing pump P-12. Torque the bolts to 45 Nm.",
+            content_type="text/plain",
+        )
+        chunks = list(self._stored("clean_text"))
+        self.assertTrue(chunks)
+        self.assertEqual(chunks[0].metadata.get("parser_provider"), "text_parser")
+        self.assertTrue(is_high_risk_citation_quality_eligible(chunks[0].metadata))
 
     @unittest.skipUnless(docling_available(), "docling not installed")
     def test_docling_html_ingest_is_retrievable_with_provenance(self) -> None:
