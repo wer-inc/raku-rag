@@ -16,7 +16,7 @@ from typing import Mapping
 from raku_rag.domain.models import Chunk, Document, Modality
 from raku_rag.interfaces.base import Chunker, EmbeddingProvider, Parser, Vector, VectorStore
 from raku_rag.services.ingestion import DocumentRegistry
-from raku_rag.services.ingestion_quality import accepted_quality_metadata
+from raku_rag.services.ingestion_quality import classify_text_extraction_quality
 from raku_rag.services.structured_tables import (
     STRUCTURED_TABLE_COUNT_KEY,
     STRUCTURED_TABLE_MANIFEST_VERSION,
@@ -226,7 +226,12 @@ class ReindexService:
     ) -> list[tuple[Chunk, Vector]]:
         text = self._parser.parse(raw, content_type)
         table_manifests = extract_structured_table_manifests(raw, content_type)
-        quality_metadata = accepted_quality_metadata()
+        # ADR-018 A12 §Phase E: reindex RE-EVALUATES extraction quality instead of stamping
+        # accepted unconditionally, so low-quality legacy content (mojibake/CID/empty) is quarantined
+        # out of retrieval on reprocessing rather than being re-blessed.
+        quality_metadata = classify_text_extraction_quality(
+            text, raw_size=len(raw), content_type=content_type
+        )
         doc.metadata.update(
             {
                 **quality_metadata,

@@ -56,6 +56,40 @@ class TestReindexService(unittest.TestCase):
             self.assertTrue(old_chunk.tombstone)
             self.assertFalse(new_chunk.tombstone)
 
+    def test_reindex_reevaluates_quality_and_quarantines_broken_extraction(self) -> None:
+        # ADR-018 A12 §Phase E: reprocessing a document whose extraction is now broken (mojibake)
+        # must re-evaluate quality and quarantine it, not re-bless it as accepted.
+        from raku_rag.services.ingestion_quality import (
+            EXTRACTION_QUALITY_STATUS_KEY,
+            QUALITY_STATUS_REVIEW_REQUIRED,
+        )
+
+        self.sys.ingest_text(
+            tenant_id=T, collection_id="c", document_id="d1", text="Valve color line A is red."
+        )
+        plan = self.sys.reindex.reindex_documents(
+            tenant_id=T,
+            collection_id="c",
+            source_id="manuals",
+            documents={"d1": ("Valve color line A " + "�" * 40).encode("utf-8")},
+            reason="reprocess",
+            created_by="ops",
+        )
+        self.assertEqual(plan.status, "succeeded")
+
+        live = [
+            c for c, _v in self.sys.store.iter_items() if c.document_id == "d1" and not c.tombstone
+        ]
+        self.assertTrue(live)
+        self.assertTrue(
+            all(
+                c.metadata[EXTRACTION_QUALITY_STATUS_KEY] == QUALITY_STATUS_REVIEW_REQUIRED
+                for c in live
+            )
+        )
+        results = self.sys.search(self.alice, "valve color line A")
+        self.assertNotIn("d1", {r.chunk.document_id for r in results})
+
     def test_failed_reindex_leaves_previous_version_live(self) -> None:
         self.sys.ingest_text(
             tenant_id=T,
