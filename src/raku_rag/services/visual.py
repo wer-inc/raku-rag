@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from raku_rag.domain.models import Chunk, LayoutRegion, Modality
+from raku_rag.services.ingestion_quality import accepted_quality_metadata
 from raku_rag.workers.ingestion import VisualIngestionResult
 
 
@@ -58,6 +59,7 @@ def visual_chunks_from_ingestion(result: VisualIngestionResult) -> tuple[Chunk, 
                     "primary_evidence_text": region.ocr_text,
                     "primary_evidence_source": primary_evidence_source,
                     "caption_source": caption_source,
+                    **accepted_quality_metadata(),
                     **_visual_page_aggregate_metadata(region),
                     **_visual_pdf_fallback_metadata(region),
                     **redaction_metadata,

@@ -37,6 +37,10 @@ from raku_rag.providers.visual_embeddings import HashingVisualEmbeddingProvider
 from raku_rag.services.cost import CostService
 from raku_rag.services.crop import CropService
 from raku_rag.services.ingestion import IngestionService, PII_REDACTION_POLICY_REF
+from raku_rag.services.ingestion_quality import (
+    quality_metadata_from_ocr_metadata,
+    with_quality_metadata,
+)
 
 VISUAL_REGION_REDACTION_REQUIRED_REF = "visual-region-redaction-required"
 ASYNC_ANALYSIS_RETRY_DELAY_SECONDS = 300
@@ -1657,8 +1661,12 @@ class IngestionExecutor:
     ) -> int:
         from raku_rag.services.visual import visual_chunks_from_ingestion
 
+        ocr_quality = _ocr_quality_metadata(results)
+        quality_metadata = quality_metadata_from_ocr_metadata(ocr_quality)
         chunks = tuple(
-            chunk for result in results for chunk in visual_chunks_from_ingestion(result)
+            replace(chunk, metadata=with_quality_metadata(chunk.metadata, quality_metadata))
+            for result in results
+            for chunk in visual_chunks_from_ingestion(result)
         )
         vectors = tuple(vector for result in results for vector in result.visual_vectors)
         self.ingestion._store.purge(tenant_id, document_id)
@@ -1677,7 +1685,8 @@ class IngestionExecutor:
                 # ★V1 取込品質ゲート: aggregate the per-region Textract confidences the pipeline
                 # already captures into a document-level verdict, so "ingested but unreadable"
                 # scans are FLAGGED instead of silently answering from garbage OCR.
-                **_ocr_quality_metadata(results),
+                **ocr_quality,
+                **quality_metadata,
                 "async_provider": async_provider,
                 "async_job_id": async_job_id,
                 "async_job_status": async_job_status,

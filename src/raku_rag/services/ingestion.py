@@ -14,11 +14,19 @@ from typing import Mapping
 
 from raku_rag.domain.models import Chunk, Document, JobStatus, Modality
 from raku_rag.interfaces.base import Chunker, EmbeddingProvider, Parser, VectorStore
-from raku_rag.observability.logging import new_correlation_id
+from raku_rag.observability.logging import log, new_correlation_id
 from raku_rag.observability.metrics import MetricsRecorder
 from raku_rag.observability.redaction import Redactor
 from raku_rag.observability.tracing import InMemoryTracer
 from raku_rag.providers.embeddings import embedding_dimension
+from raku_rag.services.ingestion_quality import (
+    EXTRACTION_QUALITY_REASONS_KEY,
+    EXTRACTION_QUALITY_SCHEMA_VERSION,
+    EXTRACTION_QUALITY_SCHEMA_VERSION_KEY,
+    EXTRACTION_QUALITY_STATUS_KEY,
+    RETRIEVAL_BLOCKING_QUALITY_STATUSES,
+    classify_text_extraction_quality,
+)
 from raku_rag.services.structured_tables import (
     STRUCTURED_TABLE_COUNT_KEY,
     STRUCTURED_TABLE_MANIFEST_VERSION,
@@ -167,6 +175,8 @@ class IngestionService:
                     existing
                     and existing.checksum == checksum
                     and not existing.tombstone
+                    and existing.metadata.get(EXTRACTION_QUALITY_SCHEMA_VERSION_KEY)
+                    == EXTRACTION_QUALITY_SCHEMA_VERSION
                     and existing.metadata.get("pii_redaction_mode", PII_REDACTION_PRE_INDEX)
                     == self._pii_redaction_mode
                     and existing.metadata.get("embedding_model_version", "")
@@ -200,6 +210,13 @@ class IngestionService:
                     else table_manifests
                 )
                 pieces = _chunk_text(self._chunker, indexed_text, effective_chunking_metadata)
+                # ADR §8.4 quality gate over the extracted text: broken-CMap / mojibake / empty-yield
+                # extractions are quarantined (review_required) so they are indexed-but-not-retrievable
+                # instead of silently backing answers. Classified on the parsed text (pre-redaction),
+                # since redaction tokens never look like mojibake.
+                quality_metadata = classify_text_extraction_quality(
+                    text, raw_size=len(raw), content_type=content_type
+                )
 
                 # Replace old version: purge prior chunks for this document (FR-005/SC-007)
                 self._store.purge(tenant_id, document_id)
@@ -229,6 +246,7 @@ class IngestionService:
                                 and "api_key" in detection_labels,
                                 "embedding_model_version": self._embedder.model_version,
                                 "embedding_dimension": embedding_dimension(self._embedder),
+                                **quality_metadata,
                                 **chunking_config,
                                 **_contextual_chunk_metadata(
                                     effective_chunking_metadata,
@@ -254,6 +272,7 @@ class IngestionService:
                         "sensitive_detection_labels": detection_labels,
                         "embedding_model_version": self._embedder.model_version,
                         "embedding_dimension": embedding_dimension(self._embedder),
+                        **quality_metadata,
                         STRUCTURED_TABLE_MANIFEST_VERSION_KEY: STRUCTURED_TABLE_MANIFEST_VERSION,
                         STRUCTURED_TABLE_MANIFESTS_KEY: indexed_table_manifests,
                         STRUCTURED_TABLE_COUNT_KEY: len(indexed_table_manifests),
@@ -276,6 +295,25 @@ class IngestionService:
                 self._registry.put(doc)
                 job.chunk_count = len(chunks)
                 job.status = JobStatus.SUCCEEDED.value
+                review_status = str(quality_metadata.get(EXTRACTION_QUALITY_STATUS_KEY) or "")
+                if review_status in RETRIEVAL_BLOCKING_QUALITY_STATUSES:
+                    # ADR §12.1: a quarantined extraction is a review-queue producer, not a silent
+                    # drop. The queue itself is projected from the stored metadata
+                    # (ingestion_quality.extraction_review_items); here we make the routing observable.
+                    log(
+                        "ingestion.quality_review_required",
+                        correlation_id=cid,
+                        tenant=tenant_id,
+                        document_id=document_id,
+                        status=review_status,
+                        reasons=list(quality_metadata.get(EXTRACTION_QUALITY_REASONS_KEY, ())),
+                    )
+                    if self._metrics:
+                        self._metrics.observe(
+                            "ingestion_quality_review_required_count",
+                            1,
+                            labels={"tenant_id": tenant_id},
+                        )
             except Exception as exc:  # parser/embedding failure → job failed, retryable (FR-030)
                 job.status = JobStatus.FAILED.value
                 job.failure_reason = str(exc)

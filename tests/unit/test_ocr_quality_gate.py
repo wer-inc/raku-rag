@@ -6,6 +6,13 @@ import os
 import unittest
 
 from raku_rag.domain.models import BoundingBox, LayoutRegion, VisualAsset
+from raku_rag.services.ingestion_quality import (
+    EXTRACTION_QUALITY_STATUS_KEY,
+    QUALITY_STATUS_ACCEPTED,
+    QUALITY_STATUS_REVIEW_REQUIRED,
+    is_retrieval_eligible,
+    quality_metadata_from_ocr_metadata,
+)
 from raku_rag.workers.ingestion import (
     VisualIngestionResult,
     _ocr_quality_metadata,
@@ -57,10 +64,16 @@ class OcrQualityGateTest(unittest.TestCase):
         self.assertEqual(meta["ocr_confidence_min"], 72.5)
         self.assertAlmostEqual(meta["ocr_confidence_mean"], 84.75)
         self.assertTrue(meta["ocr_quality_review_required"])
+        quality = quality_metadata_from_ocr_metadata(meta)
+        self.assertEqual(quality[EXTRACTION_QUALITY_STATUS_KEY], QUALITY_STATUS_REVIEW_REQUIRED)
+        self.assertFalse(is_retrieval_eligible(quality))
 
     def test_high_confidence_passes(self) -> None:
         meta = _ocr_quality_metadata((_result(_region(97.0), _region(94.0)),))
         self.assertFalse(meta["ocr_quality_review_required"])
+        quality = quality_metadata_from_ocr_metadata(meta)
+        self.assertEqual(quality[EXTRACTION_QUALITY_STATUS_KEY], QUALITY_STATUS_ACCEPTED)
+        self.assertTrue(is_retrieval_eligible(quality))
 
     def test_threshold_is_configurable(self) -> None:
         os.environ["RAKU_OCR_CONFIDENCE_REVIEW_THRESHOLD"] = "95"

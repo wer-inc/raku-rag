@@ -44,6 +44,7 @@ from raku_rag.manufacturing.safety.visual_verify import (
 from raku_rag.services.cost import CostService
 from raku_rag.services.groundedness import GateDecision, GroundednessGate
 from raku_rag.services.injection import PromptInjectionGuard
+from raku_rag.services.ingestion_quality import is_retrieval_eligible
 from raku_rag.services.retrieval import RetrievalService
 from raku_rag.services.structured_query import classify_structured_query
 
@@ -934,6 +935,8 @@ class AnswerService:
         if doc.tombstone:
             return False
         if chunk.tombstone:
+            return False
+        if not is_retrieval_eligible(chunk):
             return False
         is_visible = getattr(self._retrieval, "is_visible", None)
         if callable(is_visible):
