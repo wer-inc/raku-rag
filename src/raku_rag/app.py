@@ -185,6 +185,22 @@ class MvpSystem:
             chunking_metadata=chunking_metadata,
         )
 
+    def list_extraction_reviews(self, tenant_id: str) -> list[dict]:
+        """ADR-018 §12.1 — the extraction review queue for a tenant (quarantined chunks) as dicts."""
+
+        from raku_rag.services.ingestion_quality import extraction_review_queue
+
+        return [
+            {
+                "tenant_id": item.tenant_id,
+                "document_id": item.document_id,
+                "chunk_id": item.chunk_id,
+                "status": item.status,
+                "reasons": list(item.reasons),
+            }
+            for item in extraction_review_queue(self.store, tenant_id=tenant_id)
+        ]
+
     def ingest_visual_fixture(
         self,
         *,

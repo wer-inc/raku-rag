@@ -289,7 +289,11 @@ def extraction_review_queue(store: object, *, tenant_id: str | None = None) -> l
 
     efficient = getattr(store, "list_extraction_review_chunks", None)
     if callable(efficient):
-        return extraction_review_items(efficient(), tenant_id=tenant_id)
+        try:
+            chunks = efficient(tenant_id=tenant_id)  # PG: also sets the RLS session tenant
+        except TypeError:
+            chunks = efficient()
+        return extraction_review_items(chunks, tenant_id=tenant_id)
     iter_items = getattr(store, "iter_items", None)
     if callable(iter_items):
         return extraction_review_items(iter_items(), tenant_id=tenant_id)

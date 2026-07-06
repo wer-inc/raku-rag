@@ -577,12 +577,15 @@ class PostgresVectorStore(VectorStore):
         empty: Vector = []
         return tuple((_row_to_chunk(r), empty) for r in rows)
 
-    def list_extraction_review_chunks(self) -> tuple[Chunk, ...]:
+    def list_extraction_review_chunks(self, tenant_id: str | None = None) -> tuple[Chunk, ...]:
         """ADR-018 A9 §12.1 — RLS-scoped chunks quarantined for extraction review, via a JSONB filter.
 
-        Efficient at scale (a WHERE on ``metadata`` instead of the full ``iter_items`` scan). RLS
-        scopes rows to the connection's current tenant; the caller may re-filter. Vector not needed.
+        Efficient at scale (a WHERE on ``metadata`` instead of the full ``iter_items`` scan). When a
+        ``tenant_id`` is given, the RLS session tenant is set here so the endpoint can call this as a
+        standalone read; otherwise it relies on the connection's current tenant. Vector not needed.
         """
+        if tenant_id is not None:
+            _use_tenant(self._conn, tenant_id)
         with self._conn.cursor() as cur:
             cur.execute(
                 "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "

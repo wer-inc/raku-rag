@@ -1907,6 +1907,12 @@ def make_handler(system: ProductionSystem):
                     self._send_result(phone.retention_policy(_claims_from_headers(self.headers)))
                 elif parts == ["internal", "phone", "scenarios"]:
                     self._send_result(phone.list_scenarios(_claims_from_headers(self.headers)))
+                elif parts == ["internal", "reviews", "extraction"]:
+                    # ADR-018 §12.1 — extraction review queue (quarantined chunks) for the tenant.
+                    self._send(
+                        200,
+                        {"items": system.list_extraction_reviews(self._tenant_header())},
+                    )
                 elif parts == ["internal", "industries"]:
                     self._send(200, industry_api.list_industries(tenant_id=self._tenant_header()))
                 elif (
