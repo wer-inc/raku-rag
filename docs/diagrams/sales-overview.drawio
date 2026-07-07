@@ -1,0 +1,189 @@
+<mxfile host="app.diagrams.net" agent="claude" version="24.7.7">
+  <diagram id="raku-rag-sales-overview" name="RAKU RAG 営業向け概要">
+    <mxGraphModel dx="1420" dy="850" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ===== タイトル ===== -->
+        <mxCell id="title" value="RAKU RAG|現場ナレッジ AI プラットフォーム" style="text;html=1;align=center;verticalAlign=middle;fontSize=30;fontStyle=1;fontColor=#1a1a2e;" vertex="1" parent="1">
+          <mxGeometry x="40" y="18" width="1574" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="tagline" value="「答えるAI」ではなく、&lt;b&gt;答えてはいけない時を知っていて、それを証明できるAI&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;fontSize=15;fontColor=#555555;" vertex="1" parent="1">
+          <mxGeometry x="40" y="60" width="1574" height="28" as="geometry" />
+        </mxCell>
+
+        <!-- ===== 誰の・どんな課題 ===== -->
+        <mxCell id="h1" value="🎯 誰の・どんな課題を解決するか" style="text;html=1;align=left;verticalAlign=middle;fontSize=17;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="96" width="600" height="28" as="geometry" />
+        </mxCell>
+
+        <!-- 対象業界・現場 -->
+        <mxCell id="tgt" value="&lt;b&gt;対象となる業界・現場&lt;/b&gt;&lt;br&gt;&lt;br&gt;🏭 製造業(機械・電機・化学・食品・医薬)&lt;br&gt;&lt;br&gt;🔧 設備保全・プラント運転&lt;br&gt;&lt;br&gt;🧪 品質保証・監査対応部門&lt;br&gt;&lt;br&gt;☎️ 製品問い合わせ窓口&lt;br&gt;&lt;br&gt;&lt;i&gt;※ 安全・監査要件が厳しい現場ほど効果大&lt;/i&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;align=left;verticalAlign=top;spacing=12;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="130" width="440" height="208" as="geometry" />
+        </mxCell>
+
+        <!-- 課題 → 解決 4行 -->
+        <mxCell id="p1" value="😰 ベテランの経験が属人化、退職でノウハウが消える" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;align=left;verticalAlign=middle;spacing=10;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="500" y="130" width="500" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="✅ 文書を知識ベース化し、AI が現場の質問に即答・継承" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;verticalAlign=middle;spacing=10;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="130" width="550" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="p2" value="🔍 手順書・規格書・過去トラブルが散在して探せない" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;align=left;verticalAlign=middle;spacing=10;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="500" y="184" width="500" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="✅ 8種のソースを自動同期、数秒で「根拠つき」回答" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;verticalAlign=middle;spacing=10;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="184" width="550" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="p3" value="⚠️ AI の誤答が事故・品質不良・監査指摘に直結する" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;align=left;verticalAlign=middle;spacing=10;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="500" y="238" width="500" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="✅ 根拠がなければ答えない+人の承認+監査証跡" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;verticalAlign=middle;spacing=10;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="238" width="550" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="p4" value="🌙 夜間・休日の問い合わせ対応に人が張り付く" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;align=left;verticalAlign=middle;spacing=10;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="500" y="292" width="500" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" value="✅ AI 電話が24時間一次対応、必要時のみ人へ転送" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;verticalAlign=middle;spacing=10;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1064" y="292" width="550" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="ps1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="p1" target="s1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ps2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="p2" target="s2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ps3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="p3" target="s3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ps4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;strokeWidth=2;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="p4" target="s4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ===== システム構成 帯 ===== -->
+        <mxCell id="c0" value="🗺 システム構成(AWS 上で稼働)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fafafa;strokeColor=#bbbbbb;verticalAlign=top;fontSize=17;fontStyle=1;spacingTop=8;fontColor=#333333;align=left;spacingLeft=16;" vertex="1" parent="1">
+          <mxGeometry x="40" y="356" width="1574" height="396" as="geometry" />
+        </mxCell>
+
+        <!-- データソース -->
+        <mxCell id="ds" value="🗂 データソース" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontSize=14;fontStyle=1;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="64" y="396" width="230" height="288" as="geometry" />
+        </mxCell>
+        <mxCell id="d1" value="Confluence・Notion" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="76" y="440" width="206" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="d2" value="Box・Google Drive" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="76" y="486" width="206" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="d3" value="kintone・社内DB" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="76" y="532" width="206" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="d4" value="S3・ファイルサーバ" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="76" y="578" width="206" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="d5" value="Web・PDF アップロード" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="76" y="624" width="206" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- 取込・同期 -->
+        <mxCell id="ing" value="&lt;b&gt;⚙️ 取込・同期&lt;/b&gt;&lt;br&gt;&lt;br&gt;🔄 自動で定期同期&lt;br&gt;&lt;br&gt;🖼 OCR で画像・スキャン PDF も検索対象に&lt;br&gt;&lt;br&gt;✅ 取込文書は承認フローへ" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;verticalAlign=top;spacing=14;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="344" y="416" width="220" height="248" as="geometry" />
+        </mxCell>
+
+        <!-- 知識ベース -->
+        <mxCell id="kb" value="&lt;b&gt;🔐 知識ベース&lt;/b&gt;&lt;br&gt;&lt;br&gt;🏢 会社・部門ごとに完全分離&lt;br&gt;&lt;br&gt;🙈 権限のない文書は見えない&lt;br&gt;&lt;br&gt;🗑 削除した文書は復活しない" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;verticalAlign=top;spacing=14;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="614" y="416" width="220" height="248" as="geometry" />
+        </mxCell>
+
+        <!-- AI 回答エンジン -->
+        <mxCell id="eng" value="🤖 AI 回答エンジン" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;verticalAlign=top;fontSize=14;fontStyle=1;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="884" y="396" width="300" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="&lt;b&gt;① 検索&lt;/b&gt;(日本語最適化)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="904" y="440" width="260" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="&lt;b&gt;② 回答生成&lt;/b&gt;(AWS Bedrock / Claude)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="904" y="516" width="260" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="&lt;b&gt;③ 安全チェック&lt;/b&gt;&lt;br&gt;根拠がなければ答えない" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="904" y="592" width="260" height="64" as="geometry" />
+        </mxCell>
+        <mxCell id="ae1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#d79b00;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="e1" target="e2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ae2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#d79b00;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="e2" target="e3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- 利用チャネル -->
+        <mxCell id="chc" value="👥 利用チャネル" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;fontSize=14;fontStyle=1;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="1234" y="396" width="356" height="300" as="geometry" />
+        </mxCell>
+        <mxCell id="ch1" value="💬 &lt;b&gt;Web アプリ&lt;/b&gt;&lt;br&gt;チャット回答・引用ビューア・KPI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;align=left;verticalAlign=middle;spacing=12;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1254" y="440" width="316" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="ch2" value="📞 &lt;b&gt;AI 電話&lt;/b&gt;(Amazon Connect)&lt;br&gt;24時間一次対応・人へ転送" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;align=left;verticalAlign=middle;spacing=12;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1254" y="522" width="316" height="66" as="geometry" />
+        </mxCell>
+        <mxCell id="ch3" value="🔌 &lt;b&gt;API / SDK&lt;/b&gt;&lt;br&gt;既存システムへ組み込み" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;align=left;verticalAlign=middle;spacing=12;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1254" y="604" width="316" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- AWS 基盤ストリップ -->
+        <mxCell id="infra" value="☁️ AWS 基盤: CloudFront・ALB・Fargate・Aurora PostgreSQL・Cognito 認証・CloudWatch 監視(CDK でコード化・同一構成を再現可能)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="64" y="708" width="1526" height="34" as="geometry" />
+        </mxCell>
+
+        <!-- メインの流れ矢印 -->
+        <mxCell id="a1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;strokeWidth=3;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="ds" target="ing">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;strokeWidth=3;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="ing" target="kb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;strokeWidth=3;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="kb" target="eng">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a4" value="質問 ⇄ 引用つき回答" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;strokeWidth=3;exitX=1;exitY=0.5;entryX=0;entryY=0.5;startArrow=classic;startFill=1;fontSize=12;fontStyle=1;" edge="1" parent="1" source="eng" target="chc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ===== できること ===== -->
+        <mxCell id="h3" value="✨ できること(主要機能)" style="text;html=1;align=left;verticalAlign=middle;fontSize=17;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="762" width="600" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="f1" value="&lt;font style=&quot;font-size:28px&quot;&gt;💬&lt;/font&gt;&lt;br&gt;&lt;b&gt;引用つき AI 回答&lt;/b&gt;&lt;br&gt;出典クリックで原文を確認" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b0b0b0;align=center;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="796" width="374" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f2" value="&lt;font style=&quot;font-size:28px&quot;&gt;🔄&lt;/font&gt;&lt;br&gt;&lt;b&gt;データ自動同期&lt;/b&gt;&lt;br&gt;8種の外部サービス+ファイル登録" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b0b0b0;align=center;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="440" y="796" width="374" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f3" value="&lt;font style=&quot;font-size:28px&quot;&gt;📞&lt;/font&gt;&lt;br&gt;&lt;b&gt;AI 電話(24時間)&lt;/b&gt;&lt;br&gt;要約・経緯つきで人へ転送" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b0b0b0;align=center;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="840" y="796" width="374" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f4" value="&lt;font style=&quot;font-size:28px&quot;&gt;🛡&lt;/font&gt;&lt;br&gt;&lt;b&gt;高リスク回答の安全ガード&lt;/b&gt;&lt;br&gt;承認済み文書の根拠がなければ断定しない" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b0b0b0;align=center;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="796" width="374" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f5" value="&lt;font style=&quot;font-size:28px&quot;&gt;✅&lt;/font&gt;&lt;br&gt;&lt;b&gt;人による承認フロー&lt;/b&gt;&lt;br&gt;AI 出力はドラフト→承認で正式化" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b0b0b0;align=center;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="910" width="374" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f6" value="&lt;font style=&quot;font-size:28px&quot;&gt;📝&lt;/font&gt;&lt;br&gt;&lt;b&gt;監査エビデンス&lt;/b&gt;&lt;br&gt;改ざん検証つきで帳票化・監査対応" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b0b0b0;align=center;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="440" y="910" width="374" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f7" value="&lt;font style=&quot;font-size:28px&quot;&gt;🔐&lt;/font&gt;&lt;br&gt;&lt;b&gt;テナント分離・権限制御&lt;/b&gt;&lt;br&gt;権限外の文書は検索にも出ない" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b0b0b0;align=center;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="840" y="910" width="374" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f8" value="&lt;font style=&quot;font-size:28px&quot;&gt;📊&lt;/font&gt;&lt;br&gt;&lt;b&gt;品質 KPI の見える化&lt;/b&gt;&lt;br&gt;引用率・安全性・ナレッジギャップ" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#b0b0b0;align=center;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1240" y="910" width="374" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- ===== 安心ポイント フッター ===== -->
+        <mxCell id="trust" value="🔒 &lt;b&gt;学習利用なし&lt;/b&gt;(お客様データで AI を学習させません) 🗑 &lt;b&gt;削除文書は完全に消える&lt;/b&gt; 🕵 &lt;b&gt;電話記録は個人情報マスキング済み&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1026" width="1574" height="46" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
