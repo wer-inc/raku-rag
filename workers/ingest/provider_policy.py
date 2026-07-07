@@ -199,7 +199,10 @@ class ProviderPolicyEnforcer:
                 "customer_managed",
             }:
                 reasons.append("aws_only parser policy forbids external parser/OCR providers")
-            if provider == "azure_document_intelligence" and "azure" not in policy.parser_mode:
+            if (
+                provider in {"azure_document_intelligence", "azure_docintel"}
+                and "azure" not in policy.parser_mode
+            ):
                 reasons.append("Azure Document Intelligence requires explicit parser_mode opt-in")
             if (
                 provider in {"google_document_ai", "google_docai"}
@@ -318,6 +321,13 @@ DEFAULT_PROVIDER_CAPABILITIES: dict[str, ProviderCapability] = {
     ),
     "azure_document_intelligence": ProviderCapability(
         provider="azure_document_intelligence",
+        provider_family="azure",
+        region="japaneast",
+        zero_retention=False,
+        no_train=False,
+    ),
+    "azure_docintel": ProviderCapability(
+        provider="azure_docintel",
         provider_family="azure",
         region="japaneast",
         zero_retention=False,

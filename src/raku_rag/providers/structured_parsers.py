@@ -1,6 +1,6 @@
 """ADR-018 §9 — normalize the existing (str-returning) parsers into ``ParsedDocument`` (Phase B2).
 
-These are the FIRST producers of the canonical contract (before Docling, §9.1): the Text / DOCX /
+These are lightweight producers of the canonical contract alongside Docling (§9.1): the Text / DOCX /
 Spreadsheet parsers we already ship, re-expressed as ``StructuredParser`` s that emit
 ``ParsedDocument`` with block kinds, spreadsheet cell anchors (§7.7, FR-MFG-002 preserved), and
 per-object provenance. A hard invariant, asserted in tests, is that ``text_for_embedding()`` of the
@@ -62,6 +62,9 @@ class StructuredParser(Protocol):
         *,
         document_id: str = "",
         filename: str = "",
+        tenant_id: str = "",
+        collection_id: str = "",
+        provider_policy_id: str = "default",
     ) -> ParsedDocument: ...
 
 
@@ -91,7 +94,15 @@ class TextStructuredParser:
         return content_type in _TEXT_SUPPORTED
 
     def parse_structured(
-        self, raw: bytes, content_type: str, *, document_id: str = "", filename: str = ""
+        self,
+        raw: bytes,
+        content_type: str,
+        *,
+        document_id: str = "",
+        filename: str = "",
+        tenant_id: str = "",
+        collection_id: str = "",
+        provider_policy_id: str = "default",
     ) -> ParsedDocument:
         text = raw.decode("utf-8", errors="replace")
         if content_type == "text/html":
@@ -138,7 +149,15 @@ class SpreadsheetStructuredParser:
         return content_type == XLSX_CONTENT_TYPE or content_type in CSV_CONTENT_TYPES
 
     def parse_structured(
-        self, raw: bytes, content_type: str, *, document_id: str = "", filename: str = ""
+        self,
+        raw: bytes,
+        content_type: str,
+        *,
+        document_id: str = "",
+        filename: str = "",
+        tenant_id: str = "",
+        collection_id: str = "",
+        provider_policy_id: str = "default",
     ) -> ParsedDocument:
         sheets = read_spreadsheet_sheets(raw, content_type)
         source, run = _source_and_run(
@@ -214,7 +233,15 @@ class DocxStructuredParser:
         return content_type == DOCX_CONTENT_TYPE
 
     def parse_structured(
-        self, raw: bytes, content_type: str, *, document_id: str = "", filename: str = ""
+        self,
+        raw: bytes,
+        content_type: str,
+        *,
+        document_id: str = "",
+        filename: str = "",
+        tenant_id: str = "",
+        collection_id: str = "",
+        provider_policy_id: str = "default",
     ) -> ParsedDocument:
         from docx import Document as _DocxDocument  # local import: optional [manufacturing] dep
 
@@ -281,11 +308,25 @@ class CompositeStructuredParser:
         return any(p.supports(content_type) for p in self._parsers)
 
     def parse_structured(
-        self, raw: bytes, content_type: str, *, document_id: str = "", filename: str = ""
+        self,
+        raw: bytes,
+        content_type: str,
+        *,
+        document_id: str = "",
+        filename: str = "",
+        tenant_id: str = "",
+        collection_id: str = "",
+        provider_policy_id: str = "default",
     ) -> ParsedDocument:
         for p in self._parsers:
             if p.supports(content_type):
                 return p.parse_structured(
-                    raw, content_type, document_id=document_id, filename=filename
+                    raw,
+                    content_type,
+                    document_id=document_id,
+                    filename=filename,
+                    tenant_id=tenant_id,
+                    collection_id=collection_id,
+                    provider_policy_id=provider_policy_id,
                 )
         raise ValueError(f"unsupported content_type: {content_type}")

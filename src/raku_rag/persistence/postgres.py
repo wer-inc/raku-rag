@@ -87,6 +87,7 @@ _CORE_TABLES = (
     "document_processing_states",
     "ingestion_runs",
     "source_sync_states",
+    "extraction_quarantine_chunks",
     "chunks",
     "documents",
     "data_sources",
@@ -142,8 +143,18 @@ def connect(dsn: str, *, reset: bool = False) -> psycopg.Connection:
             if reset_tables:
                 cur.execute("TRUNCATE " + ", ".join(reset_tables) + " CASCADE")
             _repair_reset_schema(cur, existing)
+        _ensure_extraction_quarantine_schema_if_core_exists(cur)
         _set_app_role(conn, cur)
     return conn
+
+
+def _ensure_extraction_quarantine_schema_if_core_exists(cur: "psycopg.Cursor") -> None:
+    cur.execute(
+        "SELECT to_regclass('public.tenants'), to_regclass('public.collections'), "
+        "to_regclass('public.documents'), to_regclass('public.chunks')"
+    )
+    if all(cur.fetchone() or ()):
+        _ensure_extraction_quarantine_schema(cur)
 
 
 def _repair_reset_schema(cur: "psycopg.Cursor", existing: set[str]) -> None:
@@ -153,6 +164,8 @@ def _repair_reset_schema(cur: "psycopg.Cursor", existing: set[str]) -> None:
     tables, it is safe to re-assert compatibility constraints before dropping to the RLS app role.
     Production still relies on migrations; this helper only runs on explicit test resets.
     """
+
+    cur.execute("SET search_path TO public")
 
     if "source_sync_states" in existing:
         cur.execute(
@@ -190,6 +203,7 @@ def _repair_reset_schema(cur: "psycopg.Cursor", existing: set[str]) -> None:
             "ADD COLUMN IF NOT EXISTS lexical_token_hashes integer[] NOT NULL DEFAULT '{}'"
         )
         cur.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS identifier_compacts text[]")
+        _ensure_extraction_quarantine_schema(cur)
     if "documents" in existing:
         cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS identifier_compacts text[]")
     if "ingestion_runs" in existing:
@@ -214,6 +228,54 @@ def _repair_reset_schema(cur: "psycopg.Cursor", existing: set[str]) -> None:
             "DEFAULT ARRAY['bedrock','customer_managed']::text[], "
             "ADD COLUMN IF NOT EXISTS opt_in_status_by_family jsonb NOT NULL DEFAULT '{}'::jsonb"
         )
+
+
+def _ensure_extraction_quarantine_schema(cur: "psycopg.Cursor") -> None:
+    """Idempotent repair for ADR-018 quarantine table on long-lived local/bench DBs."""
+
+    cur.execute("SET search_path TO public")
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS extraction_quarantine_chunks ("
+        "chunk_id text PRIMARY KEY, "
+        "tenant_id text NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE, "
+        "document_id text NOT NULL REFERENCES documents(document_id) ON DELETE CASCADE, "
+        "collection_id text NOT NULL REFERENCES collections(collection_id) ON DELETE CASCADE, "
+        "modality text NOT NULL DEFAULT 'text', "
+        "text text NOT NULL DEFAULT '', "
+        "token_count integer NOT NULL DEFAULT 0, "
+        "position integer NOT NULL DEFAULT 0, "
+        "heading_path text[] NOT NULL DEFAULT ARRAY[]::text[], "
+        "offset_mapping jsonb, "
+        "metadata jsonb NOT NULL DEFAULT '{}'::jsonb, "
+        "metadata_schema_version integer NOT NULL DEFAULT 1, "
+        "embedding_model_version text NOT NULL DEFAULT '', "
+        "embedding vector(256), "
+        "tombstone boolean NOT NULL DEFAULT false, "
+        "created_at timestamptz NOT NULL DEFAULT now(), "
+        "updated_at timestamptz NOT NULL DEFAULT now())"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_extraction_quarantine_tenant_document "
+        "ON extraction_quarantine_chunks (tenant_id, document_id, tombstone)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_extraction_quarantine_review_status "
+        "ON extraction_quarantine_chunks "
+        "(tenant_id, ((metadata->>'extraction_quality_status'))) WHERE tombstone = false"
+    )
+    cur.execute("ALTER TABLE extraction_quarantine_chunks ENABLE ROW LEVEL SECURITY")
+    cur.execute("ALTER TABLE extraction_quarantine_chunks FORCE ROW LEVEL SECURITY")
+    cur.execute(
+        "DROP POLICY IF EXISTS tenant_isolation_extraction_quarantine_chunks "
+        "ON extraction_quarantine_chunks"
+    )
+    cur.execute(
+        "CREATE POLICY tenant_isolation_extraction_quarantine_chunks "
+        "ON extraction_quarantine_chunks "
+        "USING (tenant_id = raku.current_tenant_id()) "
+        "WITH CHECK (tenant_id = raku.current_tenant_id())"
+    )
+    cur.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON extraction_quarantine_chunks TO raku_app")
 
 
 def _set_app_role(conn: "psycopg.Connection", cur: "psycopg.Cursor") -> None:
@@ -524,6 +586,10 @@ class PostgresVectorStore(VectorStore):
         with self._conn.cursor() as cur:
             for chunk, vec in items:
                 cur.execute(
+                    "DELETE FROM extraction_quarantine_chunks WHERE chunk_id=%s",
+                    (chunk.chunk_id,),
+                )
+                cur.execute(
                     "INSERT INTO chunks (chunk_id, tenant_id, document_id, collection_id, modality, "
                     "text, token_count, position, heading_path, offset_mapping, metadata, "
                     "embedding_model_version, embedding, tombstone, lexical_token_hashes, "
@@ -557,6 +623,54 @@ class PostgresVectorStore(VectorStore):
                     ),
                 )
 
+    def quarantine(self, chunks: Sequence[tuple[Chunk, Vector]]) -> None:
+        """ADR-018 §8.5 — write chunks to the extraction quarantine store, not primary search."""
+
+        items = list(chunks)
+        if not items:
+            return
+        for _chunk, vec in items:
+            if len(vec) != self._embedding_dim:
+                raise ValueError(
+                    "embedding dimension mismatch for quarantine table: "
+                    f"expected {self._embedding_dim}, got {len(vec)}"
+                )
+        first = items[0][0]
+        _use_tenant(self._conn, first.tenant_id)
+        _ensure_doc_parents(self._conn, first.tenant_id, first.collection_id, first.document_id)
+        with self._conn.cursor() as cur:
+            for chunk, vec in items:
+                cur.execute(
+                    "DELETE FROM chunks WHERE chunk_id=%s",
+                    (chunk.chunk_id,),
+                )
+                cur.execute(
+                    "INSERT INTO extraction_quarantine_chunks "
+                    "(chunk_id, tenant_id, document_id, collection_id, modality, text, "
+                    "token_count, position, heading_path, offset_mapping, metadata, "
+                    "embedding_model_version, embedding, tombstone) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::vector,%s) "
+                    "ON CONFLICT (chunk_id) DO UPDATE SET text=EXCLUDED.text, "
+                    "embedding=EXCLUDED.embedding, tombstone=EXCLUDED.tombstone, "
+                    "position=EXCLUDED.position, metadata=EXCLUDED.metadata",
+                    (
+                        chunk.chunk_id,
+                        chunk.tenant_id,
+                        chunk.document_id,
+                        chunk.collection_id,
+                        chunk.modality.value,
+                        chunk.text,
+                        chunk.token_count,
+                        chunk.position,
+                        list(chunk.heading_path),
+                        Json(chunk.offset_mapping),
+                        Json(chunk.metadata),
+                        chunk.embedding_model_version,
+                        _vec_literal(vec),
+                        chunk.tombstone,
+                    ),
+                )
+
     def iter_items(self) -> tuple[tuple[Chunk, Vector], ...]:
         """Bulk (chunk, vector) scan for the connection's current RLS tenant context.
 
@@ -577,6 +691,21 @@ class PostgresVectorStore(VectorStore):
         empty: Vector = []
         return tuple((_row_to_chunk(r), empty) for r in rows)
 
+    def iter_quarantine_items(self) -> tuple[tuple[Chunk, Vector], ...]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "
+                "token_count, position, heading_path, offset_mapping, metadata, "
+                "embedding_model_version, tombstone FROM extraction_quarantine_chunks "
+                "ORDER BY chunk_id"
+            )
+            rows = cur.fetchall()
+        empty: Vector = []
+        return tuple((_row_to_chunk(r), empty) for r in rows)
+
+    def iter_all_items(self) -> tuple[tuple[Chunk, Vector], ...]:
+        return self.iter_items() + self.iter_quarantine_items()
+
     def _get_chunk(self, tenant_id: str, chunk_id: str) -> Chunk | None:
         _use_tenant(self._conn, tenant_id)
         with self._conn.cursor() as cur:
@@ -584,6 +713,19 @@ class PostgresVectorStore(VectorStore):
                 "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "
                 "token_count, position, heading_path, offset_mapping, metadata, "
                 "embedding_model_version, tombstone FROM chunks WHERE chunk_id=%s",
+                (chunk_id,),
+            )
+            row = cur.fetchone()
+        return _row_to_chunk(row) if row else None
+
+    def _get_quarantine_chunk(self, tenant_id: str, chunk_id: str) -> Chunk | None:
+        _use_tenant(self._conn, tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "
+                "token_count, position, heading_path, offset_mapping, metadata, "
+                "embedding_model_version, tombstone FROM extraction_quarantine_chunks "
+                "WHERE chunk_id=%s",
                 (chunk_id,),
             )
             row = cur.fetchone()
@@ -607,6 +749,36 @@ class PostgresVectorStore(VectorStore):
         """
 
         _use_tenant(self._conn, tenant_id)
+        quarantine_chunk = self._get_quarantine_chunk(tenant_id, chunk_id)
+        target_status = str((metadata or {}).get("extraction_quality_status") or "")
+        if quarantine_chunk is not None:
+            if text is not None:
+                if vector is None or len(vector) != self._embedding_dim:
+                    raise ValueError("edit_and_approve requires a re-embedded vector")
+                if metadata:
+                    quarantine_chunk.metadata.update(metadata)
+                quarantine_chunk.text = text
+                if tombstone is not None:
+                    quarantine_chunk.tombstone = tombstone
+                if target_status == "manual_approved" and not quarantine_chunk.tombstone:
+                    self.upsert([(quarantine_chunk, vector)])
+                    return True
+                return self._update_quarantine_chunk_review(
+                    tenant_id,
+                    chunk_id,
+                    metadata=metadata,
+                    text=text,
+                    vector=vector,
+                    tombstone=tombstone,
+                )
+            if target_status == "manual_approved" and tombstone is not True:
+                return self._promote_quarantine_chunk(
+                    tenant_id, chunk_id, metadata=metadata, tombstone=tombstone
+                )
+            return self._update_quarantine_chunk_review(
+                tenant_id, chunk_id, metadata=metadata, tombstone=tombstone
+            )
+
         if text is not None:
             chunk = self._get_chunk(tenant_id, chunk_id)
             if chunk is None:
@@ -636,17 +808,108 @@ class PostgresVectorStore(VectorStore):
             cur.execute(f"UPDATE chunks SET {', '.join(sets)} WHERE chunk_id=%s", params)
             return cur.rowcount > 0
 
-    def list_extraction_review_chunks(self, tenant_id: str | None = None) -> tuple[Chunk, ...]:
-        """ADR-018 A9 §12.1 — RLS-scoped chunks quarantined for extraction review, via a JSONB filter.
+    def _update_quarantine_chunk_review(
+        self,
+        tenant_id: str,
+        chunk_id: str,
+        *,
+        metadata: dict | None = None,
+        text: str | None = None,
+        vector: Vector | None = None,
+        tombstone: bool | None = None,
+    ) -> bool:
+        _use_tenant(self._conn, tenant_id)
+        sets: list[str] = []
+        params: list[object] = []
+        if metadata:
+            sets.append("metadata = metadata || %s::jsonb")
+            params.append(Json(metadata))
+        if text is not None:
+            sets.append("text = %s")
+            params.append(text)
+            sets.append("token_count = %s")
+            params.append(len(text.split()))
+        if vector is not None:
+            if len(vector) != self._embedding_dim:
+                raise ValueError("embedding dimension mismatch for quarantine review update")
+            sets.append("embedding = %s::vector")
+            params.append(_vec_literal(vector))
+        if tombstone is not None:
+            sets.append("tombstone = %s")
+            params.append(tombstone)
+        if not sets:
+            return False
+        params.append(chunk_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE extraction_quarantine_chunks SET {', '.join(sets)} WHERE chunk_id=%s",
+                params,
+            )
+            return cur.rowcount > 0
 
-        Efficient at scale (a WHERE on ``metadata`` instead of the full ``iter_items`` scan). When a
-        ``tenant_id`` is given, the RLS session tenant is set here so the endpoint can call this as a
-        standalone read; otherwise it relies on the connection's current tenant. Vector not needed.
+    def _promote_quarantine_chunk(
+        self,
+        tenant_id: str,
+        chunk_id: str,
+        *,
+        metadata: dict | None = None,
+        tombstone: bool | None = None,
+    ) -> bool:
+        chunk = self._get_quarantine_chunk(tenant_id, chunk_id)
+        if chunk is None:
+            return False
+        merged_metadata = dict(chunk.metadata)
+        if metadata:
+            merged_metadata.update(metadata)
+        live_tombstone = chunk.tombstone if tombstone is None else tombstone
+        _use_tenant(self._conn, tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO chunks (chunk_id, tenant_id, document_id, collection_id, modality, "
+                "text, token_count, position, heading_path, offset_mapping, metadata, "
+                "embedding_model_version, embedding, tombstone, lexical_token_hashes, "
+                "identifier_compacts) "
+                "SELECT q.chunk_id, q.tenant_id, q.document_id, q.collection_id, q.modality, "
+                "q.text, q.token_count, q.position, q.heading_path, q.offset_mapping, %s::jsonb, "
+                "q.embedding_model_version, q.embedding, %s, %s::int4[], %s::text[] "
+                "FROM extraction_quarantine_chunks q WHERE q.chunk_id=%s "
+                "ON CONFLICT (chunk_id) DO UPDATE SET text=EXCLUDED.text, "
+                "embedding=EXCLUDED.embedding, tombstone=EXCLUDED.tombstone, "
+                "position=EXCLUDED.position, metadata=EXCLUDED.metadata, "
+                "lexical_token_hashes=EXCLUDED.lexical_token_hashes, "
+                "identifier_compacts=EXCLUDED.identifier_compacts",
+                (
+                    Json(merged_metadata),
+                    live_tombstone,
+                    lexical_token_hashes(chunk.text),
+                    metadata_hot_identifier_compacts(merged_metadata),
+                    chunk_id,
+                ),
+            )
+            promoted = cur.rowcount > 0
+            if promoted:
+                cur.execute(
+                    "DELETE FROM extraction_quarantine_chunks WHERE chunk_id=%s", (chunk_id,)
+                )
+        return promoted
+
+    def list_extraction_review_chunks(self, tenant_id: str | None = None) -> tuple[Chunk, ...]:
+        """ADR-018 A9 §12.1 — RLS-scoped chunks quarantined for extraction review.
+
+        New ingestion writes review-required chunks to ``extraction_quarantine_chunks`` so they never
+        enter the primary retrieval index. The legacy ``chunks`` filter remains as a read-compat path
+        for rows produced before the physical quarantine store existed.
         """
         if tenant_id is not None:
             _use_tenant(self._conn, tenant_id)
         with self._conn.cursor() as cur:
             cur.execute(
+                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "
+                "token_count, position, heading_path, offset_mapping, metadata, "
+                "embedding_model_version, tombstone FROM extraction_quarantine_chunks "
+                "WHERE metadata->>'extraction_quality_status' IN ('review_required', 'draft_visual') "
+                "OR (metadata->>'quality_review_required') = 'true' "
+                "UNION ALL "
                 "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, "
                 "token_count, position, heading_path, offset_mapping, metadata, "
                 "embedding_model_version, tombstone FROM chunks "
@@ -970,12 +1233,26 @@ class PostgresVectorStore(VectorStore):
             cur.execute(
                 "UPDATE chunks SET tombstone = %s WHERE document_id = %s", (value, document_id)
             )
-            return cur.rowcount
+            updated = cur.rowcount
+            cur.execute(
+                "UPDATE extraction_quarantine_chunks SET tombstone = %s WHERE document_id = %s",
+                (value, document_id),
+            )
+            return updated + cur.rowcount
 
     def purge(self, tenant_id: str, document_id: str) -> int:
         _use_tenant(self._conn, tenant_id)
         with self._conn.cursor() as cur:
             cur.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
+            return cur.rowcount
+
+    def purge_quarantine(self, tenant_id: str, document_id: str) -> int:
+        _use_tenant(self._conn, tenant_id)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM extraction_quarantine_chunks WHERE document_id = %s",
+                (document_id,),
+            )
             return cur.rowcount
 
     def visual_chunks_for_asset(self, tenant_id: str, asset_id: str) -> tuple[Chunk, ...]:
@@ -985,8 +1262,13 @@ class PostgresVectorStore(VectorStore):
                 "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, token_count, "
                 "position, heading_path, offset_mapping, metadata, embedding_model_version, tombstone "
                 "FROM chunks WHERE tombstone = false AND modality = 'visual' "
+                "AND metadata->>'asset_id' = %s "
+                "UNION ALL "
+                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, token_count, "
+                "position, heading_path, offset_mapping, metadata, embedding_model_version, tombstone "
+                "FROM extraction_quarantine_chunks WHERE tombstone = false AND modality = 'visual' "
                 "AND metadata->>'asset_id' = %s ORDER BY position, chunk_id",
-                (asset_id,),
+                (asset_id, asset_id),
             )
             rows = cur.fetchall()
         return tuple(_row_to_chunk(row) for row in rows)
@@ -998,8 +1280,13 @@ class PostgresVectorStore(VectorStore):
                 "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, token_count, "
                 "position, heading_path, offset_mapping, metadata, embedding_model_version, tombstone "
                 "FROM chunks WHERE tombstone = false AND modality = 'visual' "
+                "AND document_id = %s "
+                "UNION ALL "
+                "SELECT chunk_id, tenant_id, document_id, collection_id, modality, text, token_count, "
+                "position, heading_path, offset_mapping, metadata, embedding_model_version, tombstone "
+                "FROM extraction_quarantine_chunks WHERE tombstone = false AND modality = 'visual' "
                 "AND document_id = %s ORDER BY position, chunk_id",
-                (document_id,),
+                (document_id, document_id),
             )
             rows = cur.fetchall()
         return tuple(_row_to_chunk(row) for row in rows)

@@ -46,7 +46,9 @@ from raku_rag.services.ingestion_quality import (
     accepted_quality_metadata,
     accepted_with_warnings_quality_metadata,
     classify_text_extraction_quality,
+    purge_quality_partitioned_document,
     review_required_quality_metadata,
+    store_quality_partitioned_chunks,
 )
 from raku_rag.services.quality_detectors import is_language_mismatch
 from raku_rag.services.quality_thresholds import quality_thresholds
@@ -59,7 +61,15 @@ class StructuredParser(Protocol):
     def supports(self, content_type: str) -> bool: ...
 
     def parse_structured(
-        self, raw: bytes, content_type: str, *, document_id: str = "", filename: str = ""
+        self,
+        raw: bytes,
+        content_type: str,
+        *,
+        document_id: str = "",
+        filename: str = "",
+        tenant_id: str = "",
+        collection_id: str = "",
+        provider_policy_id: str = "default",
     ) -> ParsedDocument: ...
 
 
@@ -220,8 +230,17 @@ class StructuredIngestionService:
             existing = self._registry.get(tenant_id, document_id)
             version = (existing.version + 1) if existing else 1
 
+            provider_policy_id = str(
+                (chunking_metadata or {}).get("provider_policy_id") or "default"
+            )
             parsed = self._parser.parse_structured(
-                raw, content_type, document_id=document_id, filename=filename
+                raw,
+                content_type,
+                document_id=document_id,
+                filename=filename,
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                provider_policy_id=provider_policy_id,
             )
             if self._raw_sink is not None:
                 self._raw_sink(document_id, parsed.to_dict())
@@ -237,6 +256,7 @@ class StructuredIngestionService:
                 document_id,
                 struct_chunks,
                 chunking_metadata,
+                parsed=parsed,
                 doc_floor_status=doc_floor_status,
                 doc_floor_reasons=doc_floor_reasons,
                 route_trace_meta={
@@ -250,8 +270,10 @@ class StructuredIngestionService:
             )
 
             vectors = self._embedder.embed([c.text for c in chunks]) if chunks else []
-            self._store.purge(tenant_id, document_id)
-            self._store.upsert(list(zip(chunks, vectors)))
+            purge_quality_partitioned_document(self._store, tenant_id, document_id)
+            _, quarantine_count = store_quality_partitioned_chunks(
+                self._store, list(zip(chunks, vectors))
+            )
 
             review_count = sum(
                 1
@@ -291,6 +313,7 @@ class StructuredIngestionService:
                     tenant=tenant_id,
                     document_id=document_id,
                     review_required_chunk_count=review_count,
+                    quarantined_chunk_count=quarantine_count,
                 )
                 if self._metrics:
                     self._metrics.observe(
@@ -321,6 +344,7 @@ class StructuredIngestionService:
         struct_chunks: list[StructuredChunk],
         chunking_metadata: Mapping[str, object] | None,
         *,
+        parsed: ParsedDocument,
         doc_floor_status: str = QUALITY_STATUS_ACCEPTED,
         doc_floor_reasons: tuple[str, ...] = (),
         route_trace_meta: Mapping[str, object] | None = None,
@@ -349,6 +373,7 @@ class StructuredIngestionService:
                 "parsed_chunk_kind": sc.kind,
                 "source_block_ids": list(sc.source_block_ids),
                 **_anchor_metadata(sc),
+                **_provider_details_metadata(parsed, sc),
                 **dict(route_trace_meta or {}),
                 **_chunk_quality_metadata(
                     sc, doc_floor_status=doc_floor_status, doc_floor_reasons=doc_floor_reasons
@@ -374,12 +399,14 @@ class StructuredIngestionService:
         return chunks
 
 
-def build_structured_parser(*, expected_language: str = "") -> StructuredParser:
-    """Compose the app's structured parser: existing parsers first (parity), Docling for the rest.
+def build_structured_parser(
+    *, expected_language: str = "", provider_policy_resolver: object | None = None
+) -> StructuredParser:
+    """Compose the app's structured parser: Docling-first where ADR-018 requires it.
 
-    Text / DOCX / CSV / XLSX / HTML keep the existing structured parsers (text_for_embedding parity
-    with the legacy path); PDF / PPTX / images fall through to the opt-in DoclingStructuredParser
-    (which itself owns OCR-provider selection per §4.2/§9.4 and degrades gracefully without docling).
+    PDF / DOCX / PPTX / images (and HTML, which Docling supports for lightweight verification) go to
+    the opt-in DoclingStructuredParser first. Plain text / markdown remain the cheap text parser, and
+    CSV / XLSX keep the existing spreadsheet parser so cell anchors remain byte-for-byte compatible.
     """
 
     from raku_rag.providers.docling_parser import DoclingStructuredParser
@@ -392,10 +419,13 @@ def build_structured_parser(*, expected_language: str = "") -> StructuredParser:
 
     return CompositeStructuredParser(
         (
+            DoclingStructuredParser(
+                expected_language=expected_language,
+                provider_policy_resolver=provider_policy_resolver,
+            ),
             TextStructuredParser(),
-            DocxStructuredParser(),
             SpreadsheetStructuredParser(),
-            DoclingStructuredParser(expected_language=expected_language),
+            DocxStructuredParser(),
         )
     )
 
@@ -410,6 +440,7 @@ def build_structured_ingestion_service(
     pii_redaction_mode: str = PII_REDACTION_PRE_INDEX,
     structured_parser: StructuredParser | None = None,
     raw_sink: RawSink | None = None,
+    provider_policy_resolver: object | None = None,
 ) -> StructuredIngestionService:
     """App factory (ADR-018 B5 wiring) — used behind the ``structured_ingest_enabled`` flag."""
 
@@ -424,7 +455,10 @@ def build_structured_ingestion_service(
         store=store,
         embedder=embedder,
         structured_parser=structured_parser
-        or build_structured_parser(expected_language=expected_language),
+        or build_structured_parser(
+            expected_language=expected_language,
+            provider_policy_resolver=provider_policy_resolver,
+        ),
         registry=registry,
         metrics=metrics,
         tracer=tracer,
@@ -478,6 +512,64 @@ def _route_trace_metadata(parsed: ParsedDocument) -> dict[str, object]:
             for s in steps
         ]
     }
+
+
+def _provider_details_metadata(parsed: ParsedDocument, chunk: StructuredChunk) -> dict[str, object]:
+    """Persist provider/version/config context for reviewer/audit explanation (§12.1/§13.3)."""
+
+    provider_details = []
+    for run in getattr(parsed, "provider_runs", ()) or ():
+        provider_details.append(
+            {
+                "provider": run.provider,
+                "provider_version": run.provider_version,
+                "model_versions": dict(run.model_versions or {}),
+                "config_hash": run.config_hash,
+                "status": run.status,
+            }
+        )
+
+    source_ids = set(chunk.source_block_ids or ())
+    block_details = []
+    seen: set[tuple[object, ...]] = set()
+    for block in getattr(parsed, "blocks", ()) or ():
+        if source_ids and block.block_id not in source_ids:
+            continue
+        prov = getattr(block, "provenance", None)
+        if prov is None:
+            continue
+        detail = {
+            "block_id": block.block_id,
+            "provider": prov.provider,
+            "provider_version": prov.provider_version,
+            "model_version": prov.model_version,
+            "method": prov.method,
+            "route": prov.route,
+            "prompt_version": prov.prompt_version,
+            "generation_config": dict(prov.generation_config or {}),
+        }
+        key = tuple(
+            detail.get(k)
+            for k in (
+                "provider",
+                "provider_version",
+                "model_version",
+                "method",
+                "route",
+                "prompt_version",
+            )
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        block_details.append(detail)
+
+    result: dict[str, object] = {}
+    if provider_details:
+        result["provider_details"] = provider_details
+    if block_details:
+        result["block_provider_details"] = block_details
+    return result
 
 
 def _page_route_metadata(parsed: ParsedDocument) -> dict[str, object]:

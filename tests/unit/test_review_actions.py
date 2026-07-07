@@ -30,7 +30,7 @@ class ReviewActionsTest(unittest.TestCase):
         )
 
     def _chunk(self, chunk_id: str):
-        return next(c for c, _ in self.m.store.iter_items() if c.chunk_id == chunk_id)
+        return next(c for c, _ in self.m.store.iter_all_items() if c.chunk_id == chunk_id)
 
     def test_approve_promotes_to_manual_approved_and_leaves_queue(self) -> None:
         cid = self._quarantine("d1")

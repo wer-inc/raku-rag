@@ -18,7 +18,7 @@ from raku_rag.services.ingestion_quality import (
     QUALITY_STATUS_REVIEW_REQUIRED,
     is_high_risk_citation_quality_eligible,
 )
-from raku_rag.services.structured_ingestion import StructuredIngestionService
+from raku_rag.services.structured_ingestion import StructuredIngestionService, build_structured_parser
 from tests.helpers import claims
 
 T = "tenant_s"
@@ -40,8 +40,23 @@ class StructuredIngestionTest(unittest.TestCase):
             raw_sink=lambda doc_id, raw: self.raw_captured.__setitem__(doc_id, raw),
         )
 
+    def test_default_parser_routes_docx_to_docling_first(self) -> None:
+        parser = build_structured_parser()
+        doc = parser.parse_structured(
+            b"not a real docx but enough to prove routing",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            document_id="docx-route",
+        )
+        self.assertEqual(doc.provider_runs[0].provider, "docling")
+        self.assertEqual(doc.quality.status, "review_required")
+
     def _stored(self, document_id: str):
         for chunk, _v in self.sys.store.iter_items():
+            if chunk.document_id == document_id:
+                yield chunk
+
+    def _quarantined(self, document_id: str):
+        for chunk, _v in self.sys.store.iter_quarantine_items():
             if chunk.document_id == document_id:
                 yield chunk
 
@@ -67,6 +82,12 @@ class StructuredIngestionTest(unittest.TestCase):
         anchored = [c for c in cells if c.metadata.get("cell_sheet") == "sheet1"]
         self.assertTrue(anchored)
         self.assertIn("sheet1!R2C1", anchored[0].text)
+        self.assertEqual(
+            anchored[0].metadata["provider_details"][0]["provider"], "spreadsheet_parser"
+        )
+        self.assertEqual(
+            anchored[0].metadata["block_provider_details"][0]["provider"], "spreadsheet_parser"
+        )
 
         # and the content is retrievable through the normal retrieval service
         result = self.sys.retrieval.retrieve(
@@ -96,7 +117,9 @@ class StructuredIngestionTest(unittest.TestCase):
             content_type="text/plain",
         )
         self.assertEqual(job.status, "succeeded", job.failure_reason)
-        broken_chunks = list(self._stored("broken"))
+        self.assertEqual(list(self._stored("broken")), [])
+        broken_chunks = list(self._quarantined("broken"))
+        self.assertTrue(broken_chunks)
         self.assertTrue(
             all(
                 c.metadata[EXTRACTION_QUALITY_STATUS_KEY] == QUALITY_STATUS_REVIEW_REQUIRED

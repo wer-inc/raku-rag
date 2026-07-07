@@ -23,7 +23,10 @@ from raku_rag.interfaces.base import (
 from raku_rag.services.cache import CacheService
 from raku_rag.services.deletion import DeletionResult, DeletionService
 from raku_rag.services.ingestion import DocumentRegistry
-from raku_rag.services.ingestion_quality import accepted_quality_metadata
+from raku_rag.services.ingestion_quality import (
+    accepted_quality_metadata,
+    purge_quality_partitioned_document,
+)
 from raku_rag.services.sync import (
     DiffAction,
     DiffDecision,
@@ -315,7 +318,7 @@ def materialize_vector_index_entries(
     for doc_id, pairs in grouped.items():
         manifest = manifests[doc_id]
         existing = registry.get(manifest.tenant_id, doc_id)
-        store.purge(manifest.tenant_id, doc_id)
+        purge_quality_partitioned_document(store, manifest.tenant_id, doc_id)
         store.upsert(pairs)
         registry.put(
             Document(

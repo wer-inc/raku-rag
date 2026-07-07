@@ -48,16 +48,22 @@ from raku_rag.domain.parsed_document import (
     TableCell,
     TableColumn,
 )
-from raku_rag.providers.ocr.pluggable import OcrProvider, select_ocr_provider
+from raku_rag.providers.ocr.pluggable import OcrProvider, OcrResult, select_ocr_provider
 from raku_rag.providers.page_routing import PAGE_CLEAN_DIGITAL, classify_page_route
-from raku_rag.providers.vlm_draft import VlmDraftProvider, select_vlm_draft_provider
+from raku_rag.providers.vlm_draft import (
+    VlmDraftProvider,
+    VlmDraftResult,
+    select_vlm_draft_provider,
+)
 from raku_rag.services.quality_detectors import (
     VisualArtifactDetector,
+    VisualArtifactSignals,
     document_quality_dimensions,
     is_drawing_like,
     select_visual_artifact_detector,
     table_structure_confidence,
 )
+from raku_rag.services.provider_policy_runtime import provider_policy_allows
 
 PROVIDER = "docling"
 
@@ -139,6 +145,7 @@ class DoclingStructuredParser:
         vlm_provider: VlmDraftProvider | None = None,
         visual_artifact_detector: VisualArtifactDetector | None = None,
         expected_language: str = "",
+        provider_policy_resolver: object | None = None,
     ) -> None:
         self._content_types = content_types
         self._converter = None  # lazy DocumentConverter (expensive to build)
@@ -156,6 +163,7 @@ class DoclingStructuredParser:
             if visual_artifact_detector is not None
             else select_visual_artifact_detector()
         )
+        self._provider_policy_resolver = provider_policy_resolver
 
     def supports(self, content_type: str) -> bool:
         return content_type in self._content_types
@@ -166,16 +174,16 @@ class DoclingStructuredParser:
             from docling.document_converter import DocumentConverter
 
             opts = self._format_options()
-            self._converter = (
-                DocumentConverter(format_options=opts) if opts else DocumentConverter()
-            )
+            self._converter = DocumentConverter(format_options=opts)
         return self._converter
 
     def _format_options(self):
         """PDF format options with Docling's built-in OCR DISABLED (§4.2) — structure only.
 
-        Defensive: if the pipeline-options API differs across Docling versions, fall back to defaults
-        rather than crashing (the external-OCR path still owns OCR either way).
+        Defensive/fail-closed: if the pipeline-options API differs across Docling versions, do not
+        silently fall back to ``DocumentConverter()`` defaults. A default converter could re-enable
+        Docling's built-in OCR, violating the ADR-018 provider split, so parse_structured catches the
+        raised error and emits ``review_required`` / ``provider_error`` instead.
         """
         try:
             from docling.datamodel.base_models import InputFormat
@@ -186,8 +194,8 @@ class DoclingStructuredParser:
             opts.do_ocr = False  # Docling does layout/table structure, NOT OCR (§4.2/§9.4)
             opts.do_table_structure = True
             return {InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
-        except Exception:  # pragma: no cover - version drift
-            return None
+        except Exception as exc:  # pragma: no cover - version drift
+            raise RuntimeError("docling_ocr_disable_config_failed") from exc
 
     def _provider_version(self) -> str:
         try:
@@ -199,7 +207,15 @@ class DoclingStructuredParser:
 
     # --- entrypoint -----------------------------------------------------------------------------
     def parse_structured(
-        self, raw: bytes, content_type: str, *, document_id: str = "", filename: str = ""
+        self,
+        raw: bytes,
+        content_type: str,
+        *,
+        document_id: str = "",
+        filename: str = "",
+        tenant_id: str = "",
+        collection_id: str = "",
+        provider_policy_id: str = "default",
     ) -> ParsedDocument:
         source = _source_info(raw, content_type, document_id=document_id, filename=filename)
         if not docling_available():
@@ -220,8 +236,24 @@ class DoclingStructuredParser:
             extract_latency_ms=extract_latency_ms,
         )
         parsed = self._apply_preflight(parsed, raw, content_type)
-        parsed = self._apply_visual_detectors(parsed, raw, content_type)
-        parsed = self._apply_external_ocr(parsed, raw, content_type)
+        parsed = self._apply_visual_detectors(
+            parsed,
+            raw,
+            content_type,
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            document_id=document_id,
+            provider_policy_id=provider_policy_id,
+        )
+        parsed = self._apply_external_ocr(
+            parsed,
+            raw,
+            content_type,
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            document_id=document_id,
+            provider_policy_id=provider_policy_id,
+        )
         parsed = _finalize_page_quality(parsed)
         return self._apply_quality_dimensions(parsed)
 
@@ -235,7 +267,15 @@ class DoclingStructuredParser:
 
     # --- §8.4 visual detectors: drawing-like (stdlib heuristic) + handwriting/seal (pluggable) ------
     def _apply_visual_detectors(
-        self, parsed: ParsedDocument, raw: bytes, content_type: str
+        self,
+        parsed: ParsedDocument,
+        raw: bytes,
+        content_type: str,
+        *,
+        tenant_id: str = "",
+        collection_id: str = "",
+        document_id: str = "",
+        provider_policy_id: str = "default",
     ) -> ParsedDocument:
         if not parsed.pages:
             return parsed
@@ -247,7 +287,14 @@ class DoclingStructuredParser:
                 )
         figure_pages = {fig.page_no for fig in parsed.figures if fig.page_no}
         table_pages = {t.page_no for t in parsed.tables if t.page_no}
-        detector = self._visual_detector
+        detector = _PolicyGuardedVisualArtifactDetector(
+            self._visual_detector,
+            policy_resolver=self._provider_policy_resolver,
+            tenant_id=tenant_id,
+            collection_id=collection_id,
+            document_id=document_id,
+            provider_policy_id=provider_policy_id,
+        )
         is_pdf = content_type == "application/pdf"
         is_standalone_image = content_type in _STANDALONE_IMAGE_CONTENT_TYPES
         detector_on = (is_pdf or is_standalone_image) and detector.available()
@@ -411,7 +458,15 @@ class DoclingStructuredParser:
 
     # --- external OCR (§4.2/§9.4): fill scanned/text-less pages via the independent provider -----
     def _apply_external_ocr(
-        self, parsed: ParsedDocument, raw: bytes, content_type: str
+        self,
+        parsed: ParsedDocument,
+        raw: bytes,
+        content_type: str,
+        *,
+        tenant_id: str = "",
+        collection_id: str = "",
+        document_id: str = "",
+        provider_policy_id: str = "default",
     ) -> ParsedDocument:
         if content_type != "application/pdf" or not parsed.pages:
             return parsed
@@ -424,10 +479,22 @@ class DoclingStructuredParser:
 
         extra_blocks, steps = apply_external_ocr(
             empty_pages,
-            ocr_provider=self._ocr,
+            ocr_provider=_PolicyGuardedOcrProvider(
+                self._ocr,
+                policy_resolver=self._provider_policy_resolver,
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                provider_policy_id=provider_policy_id,
+            ),
             render=lambda page_no: render_pdf_page_png(raw, page_no),
             start_order=len(parsed.blocks),
-            vlm_provider=self._vlm,
+            vlm_provider=_PolicyGuardedVlmDraftProvider(
+                self._vlm,
+                policy_resolver=self._provider_policy_resolver,
+                tenant_id=tenant_id,
+                collection_id=collection_id,
+                provider_policy_id=provider_policy_id,
+            ),
         )
         if not extra_blocks:
             return parsed
@@ -451,6 +518,107 @@ class DoclingStructuredParser:
         return _text_fallback(
             raw, source, result="error", reason=reason, route="docling_error_fallback"
         )
+
+
+class _PolicyGuardedOcrProvider:
+    def __init__(
+        self,
+        inner: OcrProvider,
+        *,
+        policy_resolver: object | None,
+        tenant_id: str,
+        collection_id: str,
+        provider_policy_id: str,
+    ) -> None:
+        self._inner = inner
+        self._policy_resolver = policy_resolver
+        self._tenant_id = tenant_id
+        self._collection_id = collection_id
+        self._provider_policy_id = provider_policy_id
+        self.name = inner.name
+
+    def available(self) -> bool:
+        return self._inner.available() and provider_policy_allows(
+            operation="ocr",
+            provider=self.name,
+            policy_resolver=self._policy_resolver,
+            tenant_id=self._tenant_id,
+            collection_id=self._collection_id,
+            provider_policy_id=self._provider_policy_id,
+        )
+
+    def ocr_image(self, image_png: bytes) -> OcrResult:
+        if not self.available():
+            return OcrResult(provider=self.name)
+        return self._inner.ocr_image(image_png)
+
+
+class _PolicyGuardedVlmDraftProvider:
+    def __init__(
+        self,
+        inner: VlmDraftProvider,
+        *,
+        policy_resolver: object | None,
+        tenant_id: str,
+        collection_id: str,
+        provider_policy_id: str,
+    ) -> None:
+        self._inner = inner
+        self._policy_resolver = policy_resolver
+        self._tenant_id = tenant_id
+        self._collection_id = collection_id
+        self._provider_policy_id = provider_policy_id
+        self.name = inner.name
+
+    def available(self) -> bool:
+        return self._inner.available() and provider_policy_allows(
+            operation="vlm",
+            provider=self.name,
+            policy_resolver=self._policy_resolver,
+            tenant_id=self._tenant_id,
+            collection_id=self._collection_id,
+            provider_policy_id=self._provider_policy_id,
+        )
+
+    def draft_from_image(self, image_png: bytes, *, page_no: int) -> VlmDraftResult:
+        if not self.available():
+            return VlmDraftResult(provider=self.name)
+        return self._inner.draft_from_image(image_png, page_no=page_no)
+
+
+class _PolicyGuardedVisualArtifactDetector:
+    def __init__(
+        self,
+        inner: VisualArtifactDetector,
+        *,
+        policy_resolver: object | None,
+        tenant_id: str,
+        collection_id: str,
+        document_id: str,
+        provider_policy_id: str,
+    ) -> None:
+        self._inner = inner
+        self._policy_resolver = policy_resolver
+        self._tenant_id = tenant_id
+        self._collection_id = collection_id
+        self._document_id = document_id
+        self._provider_policy_id = provider_policy_id
+        self.name = inner.name
+
+    def available(self) -> bool:
+        return self._inner.available() and provider_policy_allows(
+            operation="vlm",
+            provider=self.name,
+            policy_resolver=self._policy_resolver,
+            tenant_id=self._tenant_id,
+            collection_id=self._collection_id,
+            provider_policy_id=self._provider_policy_id,
+        )
+
+    def detect(self, image_png: bytes, *, page_no: int) -> VisualArtifactSignals:
+        if not self.available():
+            return VisualArtifactSignals()
+        return self._inner.detect(image_png, page_no=page_no)
 
 
 # --- module helpers ------------------------------------------------------------------------------

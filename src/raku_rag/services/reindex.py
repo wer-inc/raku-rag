@@ -16,7 +16,10 @@ from typing import Mapping
 from raku_rag.domain.models import Chunk, Document, Modality
 from raku_rag.interfaces.base import Chunker, EmbeddingProvider, Parser, Vector, VectorStore
 from raku_rag.services.ingestion import DocumentRegistry
-from raku_rag.services.ingestion_quality import classify_text_extraction_quality
+from raku_rag.services.ingestion_quality import (
+    classify_text_extraction_quality,
+    store_quality_partitioned_chunks,
+)
 from raku_rag.services.structured_tables import (
     STRUCTURED_TABLE_COUNT_KEY,
     STRUCTURED_TABLE_MANIFEST_VERSION,
@@ -192,7 +195,7 @@ class ReindexService:
                 for chunk, vector in chunks:
                     chunk.tombstone = False
                     live_chunks.append((chunk, vector))
-                self._store.upsert(live_chunks)
+                store_quality_partitioned_chunks(self._store, live_chunks)
                 self._registry.put(doc)
 
             self._plans.mark_succeeded(plan)

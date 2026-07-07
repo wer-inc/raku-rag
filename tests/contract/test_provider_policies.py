@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from raku_rag.app import MvpSystem
+from raku_rag.services.provider_policy_runtime import provider_policy_allows
 from workers.ingest.provider_policy import (
     ProviderCapability,
     ProviderPolicy,
@@ -260,6 +261,59 @@ class ProviderPolicyContractTest(unittest.TestCase):
 
         self.assertFalse(decision.allowed)
         self.assertIn("customer opt-in is required", " ".join(decision.reasons))
+
+    def test_runtime_policy_guard_applies_tenant_opt_in_to_cloud_ocr_aliases(self) -> None:
+        class Resolver:
+            def __init__(self, policy: ProviderPolicy) -> None:
+                self.policy = policy
+
+            def get(
+                self,
+                tenant_id: str,
+                collection_id: str = "",
+                provider_policy_id: str = "default",
+            ) -> ProviderPolicy:
+                return self.policy
+
+        pending = ProviderPolicy(
+            tenant_id="tenant_a",
+            parser_mode="google",
+            allowed_ocr_providers=("google_document_ai",),
+            allowed_regions=("asia-northeast1",),
+            cross_cloud_processing_allowed=True,
+            zero_retention_required=False,
+            no_train_required=False,
+            customer_opt_in_status="pending",
+        )
+        granted = ProviderPolicy(
+            tenant_id="tenant_a",
+            parser_mode="google",
+            allowed_ocr_providers=("google_document_ai",),
+            allowed_regions=("asia-northeast1",),
+            cross_cloud_processing_allowed=True,
+            zero_retention_required=False,
+            no_train_required=False,
+            customer_opt_in_status="granted",
+        )
+
+        self.assertFalse(
+            provider_policy_allows(
+                operation="ocr",
+                provider="google_docai",
+                policy_resolver=Resolver(pending),
+                tenant_id="tenant_a",
+                collection_id="manuals",
+            )
+        )
+        self.assertTrue(
+            provider_policy_allows(
+                operation="ocr",
+                provider="google_docai",
+                policy_resolver=Resolver(granted),
+                tenant_id="tenant_a",
+                collection_id="manuals",
+            )
+        )
 
     def test_api_surface_has_dedicated_provider_policy_controller_and_ocr_contract(self) -> None:
         controller = (ROOT / "apps/api/src/admin/provider-policies.controller.ts").read_text(

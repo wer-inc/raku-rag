@@ -8,6 +8,8 @@ crashes ingestion.
 from __future__ import annotations
 
 import importlib.util
+import sys
+import types
 import unittest
 
 from raku_rag.domain.parsed_document import (
@@ -44,6 +46,11 @@ class DoclingSupportTest(unittest.TestCase):
     def test_supports_pdf_and_office_and_images(self) -> None:
         p = DoclingStructuredParser()
         self.assertTrue(p.supports("application/pdf"))
+        self.assertTrue(
+            p.supports(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        )
         self.assertTrue(p.supports("text/html"))
         self.assertTrue(p.supports("image/png"))
         self.assertFalse(p.supports("text/csv"))
@@ -76,6 +83,57 @@ class DoclingOfflineFallbackTest(unittest.TestCase):
         )
         self.assertEqual(doc.quality.status, "review_required")
         self.assertIn("provider_error", doc.quality.reasons)
+
+    def test_ocr_disable_config_drift_fails_closed(self) -> None:
+        created_converters: list[dict] = []
+
+        class _DocumentConverter:
+            def __init__(self, *args, **kwargs) -> None:
+                created_converters.append(kwargs)
+
+        class _BadPdfPipelineOptions:
+            def __init__(self) -> None:
+                raise RuntimeError("api drift")
+
+        fake_docling = types.ModuleType("docling")
+        fake_docling.__path__ = []
+        fake_datamodel = types.ModuleType("docling.datamodel")
+        fake_datamodel.__path__ = []
+        fake_base = types.ModuleType("docling.datamodel.base_models")
+        fake_base.InputFormat = types.SimpleNamespace(PDF="pdf")
+        fake_pipeline = types.ModuleType("docling.datamodel.pipeline_options")
+        fake_pipeline.PdfPipelineOptions = _BadPdfPipelineOptions
+        fake_converter = types.ModuleType("docling.document_converter")
+        fake_converter.DocumentConverter = _DocumentConverter
+        fake_converter.PdfFormatOption = object
+
+        names = (
+            "docling",
+            "docling.datamodel",
+            "docling.datamodel.base_models",
+            "docling.datamodel.pipeline_options",
+            "docling.document_converter",
+        )
+        original = {name: sys.modules.get(name) for name in names}
+        try:
+            sys.modules.update(
+                {
+                    "docling": fake_docling,
+                    "docling.datamodel": fake_datamodel,
+                    "docling.datamodel.base_models": fake_base,
+                    "docling.datamodel.pipeline_options": fake_pipeline,
+                    "docling.document_converter": fake_converter,
+                }
+            )
+            with self.assertRaisesRegex(RuntimeError, "docling_ocr_disable_config_failed"):
+                DoclingStructuredParser()._get_converter()
+            self.assertEqual(created_converters, [])
+        finally:
+            for name, module in original.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
 
 
 def _minimal_pdf(text: str) -> bytes:

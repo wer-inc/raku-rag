@@ -38,7 +38,9 @@ from raku_rag.services.cost import CostService
 from raku_rag.services.crop import CropService
 from raku_rag.services.ingestion import IngestionService, PII_REDACTION_POLICY_REF
 from raku_rag.services.ingestion_quality import (
+    purge_quality_partitioned_document,
     quality_metadata_from_ocr_metadata,
+    store_quality_partitioned_chunks,
     with_quality_metadata,
 )
 
@@ -1692,8 +1694,8 @@ class IngestionExecutor:
             for chunk in visual_chunks_from_ingestion(result)
         )
         vectors = tuple(vector for result in results for vector in result.visual_vectors)
-        self.ingestion._store.purge(tenant_id, document_id)
-        self.ingestion._store.upsert(list(zip(chunks, vectors)))
+        purge_quality_partitioned_document(self.ingestion._store, tenant_id, document_id)
+        store_quality_partitioned_chunks(self.ingestion._store, list(zip(chunks, vectors)))
         existing = self.ingestion._registry.get(tenant_id, document_id)
         asset_ids = [result.asset.asset_id for result in results]
         first_asset = results[0].asset if results else None

@@ -138,8 +138,13 @@ class TestVisualRealPgSecurity(unittest.TestCase):
         with self.sys._conn.cursor() as cur:
             cur.execute("SELECT set_config('app.current_tenant_id', %s, false)", (tenant_id,))
             cur.execute(
-                "SELECT count(*) FROM chunks WHERE document_id = %s AND modality = 'visual'",
-                (document_id,),
+                "SELECT sum(n) FROM ("
+                "SELECT count(*) AS n FROM chunks WHERE document_id = %s AND modality = 'visual' "
+                "UNION ALL "
+                "SELECT count(*) AS n FROM extraction_quarantine_chunks "
+                "WHERE document_id = %s AND modality = 'visual'"
+                ") counts",
+                (document_id, document_id),
             )
             count = cur.fetchone()[0]
         if expected_exact is not None:

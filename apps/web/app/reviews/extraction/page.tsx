@@ -36,6 +36,25 @@ function reasonText(reasons: string[]): string {
   return reasons.map((r) => REASON_LABELS[r] ?? r).join(" / ");
 }
 
+function providerText(item: ExtractionReviewItem): string {
+  const doc = item.provider_details ?? [];
+  const blocks = item.block_provider_details ?? [];
+  const values = [
+    ...doc.map((p) => {
+      const models = p.model_versions ? Object.values(p.model_versions).filter(Boolean) : [];
+      const suffix = [p.provider_version, ...models, p.config_hash].filter(Boolean).join(" / ");
+      return [p.provider, suffix].filter(Boolean).join("@");
+    }),
+    ...blocks.map((p) => {
+      const suffix = [p.provider_version, p.model_version, p.prompt_version]
+        .filter(Boolean)
+        .join(" / ");
+      return [p.provider, suffix || p.method || p.route].filter(Boolean).join("@");
+    }),
+  ].filter(Boolean);
+  return Array.from(new Set(values)).join(" | ");
+}
+
 export default function ExtractionReviewPage() {
   const [items, setItems] = useState<ExtractionReviewItem[]>([]);
   const [metrics, setMetrics] = useState<ExtractionReviewMetrics | null>(null);
@@ -151,6 +170,11 @@ export default function ExtractionReviewPage() {
                       {item.route_trace
                         .map((s) => [s.stage, s.provider, s.result].filter(Boolean).join(":"))
                         .join(" → ")}
+                    </div>
+                  )}
+                  {providerText(item) && (
+                    <div style={{ fontSize: 11, color: "#667", marginTop: 4, fontFamily: "monospace" }}>
+                      Provider: {providerText(item)}
                     </div>
                   )}
                 </div>

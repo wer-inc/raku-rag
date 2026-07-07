@@ -194,6 +194,48 @@ def with_quality_metadata(
     return merged
 
 
+def store_quality_partitioned_chunks(store: object, pairs: Sequence[tuple[object, object]]) -> tuple[int, int]:
+    """Write chunks to the primary index or quarantine store according to extraction quality.
+
+    ADR-018 requires ``review_required`` / ``rejected`` / ``draft_visual`` output to stay out of the
+    normal retrieval index. Stores that expose ``quarantine`` get a physical split; older stores fall
+    back to the primary index so retrieval's quality filter remains a fail-closed backstop.
+    """
+
+    primary: list[tuple[object, object]] = []
+    quarantined: list[tuple[object, object]] = []
+    for chunk, vector in pairs:
+        metadata = getattr(chunk, "metadata", None)
+        status = extraction_review_status(metadata) or _quality_status(_metadata_mapping(metadata))
+        if status in RETRIEVAL_BLOCKING_QUALITY_STATUSES:
+            quarantined.append((chunk, vector))
+        else:
+            primary.append((chunk, vector))
+
+    upsert = getattr(store, "upsert")
+    if primary:
+        upsert(primary)
+    if quarantined:
+        quarantine = getattr(store, "quarantine", None)
+        if callable(quarantine):
+            quarantine(quarantined)
+        else:
+            upsert(quarantined)
+    return len(primary), len(quarantined)
+
+
+def purge_quality_partitioned_document(store: object, tenant_id: str, document_id: str) -> int:
+    """Purge a document from both the primary index and ADR-018 quarantine store."""
+
+    removed = 0
+    purge = getattr(store, "purge")
+    removed += int(purge(tenant_id, document_id) or 0)
+    purge_quarantine = getattr(store, "purge_quarantine", None)
+    if callable(purge_quarantine):
+        removed += int(purge_quarantine(tenant_id, document_id) or 0)
+    return removed
+
+
 def is_retrieval_eligible(metadata: Mapping[str, object] | object | None) -> bool:
     """Return whether parsed content is allowed into retrieval/answer evidence."""
 
@@ -271,6 +313,8 @@ class ExtractionReviewItem:
     text_snippet: str = ""
     suggested_action: str = ""
     route_trace: tuple[Mapping[str, object], ...] = ()
+    provider_details: tuple[Mapping[str, object], ...] = ()
+    block_provider_details: tuple[Mapping[str, object], ...] = ()
 
 
 # §12.1 "suggested action" — reasons that flag a *provider* problem (garbled/empty/wrong OCR) suggest a
@@ -350,6 +394,8 @@ def extraction_review_items(
         page_raw = meta.get("page_number")
         bbox_raw = meta.get("bbox")
         route_raw = meta.get("route_trace")
+        provider_raw = meta.get("provider_details")
+        block_provider_raw = meta.get("block_provider_details")
         text = str(getattr(chunk, "text", "") or "")
         queue.append(
             ExtractionReviewItem(
@@ -370,6 +416,16 @@ def extraction_review_items(
                 route_trace=(
                     tuple(dict(s) for s in route_raw if isinstance(s, Mapping))
                     if isinstance(route_raw, (list, tuple))
+                    else ()
+                ),
+                provider_details=(
+                    tuple(dict(s) for s in provider_raw if isinstance(s, Mapping))
+                    if isinstance(provider_raw, (list, tuple))
+                    else ()
+                ),
+                block_provider_details=(
+                    tuple(dict(s) for s in block_provider_raw if isinstance(s, Mapping))
+                    if isinstance(block_provider_raw, (list, tuple))
                     else ()
                 ),
             )
@@ -395,7 +451,7 @@ def extraction_quality_stats(store: object, *, tenant_id: str | None = None) -> 
     by_provider: dict[str, int] = {}  # §18.1 provider distribution (the winning provider per chunk)
     fallback_count = 0  # §18.1 fallback rate
     total = 0
-    iter_items = getattr(store, "iter_items", None)
+    iter_items = getattr(store, "iter_all_items", None) or getattr(store, "iter_items", None)
     if callable(iter_items):
         for entry in iter_items():
             chunk = entry[0] if isinstance(entry, tuple) else entry
@@ -479,7 +535,7 @@ def extraction_latency_cost_stats(
         "drawing_like_pages": 0,
     }
 
-    iter_items = getattr(store, "iter_items", None)
+    iter_items = getattr(store, "iter_all_items", None) or getattr(store, "iter_items", None)
     if callable(iter_items):
         for entry in iter_items():
             chunk = entry[0] if isinstance(entry, tuple) else entry

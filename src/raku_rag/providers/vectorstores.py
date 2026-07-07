@@ -30,12 +30,23 @@ class InMemoryVectorStore(VectorStore):
     def __init__(self) -> None:
         # chunk_id -> (Chunk, vector)
         self._items: dict[str, tuple[Chunk, Vector]] = {}
+        # ADR-018 quarantine store: chunks that need human extraction review are intentionally
+        # outside the primary retrieval index until a reviewer promotes them.
+        self._quarantine: dict[str, tuple[Chunk, Vector]] = {}
         # observability for tests: how many candidates were considered after pre-filter
         self.last_prefiltered_count: int = 0
 
     def upsert(self, chunks: Sequence[tuple[Chunk, Vector]]) -> None:
         for chunk, vec in chunks:
+            self._quarantine.pop(chunk.chunk_id, None)
             self._items[chunk.chunk_id] = (chunk, vec)
+
+    def quarantine(self, chunks: Sequence[tuple[Chunk, Vector]]) -> None:
+        """Store review-required chunks outside the primary retrieval index (ADR-018 §8.5)."""
+
+        for chunk, vec in chunks:
+            self._items.pop(chunk.chunk_id, None)
+            self._quarantine[chunk.chunk_id] = (chunk, vec)
 
     def update_chunk_review(
         self,
@@ -54,6 +65,10 @@ class InMemoryVectorStore(VectorStore):
         vector-preserving update (an upsert with an empty vector would fail PG's dim check)."""
 
         item = self._items.get(chunk_id)
+        quarantined = False
+        if item is None:
+            item = self._quarantine.get(chunk_id)
+            quarantined = item is not None
         if item is None:
             return False
         chunk, vec = item
@@ -67,16 +82,47 @@ class InMemoryVectorStore(VectorStore):
             chunk.tombstone = tombstone
         if vector is not None:
             vec = vector
-        self._items[chunk_id] = (chunk, vec)
+        status = str(chunk.metadata.get("extraction_quality_status") or "")
+        if quarantined and status == "manual_approved" and not chunk.tombstone:
+            self._quarantine.pop(chunk_id, None)
+            self._items[chunk_id] = (chunk, vec)
+        elif quarantined:
+            self._quarantine[chunk_id] = (chunk, vec)
+        else:
+            self._items[chunk_id] = (chunk, vec)
         return True
 
     def iter_items(self) -> tuple[tuple[Chunk, Vector], ...]:
-        """All stored (chunk, vector) pairs — the in-memory bulk accessor.
+        """Primary-index (chunk, vector) pairs — the in-memory bulk accessor.
 
         A public seam for callers that need to scan the whole store (e.g. metadata propagation,
         the manufacturing ACL-denial survey) so they don't reach into the private ``_items`` dict.
+        Quarantined review-required chunks deliberately live outside this primary index.
         """
         return tuple(self._items.values())
+
+    def iter_quarantine_items(self) -> tuple[tuple[Chunk, Vector], ...]:
+        """All quarantined (chunk, vector) pairs; review/ops only, never retrieval."""
+
+        return tuple(self._quarantine.values())
+
+    def iter_all_items(self) -> tuple[tuple[Chunk, Vector], ...]:
+        """Primary + quarantine items for metrics and admin review projections."""
+
+        return tuple(self._items.values()) + tuple(self._quarantine.values())
+
+    def list_extraction_review_chunks(self, tenant_id: str | None = None) -> tuple[Chunk, ...]:
+        """ADR-018 §12.1 — chunks waiting for human extraction review."""
+
+        statuses = {"review_required", "draft_visual"}
+        out: list[Chunk] = []
+        for chunk, _vec in self._quarantine.values():
+            if tenant_id is not None and chunk.tenant_id != tenant_id:
+                continue
+            status = str(chunk.metadata.get("extraction_quality_status") or "")
+            if status in statuses or bool(chunk.metadata.get("quality_review_required")):
+                out.append(chunk)
+        return tuple(out)
 
     def search(
         self,
@@ -194,7 +240,7 @@ class InMemoryVectorStore(VectorStore):
 
     def set_tombstone(self, tenant_id: str, document_id: str, value: bool) -> int:
         n = 0
-        for cid, (chunk, vec) in list(self._items.items()):
+        for cid, (chunk, vec) in list(self._items.items()) + list(self._quarantine.items()):
             if chunk.tenant_id == tenant_id and chunk.document_id == document_id:
                 chunk.tombstone = value
                 n += 1
@@ -210,10 +256,20 @@ class InMemoryVectorStore(VectorStore):
             del self._items[cid]
         return len(to_del)
 
+    def purge_quarantine(self, tenant_id: str, document_id: str) -> int:
+        to_del = [
+            cid
+            for cid, (chunk, _) in self._quarantine.items()
+            if chunk.tenant_id == tenant_id and chunk.document_id == document_id
+        ]
+        for cid in to_del:
+            del self._quarantine[cid]
+        return len(to_del)
+
     def visual_chunks_for_asset(self, tenant_id: str, asset_id: str) -> tuple[Chunk, ...]:
         return tuple(
             chunk
-            for chunk, _ in self._items.values()
+            for chunk, _ in self.iter_all_items()
             if chunk.tenant_id == tenant_id
             and not chunk.tombstone
             and (chunk.modality == Modality.VISUAL or str(chunk.modality) == Modality.VISUAL.value)
@@ -223,7 +279,7 @@ class InMemoryVectorStore(VectorStore):
     def visual_chunks_for_document(self, tenant_id: str, document_id: str) -> tuple[Chunk, ...]:
         return tuple(
             chunk
-            for chunk, _ in self._items.values()
+            for chunk, _ in self.iter_all_items()
             if chunk.tenant_id == tenant_id
             and chunk.document_id == document_id
             and not chunk.tombstone

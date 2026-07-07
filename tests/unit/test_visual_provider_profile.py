@@ -335,10 +335,14 @@ class VisualProviderProfileTest(unittest.TestCase):
 
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(result.async_provider, "sync_page_image_fallback")
-        chunks = [chunk for chunk, _vector in system.store.iter_items()]
+        self.assertEqual([chunk for chunk, _vector in system.store.iter_items()], [])
+        chunks = [chunk for chunk, _vector in system.store.iter_quarantine_items()]
         self.assertEqual(
             {chunk.chunk_id for chunk in chunks},
             {"doc_pdf:visual:1:0", "doc_pdf:visual:2:0"},
+        )
+        self.assertTrue(
+            all(chunk.metadata["extraction_quality_status"] == "review_required" for chunk in chunks)
         )
         self.assertTrue(all(chunk.metadata["pdf_page_fallback"] for chunk in chunks))
         self.assertIn("VIS-PDF-FALLBACK", chunks[0].text)

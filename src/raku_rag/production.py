@@ -221,6 +221,7 @@ class ProductionSystem(MvpSystem):
                 metrics=self.metrics,
                 tracer=self.tracer,
                 pii_redaction_mode=self.settings.pii_redaction_mode,
+                provider_policy_resolver=self.provider_policies,
             )
         self.visual_ingestion_executor = VisualIngestionExecutor(
             ocr=self.ocr,

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from raku_rag.interfaces.base import VectorStore
 from raku_rag.services.cache import CacheService
 from raku_rag.services.ingestion import DocumentRegistry
+from raku_rag.services.ingestion_quality import purge_quality_partitioned_document
 
 
 @dataclass
@@ -80,7 +81,7 @@ class DeletionService:
         # 3) derived visual crops inherit deletion/tombstone from the source document
         tombstoned_crops = self._tombstone_crops(tenant_id, document_id)
         # 4) cascade physical purge (async in production; inline here)
-        purged = self._store.purge(tenant_id, document_id)
+        purged = purge_quality_partitioned_document(self._store, tenant_id, document_id)
         return DeletionResult(
             tombstoned,
             invalidated + invalidated_visual,

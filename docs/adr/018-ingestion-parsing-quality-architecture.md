@@ -1557,14 +1557,19 @@ digital_mojibake ルートが生産者不在で到達不能だった件——**�
 統合テストで実文書ingestion→高リスク適格性を確認。§18.4 の manufacturing overlay 経由メトリクスも、直接
 endpoint のみで chatbot/phone 経路は未計装だった点を発見・追加配線。
 
-**真に残るのは「外部リソースでのライブ検証」と少数の意図的スコープ限定のみ（コードは完了）**: (1) §OQ#2 の
-**代表文書での実測閾値の確定**（実顧客文書 + 人手ラベリングが必要。チューニング機構・synthetic seed・false_accept
-ゲートは実装済み）、(2) vision/VLM/クラウド OCR アダプタの**本番資格情報でのライブ実行確認**（アダプタ・egress
-ゲート・mock テストは実装済み；Bedrock/Google/Azure の creds を与えれば即動作）、(3) §19 のクラウド egress ポリシーは
-**プロセス全体で1つの env フラグ**（`RAKU_ALLOW_CLOUD_EGRESS`）——マルチテナント環境でテナントごとに異なる許可設定は
-未対応（シングルテナント・プロセスのデプロイモデルでは妥当だが、ADR の「tenant / environment policy」という文言を
-文字通りには満たさない、既知の限定事項）、(4) レビュー項目は route_trace 経由で provider 名は見えるが、
-block 単位の model_version/prompt_version/config_hash までは reviewer UI に投影していない（軽微な context 不足、
-安全上のブロッキング要因ではない）。(1)(2) は ADR 自身が opt-in（§13.1）/ Open Question（§20）として扱う項目。
-それ以外の設計項目は実装・検証済み（Tier A gate 1945 GREEN + 実 Docling + 実 Postgres + NestJS e2e + web build +
-manufacturing safety suite 56件 unchanged）。
+**2026-07-07 追補**: ADR-018 実装残差監査（issue 0087）で見つかったコード差分も解消済み。`build_structured_parser()`
+は PDF/DOCX/PPTX/HTML/画像を Docling-first に固定し、`review_required` / `draft_visual` は primary index ではなく
+in-memory/Postgres の quarantine store に分離する。Docling built-in OCR 無効化設定に失敗した場合は default
+converter へ silent fallback せず `provider_error` / `review_required` に落とす。§19 の cloud egress は
+`RAKU_ALLOW_CLOUD_EGRESS` を environment backstop としつつ、production structured ingestion では
+`PostgresProviderPolicyRepository` を Docling parser に渡し、cloud OCR/VLM/vision detector の呼び出し直前に tenant
+provider policy（allowlist / region / no-train / zero-retention / customer opt-in）を評価する。レビュー項目は
+`route_trace` に加えて `provider_details` / `block_provider_details` を API/web へ投影し、provider/version/model/config/
+prompt context を reviewer が確認できる。
+
+**真に残るのは「外部リソースでのライブ検証」のみ（コードは完了）**: (1) §OQ#2 の**代表文書での実測閾値の確定**
+（実顧客文書 + 人手ラベリングが必要。チューニング機構・synthetic seed・false_accept ゲートは実装済み）、
+(2) vision/VLM/クラウド OCR アダプタの**本番資格情報でのライブ実行確認**（アダプタ・tenant/environment egress
+ゲート・mock テストは実装済み；Bedrock/Google/Azure の creds を与えれば即動作）。(1)(2) は ADR 自身が
+opt-in（§13.1）/ Open Question（§20）として扱う項目。それ以外の設計項目は実装・検証済み（2026-07-07:
+Tier A GREEN / separation OK / full suite GREEN 1948 tests）。

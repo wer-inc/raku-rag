@@ -64,10 +64,10 @@ class IngestionQualityGateTest(unittest.TestCase):
         chunk, _vector = self._stored_chunk("quality-doc")
         self.assertEqual(chunk.metadata[EXTRACTION_QUALITY_STATUS_KEY], QUALITY_STATUS_ACCEPTED)
 
-    def test_retrieval_filters_review_required_chunks_from_all_legs(self) -> None:
+    def test_ingestion_quarantines_review_required_chunks_before_retrieval(self) -> None:
         # A genuinely-broken (mojibake) extraction is classified review_required at INGEST, so this
-        # exercises the real ingest -> classify -> quarantine path and stays backend-agnostic (no
-        # store surgery that a Postgres backend can't round-trip).
+        # exercises the real ingest -> classify -> physical quarantine path and stays backend-agnostic
+        # (no store surgery that a Postgres backend can't round-trip).
         self.sys.ingest_text(
             tenant_id=T,
             collection_id="c",
@@ -86,6 +86,18 @@ class IngestionQualityGateTest(unittest.TestCase):
         self.assertEqual(
             review_doc.metadata[EXTRACTION_QUALITY_STATUS_KEY], QUALITY_STATUS_REVIEW_REQUIRED
         )
+        self.assertFalse(
+            any(
+                chunk.document_id == "needs-review"
+                for chunk, _vector in self.sys.store.iter_items()
+            )
+        )
+        self.assertTrue(
+            any(
+                chunk.document_id == "needs-review"
+                for chunk, _vector in self.sys.store.iter_quarantine_items()
+            )
+        )
 
         profile = QueryProfile(top_k=10, rerank_enabled=False)
         result = self.sys.retrieval.retrieve(
@@ -95,18 +107,8 @@ class IngestionQualityGateTest(unittest.TestCase):
         self.assertTrue(result)
         self.assertNotIn("needs-review", {item.chunk.document_id for item in result})
         self.assertIn("accepted", {item.chunk.document_id for item in result})
-        spans = [
-            span
-            for span in self.sys.tracer.spans(correlation_id="quality-cid")
-            if span.name == "retrieval.retrieve"
-        ]
-        self.assertEqual(len(spans), 1)
-        self.assertGreaterEqual(spans[0].attributes.get("quality_filtered_count"), 1)
-        quality_filter_observations = self.sys.metrics.observations(
-            "retrieval_quality_filtered_count",
-            labels={"tenant_id": T, "profile_id": profile.profile_id},
-        )
-        self.assertTrue(any(value >= 1 for value in quality_filter_observations))
+        queue = self.sys.list_extraction_reviews(T)
+        self.assertIn("needs-review", {item["document_id"] for item in queue})
 
     def test_answer_revalidation_rejects_quality_ineligible_fake_retrieval(self) -> None:
         self.sys.ingest_text(

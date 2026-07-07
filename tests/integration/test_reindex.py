@@ -77,14 +77,20 @@ class TestReindexService(unittest.TestCase):
         )
         self.assertEqual(plan.status, "succeeded")
 
-        live = [
+        primary_live = [
             c for c, _v in self.sys.store.iter_items() if c.document_id == "d1" and not c.tombstone
         ]
-        self.assertTrue(live)
+        self.assertEqual(primary_live, [])
+        quarantined = [
+            c
+            for c, _v in self.sys.store.iter_quarantine_items()
+            if c.document_id == "d1" and not c.tombstone
+        ]
+        self.assertTrue(quarantined)
         self.assertTrue(
             all(
                 c.metadata[EXTRACTION_QUALITY_STATUS_KEY] == QUALITY_STATUS_REVIEW_REQUIRED
-                for c in live
+                for c in quarantined
             )
         )
         results = self.sys.search(self.alice, "valve color line A")

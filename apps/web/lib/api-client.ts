@@ -893,6 +893,23 @@ export interface ExtractionReviewItem {
     reason?: string;
     signals?: string[];
   }>;
+  provider_details?: Array<{
+    provider?: string;
+    provider_version?: string;
+    model_versions?: Record<string, string>;
+    config_hash?: string;
+    status?: string;
+  }>;
+  block_provider_details?: Array<{
+    block_id?: string;
+    provider?: string;
+    provider_version?: string;
+    model_version?: string;
+    method?: string;
+    route?: string;
+    prompt_version?: string;
+    generation_config?: Record<string, unknown>;
+  }>;
 }
 
 export interface ExtractionReviewQueueResponse {

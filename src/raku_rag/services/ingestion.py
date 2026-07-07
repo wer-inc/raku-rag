@@ -26,6 +26,8 @@ from raku_rag.services.ingestion_quality import (
     EXTRACTION_QUALITY_STATUS_KEY,
     RETRIEVAL_BLOCKING_QUALITY_STATUSES,
     classify_text_extraction_quality,
+    purge_quality_partitioned_document,
+    store_quality_partitioned_chunks,
 )
 from raku_rag.services.structured_tables import (
     STRUCTURED_TABLE_COUNT_KEY,
@@ -218,8 +220,9 @@ class IngestionService:
                     text, raw_size=len(raw), content_type=content_type
                 )
 
-                # Replace old version: purge prior chunks for this document (FR-005/SC-007)
-                self._store.purge(tenant_id, document_id)
+                # Replace old version: purge prior primary/quarantine chunks for this document
+                # (FR-005/SC-007 + ADR-018 §8.5).
+                purge_quality_partitioned_document(self._store, tenant_id, document_id)
 
                 chunks: list[Chunk] = []
                 for text_piece, heading, position, offset_span in pieces:
@@ -258,7 +261,9 @@ class IngestionService:
                         )
                     )
                 vectors = self._embedder.embed([c.text for c in chunks]) if chunks else []
-                self._store.upsert(list(zip(chunks, vectors)))
+                _, quarantine_count = store_quality_partitioned_chunks(
+                    self._store, list(zip(chunks, vectors))
+                )
 
                 metadata = dict(existing.metadata) if existing else {}
                 metadata.update(
@@ -298,8 +303,8 @@ class IngestionService:
                 review_status = str(quality_metadata.get(EXTRACTION_QUALITY_STATUS_KEY) or "")
                 if review_status in RETRIEVAL_BLOCKING_QUALITY_STATUSES:
                     # ADR §12.1: a quarantined extraction is a review-queue producer, not a silent
-                    # drop. The queue itself is projected from the stored metadata
-                    # (ingestion_quality.extraction_review_items); here we make the routing observable.
+                    # drop. The queue itself is projected from the quarantine store; here we make the
+                    # routing observable.
                     log(
                         "ingestion.quality_review_required",
                         correlation_id=cid,
@@ -307,6 +312,7 @@ class IngestionService:
                         document_id=document_id,
                         status=review_status,
                         reasons=list(quality_metadata.get(EXTRACTION_QUALITY_REASONS_KEY, ())),
+                        quarantined_chunk_count=quarantine_count,
                     )
                     if self._metrics:
                         self._metrics.observe(
