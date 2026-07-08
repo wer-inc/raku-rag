@@ -15,6 +15,18 @@ ENV PYTHONUNBUFFERED=1 \
 RUN pip install --no-cache-dir \
       "psycopg[binary]>=3" boto3 "Pillow>=10" "pypdfium2>=4" python-docx==1.1.2 openpyxl==3.1.5
 
+# ADR-018 opt-in (CDK passes INSTALL_DOCLING=1 only with `--context structuredIngest=true`): bake
+# Docling (torch CPU wheels — the +cpu local tag outranks the CUDA wheel on PyPI, keeping the image
+# CPU-only) plus the layout/TableFormer weights into the image, so the structured pipeline never
+# downloads models at runtime. DOCLING_ARTIFACTS_PATH is read by docling's settings; with it set,
+# docling loads models from the baked directory and never reaches for Hugging Face.
+ARG INSTALL_DOCLING=0
+ENV DOCLING_ARTIFACTS_PATH=/opt/docling-models
+RUN if [ "${INSTALL_DOCLING}" = "1" ]; then \
+      pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu "docling>=2,<3" \
+      && docling-tools models download -o "${DOCLING_ARTIFACTS_PATH}" layout tableformer tableformerv2; \
+    fi
+
 COPY pyproject.toml ./
 COPY src/ ./src/
 COPY workers/ ./workers/

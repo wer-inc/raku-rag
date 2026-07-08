@@ -71,6 +71,7 @@ git rev-parse origin/develop
 | domain_name | 空（まずHTTPで疎通／後でドメイン追加） |
 | run_migrate_seed | ✅（スキーマ＋デモKB投入まで自動） |
 | run_live_smoke | 初回はOFF。Environment secrets/vars を入れた後にON |
+| structured_ingest | `off`（既定＝従来パイプライン）。`docling` で ADR-018 の Docling-first 品質ゲート取り込みを有効化（worker/answer イメージに Docling+モデルを焼き込み、両タスクを 1vCPU/4GB に増強 ≒ +$60〜70/月・ビルド時間も増）。`docling+bedrock-vision` は難ページの VLM draft（`draft_visual`・HITL承認必須）＋手書き/印鑑検出も Bedrock Claude vision で有効化（`RAKU_ALLOW_CLOUD_EGRESS=1`、テナント provider policy でさらにゲート） |
 | expected_sha | deploy したい 40 文字 commit SHA（特に `stg` / `develop` は指定推奨） |
 | **dry_run** | **まず `true`**（synthのみ・無変更で配線確認）→ OKなら `false` で本番実行 |
 

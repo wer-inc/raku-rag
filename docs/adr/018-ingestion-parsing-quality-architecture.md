@@ -1573,3 +1573,15 @@ prompt context を reviewer が確認できる。
 ゲート・mock テストは実装済み；Bedrock/Google/Azure の creds を与えれば即動作）。(1)(2) は ADR 自身が
 opt-in（§13.1）/ Open Question（§20）として扱う項目。それ以外の設計項目は実装・検証済み（2026-07-07:
 Tier A GREEN / separation OK / full suite GREEN 1948 tests）。
+
+**2026-07-08 追補 — §13.1/§13.2 デプロイ有効化経路を実装**: それまで「コード完了・既定 OFF」だった構造化
+パイプラインに、AWS デプロイでの opt-in 経路が無かった（`RAKU_STRUCTURED_INGEST` を CDK/CI のどこも設定して
+おらず、stg は常に旧パイプライン）。deploy workflow 入力 `structured_ingest`（`off`/`docling`/
+`docling+bedrock-vision`、既定 `off`）→ CDK context `structuredIngest`/`ingestVision` → (a) worker +
+answer-service へ `RAKU_STRUCTURED_INGEST=1` 注入、(b) 両イメージを `INSTALL_DOCLING=1` でビルド（Docling
+torch-CPU ＋ layout/TableFormer モデルを `DOCLING_ARTIFACTS_PATH=/opt/docling-models` に焼き込み、ランタイム
+モデルDLなし）、(c) 両タスクを 1vCPU/4GB へ増強、(d) `bedrock-vision` 選択時は `RAKU_VLM_DRAFT_PROVIDER=
+bedrock` / `RAKU_VISUAL_ARTIFACT_DETECTOR=bedrock` / `RAKU_ALLOW_CLOUD_EGRESS=1` も注入（テナント provider
+policy ゲートは §19 どおり呼び出し直前に別途評価）。既定 OFF の synth はドリフトなし（env 注入なし・
+256/512 サイズ維持・`INSTALL_DOCLING=0`）を synth 実測で確認。これにより残タスクは「実際に ON にして
+デプロイする運用判断＋実測」（§OQ#2 閾値・vision live 検証）のみになった。

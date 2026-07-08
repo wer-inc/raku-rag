@@ -57,6 +57,35 @@ export class RakuRagStack extends cdk.Stack {
     const minimalSpec =
       minimalSpecCtx === "true" || (minimalSpecCtx !== "false" && !isProd);
     const deployLangfuse = !minimalSpec;
+
+    // ADR-018 structured ingestion — default OFF (legacy CompositeParser path, no image/size change).
+    // `--context structuredIngest=true` turns on the Docling-first quality-gated pipeline
+    // (RAKU_STRUCTURED_INGEST=1) on both ingestion-capable services — the answer-service (connector
+    // sync / upload sink) and the SQS worker — and bakes Docling + its model weights into their
+    // images via the INSTALL_DOCLING build arg (see the two Dockerfiles).
+    const structuredIngest =
+      String(this.node.tryGetContext("structuredIngest") ?? "false") === "true";
+    const structuredIngestEnvironment: Record<string, string> = structuredIngest
+      ? { RAKU_STRUCTURED_INGEST: "1" }
+      : {};
+    // ADR-018 §10/§8.4 vision adapters — default none. `--context ingestVision=bedrock` routes
+    // difficult pages (drawing/handwriting/seal/low-confidence) through the Bedrock Claude-vision
+    // VLM draft (output stays `draft_visual` until a human approves) and the visual-artifact
+    // detector. RAKU_ALLOW_CLOUD_EGRESS is only the §19 environment backstop — the production
+    // structured path additionally evaluates the per-tenant provider policy before every cloud
+    // call. IAM InvokeModel is already granted to both task roles.
+    const ingestVision = String(this.node.tryGetContext("ingestVision") ?? "none");
+    if (!["none", "bedrock"].includes(ingestVision)) {
+      throw new Error(`unsupported ingestVision context: ${ingestVision}`);
+    }
+    const ingestVisionEnvironment: Record<string, string> =
+      ingestVision === "bedrock"
+        ? {
+            RAKU_VLM_DRAFT_PROVIDER: "bedrock",
+            RAKU_VISUAL_ARTIFACT_DETECTOR: "bedrock",
+            RAKU_ALLOW_CLOUD_EGRESS: "1"
+          }
+        : {};
     // Embedding provider — default is the offline hashing embedder (vector(256), zero cost). Pass
     // `--context embeddingProvider=openai` to switch the answer-service + worker to OpenAI
     // text-embedding-3-small at 256 dims (Matryoshka `dimensions`), which fits the existing
@@ -239,11 +268,22 @@ export class RakuRagStack extends cdk.Stack {
     const basicAuthRealm = String(this.node.tryGetContext("basicAuthRealm") ?? "Raku RAG").trim();
     const enablePresignedUpload = authMode === "cognito" || authMode === "dev";
     const enableInlineUploadSink = authMode === "dev";
+    // ADR-018: Docling's torch-CPU layout/table inference does not fit the 512 MiB minimalSpec
+    // task — with structured ingestion on, the two ingestion-capable services get 1 vCPU / 4 GB.
+    const doclingSize = { cpu: 1024, memoryLimitMiB: 4096 };
     const fargateSize = {
       web: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 1024, memoryLimitMiB: 2048 },
       api: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 1024, memoryLimitMiB: 2048 },
-      worker: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 512, memoryLimitMiB: 1024 },
-      answer: minimalSpec ? { cpu: 256, memoryLimitMiB: 512 } : { cpu: 1024, memoryLimitMiB: 2048 }
+      worker: structuredIngest
+        ? doclingSize
+        : minimalSpec
+          ? { cpu: 256, memoryLimitMiB: 512 }
+          : { cpu: 512, memoryLimitMiB: 1024 },
+      answer: structuredIngest
+        ? doclingSize
+        : minimalSpec
+          ? { cpu: 256, memoryLimitMiB: 512 }
+          : { cpu: 1024, memoryLimitMiB: 2048 }
     };
     const containerLogRetention = minimalSpec ? logs.RetentionDays.ONE_WEEK : logs.RetentionDays.ONE_MONTH;
 
@@ -886,7 +926,10 @@ export class RakuRagStack extends cdk.Stack {
     this.grantBedrockInvoke(workerTask.taskRole);
     this.grantTextractDocumentAnalysis(workerTask.taskRole);
     workerTask.addContainer("PythonIngestWorkerContainer", {
-      image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "workers/ingest/Dockerfile" }),
+      image: ecs.ContainerImage.fromAsset(REPO_ROOT, {
+        file: "workers/ingest/Dockerfile",
+        buildArgs: { INSTALL_DOCLING: structuredIngest ? "1" : "0" }
+      }),
       entryPoint: ["/bin/sh", "-c"],
       command: [`POSTGRES_URL="${PG_URL_EXPR}" exec python -m workers.ingest.worker --serve`],
       essential: true,
@@ -900,6 +943,8 @@ export class RakuRagStack extends cdk.Stack {
         ...visualProviderEnvironment,
         ...visualStorageEnvironment,
         ...ingestConnectorEnvironment,
+        ...structuredIngestEnvironment,
+        ...ingestVisionEnvironment,
         STAGE_NAME: props.stageName,
         RAKU_WORKER_BACKEND: "postgres",
         DOCUMENT_BUCKET: documentBucket.bucketName,
@@ -977,7 +1022,10 @@ export class RakuRagStack extends cdk.Stack {
     );
 
     const answerContainer = answerTask.addContainer("AnswerServiceContainer", {
-      image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "apps/answer-service/Dockerfile" }),
+      image: ecs.ContainerImage.fromAsset(REPO_ROOT, {
+        file: "apps/answer-service/Dockerfile",
+        buildArgs: { INSTALL_DOCLING: structuredIngest ? "1" : "0" }
+      }),
       entryPoint: ["/bin/sh", "-c"],
       command: [`POSTGRES_URL="${PG_URL_EXPR}" exec python apps/answer-service/server.py --port 8088`],
       essential: true,
@@ -1002,6 +1050,8 @@ export class RakuRagStack extends cdk.Stack {
         ...visualProviderEnvironment,
         ...visualStorageEnvironment,
         ...ingestConnectorEnvironment,
+        ...structuredIngestEnvironment,
+        ...ingestVisionEnvironment,
         STAGE_NAME: props.stageName,
         // Listen on all interfaces so VPC-internal callers can reach the task ENI.
         ANSWER_SERVICE_HOST: "0.0.0.0",
