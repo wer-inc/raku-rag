@@ -58,6 +58,11 @@ on:
         type: choice
         options: [extractive, bedrock, openai, gemini]
         default: extractive
+      structured_ingest:
+        description: ADR-018 ingestion (docling = Docling-first quality-gated pipeline, bakes Docling into the worker/answer images and bumps their Fargate size; +bedrock-vision also drafts difficult pages via Claude vision, HITL-gated)
+        type: choice
+        options: ["off", "docling", "docling+bedrock-vision"]
+        default: "off"
       visual_provider_profile:
         description: Visual/PDF providers (promotion remains off unless CDK context explicitly enables it)
         type: choice
@@ -135,6 +140,7 @@ jobs:
       BASIC_AUTH_USER: ${{ inputs.basic_auth_user }}
       EMBEDDING_PROVIDER: ${{ inputs.embedding_provider }}
       ANSWER_LLM: ${{ inputs.answer_llm }}
+      STRUCTURED_INGEST: ${{ inputs.structured_ingest }}
       VISUAL_PROVIDER_PROFILE: ${{ inputs.visual_provider_profile }}
       VISUAL_EVIDENCE_PROMOTION: ${{ inputs.visual_evidence_promotion }}
       VISUAL_VERIFIER_MODELS: ${{ inputs.visual_verifier_models }}
@@ -274,6 +280,12 @@ jobs:
           if [ "${BASIC_AUTH}" = "true" ]; then CTX="${CTX} --context basicAuthUser=${BASIC_AUTH_USER}"; fi
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
           if [ "${ANSWER_LLM}" != "extractive" ]; then CTX="${CTX} --context answerLlm=${ANSWER_LLM}"; fi
+          if [ "${STRUCTURED_INGEST}" = "docling" ] || [ "${STRUCTURED_INGEST}" = "docling+bedrock-vision" ]; then
+            CTX="${CTX} --context structuredIngest=true"
+          fi
+          if [ "${STRUCTURED_INGEST}" = "docling+bedrock-vision" ]; then
+            CTX="${CTX} --context ingestVision=bedrock"
+          fi
           if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
             CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock --context textractRegion=${TEXTRACT_REGION} --context ocrRegion=${TEXTRACT_REGION}"
           fi
@@ -318,6 +330,12 @@ jobs:
           if [ "${BASIC_AUTH}" = "true" ]; then CTX="${CTX} --context basicAuthUser=${BASIC_AUTH_USER}"; fi
           if [ "${EMBEDDING_PROVIDER}" = "openai" ]; then CTX="${CTX} --context embeddingProvider=openai"; fi
           if [ "${ANSWER_LLM}" != "extractive" ]; then CTX="${CTX} --context answerLlm=${ANSWER_LLM}"; fi
+          if [ "${STRUCTURED_INGEST}" = "docling" ] || [ "${STRUCTURED_INGEST}" = "docling+bedrock-vision" ]; then
+            CTX="${CTX} --context structuredIngest=true"
+          fi
+          if [ "${STRUCTURED_INGEST}" = "docling+bedrock-vision" ]; then
+            CTX="${CTX} --context ingestVision=bedrock"
+          fi
           if [ "${VISUAL_PROVIDER_PROFILE}" = "aws-textract-bedrock" ]; then
             CTX="${CTX} --context ocrProvider=aws_textract --context layoutProvider=aws_textract --context structuredProvider=aws_textract --context captioningProvider=bedrock --context vlmProvider=bedrock --context textractRegion=${TEXTRACT_REGION} --context ocrRegion=${TEXTRACT_REGION}"
           fi

@@ -27,6 +27,22 @@ npx cdk deploy --context stage=prod --context minimalSpec=true
 npx cdk deploy --context stage=prod
 ```
 
+## ADR-018 構造化取り込み（`structuredIngest` / `ingestVision`）— 既定 OFF
+
+`--context structuredIngest=true` で Docling-first 品質ゲート取り込み（ADR-018）を有効化:
+
+- worker / answer-service に `RAKU_STRUCTURED_INGEST=1` を注入（コネクタ同期・アップロード取り込みの両経路）。
+- 両イメージを `INSTALL_DOCLING=1` でビルド（Docling torch-CPU ＋ layout/TableFormer モデルを
+  `/opt/docling-models` に焼き込み。ランタイムのモデルDLなし。イメージ約+2GB・ビルド時間増）。
+- 両タスクを 1vCPU/4GB に増強（minimalSpec の 0.25vCPU/512MB では torch 推論が載らないため。
+  概算 +$60〜70/月）。
+
+さらに `--context ingestVision=bedrock` を足すと、難ページ（図面/手書き/印鑑/低信頼）を Bedrock
+Claude vision で処理: VLM draft は常に `draft_visual`（/reviews で人手承認するまで通常回答に不使用）、
+手書き/印鑑検出は review 送りを増やす方向にのみ作用。`RAKU_ALLOW_CLOUD_EGRESS=1`（§19 の環境
+バックストップ）を注入するが、本番構造化経路は呼び出し直前にテナント provider policy でもゲートする。
+`ingestVision` は `structuredIngest=true` と併用（構造化パイプライン内の seam のため単独では無意味）。
+
 ```
 [ユーザ/Vercel web] → ALB+WAF → ECS:NestJS API ──(ANSWER_SERVICE_URL, Cloud Map)──→ ECS:answer-service(Python)
                                       │  Cognito / Secrets(JWT+内部認証) / Bedrock IAM        └─ Aurora pgvector(RLS)
