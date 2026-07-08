@@ -47,9 +47,7 @@ class DoclingSupportTest(unittest.TestCase):
         p = DoclingStructuredParser()
         self.assertTrue(p.supports("application/pdf"))
         self.assertTrue(
-            p.supports(
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
+            p.supports("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         )
         self.assertTrue(p.supports("text/html"))
         self.assertTrue(p.supports("image/png"))

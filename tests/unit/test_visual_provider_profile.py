@@ -342,7 +342,9 @@ class VisualProviderProfileTest(unittest.TestCase):
             {"doc_pdf:visual:1:0", "doc_pdf:visual:2:0"},
         )
         self.assertTrue(
-            all(chunk.metadata["extraction_quality_status"] == "review_required" for chunk in chunks)
+            all(
+                chunk.metadata["extraction_quality_status"] == "review_required" for chunk in chunks
+            )
         )
         self.assertTrue(all(chunk.metadata["pdf_page_fallback"] for chunk in chunks))
         self.assertIn("VIS-PDF-FALLBACK", chunks[0].text)

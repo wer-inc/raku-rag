@@ -18,7 +18,10 @@ from raku_rag.services.ingestion_quality import (
     QUALITY_STATUS_REVIEW_REQUIRED,
     is_high_risk_citation_quality_eligible,
 )
-from raku_rag.services.structured_ingestion import StructuredIngestionService, build_structured_parser
+from raku_rag.services.structured_ingestion import (
+    StructuredIngestionService,
+    build_structured_parser,
+)
 from tests.helpers import claims
 
 T = "tenant_s"

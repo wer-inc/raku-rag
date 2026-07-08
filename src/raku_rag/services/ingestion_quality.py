@@ -194,7 +194,9 @@ def with_quality_metadata(
     return merged
 
 
-def store_quality_partitioned_chunks(store: object, pairs: Sequence[tuple[object, object]]) -> tuple[int, int]:
+def store_quality_partitioned_chunks(
+    store: object, pairs: Sequence[tuple[object, object]]
+) -> tuple[int, int]:
     """Write chunks to the primary index or quarantine store according to extraction quality.
 
     ADR-018 requires ``review_required`` / ``rejected`` / ``draft_visual`` output to stay out of the

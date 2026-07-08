@@ -205,9 +205,7 @@ class MvpSystem:
                 "suggested_action": item.suggested_action,
                 "route_trace": [dict(step) for step in item.route_trace],
                 "provider_details": [dict(detail) for detail in item.provider_details],
-                "block_provider_details": [
-                    dict(detail) for detail in item.block_provider_details
-                ],
+                "block_provider_details": [dict(detail) for detail in item.block_provider_details],
             }
             for item in extraction_review_queue(self.store, tenant_id=tenant_id)
         ]
