@@ -75,6 +75,27 @@ git rev-parse origin/develop
 | expected_sha | deploy したい 40 文字 commit SHA（特に `stg` / `develop` は指定推奨） |
 | **dry_run** | **まず `true`**（synthのみ・無変更で配線確認）→ OKなら `false` で本番実行 |
 
+### stg の既知良好プロファイル（Preflight guard で強制）
+
+stg の能力は context 駆動で、**入力を省略するとその能力ごと削除される**（CloudFront・構造化取り込み
++タスク増強・Connect アダプタ・ガードレール）。事故防止のため、`stage=stg` では Preflight が以下との
+一致を検査し、外れていれば deploy 前に失敗する（意図的なダウングレードは `allow_stg_downgrade=true`）:
+
+```bash
+gh workflow run deploy.yml \
+  -f stage=stg -f frontend=aws-nextjs -f auth_mode=cognito \
+  -f embedding_provider=openai -f answer_llm=bedrock \
+  -f visual_provider_profile=aws-textract-bedrock \
+  -f bedrock_guardrail_id=uv9pc44guprp -f bedrock_guardrail_version=1 \
+  -f https_front=cloudfront \
+  -f structured_ingest=docling+bedrock-vision \
+  -f phone_telephony=connect \
+  -f expected_sha=$(git rev-parse origin/develop) \
+  -f dry_run=false
+```
+
+（`connect_instance_arn` は stg インスタンスが入力の既定値。）
+
 完了後、ワークフローの **Summary に deploy commit と公開URL（`http://<ALB>`）** が出ます。
 ブラウザで開いて回答が返ればOK。
 
@@ -128,7 +149,9 @@ Web Speech API のマイク（/phone 通話シミュレータ）などブラウ�
 公開ALBの前に CloudFront が入り、`https://xxx.cloudfront.net` で使える（ドメイン/ACM不要。
 `domain_name` とは排他）。URL はスタック出力 **HttpsFrontUrl**（deploy の Summary にも出る）。
 Cognito のコールバック/ログアウトURLには CloudFront ドメインが既存URLに追加で自動登録される。
-既存の `http://<ALB>` 直アクセスは開いたまま（CloudFront 経由に絞るのは今後の課題）。
+`https_front=cloudfront` のとき、公開ALBの ingress は CloudFront の origin-facing マネージド
+プレフィックスリストに限定される（`http://<ALB>` 直アクセスはタイムアウト）。直 ALB での
+デバッグが必要なときだけ `--context albPublicIngress=true` で開放できる。
 
 ## つまずいたら
 各ステップのログ（特に `cdk deploy` / `migrate-seed`）を貼ってください。よくある詰まり: OIDCロールのsub条件

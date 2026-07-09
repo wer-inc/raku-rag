@@ -1,0 +1,31 @@
+# The regular deploy-checks matrix builds every image with INSTALL_DOCLING=0 (the default), so the
+# Docling layer — torch CPU wheels, model download, native libs, and the build-time conversion
+# smoke — is never exercised by PR CI and would break only at deploy time. This workflow builds the
+# worker image with the layer ON whenever something that feeds it changes. The answer-service
+# Dockerfile carries the identical layer, so building one image covers both.
+name: docling-image-check
+
+on:
+  pull_request:
+    paths:
+      - "workers/ingest/Dockerfile"
+      - "apps/answer-service/Dockerfile"
+      - "infra/docker/**"
+      - ".github/workflows/docling-image-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-docling-image:
+    name: Worker image with INSTALL_DOCLING=1 (build smoke converts a real PDF)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build worker image with the Docling layer enabled
+        run: |
+          docker build -f workers/ingest/Dockerfile \
+            --build-arg INSTALL_DOCLING=1 \
+            -t raku-rag-worker-docling .

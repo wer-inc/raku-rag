@@ -37,13 +37,18 @@ _STRUCTURED_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("latest_value", re.compile(r"\b(latest|newest|current value|last\s+\d+\s+days)\b", re.I)),
     (
         "numeric_comparison",
-        re.compile(r"([<>]=?|=)\s*\d|\b(greater|less|above|below|between)\b", re.I),
+        # Bare "=" is NOT a comparison trigger: spec-style prose quotes parameters as assignments
+        # ("AQL 1.0 で n=125、Ac=3") and must stay on the RAG route; the tool only implements </>
+        # filtering anyway.
+        re.compile(r"[<>]=?\s*\d|\b(greater|less|above|below|between)\b", re.I),
     ),
     (
         "period_filter",
         re.compile(r"\b(from|between|during|since|until)\s+\d{4}(?:[-/]\d{1,2})?", re.I),
     ),
-    ("aggregation_ja", re.compile(r"(合計|平均|件数|集計|中央値|何件|いくつ)")),
+    # 「いくつ」 is generic value-lookup Japanese ("AQL はいくつですか" = "what is the AQL?"), not an
+    # aggregation request — routing it here starves RAG of answerable lookups.
+    ("aggregation_ja", re.compile(r"(合計|平均|件数|集計|中央値|何件)")),
     ("ranking_ja", re.compile(r"(ランキング|上位|下位|最大|最小|最も多い|最も少ない)")),
     ("latest_ja", re.compile(r"(最新値|最新の値|直近|現在値)")),
     ("numeric_comparison_ja", re.compile(r"\d+\s*(以上|以下|超|未満|より大きい|より小さい)")),

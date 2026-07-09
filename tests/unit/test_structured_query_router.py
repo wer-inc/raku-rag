@@ -35,6 +35,29 @@ class TestStructuredQueryRouter(unittest.TestCase):
         self.assertEqual(decision.route, "refused_structured_tool_required")
         self.assertEqual(decision.reason, "period_filter")
 
+    def test_spec_style_assignments_stay_on_rag_route(self) -> None:
+        # "n=125" / "Ac=3" quote sampling-plan parameters; they are not comparison filters. The live
+        # AQL demo query was mis-routed to the structured tool and answered from an unrelated table.
+        queries = (
+            "出荷検査の抜取は AQL 1.0 で n=125、合格判定個数 Ac=3 でよいか。"
+            "軸受ハウジング A-200 のロット 1201〜3200 個の判定基準を教えて",
+            "出荷検査の抜取検査のAQLはいくつですか?",
+        )
+        for query in queries:
+            with self.subTest(query=query):
+                self.assertEqual(classify_structured_query(query).route, "rag")
+
+    def test_real_comparisons_and_counts_still_route_to_the_tool(self) -> None:
+        for query, reason in (
+            ("show parts where temperature > 100", "numeric_comparison"),
+            ("不良率 5 以上の設備", "numeric_comparison_ja"),
+            ("直近1ヶ月の不具合は何件?", "aggregation_ja"),
+        ):
+            with self.subTest(query=query):
+                decision = classify_structured_query(query)
+                self.assertEqual(decision.route, "refused_structured_tool_required")
+                self.assertEqual(decision.reason, reason)
+
     def test_answer_routes_structured_query_away_from_vector_answering(self) -> None:
         sys = fresh()
         sys.ingest_text(
@@ -105,6 +128,32 @@ class TestStructuredQueryRouter(unittest.TestCase):
         self.assertEqual(ans.status, "ok")
         self.assertEqual(ans.route, "structured_tool")
         self.assertEqual(ans.text, "Total defect count: 30")
+
+    def test_tool_refuses_numeric_filter_over_unrelated_table(self) -> None:
+        # Fabrication guard: a comparison query must not be answered from a table none of whose
+        # columns the query references (the tool used to fall back to an arbitrary numeric column
+        # and cite an unrelated spreadsheet as evidence).
+        sys = fresh()
+        sys.ingestion.ingest(
+            tenant_id=T,
+            collection_id="hr",
+            source_id="skills-csv",
+            document_id="skills",
+            raw=b"skill,years\nwelding,12\ninspection,3\n",
+            content_type="text/csv",
+        )
+        sys.grant(T, ScopeType.COLLECTION, "hr", SubjectType.USER, "alice")
+
+        ans = sys.answer(
+            claims(T, "alice"),
+            "show parts where temperature > 5",
+            collection_id="hr",
+        )
+
+        self.assertEqual(ans.status, "insufficient_evidence")
+        self.assertEqual(ans.route, "structured_tool")
+        self.assertIsNone(ans.text)
+        self.assertEqual(ans.citations, ())
 
     def test_structured_tool_enforces_acl(self) -> None:
         sys = fresh()

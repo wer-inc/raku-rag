@@ -8,6 +8,7 @@ hands the raw provider output to the sink.
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from raku_rag.app import MvpSystem
 from raku_rag.domain.models import QueryProfile, ScopeType, SubjectType
@@ -42,6 +43,17 @@ class StructuredIngestionTest(unittest.TestCase):
             tracer=self.sys.tracer,
             raw_sink=lambda doc_id, raw: self.raw_captured.__setitem__(doc_id, raw),
         )
+
+    def test_expected_language_is_env_configurable(self) -> None:
+        # §8.3 language_consistency: a JP deployment turns the gate on with RAKU_EXPECTED_LANGUAGE=ja
+        # (no code change); unset keeps it off so English tenants are unaffected.
+        with mock.patch.dict("os.environ", {"RAKU_EXPECTED_LANGUAGE": "ja"}):
+            parser = build_structured_parser()
+        docling = parser._parsers[0]  # type: ignore[attr-defined]
+        self.assertIsInstance(docling, DoclingStructuredParser)
+        self.assertEqual(docling._expected_language, "ja")
+        default_parser = build_structured_parser()
+        self.assertEqual(default_parser._parsers[0]._expected_language, "")  # type: ignore[attr-defined]
 
     def test_default_parser_routes_docx_to_docling_first(self) -> None:
         parser = build_structured_parser()

@@ -35,7 +35,7 @@ RUN if [ "${INSTALL_DOCLING}" = "1" ]; then \
       apt-get update \
       && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libxcb1 \
       && rm -rf /var/lib/apt/lists/* \
-      && pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu "docling>=2,<3" \
+      && pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu "docling==2.110.0" \
       && docling-tools models download -o "${DOCLING_ARTIFACTS_PATH}" layout tableformer tableformerv2 \
       && python -c "from docling.datamodel.base_models import InputFormat; from docling.datamodel.pipeline_options import PdfPipelineOptions; from docling.document_converter import DocumentConverter, PdfFormatOption; o=PdfPipelineOptions(); o.do_ocr=False; o.do_table_structure=True; c=DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=o)}); r=c.convert('/tmp/docling-smoke.pdf'); t=r.document.export_to_markdown(); assert 'DOCLINGSMOKE' in t.upper(), 'text not extracted: '+t[:200]; print('docling build smoke OK:', t[:80])"; \
     fi && rm -f /tmp/docling-smoke.pdf

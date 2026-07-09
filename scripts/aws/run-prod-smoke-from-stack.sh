@@ -37,12 +37,20 @@ out() {
 }
 
 if [ -z "${RAKU_PROD_BASE_URL:-}" ]; then
-  ALB_DNS="$(out ApiLoadBalancerDnsName)"
-  if [ -z "$ALB_DNS" ] || [ "$ALB_DNS" = "None" ]; then
-    echo "[run-prod-smoke] ERROR: could not read ApiLoadBalancerDnsName from $STACK." >&2
-    exit 2
+  # Prefer the CloudFront entry point when the stack has one: with httpsFront=cloudfront the ALB
+  # listener is locked to CloudFront's origin-facing prefix list, so a direct http://<ALB> probe
+  # times out by design.
+  CF_URL="$(out HttpsFrontUrl || true)"
+  if [ -n "$CF_URL" ] && [ "$CF_URL" != "None" ]; then
+    export RAKU_PROD_BASE_URL="${CF_URL%/}/v1"
+  else
+    ALB_DNS="$(out ApiLoadBalancerDnsName)"
+    if [ -z "$ALB_DNS" ] || [ "$ALB_DNS" = "None" ]; then
+      echo "[run-prod-smoke] ERROR: could not read ApiLoadBalancerDnsName from $STACK." >&2
+      exit 2
+    fi
+    export RAKU_PROD_BASE_URL="http://${ALB_DNS}/v1"
   fi
-  export RAKU_PROD_BASE_URL="http://${ALB_DNS}/v1"
 fi
 
 echo "[run-prod-smoke] stack=$STACK region=$REGION base=${RAKU_PROD_BASE_URL}"
