@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 
 from raku_rag.workers.queue.sqs import SqsTaskQueue
 
@@ -14,12 +15,14 @@ class FakeSqsClient:
         self.deleted: list[dict] = []
         self.visibility: list[dict] = []
         self.messages: list[dict] = []
+        self.received: list[dict] = []
 
     def send_message(self, **kwargs):
         self.sent.append(kwargs)
         return {"MessageId": "m1"}
 
     def receive_message(self, **kwargs):
+        self.received.append(kwargs)
         return {"Messages": list(self.messages)}
 
     def delete_message(self, **kwargs):
@@ -30,6 +33,18 @@ class FakeSqsClient:
 
 
 class TestSqsTaskQueue(unittest.TestCase):
+    def test_visibility_window_fits_long_parses_and_is_env_tunable(self) -> None:
+        # One receive window must fit a full Docling parse (~10s/page); the old 30s default
+        # re-delivered any multi-page PDF to a second worker mid-processing.
+        client = FakeSqsClient()
+        queue = SqsTaskQueue("http://sqs/raku-ingest", client=client)
+        queue.receive()
+        self.assertEqual(client.received[0]["VisibilityTimeout"], 900)
+
+        with mock.patch.dict("os.environ", {"SQS_VISIBILITY_TIMEOUT": "120"}):
+            tuned = SqsTaskQueue("http://sqs/raku-ingest", client=client)
+        self.assertEqual(tuned.visibility_timeout, 120)
+
     def test_send_receive_ack_and_retry_failure(self) -> None:
         client = FakeSqsClient()
         queue = SqsTaskQueue("http://sqs/raku-ingest", client=client)

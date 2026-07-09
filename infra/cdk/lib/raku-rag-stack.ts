@@ -262,6 +262,18 @@ export class RakuRagStack extends cdk.Stack {
         "httpsFront=cloudfront is for the no-custom-domain case; domainName already provides HTTPS at the ALB"
       );
     }
+    // With CloudFront in front, the ALB must not stay reachable from the whole internet on plain
+    // HTTP — its listener ingress is restricted to CloudFront's origin-facing AWS-managed prefix
+    // list. `--context albPublicIngress=true` restores 0.0.0.0/0 (e.g. for direct-ALB debugging).
+    // The default id is `com.amazonaws.global.cloudfront.origin-facing` as resolved in
+    // ap-northeast-1; other regions pass `--context cloudfrontOriginPrefixListId=pl-…`
+    // (aws ec2 describe-managed-prefix-lists --filters Name=prefix-list-name,Values=com.amazonaws.global.cloudfront.origin-facing).
+    const albPublicIngress =
+      String(this.node.tryGetContext("albPublicIngress") ?? "false") === "true";
+    const lockAlbToCloudFront = useCloudFrontHttpsFront && !albPublicIngress;
+    const cloudfrontOriginPrefixListId = String(
+      this.node.tryGetContext("cloudfrontOriginPrefixListId") ?? "pl-58a04531"
+    );
     const authMode = String(this.node.tryGetContext("authMode") ?? (isProd ? "cognito" : "dev"));
     const manageCognitoGroups = String(this.node.tryGetContext("manageCognitoGroups") ?? "false").toLowerCase() === "true";
     const basicAuthUser = String(this.node.tryGetContext("basicAuthUser") ?? "").trim();
@@ -357,7 +369,10 @@ export class RakuRagStack extends cdk.Stack {
       queueName: `${servicePrefix}-ingestion`,
       encryption: sqs.QueueEncryption.KMS,
       encryptionMasterKey: dataKey,
-      visibilityTimeout: cdk.Duration.minutes(5),
+      // Must cover one full ingest job (Docling ~10s/page on 1 vCPU) — the worker also passes the
+      // same window per-receive (SQS_VISIBILITY_TIMEOUT); the old 30s/5min windows re-delivered
+      // long parses mid-processing.
+      visibilityTimeout: cdk.Duration.minutes(15),
       retentionPeriod: cdk.Duration.days(4),
       deadLetterQueue: {
         queue: deadLetterQueue,
@@ -718,6 +733,9 @@ export class RakuRagStack extends cdk.Stack {
           securityGroups: [ecsSecurityGroup],
           taskSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
           healthCheckGracePeriod: cdk.Duration.seconds(120),
+          // When the CloudFront front locks the ALB, do not open the listener to 0.0.0.0/0 —
+          // the prefix-list ingress below is the only path in.
+          openListener: !lockAlbToCloudFront,
           ...(certificate
             ? {
                 protocol: elbv2.ApplicationProtocol.HTTPS,
@@ -769,9 +787,9 @@ export class RakuRagStack extends cdk.Stack {
 
       if (useCloudFrontHttpsFront) {
         // HTTPS without a custom domain: CloudFront terminates TLS on *.cloudfront.net and forwards
-        // EVERYTHING to the ALB over plain HTTP (the ALB keeps its HTTP:80 listener — same shape as
-        // direct access, which stays reachable; restricting the ALB to the CloudFront origin prefix
-        // list is a possible follow-up). ALL_VIEWER forwards the viewer Host header, so the app
+        // EVERYTHING to the ALB over plain HTTP (the ALB keeps its HTTP:80 listener, but its
+        // ingress is locked to CloudFront's origin-facing prefix list — see lockAlbToCloudFront;
+        // `--context albPublicIngress=true` reopens it). ALL_VIEWER forwards the viewer Host header, so the app
         // keeps seeing the browser-facing hostname: the client builds the Cognito redirect_uri from
         // window.location.origin and the presign route self-calls /v1/whoami via x-forwarded-host —
         // both resolve to the CloudFront domain with no extra public-URL env. CACHING_DISABLED
@@ -807,6 +825,13 @@ export class RakuRagStack extends cdk.Stack {
         ];
       }
 
+      if (lockAlbToCloudFront) {
+        webService.loadBalancer.connections.allowFrom(
+          ec2.Peer.prefixList(cloudfrontOriginPrefixListId),
+          ec2.Port.tcp(80),
+          "CloudFront origin-facing ranges only (httpsFront=cloudfront)"
+        );
+      }
       publicAlb = webService.loadBalancer;
       apiTargetGroup = apiTg;
       apiFargateService = apiSvc;
@@ -951,6 +976,8 @@ export class RakuRagStack extends cdk.Stack {
         SQS_QUEUE_URL: ingestionQueue.queueUrl,
         SQS_DLQ_URL: deadLetterQueue.queueUrl,
         SQS_MAX_RECEIVE_COUNT: "5",
+        // Matches the queue's visibilityTimeout above; one window must fit a full Docling parse.
+        SQS_VISIBILITY_TIMEOUT: "900",
         DATABASE_HOST: database.clusterEndpoint.hostname,
         DATABASE_PORT: database.clusterEndpoint.port.toString(),
         DATABASE_NAME: "raku_rag",

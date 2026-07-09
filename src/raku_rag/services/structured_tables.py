@@ -422,9 +422,9 @@ def _latest(query: str, rows: list[_StructuredRow]) -> tuple[str, list[_CellRef]
     if not dated:
         return None
     row = max(dated, key=lambda item: item[1])[0]
-    target_col = _best_column(query, rows, exclude=date_col) or _label_column(
-        rows, exclude=date_col
-    )
+    # Same relevance guard as _best_numeric_column: without a query-referenced target column,
+    # "latest" over an arbitrary visible table invents a fact.
+    target_col = _best_column(query, rows, exclude=date_col, fallback=False)
     if not target_col:
         return None
     text = f"Latest {target_col}: {row.values.get(target_col, '')} ({date_col}: {row.values.get(date_col, '')})"
@@ -519,17 +519,23 @@ def _apply_aggregate(op: str, values: list[float]) -> float:
 
 
 def _best_numeric_column(query: str, rows: list[_StructuredRow]) -> str:
+    # Relevance guard: the value column must actually be referenced by the query (no positional
+    # fallback). Otherwise a numeric/ranking/aggregate intent fabricates answers out of whatever
+    # table happens to be visible — live case: "AQL 1.0 で n=125…" filtered an unrelated skill-sheet
+    # xlsx as "column_3 > 1" and cited it as evidence.
     candidates = [
         column
         for column in _columns(rows)
         if any(_numeric(row.values.get(column, "")) is not None for row in rows)
     ]
-    return _best_named_column(query, candidates)
+    return _best_named_column(query, candidates, fallback=False)
 
 
-def _best_column(query: str, rows: list[_StructuredRow], *, exclude: str = "") -> str:
+def _best_column(
+    query: str, rows: list[_StructuredRow], *, exclude: str = "", fallback: bool = True
+) -> str:
     candidates = [column for column in _columns(rows) if column != exclude]
-    return _best_named_column(query, candidates)
+    return _best_named_column(query, candidates, fallback=fallback)
 
 
 def _best_named_column(query: str, candidates: list[str], *, fallback: bool = True) -> str:

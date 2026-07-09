@@ -400,14 +400,20 @@ class StructuredIngestionService:
 
 
 def build_structured_parser(
-    *, expected_language: str = "", provider_policy_resolver: object | None = None
+    *, expected_language: str | None = None, provider_policy_resolver: object | None = None
 ) -> StructuredParser:
     """Compose the app's structured parser: Docling-first where ADR-018 requires it.
 
     PDF / DOCX / PPTX / images (and HTML, which Docling supports for lightweight verification) go to
     the opt-in DoclingStructuredParser first. Plain text / markdown remain the cheap text parser, and
     CSV / XLSX keep the existing spreadsheet parser so cell anchors remain byte-for-byte compatible.
+
+    ``expected_language`` drives the §8.3 language_consistency gate (a JP deployment sets ``ja`` so
+    a mostly-non-Japanese extraction routes to review). Deployments configure it with
+    ``RAKU_EXPECTED_LANGUAGE``; unset keeps the gate off.
     """
+    if expected_language is None:
+        expected_language = os.environ.get("RAKU_EXPECTED_LANGUAGE", "")
 
     from raku_rag.providers.docling_parser import DoclingStructuredParser
     from raku_rag.providers.structured_parsers import (

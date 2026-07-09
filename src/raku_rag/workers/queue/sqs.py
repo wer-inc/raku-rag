@@ -20,7 +20,12 @@ class SqsTaskQueue:
     dead_letter_queue_url: str = ""
     max_receive_count: int = 5
     wait_time_seconds: int = 1
-    visibility_timeout: int = 30
+    # Per-receive visibility window = the max time ONE ingest job may take before SQS re-delivers
+    # it to another worker mid-processing. Docling PDF extraction measures ~10s/page on a 1-vCPU
+    # Fargate task, so 30s (the old default) re-delivered any 4+ page PDF while it was still being
+    # parsed. Crash recovery latency is the trade-off: a dead worker's message stays invisible for
+    # this long before retry.
+    visibility_timeout: int = 900
     retry_visibility_timeout: int = 5
 
     def __post_init__(self) -> None:
@@ -28,6 +33,9 @@ class SqsTaskQueue:
             self.dead_letter_queue_url = os.environ.get("SQS_DLQ_URL", "")
         self.max_receive_count = int(
             os.environ.get("SQS_MAX_RECEIVE_COUNT", str(self.max_receive_count))
+        )
+        self.visibility_timeout = int(
+            os.environ.get("SQS_VISIBILITY_TIMEOUT", str(self.visibility_timeout))
         )
         if self.client is None:
             try:

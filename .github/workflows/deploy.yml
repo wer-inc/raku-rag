@@ -97,10 +97,10 @@ on:
         options: [none, connect]
         default: none
       connect_instance_arn:
-        description: Amazon Connect instance ARN (scopes the Lambda invoke permission; required when phone_telephony=connect)
+        description: Amazon Connect instance ARN (scopes the Lambda invoke permission; required when phone_telephony=connect; default = the stg instance)
         type: string
         required: false
-        default: ""
+        default: "arn:aws:connect:ap-northeast-1:902353451555:instance/61bbc4a9-04dd-4c82-86f0-8bd8f50e0793"
       https_front:
         description: HTTPS entry point without a custom domain (cloudfront = CloudFront in front of the public ALB; browser mic etc. need a secure context)
         type: choice
@@ -115,6 +115,10 @@ on:
         description: Synth/plan only (no AWS changes)
         type: boolean
         default: true
+      allow_stg_downgrade:
+        description: Bypass the stg profile guard (deliberately deploy stg WITHOUT a known-good capability — CloudFront/structured ingest/Connect/guardrail get REMOVED when their input is omitted)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -151,6 +155,7 @@ jobs:
       CONNECT_INSTANCE_ARN: ${{ inputs.connect_instance_arn }}
       HTTPS_FRONT: ${{ inputs.https_front }}
       EXPECTED_SHA: ${{ inputs.expected_sha }}
+      ALLOW_STG_DOWNGRADE: ${{ inputs.allow_stg_downgrade }}
       # Textract is not available in every AWS region where the app can run (for example Tokyo).
       # Keep the app stack regional, but route Textract OCR/layout calls to a supported region by
       # default. Override with repo/environment Variable TEXTRACT_REGION if residency requires it.
@@ -266,6 +271,44 @@ jobs:
               echo "| subject | ${commit_subject} |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # stg carries live capabilities that are context-driven and get REMOVED when their input is
+      # omitted (CloudFront distro + Cognito URLs, structured ingestion + task sizing, Connect
+      # adapter, output guardrail). Dispatching with GitHub's input defaults therefore silently
+      # downgrades the environment — this guard makes a downgrade an explicit decision.
+      - name: Preflight (stg profile guard)
+        if: inputs.stage == 'stg'
+        run: |
+          set -euo pipefail
+          if [ "${ALLOW_STG_DOWNGRADE}" = "true" ]; then
+            echo "stg profile guard: BYPASSED via allow_stg_downgrade=true"
+            exit 0
+          fi
+          fail=0
+          req() {
+            local label="$1" actual="$2"; shift 2
+            for want in "$@"; do
+              [ "${actual}" = "${want}" ] && return 0
+            done
+            echo "::error::stg profile drift: ${label}='${actual}' (expected one of: $*)"
+            fail=1
+          }
+          req https_front "${HTTPS_FRONT}" cloudfront
+          req structured_ingest "${STRUCTURED_INGEST}" docling docling+bedrock-vision
+          req embedding_provider "${EMBEDDING_PROVIDER}" openai
+          req answer_llm "${ANSWER_LLM}" bedrock
+          req visual_provider_profile "${VISUAL_PROVIDER_PROFILE}" aws-textract-bedrock
+          req phone_telephony "${PHONE_TELEPHONY}" connect
+          if [ -z "${BEDROCK_GUARDRAIL_ID}" ] || [ -z "${BEDROCK_GUARDRAIL_VERSION}" ]; then
+            echo "::error::stg profile drift: bedrock_guardrail_id/bedrock_guardrail_version must be set (the production profile fails closed without a guardrail)"
+            fail=1
+          fi
+          if [ "${fail}" != "0" ]; then
+            echo "The inputs above would remove live stg capabilities. If the downgrade is deliberate,"
+            echo "re-run with allow_stg_downgrade=true. Known-good stg dispatch is documented in infra/cdk/DEPLOY-CI.md."
+            exit 1
+          fi
+          echo "stg profile guard: OK"
 
       - name: Install + build CDK app
         working-directory: infra/cdk
