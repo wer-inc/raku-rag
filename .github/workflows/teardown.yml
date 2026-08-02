@@ -195,7 +195,9 @@ jobs:
         env:
           DOC_BUCKET_HINT: raku-rag
         run: |
-          set -uo pipefail
+          # GitHub runs `bash -e`, which would abort this step at the first denial — but a denial IS
+          # the result we are here to record. Turn it off explicitly.
+          set +e
           ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
           Q=hnb659fds
           mkdir -p ~/.aws
