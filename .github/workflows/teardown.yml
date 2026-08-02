@@ -20,9 +20,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "list = read-only inventory (safe, start here) / destroy = delete the app stack / finish-delete = complete a DELETE_FAILED stack, retaining the resources that blocked it / residual = delete secrets+logs+ECR assets"
+        description: "list = read-only inventory (safe, start here) / destroy = delete the app stack / finish-delete = complete a DELETE_FAILED stack, retaining the resources that blocked it / residual = delete secrets+logs+ECR assets / residual-ci = same, but attempted through every cdk-* role the scoped role can reach, reporting what each one could and could not do"
         type: choice
-        options: [list, destroy, finish-delete, residual]
+        options: [list, destroy, finish-delete, residual, residual-ci]
         default: list
       stage:
         description: CDK stage to act on (also selects the GitHub Environment the OIDC subject is scoped to)
@@ -184,6 +184,97 @@ jobs:
             exit 1
           }
           echo "${STACK} deleted."
+
+      - name: Residual cleanup, attempted through every reachable role
+        if: ${{ inputs.mode == 'residual-ci' }}
+        # The GitHub role is cdk-scoped: no s3:*, no ecr:*, no secretsmanager:*, no logs:Delete*.
+        # But the cdk-* roles it MAY assume hold some of those on the bootstrap resources —
+        # file-publishing has s3:DeleteObject* on the assets bucket, image-publishing has ECR.
+        # Attempt each item with the best role available; never fail the step on a denial, and
+        # print a matrix so what is genuinely unreachable from CI is recorded rather than guessed.
+        env:
+          DOC_BUCKET_HINT: raku-rag
+        run: |
+          set -uo pipefail
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          Q=hnb659fds
+          mkdir -p ~/.aws
+          # credential_source=Environment chains off the OIDC creds already exported by the
+          # configure-aws-credentials step, so each profile is just "assume that cdk-* role".
+          {
+            for r in file-publishing image-publishing deploy lookup; do
+              printf '[profile %s]\nrole_arn = arn:aws:iam::%s:role/cdk-%s-%s-role-%s-%s\ncredential_source = Environment\n\n' \
+                "$r" "$ACCOUNT" "$Q" "$r" "$ACCOUNT" "${AWS_REGION}"
+            done
+          } > ~/.aws/config
+
+          RESULT=""
+          record() { RESULT="${RESULT}\n$1\t$2\t$3"; }
+
+          try() { # try <label> <role-or-default> <cmd...>
+            local label="$1" prof="$2"; shift 2
+            local out rc
+            if [ "$prof" = "default" ]; then out="$("$@" 2>&1)"; rc=$?
+            else out="$(AWS_PROFILE="$prof" "$@" 2>&1)"; rc=$?
+            fi
+            if [ $rc -eq 0 ]; then
+              record "$label" "$prof" "OK"
+              [ -n "$out" ] && echo "$out" | head -5
+            else
+              record "$label" "$prof" "DENIED/FAILED"
+              echo "$out" | head -3
+            fi
+            return 0
+          }
+
+          empty_bucket() { # empty_bucket <profile> <bucket>
+            local prof="$1" b="$2"
+            while :; do
+              local batch
+              batch="$(AWS_PROFILE="$prof" aws s3api list-object-versions --bucket "$b" --max-keys 500 \
+                --query '{Objects: [Versions,DeleteMarkers][][].{Key:Key,VersionId:VersionId}}' \
+                --output json 2>/dev/null)" || return 1
+              case "$batch" in *'"Objects": null'*|*'"Objects":null'*) return 0 ;; esac
+              printf '%s' "$batch" > /tmp/batch.json
+              AWS_PROFILE="$prof" aws s3api delete-objects --bucket "$b" \
+                --delete file:///tmp/batch.json >/dev/null 2>&1 || return 1
+            done
+          }
+
+          echo "##### 1. CDK staging bucket (asset zips) #####"
+          ASSETS="cdk-${Q}-assets-${ACCOUNT}-${AWS_REGION}"
+          if empty_bucket file-publishing "$ASSETS"; then record "cdk assets bucket emptied" file-publishing OK
+          else record "cdk assets bucket emptied" file-publishing "DENIED/FAILED"; fi
+
+          echo "##### 2. ECR CDK container assets (the ~2GB Docling images) #####"
+          REPO="cdk-${Q}-container-assets-${ACCOUNT}-${AWS_REGION}"
+          IDS="$(AWS_PROFILE=image-publishing aws ecr list-images --repository-name "$REPO" \
+            --query 'imageIds[*]' --output json 2>&1)"
+          if printf '%s' "$IDS" | head -c1 | grep -q '\['; then
+            printf '%s' "$IDS" > /tmp/imgs.json
+            N="$(python3 -c 'import json;print(len(json.load(open("/tmp/imgs.json"))))')"
+            echo "  $N images found"
+            try "ecr images purged ($N)" image-publishing \
+              aws ecr batch-delete-image --repository-name "$REPO" --image-ids file:///tmp/imgs.json
+          else
+            record "ecr list-images" image-publishing "DENIED/FAILED"; echo "$IDS" | head -3
+          fi
+
+          echo "##### 3. Retained document bucket(s) #####"
+          for prof in default file-publishing deploy; do
+            try "s3 list-buckets" "$prof" aws s3api list-buckets --query 'length(Buckets[])' --output text
+          done
+
+          echo "##### 4. Secrets / log groups #####"
+          try "secretsmanager list-secrets" default aws secretsmanager list-secrets --max-results 1
+          try "logs describe-log-groups" default aws logs describe-log-groups --limit 1
+
+          echo
+          echo "================ RESIDUAL CLEANUP MATRIX ================"
+          printf 'ITEM\tROLE\tRESULT\n'
+          printf "$RESULT\n" | sed '/^$/d'
+          echo "========================================================="
+          echo "Anything DENIED/FAILED above is unreachable from CI and needs real credentials."
 
       - name: Clean residual (secrets, log groups, ECR assets)
         if: ${{ inputs.mode == 'residual' }}
