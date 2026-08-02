@@ -200,45 +200,52 @@ jobs:
           set +e
           ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
           Q=hnb659fds
-          mkdir -p ~/.aws
-          # credential_source=Environment chains off the OIDC creds already exported by the
-          # configure-aws-credentials step, so each profile is just "assume that cdk-* role".
-          {
-            for r in file-publishing image-publishing deploy lookup; do
-              printf '[profile %s]\nrole_arn = arn:aws:iam::%s:role/cdk-%s-%s-role-%s-%s\ncredential_source = Environment\n\n' \
-                "$r" "$ACCOUNT" "$Q" "$r" "$ACCOUNT" "${AWS_REGION}"
-            done
-          } > ~/.aws/config
+          # Keep the OIDC credentials aside. NOTE: an AWS_PROFILE with credential_source=Environment
+          # does NOT chain here — environment credentials outrank the profile, so every call would
+          # silently run as the GitHub role and every "denied" would be about the wrong principal.
+          # Assume each cdk-* role explicitly instead, exactly as the finish-delete step does.
+          GH_AK="$AWS_ACCESS_KEY_ID"; GH_SK="$AWS_SECRET_ACCESS_KEY"; GH_ST="$AWS_SESSION_TOKEN"
 
           RESULT=""
           record() { RESULT="${RESULT}\n$1\t$2\t$3"; }
 
-          try() { # try <label> <role-or-default> <cmd...>
-            local label="$1" prof="$2"; shift 2
+          run_as() { # run_as <cdk-role-shortname|default> <cmd...>
+            local short="$1"; shift
+            if [ "$short" = "default" ]; then "$@"; return $?; fi
+            local arn="arn:aws:iam::${ACCOUNT}:role/cdk-${Q}-${short}-role-${ACCOUNT}-${AWS_REGION}"
+            local c ak sk st
+            c="$(env AWS_ACCESS_KEY_ID="$GH_AK" AWS_SECRET_ACCESS_KEY="$GH_SK" AWS_SESSION_TOKEN="$GH_ST" \
+                 aws sts assume-role --role-arn "$arn" --role-session-name raku-residual \
+                 --query Credentials --output json 2>&1)"
+            if [ $? -ne 0 ]; then echo "ASSUME ${short} FAILED: $(printf '%s' "$c" | head -1)"; return 1; fi
+            ak="$(printf '%s' "$c" | python3 -c 'import json,sys;print(json.load(sys.stdin)["AccessKeyId"])')"
+            sk="$(printf '%s' "$c" | python3 -c 'import json,sys;print(json.load(sys.stdin)["SecretAccessKey"])')"
+            st="$(printf '%s' "$c" | python3 -c 'import json,sys;print(json.load(sys.stdin)["SessionToken"])')"
+            echo "::add-mask::${sk}"; echo "::add-mask::${st}"
+            env AWS_ACCESS_KEY_ID="$ak" AWS_SECRET_ACCESS_KEY="$sk" AWS_SESSION_TOKEN="$st" "$@"
+          }
+
+          try() { # try <label> <role> <cmd...>
+            local label="$1" role="$2"; shift 2
             local out rc
-            if [ "$prof" = "default" ]; then out="$("$@" 2>&1)"; rc=$?
-            else out="$(AWS_PROFILE="$prof" "$@" 2>&1)"; rc=$?
-            fi
+            out="$(run_as "$role" "$@" 2>&1)"; rc=$?
             if [ $rc -eq 0 ]; then
-              record "$label" "$prof" "OK"
-              [ -n "$out" ] && echo "$out" | head -5
+              record "$label" "$role" "OK"; [ -n "$out" ] && printf '%s\n' "$out" | head -5
             else
-              record "$label" "$prof" "DENIED/FAILED"
-              echo "$out" | head -3
+              record "$label" "$role" "DENIED/FAILED"; printf '%s\n' "$out" | head -3
             fi
             return 0
           }
 
-          empty_bucket() { # empty_bucket <profile> <bucket>
-            local prof="$1" b="$2"
+          empty_bucket() { # empty_bucket <role> <bucket>
+            local role="$1" b="$2" batch
             while :; do
-              local batch
-              batch="$(AWS_PROFILE="$prof" aws s3api list-object-versions --bucket "$b" --max-keys 500 \
+              batch="$(run_as "$role" aws s3api list-object-versions --bucket "$b" --max-keys 500 \
                 --query '{Objects: [Versions,DeleteMarkers][][].{Key:Key,VersionId:VersionId}}' \
                 --output json 2>/dev/null)" || return 1
               case "$batch" in *'"Objects": null'*|*'"Objects":null'*) return 0 ;; esac
               printf '%s' "$batch" > /tmp/batch.json
-              AWS_PROFILE="$prof" aws s3api delete-objects --bucket "$b" \
+              run_as "$role" aws s3api delete-objects --bucket "$b" \
                 --delete file:///tmp/batch.json >/dev/null 2>&1 || return 1
             done
           }
@@ -250,7 +257,7 @@ jobs:
 
           echo "##### 2. ECR CDK container assets (the ~2GB Docling images) #####"
           REPO="cdk-${Q}-container-assets-${ACCOUNT}-${AWS_REGION}"
-          IDS="$(AWS_PROFILE=image-publishing aws ecr list-images --repository-name "$REPO" \
+          IDS="$(run_as image-publishing aws ecr list-images --repository-name "$REPO" \
             --query 'imageIds[*]' --output json 2>&1)"
           if printf '%s' "$IDS" | head -c1 | grep -q '\['; then
             printf '%s' "$IDS" > /tmp/imgs.json
