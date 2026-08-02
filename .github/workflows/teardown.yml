@@ -1,0 +1,141 @@
+name: teardown
+
+# Tear the AWS footprint down to zero recurring cost, from CI, using the SAME OIDC role deploy.yml
+# uses (no static keys, nothing to install locally).
+#
+# WHY THIS WORKS WITH THE cdk-scoped ROLE:
+#   the role has no direct cloudformation:DeleteStack, but it may assume `cdk-*` — which is exactly
+#   how `cdk destroy` deletes a stack (assume the CDK deploy role -> CloudFormation -> cfn-exec role).
+#   Pick stack_delete_method=cdk if the direct CloudFormation path is denied.
+#
+# SAFETY
+#   - mode=list is READ-ONLY and is the default. Run it first; it is also the permission probe.
+#   - Destructive modes require confirm=DESTROY typed literally.
+#   - stage is restricted to sales|stg. There is no `prod` GitHub Environment and the OIDC trust
+#     policy does not admit repo:...:environment:prod, so prod cannot be torn down from here by
+#     design. Tear prod down deliberately, with credentials, per scripts/aws/teardown.sh.
+#   - Amazon Connect instances / phone numbers are never touched (releasing a DID is irreversible).
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "list = read-only inventory (safe, start here) / destroy = delete the app stack / residual = delete secrets+logs+ECR assets"
+        type: choice
+        options: [list, destroy, residual]
+        default: list
+      stage:
+        description: CDK stage to act on (also selects the GitHub Environment the OIDC subject is scoped to)
+        type: choice
+        options: [stg, sales]
+        default: stg
+      stack_delete_method:
+        description: "How to delete the stack in mode=destroy. cloudformation = direct DeleteStack / cdk = `cdk destroy` via the cdk-* roles (use if direct is denied)"
+        type: choice
+        options: [cloudformation, cdk]
+        default: cloudformation
+      drop_bootstrap:
+        description: "mode=residual only: also delete the CDKToolkit bootstrap stack (a future deploy must re-bootstrap)"
+        type: boolean
+        default: false
+      confirm:
+        description: "Type DESTROY to authorise a destructive mode. Ignored when mode=list."
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write # OIDC web-identity for AWS role assumption (no static keys)
+
+jobs:
+  teardown:
+    name: Teardown (${{ inputs.mode }} / ${{ inputs.stage }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.stage }} # the OIDC trust policy matches on environment:<stage>
+    concurrency:
+      group: teardown-${{ inputs.stage }}
+      cancel-in-progress: false
+    env:
+      # Inputs are passed via env and referenced as shell vars (never inlined into run: scripts) to
+      # avoid GitHub Actions expression injection — same convention as deploy.yml.
+      MODE: ${{ inputs.mode }}
+      STAGE: ${{ inputs.stage }}
+      DELETE_METHOD: ${{ inputs.stack_delete_method }}
+      DROP_BOOTSTRAP: ${{ inputs.drop_bootstrap }}
+      CONFIRM: ${{ inputs.confirm }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+      ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+
+    steps:
+      - name: Preflight (confirmation gate)
+        run: |
+          set -euo pipefail
+          if [ -z "${ROLE_ARN}" ]; then
+            echo "::error::repo variable AWS_DEPLOY_ROLE_ARN is not set." >&2; exit 1
+          fi
+          if [ "${MODE}" != "list" ] && [ "${CONFIRM}" != "DESTROY" ]; then
+            echo "::error::mode=${MODE} is destructive: re-run with confirm=DESTROY typed exactly." >&2
+            exit 1
+          fi
+          echo "mode=${MODE} stage=${STAGE} region=${AWS_REGION}"
+          [ "${MODE}" = "list" ] && echo "READ-ONLY: this run changes nothing." || true
+
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Probe effective permissions (non-fatal — tells us cdk-scoped vs admin)
+        continue-on-error: true
+        run: |
+          set +e
+          echo "== identity =="
+          aws sts get-caller-identity
+          echo
+          echo "== can we read the role's own policies? (admin can; cdk-scoped cannot) =="
+          aws iam list-attached-role-policies --role-name raku-rag-github-deploy 2>&1 | head -20
+          echo
+          echo "== can we list buckets directly? (needed to empty the versioned document bucket) =="
+          aws s3api list-buckets --query 'length(Buckets[])' --output text 2>&1 | head -5
+          echo
+          echo "== can we describe the app stacks? =="
+          aws cloudformation describe-stacks \
+            --query "Stacks[?starts_with(StackName,'RakuRag-')].[StackName,StackStatus]" \
+            --output text 2>&1 | head -20
+
+      - name: Inventory (read-only)
+        if: ${{ inputs.mode == 'list' }}
+        run: bash scripts/aws/teardown.sh list
+
+      - name: Destroy the app stack
+        if: ${{ inputs.mode == 'destroy' && inputs.stack_delete_method == 'cloudformation' }}
+        env:
+          RAKU_TEARDOWN_APPROVED: "yes"
+        run: bash scripts/aws/teardown.sh destroy
+
+      - name: Destroy the app stack (via cdk destroy / the cdk-* roles)
+        if: ${{ inputs.mode == 'destroy' && inputs.stack_delete_method == 'cdk' }}
+        working-directory: infra/cdk
+        run: |
+          set -euo pipefail
+          npm ci
+          # `cdk destroy` synthesises the app to resolve the stack, so it needs the stage context.
+          npx cdk destroy "RakuRag-${STAGE}" --force --context "stage=${STAGE}"
+
+      - name: Clean residual (secrets, log groups, ECR assets)
+        if: ${{ inputs.mode == 'residual' }}
+        env:
+          RAKU_TEARDOWN_APPROVED: "yes"
+          RAKU_TEARDOWN_DROP_BOOTSTRAP: ${{ inputs.drop_bootstrap && 'yes' || 'no' }}
+        run: bash scripts/aws/teardown.sh residual
+
+      - name: What still bills
+        if: ${{ always() && inputs.mode != 'list' }}
+        run: |
+          echo "Amazon Connect instances and claimed phone numbers are NEVER touched by this workflow"
+          echo "(releasing a DID is irreversible). Release them in the console if you want them gone."
+          echo "KMS keys stay in a 7-30 day pending-deletion window and bill until it elapses."
