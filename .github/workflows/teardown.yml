@@ -22,7 +22,7 @@ on:
       mode:
         description: "list = read-only inventory (safe, start here) / destroy = delete the app stack / finish-delete = complete a DELETE_FAILED stack, retaining the resources that blocked it / residual = delete secrets+logs+ECR assets / residual-ci = same, but attempted through every cdk-* role the scoped role can reach, reporting what each one could and could not do"
         type: choice
-        options: [list, destroy, finish-delete, residual, residual-ci]
+        options: [list, verify, destroy, finish-delete, residual, residual-ci]
         default: list
       stage:
         description: CDK stage to act on (also selects the GitHub Environment the OIDC subject is scoped to)
@@ -80,7 +80,7 @@ jobs:
           if [ -z "${ROLE_ARN}" ]; then
             echo "::error::repo variable AWS_DEPLOY_ROLE_ARN is not set." >&2; exit 1
           fi
-          if [ "${MODE}" != "list" ] && [ "${CONFIRM}" != "DESTROY" ]; then
+          if [ "${MODE}" != "list" ] && [ "${MODE}" != "verify" ] && [ "${CONFIRM}" != "DESTROY" ]; then
             echo "::error::mode=${MODE} is destructive: re-run with confirm=DESTROY typed exactly." >&2
             exit 1
           fi
@@ -184,6 +184,76 @@ jobs:
             exit 1
           }
           echo "${STACK} deleted."
+
+      - name: Verify what actually remains (READ-ONLY)
+        if: ${{ inputs.mode == 'verify' }}
+        # Read-only re-check of the teardown result. Assumes each cdk-* role ONCE up front and caches
+        # the session, so the ::add-mask:: directives reach the log directly instead of being swallowed
+        # into a captured variable — which is what blanked the error text in the residual-ci run and
+        # left it ambiguous whether the assume or the operation had failed.
+        run: |
+          set +e
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          Q=hnb659fds
+          GH_AK="$AWS_ACCESS_KEY_ID"; GH_SK="$AWS_SECRET_ACCESS_KEY"; GH_ST="$AWS_SESSION_TOKEN"
+
+          echo "##### role assumption #####"
+          for r in deploy file-publishing image-publishing; do
+            arn="arn:aws:iam::${ACCOUNT}:role/cdk-${Q}-${r}-role-${ACCOUNT}-${AWS_REGION}"
+            c="$(env AWS_ACCESS_KEY_ID="$GH_AK" AWS_SECRET_ACCESS_KEY="$GH_SK" AWS_SESSION_TOKEN="$GH_ST" \
+                 aws sts assume-role --role-arn "$arn" --role-session-name raku-verify \
+                 --query Credentials --output json 2>&1)"
+            if [ $? -ne 0 ]; then
+              echo "  ${r}: ASSUME FAILED -- $(printf '%s' "$c" | tr '\n' ' ' | cut -c1-160)"
+              continue
+            fi
+            ak="$(printf '%s' "$c" | python3 -c 'import json,sys;print(json.load(sys.stdin)["AccessKeyId"])')"
+            sk="$(printf '%s' "$c" | python3 -c 'import json,sys;print(json.load(sys.stdin)["SecretAccessKey"])')"
+            st="$(printf '%s' "$c" | python3 -c 'import json,sys;print(json.load(sys.stdin)["SessionToken"])')"
+            echo "::add-mask::${sk}"
+            echo "::add-mask::${st}"
+            printf 'export AWS_ACCESS_KEY_ID=%s\nexport AWS_SECRET_ACCESS_KEY=%s\nexport AWS_SESSION_TOKEN=%s\n' \
+              "$ak" "$sk" "$st" > "/tmp/creds-${r}.env"
+            echo "  ${r}: OK"
+          done
+
+          as() { # as <role|default> <cmd...>
+            local r="$1"; shift
+            if [ "$r" = "default" ]; then "$@"; return $?; fi
+            [ -f "/tmp/creds-${r}.env" ] || { echo "  (no session for ${r} — assume failed above)"; return 1; }
+            ( . "/tmp/creds-${r}.env"; "$@" )
+          }
+
+          echo
+          echo "##### 1. app stacks — do they still exist? #####"
+          for s in "RakuRag-stg" "RakuRag-sales" "RakuRag-prod"; do
+            printf '  %s: ' "$s"
+            as deploy aws cloudformation describe-stacks --stack-name "$s" \
+              --query 'Stacks[0].StackStatus' --output text 2>&1 | tr '\n' ' ' | cut -c1-140
+            echo
+          done
+
+          echo
+          echo "##### 2. ECR — the CDK container assets (largest storage leftover) #####"
+          as image-publishing aws ecr describe-repositories \
+            --query 'repositories[].repositoryName' --output text 2>&1 | cut -c1-300
+          as image-publishing aws ecr describe-images \
+            --repository-name "cdk-${Q}-container-assets-${ACCOUNT}-${AWS_REGION}" \
+            --query 'sum(imageDetails[].imageSizeInBytes)' --output text 2>&1 | cut -c1-300
+
+          echo
+          echo "##### 3. CDK staging bucket #####"
+          as file-publishing aws s3api list-objects-v2 \
+            --bucket "cdk-${Q}-assets-${ACCOUNT}-${AWS_REGION}" \
+            --query 'length(Contents[])' --output text 2>&1 | cut -c1-300
+
+          echo
+          echo "##### 4. CloudWatch log groups still holding data #####"
+          aws logs describe-log-groups \
+            --query 'logGroups[?storedBytes>`0`].[logGroupName,storedBytes]' --output text 2>&1 | head -30
+
+          echo
+          echo "READ-ONLY: nothing above was modified."
 
       - name: Residual cleanup, attempted through every reachable role
         if: ${{ inputs.mode == 'residual-ci' }}
