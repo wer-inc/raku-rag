@@ -52,6 +52,12 @@ jobs:
         run: npm run build && npm run synth -- --quiet
         working-directory: infra/cdk
 
+      # Regression assertions for the stage guards (issue 0088 + the prod profile guard): prod always
+      # carries RAKU_RUNTIME_PROFILE=production, prod + any real LLM requires a guardrail, prod refuses
+      # the hashing embedder, and the known-good stg / default synths keep working.
+      - name: Stage guard assertions
+        run: bash infra/cdk/scripts/assert-stage-guards.sh
+
   image-build-scan:
     name: Image build + SBOM + scan (${{ matrix.name }})
     runs-on: ubuntu-latest

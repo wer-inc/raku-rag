@@ -78,8 +78,20 @@ Aurora は空なので **マイグレーション適用＋デモKBシード**が
 AWS_REGION=ap-northeast-1 STACK=RakuRag-sales bash scripts/aws/migrate-seed.sh
 ```
 スクリプトがスタック出力（cluster / task-def / private subnets / SG）を読んで ECS RunTask を起動し、
-`scripts/pg-migrate.sh up`（冪等）→ `scripts/demo/demo_seed.sh`（18件KB）を流して終了を待ちます。失敗時は
-CloudWatch ログを案内。`prod` なら `STACK=RakuRag-prod`。
+`scripts/pg-migrate.sh up`（冪等）→ 必要なら `scripts/demo/demo_seed.sh`（18件KB）を流して終了を待ちます。
+失敗時は CloudWatch ログを案内。`prod` なら `STACK=RakuRag-prod`。
+
+**マイグレーションとシードは分離されています（issue 0089）**。デモKBは `demo` テナントのフィクスチャ
+データなので、顧客の本番DBに既定で書き込まれてはいけません。`RUN_SEED` で制御し、既定は
+**`*-prod` スタックなら 0（スキーマのみ）・それ以外は 1**:
+
+```bash
+STACK=RakuRag-prod bash scripts/aws/migrate-seed.sh              # マイグレーションのみ（prod 既定）
+STACK=RakuRag-prod RUN_SEED=1 bash scripts/aws/migrate-seed.sh   # 明示的にデモKBも投入（警告が出る）
+```
+
+`deploy.yml` からは prod のシードはできません（意図的。必要なら上記を手動実行）。非prod は入力
+`seed_demo_kb=off` でスキーマのみにできます。
 
 > 補足：このタスクは**常駐サービスではない**（呼ぶまで課金ゼロ）。answer-service の `/healthz` は浅いので
 > 空スキーマでもデプロイは安定 → デプロイ完了後にこのスクリプトを実行、の順で動きます。
@@ -190,12 +202,29 @@ aws secretsmanager get-secret-value --secret-id "$SECRET" \
    - 検証できたら `apps/web` の Google Drive の `readiness` を `three_days` → `ready` に上げてください。
 
 ## まだ残る穴（正直に）
-- **初回 cdk deploy は未実機検証**（この環境にAWS鍵・Docker無し→ `cdk synth` 緑まで）。最初のデプロイで
-  Aurora の `raku_rag`→`SET ROLE raku_app` 権限、Cloud Map 到達、ヘルスチェックを実機確認してください。
+- **Bedrock rerank はデプロイできない**：スタックに reranker の context knob が無く、`answerLlm=bedrock` でも
+  rerank は決定論的な score-order のまま（このファイルが依拠する `raku-rag-stack.ts` のコメント自身が
+  「guardrail/reranker stay deterministic」と明記）。有償パイロット契約（`docs/production-readiness/
+  paid-pilot-readiness.md`）は "Bedrock rerank enabled" を要求しているので、契約を満たすには先に結線が必要。
+- **Langfuse は prod でしか立たない**：`deployLangfuse = !minimalSpec` かつ `minimalSpec` は非prod既定ON、
+  さらに `deploy.yml` は `minimalSpec` を渡さない。よって **stg/sales に Langfuse は存在せず**、live smoke の
+  `RAKU_SMOKE_LANGFUSE_TRACE_CHECK_URL` チェックは stg では通せない（＝skips=0 が構造的に不可能）。
+  必要なら `minimal_spec` をワークフロー入力に出すのが最小の手当て。
 - **Cognitoユーザーの初期投入は手動**：User Pool / App Client / groups / Hosted UI / JWT検証はCDKとアプリに
   結線済みですが、初回ユーザー作成・仮パスワード配布・グループ付与は運用手順として実施します。
-- **マイグレーション自動化**・**TLS(ACM/独自ドメイン)** は別途。
+- **有償パイロットの証跡は未記入**：`docs/production-readiness/evidence/` の6ファイルは全て
+  `Status: pending` のテンプレートのまま。`python3 scripts/pilot_readiness_status.py` は NOT READY を返す。
 
-## 検証済み（このリポ環境）
-`cdk synth` 緑（answer-service/ANSWER_SERVICE_URL/Bedrock IAM/内部認証/4イメージfromAsset/4 ECSサービス）、
-`tsc` 緑、CI deploy-checks で4イメージ(api/web/worker/answer)を build+SBOM+Trivy。
+## 検証済み
+- **実機**：`RakuRag-stg` はデプロイ済みで、ライブ検証も実施済み（ADR-018 stg 検証が実際の不具合を検出し、
+  コミット `0fd2180` で修正）。初回デプロイ時の不明点だった Aurora 権限 / Cloud Map 到達 / ヘルスチェックは
+  この経路で通過済み。
+- **リポ側**：`tsc` 緑、`cdk synth` 緑（stg の既知良好プロファイル全 context 込み）、
+  CI deploy-checks で5イメージ(api/web/worker/answer/ops)を build+SBOM+Trivy。
+
+## ステージ別の必須 context（synth 時に fail-closed）
+| stage | 強制される内容 |
+|---|---|
+| `prod` | **常に `RAKU_RUNTIME_PROFILE=production`**（issue 0088）/ `domainName` 必須 / `minimalSpec=false` 必須 / `embeddingProvider=openai` 必須（hashing 埋め込みは検索品質を静かに落とすため synth で失敗）/ `answerLlm` が `extractive` 以外なら guardrail 必須（出力ガードレールは ApplyGuardrail で LLM 非依存） |
+| `stg` | `deploy.yml` の Preflight プロファイルガード（`auth_mode=cognito` 含む）が既知良好プロファイルからの後退を拒否 |
+| 非prod全般 | `RAKU_RUNTIME_PROFILE=production` かつ hashing 埋め込みの組み合わせは synth 警告を出す（デモ用途として許容だが不可視にはしない） |

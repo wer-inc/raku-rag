@@ -69,7 +69,8 @@ git rev-parse origin/develop
 | stage | `sales`（安価・使い捨て可） |
 | frontend | `aws-nextjs`（web+API同一オリジン） |
 | domain_name | 空（まずHTTPで疎通／後でドメイン追加） |
-| run_migrate_seed | ✅（スキーマ＋デモKB投入まで自動） |
+| run_migrate_seed | ✅（スキーマ適用。デモKB投入は `seed_demo_kb` で制御） |
+| seed_demo_kb | `auto`（sales/stg は投入・prod は投入しない。issue 0089。`off` でスキーマのみ） |
 | run_live_smoke | 初回はOFF。Environment secrets/vars を入れた後にON |
 | structured_ingest | `off`（既定＝従来パイプライン）。`docling` で ADR-018 の Docling-first 品質ゲート取り込みを有効化（worker/answer イメージに Docling+モデルを焼き込み、両タスクを 1vCPU/4GB に増強 ≒ +$60〜70/月・ビルド時間も増）。`docling+bedrock-vision` は難ページの VLM draft（`draft_visual`・HITL承認必須）＋手書き/印鑑検出も Bedrock Claude vision で有効化（`RAKU_ALLOW_CLOUD_EGRESS=1`、テナント provider policy でさらにゲート） |
 | expected_sha | deploy したい 40 文字 commit SHA（特に `stg` / `develop` は指定推奨） |
@@ -79,7 +80,13 @@ git rev-parse origin/develop
 
 stg の能力は context 駆動で、**入力を省略するとその能力ごと削除される**（CloudFront・構造化取り込み
 +タスク増強・Connect アダプタ・ガードレール）。事故防止のため、`stage=stg` では Preflight が以下との
-一致を検査し、外れていれば deploy 前に失敗する（意図的なダウングレードは `allow_stg_downgrade=true`）:
+一致を検査し、外れていれば deploy 前に失敗する（意図的なダウングレードは `allow_stg_downgrade=true`）。
+
+> `auth_mode` もこのガードの対象（2026-07-31 追加）。省略時の既定 `dev` は web タスクに
+> `RAKU_ENABLE_DEV_TOKEN_ISSUER=1` を入れ、`apps/web/app/api/dev-token/route.ts` が**リクエストが指定した
+> 任意の `tenant_id`** に対して署名トークンを発行する（`user_id=alice`/`misaki` は `tenant_admin` 付き）。
+> prod は同ルートの `STAGE_NAME === "prod"` で塞がれるが **stg は塞がれない**ため、公開されている stg で
+> 誰でもクロステナントの管理者トークンを作れてしまう。`auth_mode=cognito` は必須。
 
 ```bash
 gh workflow run deploy.yml \
@@ -96,6 +103,24 @@ gh workflow run deploy.yml \
 
 （`connect_instance_arn` は stg インスタンスが入力の既定値。）
 
+### prod の必須入力（Preflight prod プロファイルガードで強制）
+
+`stage=prod` はワークフローの**入力既定値のままでは通らない**（`auth_mode=dev` / `embedding_provider=hashing`
+/ `domain_name` 空はいずれも本番として不正）。Preflight が以下を強制し、バイパス入力は用意していない
+（サイズの選択ではなく、有償パイロット運用契約の安全性・品質の不変条件のため）:
+
+| 入力 | prod で必須の値 | 理由 |
+|---|---|---|
+| `auth_mode` | `cognito` | `dev` は開発用トークン発行経路を有効化する |
+| `embedding_provider` | `openai` | hashing 埋め込みは検索品質を静かに落とす（CDK も synth で fail） |
+| `domain_name` | 非空 | ALB の ACM による HTTPS |
+| `bedrock_guardrail_id` / `_version` | `answer_llm` が `extractive` 以外のとき必須 | 出力ガードレールは Bedrock ApplyGuardrail を**回答テキスト**に適用するのでベンダー非依存（openai/gemini も対象）。prod は常に production プロファイルで動き、ガードレール未設定だと回答経路が fail-closed する |
+
+なお **`stage=prod` は常に `RAKU_RUNTIME_PROFILE=production`** で動きます（issue 0088）。以前は視覚プロバイダか
+Bedrock+guardrail が構成されたときだけ profile が付き、`answer_llm=openai|gemini|extractive` ＋ 視覚プロバイダ
+default だと prod でも `deterministic` のまま＝出力ガードレール・意味的危険分類・Secrets Manager 秘密ストア等の
+production バックストップが**全て無言で無効**でした。現在は prod で構造的に保証されます。
+
 完了後、ワークフローの **Summary に deploy commit と公開URL（`http://<ALB>`）** が出ます。
 ブラウザで開いて回答が返ればOK。
 
@@ -103,6 +128,11 @@ gh workflow run deploy.yml \
 
 `run_live_smoke=true` にすると、deploy 後に Cognito で smoke user の JWT を発行し、
 `scripts/prod-smoke.sh` を実行します。Paid pilot promotion では skips なしが条件です。
+
+> **stg では skips=0 に到達できない**（既知の構造的ギャップ）。Langfuse は `deployLangfuse = !minimalSpec`
+> で、`minimalSpec` は非prod既定ON・ワークフローからは変更不可のため、stg に Langfuse が存在せず
+> `RAKU_SMOKE_LANGFUSE_TRACE_CHECK_URL` のチェックが必ず skip になる。promotion 用の zero-skip 実行には
+> 先に `minimal_spec` 入力の追加（または stg での Langfuse 強制）が必要。
 
 GitHub Environment の Secrets:
 

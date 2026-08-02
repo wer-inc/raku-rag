@@ -41,9 +41,14 @@ on:
         required: false
         default: raku
       run_migrate_seed:
-        description: After deploy, apply schema migrations + seed the demo KB
+        description: After deploy, apply schema migrations (seeding the demo KB is controlled by seed_demo_kb)
         type: boolean
         default: true
+      seed_demo_kb:
+        description: "Also seed the curated demo KB. auto = yes for sales/stg, no for prod (issue 0089 — demo-tenant fixture data must not land in a customer prod DB)"
+        type: choice
+        options: [auto, "off"]
+        default: auto
       run_live_smoke:
         description: After deploy, run Cognito-authenticated live smoke checks (requires Environment secrets/vars)
         type: boolean
@@ -137,6 +142,7 @@ jobs:
       # run: scripts) to avoid GitHub Actions expression injection. STAGE/FRONTEND are constrained
       # choices; DOMAIN_NAME is free text and is format-validated in Preflight before any use.
       STAGE: ${{ inputs.stage }}
+      SEED_DEMO_KB: ${{ inputs.seed_demo_kb }}
       FRONTEND: ${{ inputs.frontend }}
       DOMAIN_NAME: ${{ inputs.domain_name }}
       AUTH_MODE: ${{ inputs.auth_mode }}
@@ -297,6 +303,12 @@ jobs:
           req structured_ingest "${STRUCTURED_INGEST}" docling docling+bedrock-vision
           req embedding_provider "${EMBEDDING_PROVIDER}" openai
           req answer_llm "${ANSWER_LLM}" bedrock
+          # auth_mode=dev injects RAKU_ENABLE_DEV_TOKEN_ISSUER=1 into the web task, and the issuer
+          # (apps/web/app/api/dev-token/route.ts) signs a token for ANY tenant_id in the request body
+          # — user_id=alice/misaki even come back with tenant_admin. stg is publicly reachable, and
+          # unlike prod it is not covered by that route's own STAGE_NAME==="prod" kill switch, so the
+          # omitted-input default would hand out cross-tenant admin tokens.
+          req auth_mode "${AUTH_MODE}" cognito
           req visual_provider_profile "${VISUAL_PROVIDER_PROFILE}" aws-textract-bedrock
           req phone_telephony "${PHONE_TELEPHONY}" connect
           if [ -z "${BEDROCK_GUARDRAIL_ID}" ] || [ -z "${BEDROCK_GUARDRAIL_VERSION}" ]; then
@@ -309,6 +321,43 @@ jobs:
             exit 1
           fi
           echo "stg profile guard: OK"
+
+      # prod has no known-good-capability history to protect yet, so this guard defends the two
+      # things the workflow's own input defaults get wrong (auth_mode=dev, embedding_provider=hashing)
+      # plus the invariants the CDK asserts at synth — failing here costs seconds instead of a full
+      # image build. Deliberately NO bypass input: these are safety/quality invariants of the pilot
+      # runtime contract (docs/production-readiness/paid-pilot-readiness.md), not sizing choices.
+      - name: Preflight (prod profile guard)
+        if: inputs.stage == 'prod'
+        run: |
+          set -euo pipefail
+          fail=0
+          if [ "${AUTH_MODE}" != "cognito" ]; then
+            echo "::error::prod requires auth_mode=cognito (auth_mode=dev enables the dev token issuer path)"
+            fail=1
+          fi
+          if [ "${EMBEDDING_PROVIDER}" != "openai" ]; then
+            echo "::error::prod requires embedding_provider=openai (the hashing embedder silently degrades retrieval)"
+            fail=1
+          fi
+          if [ -z "${DOMAIN_NAME}" ]; then
+            echo "::error::prod requires domain_name (HTTPS at the ALB via ACM)"
+            fail=1
+          fi
+          # issue 0088: every real generator (bedrock/openai/gemini), not just bedrock — the output
+          # guardrail is Bedrock ApplyGuardrail over the answer TEXT, so it is vendor-independent.
+          if [ "${ANSWER_LLM}" != "extractive" ] && { [ -z "${BEDROCK_GUARDRAIL_ID}" ] || [ -z "${BEDROCK_GUARDRAIL_VERSION}" ]; }; then
+            echo "::error::prod answer_llm=${ANSWER_LLM} requires bedrock_guardrail_id + bedrock_guardrail_version (output guardrail applies to every LLM vendor)"
+            fail=1
+          fi
+          if [ "${ANSWER_LLM}" = "extractive" ]; then
+            echo "::warning::prod is deploying with the deterministic extractive generator, not a real LLM."
+          fi
+          if [ "${fail}" != "0" ]; then
+            echo "The pilot runtime contract fixes these for prod; see docs/production-readiness/paid-pilot-readiness.md."
+            exit 1
+          fi
+          echo "prod profile guard: OK"
 
       - name: Install + build CDK app
         working-directory: infra/cdk
@@ -403,11 +452,22 @@ jobs:
           fi
           npx cdk deploy --require-approval never ${CTX}
 
-      - name: Migrate + seed (in-VPC one-off task)
+      - name: Migrate (+ seed the demo KB on non-prod) — in-VPC one-off task
         if: ${{ !inputs.dry_run && inputs.run_migrate_seed }}
         run: |
           set -euo pipefail
-          STACK="RakuRag-${STAGE}" AWS_REGION="${AWS_REGION}" bash scripts/aws/migrate-seed.sh
+          # issue 0089: migrations always apply; the demo KB is fixture data for the `demo` tenant and
+          # is seeded only on sales/stg. prod gets schema-only — the workflow offers no way to seed it
+          # (deliberate: use `STACK=RakuRag-prod RUN_SEED=1 bash scripts/aws/migrate-seed.sh` out of band
+          # if a prod-durability stack really needs the demo corpus).
+          if [ "${STAGE}" = "prod" ] || [ "${SEED_DEMO_KB}" = "off" ]; then
+            RUN_SEED=0
+          else
+            RUN_SEED=1
+          fi
+          echo "stage=${STAGE} seed_demo_kb=${SEED_DEMO_KB} -> RUN_SEED=${RUN_SEED}"
+          STACK="RakuRag-${STAGE}" AWS_REGION="${AWS_REGION}" RUN_SEED="${RUN_SEED}" \
+            bash scripts/aws/migrate-seed.sh
 
       - name: Outputs
         if: ${{ !inputs.dry_run }}

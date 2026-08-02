@@ -94,6 +94,17 @@ export class RakuRagStack extends cdk.Stack {
     // so chunks are re-embedded with the new provider.
     const useOpenAiEmbeddings =
       String(this.node.tryGetContext("embeddingProvider") ?? "hashing") === "openai";
+    // The hashing embedder is a demo/dev convenience and degrades retrieval SILENTLY (answers still
+    // come back, just worse). `embedding_provider_from_settings` (src/raku_rag/providers/embeddings.py)
+    // therefore refuses it under RAKU_RUNTIME_PROFILE=production unless
+    // RAKU_ALLOW_HASHING_EMBEDDINGS_IN_PRODUCTION is set — and the env block below sets exactly that
+    // whenever the provider is not openai. prod must never ship that override: fail the synth instead.
+    if (isProd && !useOpenAiEmbeddings) {
+      throw new Error(
+        "prod deployment requires --context embeddingProvider=openai (the hashing embedder is " +
+          "demo-only and would silently degrade retrieval quality behind the production backstop)"
+      );
+    }
     const openAiSecret = useOpenAiEmbeddings
       ? secretsmanager.Secret.fromSecretNameV2(this, "OpenAiApiKeySecret", "raku-rag/openai-api-key")
       : undefined;
@@ -114,6 +125,11 @@ export class RakuRagStack extends cdk.Stack {
     // model id with `--context bedrockClaudeModelId=<id>`.
     const answerLlmCtx = String(this.node.tryGetContext("answerLlm") ?? "extractive");
     const useBedrockAnswerLlm = answerLlmCtx === "bedrock";
+    // Any generator that is not the deterministic extractive one produces free-form model text, so it
+    // is the output guardrail's job to screen it — regardless of WHICH vendor generated it. The
+    // guardrail is Bedrock ApplyGuardrail on the answer text (providers/guardrails.py), which is
+    // LLM-independent, so openai/gemini are screened by the same Bedrock guardrail as Claude.
+    const useRealAnswerLlm = answerLlmCtx !== "extractive";
     const bedrockModelIdCtx = this.node.tryGetContext("bedrockClaudeModelId") as string | undefined;
     // Provider-swap seam (llm_provider_from_settings): the LLM is a leaf part; retrieval/ACL/
     // groundedness/guardrail are provider-agnostic, so openai/gemini reuse everything else as-is.
@@ -151,9 +167,15 @@ export class RakuRagStack extends cdk.Stack {
     const bedrockGuardrailVersionCtx = this.node.tryGetContext("bedrockGuardrailVersion") as
       | string
       | undefined;
-    if (isProd && useBedrockAnswerLlm && (!bedrockGuardrailIdCtx || !bedrockGuardrailVersionCtx)) {
+    // issue 0088: this used to check `useBedrockAnswerLlm` only, so prod + answerLlm=openai|gemini
+    // shipped a real generator with NO output guardrail. prod always runs RAKU_RUNTIME_PROFILE=production
+    // (below), under which guardrail_from_settings returns a BedrockGuardrailProvider that FAILS CLOSED
+    // without an id+version — i.e. every answer would raise at runtime. Fail at synth instead.
+    if (isProd && useRealAnswerLlm && (!bedrockGuardrailIdCtx || !bedrockGuardrailVersionCtx)) {
       throw new Error(
-        "prod Bedrock answer path requires --context bedrockGuardrailId and bedrockGuardrailVersion"
+        `prod answerLlm=${answerLlmCtx} requires --context bedrockGuardrailId and ` +
+          "bedrockGuardrailVersion (the production output guardrail screens generated text for every " +
+          "LLM vendor via Bedrock ApplyGuardrail; without it the answer path fails closed)"
       );
     }
     const contextString = (name: string) => String(this.node.tryGetContext(name) ?? "").trim();
@@ -213,8 +235,15 @@ export class RakuRagStack extends cdk.Stack {
         : {})
     };
     const visualProvidersConfigured = Object.keys(visualProviderEnvironment).length > 0;
+    // issue 0088: `isProd` MUST be part of this condition. Without it, stage=prod with
+    // answerLlm=openai|gemini|extractive and the default visual profile left the runtime profile at
+    // `deterministic`, and every production backstop keyed on the profile — output guardrail
+    // (guardrails.py:110-113 returns None under deterministic), the LLM semantic danger classifier,
+    // the Secrets Manager secret store, the Langfuse exporter, the embedding backstop — silently did
+    // not apply. "prod runs the production profile" is now structural, not a function of which
+    // optional providers happen to be configured.
     const productionRuntimeEnvironment: Record<string, string> =
-      visualProvidersConfigured || (useBedrockAnswerLlm && bedrockGuardrailIdCtx && bedrockGuardrailVersionCtx)
+      isProd || visualProvidersConfigured || (useBedrockAnswerLlm && bedrockGuardrailIdCtx && bedrockGuardrailVersionCtx)
         ? {
             RAKU_RUNTIME_PROFILE: "production",
             AWS_DEFAULT_REGION: cdk.Stack.of(this).region,
@@ -226,6 +255,17 @@ export class RakuRagStack extends cdk.Stack {
               : {})
           }
         : {};
+    // Non-prod stages reach RAKU_RUNTIME_PROFILE=production too (visual providers or Bedrock+guardrail
+    // turn it on above). Keeping the hashing override there is deliberate — sales demos run without an
+    // OpenAI key — but it must not be invisible, because it disables the production embedding backstop
+    // on an environment that otherwise calls itself "production".
+    if (!useOpenAiEmbeddings && productionRuntimeEnvironment.RAKU_RUNTIME_PROFILE === "production") {
+      cdk.Annotations.of(this).addWarning(
+        `${props.stageName}: RAKU_RUNTIME_PROFILE=production is combined with the hashing embedder, ` +
+          "so RAKU_ALLOW_HASHING_EMBEDDINGS_IN_PRODUCTION=1 overrides the production embedding " +
+          "backstop. Pass --context embeddingProvider=openai for any customer-facing environment."
+      );
+    }
     // Frontend hosting shape (resolved early — it decides who owns the public ALB):
     //  - external-vercel (default): the NestJS API owns the public ALB; web is hosted off-AWS (Vercel).
     //  - aws-nextjs: the Next.js web owns the public ALB and is the default target; the API is attached
@@ -1223,12 +1263,17 @@ export class RakuRagStack extends cdk.Stack {
     migrateSeedTask.addContainer("MigrateSeedContainer", {
       image: ecs.ContainerImage.fromAsset(REPO_ROOT, { file: "infra/ops/Dockerfile" }),
       entryPoint: ["/bin/bash", "-lc"],
-      // migrate (idempotent) -> then seed the demo KB via the internal answer-service endpoint.
+      // issue 0089: migrate and seed are SEPARATE steps. `scripts/pg-migrate.sh up` (idempotent) always
+      // runs; seeding the curated demo KB (東洋精機 docs under the `demo` tenant) is opt-in via RUN_SEED
+      // because it writes demo data into whatever database this points at. RUN_SEED defaults to 0 for
+      // prod and 1 elsewhere (below), and scripts/aws/migrate-seed.sh can override it per run — so
+      // "apply migrations only" no longer requires skipping the whole task.
       command: [
         `set -euo pipefail; export POSTGRES_URL="${PG_URL_EXPR}"; ` +
           `scripts/pg-migrate.sh up; ` +
-          `ANSWER_SERVICE_URL="${answerServiceUrl}" ` +
-          `bash scripts/demo/demo_seed.sh`
+          `if [ "\${RUN_SEED:-0}" = "1" ]; then ` +
+          `ANSWER_SERVICE_URL="${answerServiceUrl}" bash scripts/demo/demo_seed.sh; ` +
+          `else echo "[migrate-seed] RUN_SEED=\${RUN_SEED:-0}: migrations applied; demo KB NOT seeded."; fi`
       ],
       essential: true,
       logging: ecs.LogDrivers.awsLogs({
@@ -1237,6 +1282,8 @@ export class RakuRagStack extends cdk.Stack {
       }),
       environment: {
         STAGE_NAME: props.stageName,
+        // issue 0089: prod defaults to schema-only. sales/stg keep the one-command demo boot.
+        RUN_SEED: isProd ? "0" : "1",
         DATABASE_HOST: database.clusterEndpoint.hostname,
         DATABASE_PORT: database.clusterEndpoint.port.toString(),
         DATABASE_NAME: "raku_rag"
