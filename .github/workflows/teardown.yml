@@ -20,9 +20,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "list = read-only inventory (safe, start here) / destroy = delete the app stack / residual = delete secrets+logs+ECR assets"
+        description: "list = read-only inventory (safe, start here) / destroy = delete the app stack / finish-delete = complete a DELETE_FAILED stack, retaining the resources that blocked it / residual = delete secrets+logs+ECR assets"
         type: choice
-        options: [list, destroy, residual]
+        options: [list, destroy, finish-delete, residual]
         default: list
       stage:
         description: CDK stage to act on (also selects the GitHub Environment the OIDC subject is scoped to)
@@ -38,6 +38,11 @@ on:
         description: "mode=residual only: also delete the CDKToolkit bootstrap stack (a future deploy must re-bootstrap)"
         type: boolean
         default: false
+      retain_resources:
+        description: "mode=finish-delete only: space-separated LOGICAL ids to retain (orphan, not delete). e.g. DocumentBucketAE41E5A9"
+        type: string
+        required: false
+        default: ""
       confirm:
         description: "Type DESTROY to authorise a destructive mode. Ignored when mode=list."
         type: string
@@ -63,6 +68,7 @@ jobs:
       STAGE: ${{ inputs.stage }}
       DELETE_METHOD: ${{ inputs.stack_delete_method }}
       DROP_BOOTSTRAP: ${{ inputs.drop_bootstrap }}
+      RETAIN: ${{ inputs.retain_resources }}
       CONFIRM: ${{ inputs.confirm }}
       AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
       ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
@@ -125,6 +131,59 @@ jobs:
           npm ci
           # `cdk destroy` synthesises the app to resolve the stack, so it needs the stage context.
           npx cdk destroy "RakuRag-${STAGE}" --force --context "stage=${STAGE}"
+
+      - name: Finish a DELETE_FAILED stack (via the CDK deploy role)
+        if: ${{ inputs.mode == 'finish-delete' }}
+        # `cdk destroy` stops at the first resource that will not delete (the versioned document
+        # bucket) and leaves the REST OF THE STACK STANDING — including the NAT gateway, which is the
+        # single biggest line item left. Re-issue the delete directly, retaining only the blocker.
+        # The GitHub role has no cloudformation:DeleteStack of its own; the cdk-* deploy role does,
+        # which is the whole reason the scoped role may assume it.
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "${RETAIN}" | grep -qE '^[A-Za-z0-9 ]*$'; then
+            echo "::error::retain_resources must be space-separated alphanumeric logical ids." >&2
+            exit 1
+          fi
+          ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          ROLE="arn:aws:iam::${ACCOUNT}:role/cdk-hnb659fds-deploy-role-${ACCOUNT}-${AWS_REGION}"
+          echo "assuming ${ROLE}"
+          CREDS="$(aws sts assume-role --role-arn "${ROLE}" --role-session-name raku-teardown \
+            --query Credentials --output json)"
+          for k in AccessKeyId SecretAccessKey SessionToken; do
+            v="$(printf '%s' "${CREDS}" | python3 -c "import json,sys;print(json.load(sys.stdin)['$k'])")"
+            echo "::add-mask::${v}"
+            case "$k" in
+              AccessKeyId) export AWS_ACCESS_KEY_ID="$v" ;;
+              SecretAccessKey) export AWS_SECRET_ACCESS_KEY="$v" ;;
+              SessionToken) export AWS_SESSION_TOKEN="$v" ;;
+            esac
+          done
+
+          STACK="RakuRag-${STAGE}"
+          echo "== current status =="
+          aws cloudformation describe-stacks --stack-name "${STACK}" \
+            --query 'Stacks[0].StackStatus' --output text
+          echo "== resources still standing (these are what is still billing) =="
+          aws cloudformation describe-stack-resources --stack-name "${STACK}" \
+            --query 'StackResources[?ResourceStatus!=`DELETE_COMPLETE`].[ResourceType,LogicalResourceId,ResourceStatus]' \
+            --output text
+
+          echo "== deleting ${STACK} (retaining: ${RETAIN:-none}) =="
+          # shellcheck disable=SC2086 -- RETAIN is a validated space-separated id list
+          if [ -n "${RETAIN}" ]; then
+            aws cloudformation delete-stack --stack-name "${STACK}" --retain-resources ${RETAIN}
+          else
+            aws cloudformation delete-stack --stack-name "${STACK}"
+          fi
+          aws cloudformation wait stack-delete-complete --stack-name "${STACK}" || {
+            echo "::error::delete still did not complete. Remaining failures:" >&2
+            aws cloudformation describe-stack-events --stack-name "${STACK}" \
+              --query "StackEvents[?ResourceStatus=='DELETE_FAILED'].[LogicalResourceId,ResourceStatusReason]" \
+              --output text >&2 || true
+            exit 1
+          }
+          echo "${STACK} deleted."
 
       - name: Clean residual (secrets, log groups, ECR assets)
         if: ${{ inputs.mode == 'residual' }}
